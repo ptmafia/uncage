@@ -1,8 +1,6 @@
-import { randomUUID } from 'node:crypto';
-
 export type IdPrefix = 'ses' | 'run' | 'apr' | 'msg' | 'tool' | 'req';
 
-export const newId = (prefix: IdPrefix): string => `${prefix}_${randomUUID().replaceAll('-', '')}`;
+export const newId = (prefix: IdPrefix): string => `${prefix}_${globalThis.crypto.randomUUID().replaceAll('-', '')}`;
 
 export const formatEventId = (sequence: number): string =>
   `evt_${String(sequence).padStart(10, '0')}`;
