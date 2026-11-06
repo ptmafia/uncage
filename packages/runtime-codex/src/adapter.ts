@@ -7,15 +7,20 @@ import {
   type RuntimeCapabilities,
   type RuntimeEvent,
 } from '@uncage/protocol';
-import { ATTACHMENT_LIMITS } from '@uncage/protocol';
+import { ATTACHMENT_LIMITS, type ModelOption } from '@uncage/protocol';
 import { JsonRpcError, JsonRpcPeer } from './jsonrpc.js';
 import { createMapper, toDecision } from './map.js';
 import { probeCodex, type ExecFile } from './probe.js';
 import {
   APPROVAL_POLICY,
+  BYPASS_APPROVAL_POLICY,
   CLIENT_REQUEST,
+  EFFORTS,
   INITIALIZED,
   NOTIFY,
+  type ModelListParams,
+  type ModelListResult,
+  type SandboxPolicy,
   REQUEST,
   SANDBOX,
   type AccountReadParams,
@@ -39,20 +44,11 @@ export interface CodexAdapterOptions {
   execFile?: ExecFile;
   /** Timeout for each JSON-RPC request to the app-server. Defaults to 30 s. */
   requestTimeoutMs?: number;
+  /** Offer (and accept) the `bypassPermissions` mode. Defaults to false. */
+  allowBypass?: boolean;
 }
 
-const CAPABILITIES: RuntimeCapabilities = {
-  streaming: true,
-  approval: { once: true, session: false, types: ['shell', 'file'] },
-  nativeResume: true,
-  diffEvents: false,
-  mcp: true,
-  skills: 'unknown',
-  models: [],
-  efforts: [],
-  permissionModes: ['default'],
-  attachments: { images: false, files: false, maxBytes: ATTACHMENT_LIMITS.maxBytes },
-};
+const DEFAULT_MODELS: ModelOption[] = [{ id: 'default', label: 'Default' }];
 
 const CLIENT_INFO: InitializeParams['clientInfo'] = { name: 'uncage', title: 'Uncage', version: '0.0.0' };
 const DISCONNECTED: RuntimeEvent = { type: 'run.interrupted', reason: 'runtime_disconnected' };
@@ -135,7 +131,7 @@ const turnIdOf = (method: string, params: unknown): string | undefined => {
   return typeof id === 'string' ? id : undefined;
 };
 
-function failed(code: 'runtime_unavailable' | 'internal_error', message: string): RuntimeEvent {
+function failed(code: 'runtime_unavailable' | 'internal_error' | 'policy_denied' | 'invalid_request', message: string): RuntimeEvent {
   const entry = ERROR_CATALOG[code];
   return { type: 'run.failed', error: { code, message, hint: entry.hint, retryable: entry.retryable } };
 }
@@ -143,6 +139,8 @@ function failed(code: 'runtime_unavailable' | 'internal_error', message: string)
 export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
   const [executable = 'codex', ...args] = o.command ?? ['codex', 'app-server'];
   const requestTimeoutMs = o.requestTimeoutMs ?? 30_000;
+  const allowBypass = o.allowBypass === true;
+  let models: ModelOption[] = DEFAULT_MODELS;
   let current: Promise<Connection> | undefined;
 
   /** One app-server per adapter, started lazily and shared by every session; respawned after it exits. */
@@ -231,6 +229,16 @@ export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
         );
       }
 
+      const { settings } = input;
+      const bypass = settings.permissionMode === 'bypassPermissions';
+      if (bypass && !allowBypass) {
+        ended = true;
+        return yield failed('policy_denied', 'bypassPermissions is not allowed on this server.');
+      }
+      if (settings.permissionMode !== 'default' && !bypass) {
+        ended = true;
+        return yield failed('invalid_request', `Codex does not support the ${settings.permissionMode} permission mode.`);
+      }
       const policy = { cwd: input.cwd, approvalPolicy: APPROVAL_POLICY, sandbox: SANDBOX } as const;
       const thread = input.nativeSessionRef
         ? conn.peer.request<ThreadResult>(CLIENT_REQUEST.threadResume, {
@@ -250,9 +258,21 @@ export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
       conn.sinks.set(threadId, sink);
       yield { type: 'native.session', ref: threadId };
 
+      const images = input.attachments.filter((a) => a.kind === 'image');
+      const files = input.attachments.filter((a) => a.kind !== 'image');
+      const listing = files.length
+        ? `\n\nAttached files (read them with your tools):\n${files.map((f) => `- ${f.absPath}`).join('\n')}`
+        : '';
+      const sandboxPolicy: SandboxPolicy = bypass
+        ? { type: 'dangerFullAccess' }
+        : { type: 'workspaceWrite', writableRoots: [input.cwd], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false };
       turnStart = conn.peer.request<TurnStartResult>(CLIENT_REQUEST.turnStart, {
         threadId,
-        input: [{ type: 'text', text: input.prompt }],
+        input: [...images.map((a) => ({ type: 'localImage' as const, path: a.absPath })), { type: 'text', text: input.prompt + listing }],
+        ...(settings.model && settings.model !== 'default' ? { model: settings.model } : {}),
+        ...(settings.effort ? { effort: settings.effort } : {}),
+        approvalPolicy: bypass ? BYPASS_APPROVAL_POLICY : APPROVAL_POLICY,
+        sandboxPolicy,
       } satisfies TurnStartParams);
       let started: TurnStartResult | typeof ABORTED;
       try {
@@ -308,10 +328,37 @@ export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
     }
   }
 
+  const capabilities = (): RuntimeCapabilities => ({
+    streaming: true,
+    approval: { once: true, session: false, types: ['shell', 'file'] },
+    nativeResume: true,
+    diffEvents: false,
+    mcp: true,
+    skills: 'unknown',
+    models,
+    efforts: [...EFFORTS],
+    permissionModes: allowBypass ? ['default', 'bypassPermissions'] : ['default'],
+    attachments: { images: true, files: true, maxBytes: ATTACHMENT_LIMITS.maxBytes },
+  });
+
   return {
     id: 'codex',
     displayName: 'Codex',
-    capabilities: () => CAPABILITIES,
+    capabilities,
+    /** `model/list` (first page, hidden models excluded); keeps the previous list on any failure. */
+    async refreshCapabilities() {
+      try {
+        const conn = await connect();
+        const { data } = await conn.peer.request<ModelListResult>(CLIENT_REQUEST.modelList, {} satisfies ModelListParams);
+        const listed = data
+          .filter((m) => !m.hidden)
+          .map((m) => ({ id: m.model, label: m.displayName || m.model, ...(m.description ? { description: m.description } : {}) }));
+        if (listed.length > 0) models = [...DEFAULT_MODELS, ...listed.filter((m) => m.id !== 'default')];
+      } catch {
+        // Keep what we had.
+      }
+      return capabilities();
+    },
     probe: () =>
       probeCodex(executable, o.execFile, async (params) => {
         const conn = await connect();

@@ -26,6 +26,8 @@
 /** Uncage's defaults for new and resumed threads. Never 'never' / 'danger-full-access'. */
 export const APPROVAL_POLICY = 'on-request';
 export const SANDBOX = 'workspace-write';
+/** The bypass pair, only ever sent when the server runs with `allowBypass`. */
+export const BYPASS_APPROVAL_POLICY = 'never';
 
 // ---- Client → server requests ------------------------------------------------------------------
 /** [S] ClientRequest method names. */
@@ -33,6 +35,7 @@ export const CLIENT_REQUEST = {
   initialize: 'initialize',
   threadStart: 'thread/start',
   threadResume: 'thread/resume',
+  modelList: 'model/list',
   turnStart: 'turn/start',
   turnInterrupt: 'turn/interrupt',
   accountRead: 'account/read',
@@ -78,11 +81,62 @@ export interface TextInput {
   type: 'text';
   text: string;
 }
-/** [S] TurnStartParams (subset). */
+/**
+ * [S] UserInput `{ "type": "localImage", path: string, detail?: ImageDetail }`
+ * (https://raw.githubusercontent.com/openai/codex/main/codex-rs/app-server-protocol/schema/typescript/v2/UserInput.ts).
+ */
+export interface LocalImageInput {
+  type: 'localImage';
+  path: string;
+}
+/**
+ * [S] SandboxPolicy (v2/SandboxPolicy.ts): `{type:'dangerFullAccess'}` | `{type:'readOnly', networkAccess}` |
+ * `{type:'externalSandbox', networkAccess}` | `{type:'workspaceWrite', writableRoots, networkAccess,
+ * excludeTmpdirEnvVar, excludeSlashTmp}`. Only the two Uncage uses are modelled.
+ */
+export type SandboxPolicy =
+  | { type: 'dangerFullAccess' }
+  | { type: 'workspaceWrite'; writableRoots: string[]; networkAccess: boolean; excludeTmpdirEnvVar: boolean; excludeSlashTmp: boolean };
+/**
+ * [S] TurnStartParams (subset), v2/TurnStartParams.ts. Each override below is documented there as
+ * "Override the ... for this turn and subsequent turns" and is optional / nullable:
+ *  - `model?: string | null`
+ *  - `effort?: ReasoningEffort | null`; ReasoningEffort is a plain string (ReasoningEffort.ts). The Rust enum
+ *    in codex-rs/protocol/src/openai_models.rs serialises none|minimal|low|medium|high|xhigh|max|...;
+ *    which ones a model accepts is per model (`Model.supportedReasoningEfforts`). Uncage offers low/medium/high.
+ *  - `approvalPolicy?: AskForApproval | null` (v2/AskForApproval.ts: "untrusted" | "on-request" | {granular} | "never")
+ *  - `sandboxPolicy?: SandboxPolicy | null`
+ */
 export interface TurnStartParams {
   threadId: string;
-  input: TextInput[];
+  input: Array<LocalImageInput | TextInput>;
+  model?: string;
+  effort?: string;
+  approvalPolicy: typeof APPROVAL_POLICY | typeof BYPASS_APPROVAL_POLICY;
+  sandboxPolicy: SandboxPolicy;
 }
+/**
+ * [S] model/list: ModelListParams `{modelProvider?, cursor?, limit?, includeHidden?}` and
+ * ModelListResponse `{data: Model[], nextCursor: string | null}` (v2/ModelListParams.ts, ModelListResponse.ts);
+ * Model (v2/Model.ts, subset) `{id, model, displayName, description, hidden, isDefault, ...}`.
+ */
+export interface ModelListParams {
+  limit?: number;
+}
+export interface ModelListResult {
+  data: Array<{ id: string; model: string; displayName: string; description: string; hidden: boolean }>;
+  nextCursor: string | null;
+}
+/** Efforts Uncage offers; each is a valid ReasoningEffort string on the wire. */
+export const EFFORTS = ['low', 'medium', 'high'] as const;
+/**
+ * Permission modes with a faithful equivalent in the schema. `acceptEdits`, `plan` and `auto` have none
+ * (AskForApproval has no "accept edits only" or plan variant), so they are not offered.
+ */
+export const PERMISSION_POLICIES = {
+  default: { approvalPolicy: APPROVAL_POLICY, sandbox: 'workspace-write' },
+  bypassPermissions: { approvalPolicy: BYPASS_APPROVAL_POLICY, sandbox: 'danger-full-access' },
+} as const;
 /** [S] TurnStatus. */
 export type TurnStatus = 'completed' | 'interrupted' | 'failed' | 'inProgress';
 /** [S] TurnError (subset). `codexErrorInfo` is a string or an object variant. */

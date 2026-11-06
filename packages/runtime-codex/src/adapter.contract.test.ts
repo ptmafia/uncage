@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { collect, fakeCodexPath, runAdapterContract } from '@uncage/testkit';
-import type { AdapterRunContext, ApprovalOutcome, NativeApprovalInput, RuntimeAdapter, RuntimeEvent } from '@uncage/protocol';
+import type { AdapterRunContext, AdapterRunInput, ApprovalOutcome, NativeApprovalInput, RuntimeAdapter, RuntimeEvent } from '@uncage/protocol';
 import { ATTACHMENT_LIMITS } from '@uncage/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { codexAdapter } from './index.js';
@@ -64,11 +64,75 @@ describe('codexAdapter', () => {
       diffEvents: false,
       mcp: true,
       skills: 'unknown',
-      models: [],
-      efforts: [],
+      models: [{ id: 'default', label: 'Default' }],
+      efforts: ['low', 'medium', 'high'],
       permissionModes: ['default'],
-      attachments: { images: false, files: false, maxBytes: ATTACHMENT_LIMITS.maxBytes },
+      attachments: { images: true, files: true, maxBytes: ATTACHMENT_LIMITS.maxBytes },
     });
+  });
+
+  it('capabilities omit bypass unless allowBypass', () => {
+    expect(make().capabilities().permissionModes).toEqual(['default']);
+    expect(make({ allowBypass: true }).capabilities().permissionModes).toEqual(['default', 'bypassPermissions']);
+  });
+
+  it('refreshCapabilities lists visible models from model/list after default', async () => {
+    const caps = await make().refreshCapabilities!();
+    expect(caps.models).toEqual([
+      { id: 'default', label: 'Default' },
+      { id: 'fake-model', label: 'Fake Model', description: 'The fake default' },
+    ]);
+  });
+
+  describe('turn/start params on the wire', () => {
+    const turnStart = async (o: { allowBypass?: boolean }, over: Partial<AdapterRunInput>): Promise<Record<string, unknown>> => {
+      const trace = join(mkdtempSync(join(tmpdir(), 'uncage-codex-')), 'trace.jsonl');
+      const a = make({ env: { ...process.env, FAKE_CODEX_TRACE: trace }, ...o });
+      const events = await collect(a.run({ ...input('simple hi'), ...over }, ctxWith({ decision: 'allow' }).ctx));
+      const wire = readFileSync(trace, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>);
+      const m = wire.find((x) => x.method === 'turn/start');
+      expect(m, JSON.stringify(events)).toBeDefined();
+      return m!.params as Record<string, unknown>;
+    };
+
+    it('turn/start carries model/effort/approvalPolicy from settings', async () => {
+      const p = await turnStart({}, { settings: { permissionMode: 'default', model: 'gpt-x', effort: 'high' } });
+      expect(p).toMatchObject({
+        model: 'gpt-x',
+        effort: 'high',
+        approvalPolicy: 'on-request',
+        sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/tmp/uncage-fixture'], networkAccess: false },
+      });
+    });
+
+    it('omits model for the default and effort when unset', async () => {
+      const p = await turnStart({}, { settings: { permissionMode: 'default', model: 'default' } });
+      expect(p).not.toHaveProperty('model');
+      expect(p).not.toHaveProperty('effort');
+    });
+
+    it('bypass maps to never + danger-full-access', async () => {
+      const p = await turnStart({ allowBypass: true }, { settings: { permissionMode: 'bypassPermissions' } });
+      expect(p).toMatchObject({ approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } });
+    });
+
+    it('image attachment sent as localImage before text; files listed by path', async () => {
+      const att = (kind: 'image' | 'file', absPath: string) => ({
+        id: 'a', sessionId: 's', name: 'n', mime: 'x', size: 1, kind, sha256: 'h', createdAt: 't', absPath,
+      });
+      const p = await turnStart({}, { attachments: [att('file', '/w/notes.md'), att('image', '/w/pic.png')] });
+      expect(p.input).toEqual([
+        { type: 'localImage', path: '/w/pic.png' },
+        { type: 'text', text: 'simple hi\n\nAttached files (read them with your tools):\n- /w/notes.md' },
+      ]);
+    });
+  });
+
+  it('bypass without allowBypass fails policy_denied and unsupported modes fail invalid_request', async () => {
+    const run = (permissionMode: 'bypassPermissions' | 'plan') =>
+      collect(make().run({ ...input('simple'), settings: { permissionMode } }, ctxWith({ decision: 'allow' }).ctx));
+    expect(await run('bypassPermissions')).toEqual([{ type: 'run.failed', error: expect.objectContaining({ code: 'policy_denied' }) }]);
+    expect(await run('plan')).toEqual([{ type: 'run.failed', error: expect.objectContaining({ code: 'invalid_request' }) }]);
   });
 
   it('resume keeps context', async () => {

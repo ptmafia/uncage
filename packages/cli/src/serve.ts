@@ -27,12 +27,11 @@ export function createLogger(env: NodeJS.ProcessEnv = process.env, destination?:
 }
 
 export function buildAdapters(config: UncageConfig): RuntimeAdapter[] {
-  // TODO(composer Task 5): pass `allowBypass` into codexAdapter once its options accept it.
   const { allowBypass } = config.security;
   const adapters: RuntimeAdapter[] = [];
   if (config.runtimes.claude.enabled) adapters.push(claudeAdapter({ allowBypass }));
   if (config.runtimes.codex.enabled) {
-    adapters.push(codexAdapter(config.runtimes.codex.command ? { command: config.runtimes.codex.command } : {}));
+    adapters.push(codexAdapter({ allowBypass, ...(config.runtimes.codex.command ? { command: config.runtimes.codex.command } : {}) }));
   }
   return adapters;
 }

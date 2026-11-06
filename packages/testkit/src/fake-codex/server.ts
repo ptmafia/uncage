@@ -4,7 +4,8 @@
  * Speaks the subset in packages/runtime-codex/src/protocol.ts. Env:
  *   FAKE_CODEX_SCENARIO  force a scenario (else the first word of the turn text picks it)
  *   FAKE_CODEX_AUTH=none `account/read` reports no account
- *   FAKE_CODEX_TRACE     append every received line to this file (lets tests inspect the client's wire output)
+ *   FAKE_CODEX_TRACE     append every received line to this file (lets tests inspect the client's wire output,
+ *                       including turn/start's model, effort, approvalPolicy, sandboxPolicy and localImage inputs)
  */
 import { appendFileSync } from 'node:fs';
 import { pickScenario, type TurnApi, type TurnOutcome } from './scenarios.js';
@@ -131,6 +132,14 @@ function handle(method: string, params: Record<string, unknown>): unknown {
       if (typeof params.cwd === 'string') thread.cwd = params.cwd;
       return threadResult(thread);
     }
+    case 'model/list':
+      return {
+        data: [
+          { id: 'fake-model', model: 'fake-model', displayName: 'Fake Model', description: 'The fake default', hidden: false, isDefault: true },
+          { id: 'fake-hidden', model: 'fake-hidden', displayName: 'Hidden', description: '', hidden: true, isDefault: false },
+        ],
+        nextCursor: null,
+      };
     case 'turn/start': {
       const thread = getThread(params);
       const input = (params.input ?? []) as Array<{ type?: string; text?: string }>;

@@ -32,6 +32,7 @@ describe('fake app-server speaks protocol.ts', () => {
     await peer.request(CLIENT_REQUEST.initialize, { clientInfo: { name: 'uncage', title: 'Uncage', version: '0.0.0' } });
     peer.notify(INITIALIZED, {});
     expect(await peer.request(CLIENT_REQUEST.accountRead, { refreshToken: false })).toHaveProperty('requiresOpenaiAuth');
+    expect(await peer.request(CLIENT_REQUEST.modelList, {})).toHaveProperty('data');
     const { thread } = await peer.request<ThreadResult>(CLIENT_REQUEST.threadStart, { cwd: '/tmp' });
     await peer.request(CLIENT_REQUEST.threadResume, { threadId: thread.id });
 
