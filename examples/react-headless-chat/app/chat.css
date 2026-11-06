@@ -1,0 +1,123 @@
+body {
+  margin: 0;
+  font: 15px/1.5 system-ui, sans-serif;
+  color: #1f2328;
+  background: #fafafa;
+}
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 720px;
+  min-height: 100dvh;
+  margin: 0 auto;
+  padding: 16px;
+  box-sizing: border-box;
+}
+.chat header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.chat h1 {
+  margin: 0;
+  font-size: 18px;
+}
+.muted {
+  color: #6e7781;
+}
+.timeline {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.msg-user {
+  align-self: flex-end;
+  max-width: 80%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: #e8eefc;
+  white-space: pre-wrap;
+}
+.msg-assistant {
+  white-space: pre-wrap;
+}
+.tools {
+  margin: 0;
+  padding-left: 16px;
+  color: #6e7781;
+  font-size: 13px;
+}
+.tool[data-status='failed'],
+.tool[data-status='declined'] {
+  color: #9a6700;
+}
+.approval-card {
+  padding: 12px;
+  border: 1px solid #d4a72c;
+  border-radius: 8px;
+  background: #fff8c5;
+}
+.approval-card pre {
+  margin: 8px 0;
+  padding: 6px 8px;
+  background: #fff;
+  border-radius: 4px;
+}
+.approval-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.approval-line {
+  margin: 0;
+  color: #6e7781;
+  font-size: 13px;
+}
+.run-status {
+  margin: 0;
+  color: #6e7781;
+  font-size: 13px;
+}
+.run-status[data-state='interrupted'],
+.run-status[data-state='failed'] {
+  color: #9a6700;
+}
+.error {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #ffebe9;
+  color: #82071e;
+}
+.composer {
+  position: sticky;
+  bottom: 16px;
+  display: flex;
+  gap: 8px;
+}
+.composer textarea {
+  flex: 1;
+  font: inherit;
+  padding: 8px;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  resize: vertical;
+}
+button {
+  font: inherit;
+  padding: 6px 14px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+button.primary {
+  border-color: #1f6feb;
+  background: #1f6feb;
+  color: #fff;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

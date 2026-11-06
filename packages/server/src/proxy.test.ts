@@ -159,6 +159,20 @@ describe('createUncageHandler', () => {
     expect(rest).toBe(frames[1]! + frames[2]!);
   });
 
+  it('ends the SSE body cleanly when the daemon drops mid-stream', async () => {
+    const frame = 'id: evt_0000000001\nevent: a\ndata: {}\n\n';
+    respond = (res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write(frame);
+      setTimeout(() => res.socket?.destroy(), 20);
+    };
+    const h = createUncageHandler({ endpoint, token: 'tok' });
+    const res = await h.GET(new Request('http://app.local/api/uncage/sessions/ses_1/events'));
+    // A daemon restart is routine: the browser just sees the stream end and reconnects, and the
+    // host app (Next) logs no "failed to pipe response" error.
+    expect(await res.text()).toBe(frame);
+  });
+
   it('passes upstream error status and body through', async () => {
     respond = (res) => {
       res.writeHead(409, { 'content-type': 'application/json' });

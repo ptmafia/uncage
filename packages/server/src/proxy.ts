@@ -44,6 +44,26 @@ function errorResponse(code: ErrorCode, opts: { message?: string; hint?: string 
   return Response.json({ error }, { status: entry.status });
 }
 
+/**
+ * Event streams end, rather than error, when the daemon drops the connection (e.g. it restarted):
+ * the browser client reconnects either way, and the host app logs no "failed to pipe" error.
+ */
+function endOnUpstreamDrop(body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) controller.close();
+        else controller.enqueue(value);
+      } catch {
+        controller.close();
+      }
+    },
+    cancel: (reason) => reader.cancel(reason),
+  });
+}
+
 const trimSlashes = (s: string): string => s.replace(/^\/+|\/+$/g, '');
 
 export function createUncageHandler(o: ProxyOptions = {}): UncageHandler {
@@ -107,7 +127,9 @@ export function createUncageHandler(o: ProxyOptions = {}): UncageHandler {
     upstream.headers.forEach((value, name) => {
       if (!DROP_RESPONSE_HEADERS.has(name)) responseHeaders.set(name, value);
     });
-    return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers: responseHeaders });
+    const sse = upstream.headers.get('content-type')?.startsWith('text/event-stream') === true;
+    const body = sse && upstream.body ? endOnUpstreamDrop(upstream.body) : upstream.body;
+    return new Response(body, { status: upstream.status, statusText: upstream.statusText, headers: responseHeaders });
   };
 
   return { GET: handle, POST: handle };
