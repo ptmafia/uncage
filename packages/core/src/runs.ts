@@ -1,21 +1,26 @@
 import { createHash } from 'node:crypto';
 import {
   newId,
+  type ActiveRunInfo,
   type ApprovalOutcome,
   type ErrorBody,
   type NativeApprovalInput,
+  type ResolvedAttachment,
   type Run,
   type RunState,
   type RuntimeAdapter,
   type RuntimeEvent,
+  type SessionSettings,
   type StartRunBody,
 } from '@uncage/protocol';
 import type { ApprovalBridge } from './approvals.js';
+import { publicAttachment } from './attachments.js';
 import { UncageError } from './errors.js';
 import type { EventLog } from './event-log.js';
 import type { Log } from './logger.js';
 import type { AdapterRegistry } from './registry.js';
 import type { WorkspaceConfig } from './sessions.js';
+import type { SecurityPolicy } from './settings.js';
 import type { Store } from './store/store.js';
 import { resolveWorkspace } from './workspace.js';
 
@@ -33,6 +38,9 @@ interface ActiveRun {
   sessionId: string;
   workspace: string;
   nativeSessionRef?: string;
+  /** The session's settings when the run started; later changes apply from the next run. */
+  settings: SessionSettings;
+  attachments: ResolvedAttachment[];
   adapter: RuntimeAdapter;
   abort: AbortController;
   cancelRequested: boolean;
@@ -54,7 +62,11 @@ const sleep = (ms: number) =>
   });
 
 const runIdemScope = (sessionId: string) => `run:${sessionId}`;
-const hashPrompt = (prompt: string) => createHash('sha256').update(prompt).digest('hex');
+/** Request fingerprint for idempotency: the prompt, plus the attachment ids when there are any. */
+const hashRequest = (prompt: string, attachmentIds: string[]) =>
+  createHash('sha256')
+    .update(attachmentIds.length === 0 ? prompt : `${prompt}\0${attachmentIds.join(',')}`)
+    .digest('hex');
 
 /** Owns run execution: starting, driving adapter iterators, cancelling, and shutting down. */
 export class RunManager {
@@ -69,12 +81,33 @@ export class RunManager {
     private readonly registry: AdapterRegistry,
     private readonly logger: Log,
     private readonly workspaceConfig: WorkspaceConfig,
+    private readonly policy: SecurityPolicy,
   ) {}
 
   async get(id: string): Promise<Run> {
     const run = await this.store.getRun(id);
     if (!run) throw new UncageError('not_found', { message: `Run ${id} not found.` });
     return run;
+  }
+
+  /** Runs in `queued | running | waiting_approval` across all sessions, newest first. */
+  async listActive(): Promise<ActiveRunInfo[]> {
+    const runs = await this.store.listRunsInState(ACTIVE_RUN_STATES);
+    const titles = new Map<string, string>();
+    for (const sid of new Set(runs.map((r) => r.sessionId))) {
+      const s = await this.store.getSession(sid);
+      if (s) titles.set(sid, s.title);
+    }
+    return runs
+      .filter((r) => titles.has(r.sessionId))
+      .sort((a, b) => (a.createdAt === b.createdAt ? b.id.localeCompare(a.id) : b.createdAt.localeCompare(a.createdAt)))
+      .map((r) => ({
+        runId: r.id,
+        sessionId: r.sessionId,
+        sessionTitle: titles.get(r.sessionId) as string,
+        state: r.state,
+        ...(r.startedAt !== undefined ? { startedAt: r.startedAt } : {}),
+      }));
   }
 
   /** Persists a queued run and starts driving it in the background. Serialised per session. */
@@ -92,13 +125,17 @@ export class RunManager {
 
   private async startLocked(sessionId: string, body: StartRunBody & { idempotencyKey?: string }): Promise<Run> {
     const { idempotencyKey: key, prompt } = body;
-    const hash = hashPrompt(prompt);
+    const attachmentIds = body.attachmentIds ?? [];
+    if (attachmentIds.some((a) => a === '') || new Set(attachmentIds).size !== attachmentIds.length) {
+      throw new UncageError('invalid_request', { message: 'attachmentIds must be distinct, non-empty ids.' });
+    }
+    const hash = hashRequest(prompt, attachmentIds);
     if (key !== undefined) {
       const prior = await this.store.getIdempotent(key, runIdemScope(sessionId));
       if (prior) {
         if (prior.requestHash !== hash) {
           throw new UncageError('invalid_request', {
-            message: 'This idempotency key was already used with a different prompt.',
+            message: 'This idempotency key was already used with a different request.',
             hint: 'Use a new idempotency key for a new run.',
           });
         }
@@ -114,6 +151,9 @@ export class RunManager {
       throw new UncageError('runtime_unavailable', { message: `Runtime ${session.runtimeId} is not registered.` });
     }
     if (session.readOnly) throw new UncageError('session_read_only', { hint: 'Start a new session' });
+    if (session.settings.permissionMode === 'bypassPermissions' && !this.policy.allowBypass) {
+      throw new UncageError('policy_denied', { message: 'Bypass permissions mode is disabled on this server.' });
+    }
     // allowedRoots may have changed since the session was created (config edit, another --workspace).
     const workspace = await resolveWorkspace(session.workspace, this.workspaceConfig).catch((e: unknown) => {
       throw new UncageError('invalid_workspace', {
@@ -124,12 +164,15 @@ export class RunManager {
       });
     });
 
+    const attachments = await this.resolveAttachments(sessionId, attachmentIds);
+
     const run: Run = {
       id: newId('run'),
       sessionId,
       prompt,
       state: 'queued',
       createdAt: new Date().toISOString(),
+      ...(attachments.length > 0 ? { attachments: attachments.map(publicAttachment) } : {}),
     };
     let markDone!: () => void;
     const entry: ActiveRun = {
@@ -137,6 +180,8 @@ export class RunManager {
       sessionId,
       workspace,
       ...(session.nativeSessionRef !== undefined ? { nativeSessionRef: session.nativeSessionRef } : {}),
+      settings: session.settings,
+      attachments,
       adapter,
       abort: new AbortController(),
       cancelRequested: false,
@@ -151,6 +196,7 @@ export class RunManager {
     this.bySession.set(sessionId, entry);
     try {
       await this.store.createRun(run);
+      if (attachmentIds.length > 0) await this.store.markAttachmentsReferenced(attachmentIds, run.id);
       await this.store.updateSession(sessionId, { status: 'busy', activeRunId: run.id });
       await this.log.append(sessionId, 'run.started', { run }, run.id);
       if (key !== undefined) await this.store.putIdempotent(key, runIdemScope(sessionId), hash, { runId: run.id });
@@ -164,6 +210,25 @@ export class RunManager {
     this.logger.debug({ runId: run.id, promptLength: prompt.length }, 'run prompt received');
     void this.drive(entry);
     return run;
+  }
+
+  /**
+   * Every id must exist, belong to this session and not have been sent with a run yet; otherwise
+   * `invalid_request` and no run is created. Returned oldest first, as runs are hydrated.
+   */
+  private async resolveAttachments(sessionId: string, ids: string[]): Promise<ResolvedAttachment[]> {
+    if (ids.length === 0) return [];
+    const rows = await this.store.listAttachments(ids);
+    const usable = rows.filter((a) => a.sessionId === sessionId && a.referencedByRun === undefined);
+    if (usable.length !== ids.length) {
+      const ok = new Set(usable.map((a) => a.id));
+      throw new UncageError('invalid_request', {
+        message: 'Some attachments are unknown, belong to another session, or were already sent.',
+        hint: 'Upload the files again and resend.',
+        details: { attachmentIds: ids.filter((id) => !ok.has(id)) },
+      });
+    }
+    return usable.map((a) => ({ ...publicAttachment(a), absPath: a.absPath }));
   }
 
   /** Aborts the run, cancels its pending approvals, waits ≤5 s, and marks it cancelled. */
@@ -209,8 +274,8 @@ export class RunManager {
           runId: entry.run.id,
           prompt: entry.run.prompt,
           cwd: entry.workspace,
-          settings: { permissionMode: 'default' }, // Task 2 reads the session's stored settings
-          attachments: [],
+          settings: entry.settings,
+          attachments: entry.attachments,
           ...(entry.nativeSessionRef !== undefined ? { nativeSessionRef: entry.nativeSessionRef } : {}),
         },
         { signal: entry.abort.signal, requestApproval: (i) => this.requestApproval(entry, i) },

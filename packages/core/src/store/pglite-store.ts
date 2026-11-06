@@ -1,11 +1,12 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
-import { and, asc, eq, gt, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { formatEventId } from '@uncage/protocol';
 import type {
   ApprovalRequest,
+  Attachment,
   EventEnvelope,
   EventType,
   Run,
@@ -13,13 +14,14 @@ import type {
 } from '@uncage/protocol';
 import { UncageError } from '../errors.js';
 import { MIGRATIONS } from './migrations.js';
-import { approvals, events, idempotencyKeys, runs, sessions } from './schema.js';
-import type { Store } from './store.js';
+import { approvals, attachments, events, idempotencyKeys, runs, sessions } from './schema.js';
+import type { Store, StoredAttachment } from './store.js';
 
 type SessionRow = typeof sessions.$inferSelect;
 type RunRow = typeof runs.$inferSelect;
 type EventRow = typeof events.$inferSelect;
 type ApprovalRow = typeof approvals.$inferSelect;
+type AttachmentRow = typeof attachments.$inferSelect;
 
 const opt = <T>(v: T | null): T | undefined => (v === null ? undefined : v);
 
@@ -32,7 +34,7 @@ const toSession = (r: SessionRow): Session => ({
   readOnly: r.readOnly,
   createdAt: r.createdAt,
   capabilities: r.capabilities,
-  settings: { permissionMode: 'default' }, // TODO(Task 2): persisted column
+  settings: r.settings,
   ...(r.activeRunId !== null ? { activeRunId: r.activeRunId } : {}),
 });
 
@@ -45,6 +47,23 @@ const toRun = (r: RunRow): Run => ({
   ...(r.startedAt !== null ? { startedAt: r.startedAt } : {}),
   ...(r.endedAt !== null ? { endedAt: r.endedAt } : {}),
   ...(r.error !== null ? { error: r.error } : {}),
+});
+
+const toAttachment = (r: AttachmentRow): Attachment => ({
+  id: r.id,
+  sessionId: r.sessionId,
+  name: r.name,
+  mime: r.mime,
+  size: r.size,
+  kind: r.kind as Attachment['kind'],
+  sha256: r.sha256,
+  createdAt: r.createdAt,
+});
+
+const toStoredAttachment = (r: AttachmentRow): StoredAttachment => ({
+  ...toAttachment(r),
+  absPath: r.absPath,
+  ...(r.referencedByRun !== null ? { referencedByRun: r.referencedByRun } : {}),
 });
 
 const toEvent = (r: EventRow): EventEnvelope => ({
@@ -170,6 +189,27 @@ export async function openPgliteStore(opts: { dataDir: string | 'memory://' }): 
     return map(row as never);
   };
 
+  /** Attaches the attachments each run consumed (`run.attachments`), oldest first. */
+  const withAttachments = async (rows: RunRow[]): Promise<Run[]> => {
+    if (rows.length === 0) return [];
+    const atts = await db
+      .select()
+      .from(attachments)
+      .where(inArray(attachments.referencedByRun, rows.map((r) => r.id)))
+      .orderBy(asc(attachments.createdAt), asc(attachments.id));
+    const byRun = new Map<string, Attachment[]>();
+    for (const a of atts) {
+      const list = byRun.get(a.referencedByRun as string) ?? [];
+      list.push(toAttachment(a));
+      byRun.set(a.referencedByRun as string, list);
+    }
+    return rows.map((r) => {
+      const list = byRun.get(r.id);
+      return list ? { ...toRun(r), attachments: list } : toRun(r);
+    });
+  };
+  const oneRun = async (r: RunRow): Promise<Run> => (await withAttachments([r]))[0] as Run;
+
   const store: Store = {
     async createSession(s) {
       await db.insert(sessions).values({
@@ -181,6 +221,7 @@ export async function openPgliteStore(opts: { dataDir: string | 'memory://' }): 
         readOnly: s.readOnly,
         createdAt: s.createdAt,
         capabilities: s.capabilities,
+        settings: s.settings,
         activeRunId: s.activeRunId ?? null,
         nativeSessionRef: s.nativeSessionRef ?? null,
       });
@@ -214,20 +255,20 @@ export async function openPgliteStore(opts: { dataDir: string | 'memory://' }): 
     },
     async getRun(id) {
       const [r] = await db.select().from(runs).where(eq(runs.id, id));
-      return r ? toRun(r) : null;
+      return r ? oneRun(r) : null;
     },
     async listRuns(sessionId) {
       const rows = await db.select().from(runs).where(eq(runs.sessionId, sessionId)).orderBy(asc(runs.createdAt), asc(runs.id));
-      return rows.map(toRun);
+      return withAttachments(rows);
     },
     async updateRun(id, patch) {
       const set = buildSet(patch, ['startedAt', 'endedAt', 'error']);
-      return updateOne(runs, id, set, toRun, 'Run');
+      return oneRun(await updateOne(runs, id, set, (r: RunRow) => r, 'Run'));
     },
     async listRunsInState(states) {
       if (states.length === 0) return [];
       const rows = await db.select().from(runs).where(inArray(runs.state, states)).orderBy(asc(runs.createdAt), asc(runs.id));
-      return rows.map(toRun);
+      return withAttachments(rows);
     },
 
     async appendEvent<K extends EventType>(
@@ -337,6 +378,50 @@ export async function openPgliteStore(opts: { dataDir: string | 'memory://' }): 
         .where(and(eq(approvals.id, id), eq(approvals.state, expect.state), eq(approvals.version, expect.version)))
         .returning();
       return r ? toApproval(r) : null;
+    },
+
+    async createAttachment(a) {
+      await db.insert(attachments).values({
+        id: a.id,
+        sessionId: a.sessionId,
+        name: a.name,
+        mime: a.mime,
+        size: a.size,
+        kind: a.kind,
+        sha256: a.sha256,
+        absPath: a.absPath,
+        createdAt: a.createdAt,
+        referencedByRun: a.referencedByRun ?? null,
+      });
+    },
+    async getAttachment(id) {
+      const [r] = await db.select().from(attachments).where(eq(attachments.id, id));
+      return r ? toStoredAttachment(r) : null;
+    },
+    async listAttachments(ids) {
+      if (ids.length === 0) return [];
+      const rows = await db
+        .select()
+        .from(attachments)
+        .where(inArray(attachments.id, ids))
+        .orderBy(asc(attachments.createdAt), asc(attachments.id));
+      return rows.map(toStoredAttachment);
+    },
+    async markAttachmentsReferenced(ids, runId) {
+      if (ids.length === 0) return 0;
+      const rows = await db
+        .update(attachments)
+        .set({ referencedByRun: runId })
+        .where(and(inArray(attachments.id, ids), isNull(attachments.referencedByRun)))
+        .returning({ id: attachments.id });
+      return rows.length;
+    },
+    async deleteOrphanAttachments(olderThan) {
+      const rows = await db
+        .delete(attachments)
+        .where(and(isNull(attachments.referencedByRun), lt(attachments.createdAt, olderThan.toISOString())))
+        .returning();
+      return rows.map(toStoredAttachment);
     },
 
     async getIdempotent(key, scope) {

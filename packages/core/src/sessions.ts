@@ -4,6 +4,7 @@ import {
   type CreateSessionBody,
   type Run,
   type Session,
+  type SessionSettings,
   type SessionSnapshot,
   type StartRunBody,
   type UncageEvent,
@@ -12,6 +13,7 @@ import { UncageError } from './errors.js';
 import type { EventLog } from './event-log.js';
 import type { AdapterRegistry } from './registry.js';
 import type { RunManager } from './runs.js';
+import { mergeSettings, type SecurityPolicy } from './settings.js';
 import type { Store } from './store/store.js';
 import { resolveWorkspace } from './workspace.js';
 
@@ -39,12 +41,16 @@ const toPublic = (stored: Session & { nativeSessionRef?: string; lastSequence?: 
 };
 
 export class SessionService {
+  /** Serialises settings read-merge-write per session. */
+  private readonly settingsLocks = new Map<string, Promise<unknown>>();
+
   constructor(
     private readonly store: Store,
     private readonly log: EventLog,
     private readonly registry: AdapterRegistry,
     private readonly runs: RunManager,
     private readonly workspace: WorkspaceConfig,
+    private readonly policy: SecurityPolicy,
   ) {}
 
   async create(b: CreateSessionBody): Promise<SessionHandle> {
@@ -66,7 +72,7 @@ export class SessionService {
       status: 'ready',
       readOnly: false,
       createdAt: new Date().toISOString(),
-      capabilities: adapter.capabilities(),
+      capabilities: await this.registry.capabilities(adapter.id),
       settings: { permissionMode: 'default' },
     };
     await this.store.createSession(session);
@@ -77,6 +83,34 @@ export class SessionService {
   async get(id: string): Promise<SessionHandle> {
     await this.load(id);
     return this.handle(id);
+  }
+
+  /**
+   * Validates `patch` (policy first, then the runtime's current capabilities), persists the merged
+   * settings and emits `session.updated`. Takes effect from the next run.
+   */
+  updateSettings(id: string, patch: Partial<SessionSettings>): Promise<Session> {
+    const prev = this.settingsLocks.get(id) ?? Promise.resolve();
+    const next = prev.catch(() => undefined).then(() => this.updateSettingsLocked(id, patch));
+    this.settingsLocks.set(id, next);
+    void next
+      .finally(() => {
+        if (this.settingsLocks.get(id) === next) this.settingsLocks.delete(id);
+      })
+      .catch(() => undefined);
+    return next;
+  }
+
+  private async updateSettingsLocked(id: string, patch: Partial<SessionSettings>): Promise<Session> {
+    const current = await this.load(id);
+    if (current.readOnly) throw new UncageError('session_read_only', { hint: 'Start a new session' });
+    const caps = this.registry.find(current.runtimeId)
+      ? await this.registry.capabilities(current.runtimeId)
+      : current.capabilities;
+    const settings = mergeSettings(current.settings, patch, caps, this.policy);
+    const session = toPublic(await this.store.updateSession(id, { settings }));
+    await this.log.append(id, 'session.updated', { session });
+    return session;
   }
 
   async list(): Promise<Session[]> {

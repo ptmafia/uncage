@@ -1,23 +1,29 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type {
+  ActiveRunInfo,
   ApprovalDecision,
   ApprovalRequest,
+  Attachment,
   CreateSessionBody,
   Run,
   RuntimeAdapter,
   RuntimeInfo,
   Session,
+  SessionSettings,
 } from '@uncage/protocol';
 import type { Logger } from 'pino';
 import { ApprovalBridge } from './approvals.js';
+import { AttachmentService, type AttachmentBody } from './attachments.js';
 import { EventLog } from './event-log.js';
 import { silentLog, type Log } from './logger.js';
 import { AdapterRegistry } from './registry.js';
 import { ACTIVE_RUN_STATES, RunManager } from './runs.js';
 import { SessionService, type SessionHandle, type WorkspaceConfig } from './sessions.js';
+import { applyPolicy, type SecurityPolicy } from './settings.js';
 import { openPgliteStore } from './store/pglite-store.js';
 import type { Store } from './store/store.js';
+import { UncageError } from './errors.js';
 
 export interface UncageOptions {
   adapters: RuntimeAdapter[];
@@ -31,6 +37,8 @@ export interface UncageOptions {
   approvals?: { ttlMs?: number };
   /** Defaults to 7. */
   eventRetentionDays?: number;
+  /** `allowBypass` (default false) enables the `bypassPermissions` permission mode. */
+  security?: { allowBypass?: boolean };
   logger?: Logger;
 }
 
@@ -40,8 +48,22 @@ export interface Uncage {
     create(b: CreateSessionBody): Promise<SessionHandle>;
     get(id: string): Promise<SessionHandle>;
     list(): Promise<Session[]>;
+    /** Validated against the policy and the runtime's capabilities; emits `session.updated`. */
+    updateSettings(id: string, patch: Partial<SessionSettings>): Promise<Session>;
   };
-  runs: { get(id: string): Promise<Run>; cancel(id: string): Promise<Run> };
+  attachments: {
+    /** `body` may be a byte array or a stream (e.g. a Node request); stored under the session workspace. */
+    add(sessionId: string, input: { name: string; mime: string; body: AttachmentBody }): Promise<Attachment>;
+    get(id: string): Promise<{ attachment: Attachment; absPath: string }>;
+    /** Deletes attachments never sent with a run and created before `olderThan`. */
+    pruneOrphans(olderThan: Date): Promise<number>;
+  };
+  runs: {
+    get(id: string): Promise<Run>;
+    cancel(id: string): Promise<Run>;
+    /** Active runs across all sessions, newest first. */
+    listActive(): Promise<ActiveRunInfo[]>;
+  };
   approvals: {
     list(q: { sessionId: string; pendingOnly?: boolean }): Promise<ApprovalRequest[]>;
     decide(id: string, d: ApprovalDecision, idempotencyKey: string): Promise<ApprovalRequest>;
@@ -53,10 +75,12 @@ const DEFAULT_TTL_MS = 600_000;
 const DEFAULT_RETENTION_DAYS = 7;
 const PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const ORPHAN_ATTACHMENT_MS = DAY_MS;
 
 export async function createUncage(opts: UncageOptions): Promise<Uncage> {
   const logger: Log = opts.logger ?? silentLog;
-  const registry = new AdapterRegistry(opts.adapters);
+  const policy: SecurityPolicy = { allowBypass: opts.security?.allowBypass === true };
+  const registry = new AdapterRegistry(opts.adapters, policy);
   const store = opts.store ?? (await openPgliteStore({ dataDir: opts.dataDir ?? join(homedir(), '.uncage', 'data') }));
   const log = new EventLog(store);
   const bridge = new ApprovalBridge(store, log, opts.approvals?.ttlMs ?? DEFAULT_TTL_MS, logger);
@@ -65,32 +89,54 @@ export async function createUncage(opts: UncageOptions): Promise<Uncage> {
     allowedRoots: opts.workspace?.allowedRoots ?? [cwd],
     default: opts.workspace?.default ?? cwd,
   };
-  const runs = new RunManager(store, log, bridge, registry, logger, workspace);
-  const sessions = new SessionService(store, log, registry, runs, workspace);
+  const runs = new RunManager(store, log, bridge, registry, logger, workspace, policy);
+  const sessions = new SessionService(store, log, registry, runs, workspace, policy);
+  const attachments = new AttachmentService(
+    store,
+    workspace,
+    async (sessionId) => {
+      const s = await store.getSession(sessionId);
+      if (!s) throw new UncageError('not_found', { message: `Session ${sessionId} not found.` });
+      return registry.find(s.runtimeId) ? registry.capabilities(s.runtimeId) : s.capabilities;
+    },
+    logger,
+  );
 
   const retentionMs = (opts.eventRetentionDays ?? DEFAULT_RETENTION_DAYS) * DAY_MS;
   const prune = async () => {
     const n = await store.pruneEvents(new Date(Date.now() - retentionMs));
     if (n > 0) logger.info({ pruned: n }, 'pruned old events');
+    const a = await attachments.pruneOrphans(new Date(Date.now() - ORPHAN_ATTACHMENT_MS));
+    if (a > 0) logger.info({ pruned: a }, 'pruned unsent attachments');
   };
 
   try {
-    await reconcile(store, log, registry, logger);
+    await reconcile(store, log, registry, logger, policy);
     await prune();
   } catch (e) {
     await store.close().catch(() => undefined);
     throw e;
   }
   const pruneTimer = setInterval(() => {
-    prune().catch((e: unknown) => logger.error({ err: e }, 'event pruning failed'));
+    prune().catch((e: unknown) => logger.error({ err: e }, 'retention pruning failed'));
   }, PRUNE_INTERVAL_MS);
   pruneTimer.unref();
 
   let closing: Promise<void> | undefined;
   return {
     runtimes: { list: () => registry.list(), get: (id) => registry.info(id) },
-    sessions: { create: (b) => sessions.create(b), get: (id) => sessions.get(id), list: () => sessions.list() },
-    runs: { get: (id) => runs.get(id), cancel: (id) => runs.cancel(id) },
+    sessions: {
+      create: (b) => sessions.create(b),
+      get: (id) => sessions.get(id),
+      list: () => sessions.list(),
+      updateSettings: (id, patch) => sessions.updateSettings(id, patch),
+    },
+    attachments: {
+      add: (sessionId, input) => attachments.add(sessionId, input),
+      get: (id) => attachments.get(id),
+      pruneOrphans: (olderThan) => attachments.pruneOrphans(olderThan),
+    },
+    runs: { get: (id) => runs.get(id), cancel: (id) => runs.cancel(id), listActive: () => runs.listActive() },
     approvals: {
       list: (q) =>
         store.listApprovals({ sessionId: q.sessionId, ...(q.pendingOnly ? { states: ['pending', 'submitting'] } : {}) }),
@@ -111,8 +157,15 @@ export async function createUncage(opts: UncageOptions): Promise<Uncage> {
 /**
  * Startup reconciliation: native callbacks and adapter iterators do not survive a restart, so
  * open approvals become `expired` and unfinished runs `interrupted` (reason `server_restart`).
+ * When the policy no longer allows bypass, sessions stop advertising it and leave bypass mode.
  */
-async function reconcile(store: Store, log: EventLog, registry: AdapterRegistry, logger: Log): Promise<void> {
+async function reconcile(
+  store: Store,
+  log: EventLog,
+  registry: AdapterRegistry,
+  logger: Log,
+  policy: SecurityPolicy,
+): Promise<void> {
   const sessions = await store.listSessions();
   for (const s of sessions) {
     for (const a of await store.listApprovals({ sessionId: s.id, states: ['pending', 'submitting'] })) {
@@ -135,6 +188,13 @@ async function reconcile(store: Store, log: EventLog, registry: AdapterRegistry,
     const status = adapter ? 'ready' : 'unavailable';
     if (s.status !== status || s.readOnly !== readOnly || s.activeRunId !== undefined) {
       await store.updateSession(id, { status, readOnly, activeRunId: undefined });
+    }
+    const capabilities = applyPolicy(s.capabilities, policy);
+    if (capabilities !== s.capabilities || (s.settings.permissionMode === 'bypassPermissions' && !policy.allowBypass)) {
+      const settings = policy.allowBypass ? s.settings : { ...s.settings, permissionMode: 'default' as const };
+      const session = await store.updateSession(id, { capabilities, settings });
+      await log.append(id, 'session.updated', { session });
+      logger.warn({ sessionId: id }, 'bypass permissions removed from session by policy');
     }
   }
   await log.drain();

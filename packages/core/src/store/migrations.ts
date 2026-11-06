@@ -68,4 +68,24 @@ CREATE TABLE idempotency_keys (
 );
 `,
   },
+  {
+    id: 2,
+    sql: `
+ALTER TABLE sessions ADD COLUMN settings jsonb NOT NULL DEFAULT '{"permissionMode":"default"}';
+CREATE TABLE attachments (
+  id text PRIMARY KEY,
+  session_id text NOT NULL,
+  name text NOT NULL,
+  mime text NOT NULL,
+  size integer NOT NULL,
+  kind text NOT NULL,
+  sha256 text NOT NULL,
+  abs_path text NOT NULL,
+  created_at text NOT NULL,
+  referenced_by_run text
+);
+CREATE INDEX attachments_session_idx ON attachments (session_id);
+CREATE INDEX attachments_run_idx ON attachments (referenced_by_run);
+`,
+  },
 ];

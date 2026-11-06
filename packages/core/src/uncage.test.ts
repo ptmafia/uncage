@@ -442,4 +442,56 @@ describe('createUncage', () => {
     const u2 = await make([fake([])], { dataDir: dir });
     expect(await u2.runs.get(run.id)).toMatchObject({ state: 'interrupted' });
   });
+
+  it('listActive returns active runs across sessions', async () => {
+    const u = await make([fake([{ waitMs: 10_000 }])]);
+    const a = await u.sessions.create({ runtime: 'fake', title: 'A' });
+    const b = await u.sessions.create({ runtime: 'fake', title: 'B' });
+    const c = await u.sessions.create({ runtime: 'fake', title: 'C' });
+    expect(await u.runs.listActive()).toEqual([]);
+    const ra = await a.startRun({ prompt: 'a' });
+    await new Promise((r) => setTimeout(r, 5));
+    const rb = await b.startRun({ prompt: 'b' });
+    await eventsUntil(b, (e) => e.type === 'run.updated');
+    const rc = await c.startRun({ prompt: 'c' });
+    await u.runs.cancel(rc.id);
+
+    const active = await u.runs.listActive();
+    expect(active.map((r) => r.runId)).toEqual([rb.id, ra.id]);
+    expect(active[0]).toMatchObject({ runId: rb.id, sessionId: b.id, sessionTitle: 'B', state: 'running' });
+    expect(active[0]?.startedAt).toEqual(expect.any(String));
+    expect(active[1]).toMatchObject({ sessionId: a.id, sessionTitle: 'A' });
+
+    await u.runs.cancel(ra.id);
+    expect((await u.runs.listActive()).map((r) => r.runId)).toEqual([rb.id]);
+  });
+
+  it('registry uses refreshCapabilities when provided', async () => {
+    const base = fake([]);
+    const refreshed = { ...base.capabilities(), models: [{ id: 'm-live', label: 'Live' }], efforts: ['low' as const] };
+    let refreshCalls = 0;
+    const adapter: RuntimeAdapter = {
+      ...base,
+      refreshCapabilities: () => {
+        refreshCalls++;
+        return Promise.resolve(refreshed);
+      },
+    };
+    const u = await make([adapter]);
+    const [info] = await u.runtimes.list();
+    expect(info?.capabilities?.models).toEqual([{ id: 'm-live', label: 'Live' }]);
+    await u.runtimes.list();
+    expect(refreshCalls).toBe(1); // inside the 30 s probe cache
+    const s = await u.sessions.create({ runtime: 'fake' });
+    expect((await s.get()).capabilities.models).toEqual([{ id: 'm-live', label: 'Live' }]);
+
+    const failing: RuntimeAdapter = {
+      ...fake([]),
+      id: 'failing',
+      refreshCapabilities: () => Promise.reject(new Error('boom')),
+    };
+    const u2 = await make([failing]);
+    const [info2] = await u2.runtimes.list();
+    expect(info2).toMatchObject({ status: 'available', capabilities: { models: [] } });
+  });
 });

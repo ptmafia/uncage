@@ -1,5 +1,6 @@
 import type {
   ApprovalRequest,
+  Attachment,
   ApprovalState,
   EventEnvelope,
   EventType,
@@ -8,12 +9,16 @@ import type {
   Session,
 } from '@uncage/protocol';
 
+/** An attachment row: the public attachment plus its file location and consuming run. */
+export type StoredAttachment = Attachment & { absPath: string; referencedByRun?: string };
+
 export interface Store {
   createSession(s: Session & { nativeSessionRef?: string }): Promise<void>;
   getSession(id: string): Promise<(Session & { nativeSessionRef?: string; lastSequence: number }) | null>;
   listSessions(): Promise<Session[]>;
   /** Keys present in `patch` with value `undefined`/`null` clear nullable fields (activeRunId, nativeSessionRef). */
   updateSession(id: string, patch: Partial<Session> & { nativeSessionRef?: string | null }): Promise<Session>;
+  /** `r.attachments` is not stored here; runs are hydrated from attachments referenced by them. */
   createRun(r: Run): Promise<void>;
   getRun(id: string): Promise<Run | null>;
   listRuns(sessionId: string): Promise<Run[]>;
@@ -35,6 +40,14 @@ export interface Store {
     expect: { state: ApprovalState; version: number },
     next: Partial<ApprovalRequest>,
   ): Promise<ApprovalRequest | null>;
+  createAttachment(a: StoredAttachment): Promise<void>;
+  getAttachment(id: string): Promise<StoredAttachment | null>;
+  /** Returns the existing rows among `ids` (missing ids are simply absent). */
+  listAttachments(ids: string[]): Promise<StoredAttachment[]>;
+  /** Sets `referencedByRun` on those of `ids` not yet referenced; returns how many were marked. */
+  markAttachmentsReferenced(ids: string[], runId: string): Promise<number>;
+  /** Deletes unreferenced attachments created before `olderThan`; returns the deleted rows. */
+  deleteOrphanAttachments(olderThan: Date): Promise<StoredAttachment[]>;
   getIdempotent(key: string, scope: string): Promise<{ requestHash: string; response: unknown } | null>;
   putIdempotent(key: string, scope: string, requestHash: string, response: unknown): Promise<void>;
   close(): Promise<void>;

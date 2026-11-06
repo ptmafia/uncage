@@ -1,5 +1,5 @@
 import { index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, boolean } from 'drizzle-orm/pg-core';
-import type { ApprovalRequest, ErrorBody, RuntimeCapabilities } from '@uncage/protocol';
+import type { ApprovalRequest, ErrorBody, RuntimeCapabilities, SessionSettings } from '@uncage/protocol';
 
 export const sessions = pgTable('sessions', {
   id: text('id').primaryKey(),
@@ -14,6 +14,7 @@ export const sessions = pgTable('sessions', {
   nativeSessionRef: text('native_session_ref'),
   lastSequence: integer('last_sequence').notNull().default(0),
   prunedThrough: integer('pruned_through').notNull().default(0),
+  settings: jsonb('settings').$type<SessionSettings>().notNull().default({ permissionMode: 'default' }),
 });
 
 export const runs = pgTable(
@@ -78,4 +79,21 @@ export const idempotencyKeys = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.scope, t.key] })],
+);
+
+export const attachments = pgTable(
+  'attachments',
+  {
+    id: text('id').primaryKey(),
+    sessionId: text('session_id').notNull(),
+    name: text('name').notNull(),
+    mime: text('mime').notNull(),
+    size: integer('size').notNull(),
+    kind: text('kind').notNull(),
+    sha256: text('sha256').notNull(),
+    absPath: text('abs_path').notNull(),
+    createdAt: text('created_at').notNull(),
+    referencedByRun: text('referenced_by_run'),
+  },
+  (t) => [index('attachments_session_idx').on(t.sessionId), index('attachments_run_idx').on(t.referencedByRun)],
 );
