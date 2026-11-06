@@ -1,39 +1,56 @@
 import { useSessionSettings } from '@uncage/react';
 import type { PermissionMode } from '@uncage/protocol';
 import { ChevronDown, Shield, ShieldAlert } from 'lucide-react';
-import { useEffect, useId, useRef, useState, type JSX, type KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState, type JSX } from 'react';
 import { useUi } from '../../context.js';
 import { Popover } from './Popover.js';
 
 const BYPASS: PermissionMode = 'bypassPermissions';
 
-/** "Agent will run any command without asking. Continue?" — Cancel (focused) / Enable. */
+/**
+ * "Agent will run any command without asking. Continue?" — Cancel (focused) / Enable. Modal: Esc
+ * cancels and Tab cycles between the two buttons wherever focus is (also after a click on the
+ * dialog's text, which focuses the dialog itself).
+ */
 function BypassConfirm({ onCancel, onConfirm }: { onCancel(): void; onConfirm(): void }): JSX.Element {
   const { t } = useUi();
   const id = useId();
+  const dialog = useRef<HTMLDivElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
   const confirm = useRef<HTMLButtonElement>(null);
-  useEffect(() => cancel.current?.focus(), []);
-  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      onCancel();
-    } else if (e.key === 'Tab') {
-      // Two buttons: keep focus inside the dialog.
-      e.preventDefault();
-      (document.activeElement === cancel.current ? confirm : cancel).current?.focus();
-    }
-  };
+  const onCancelRef = useRef(onCancel);
+  useEffect(() => {
+    onCancelRef.current = onCancel;
+  });
+  useEffect(() => {
+    cancel.current?.focus();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        onCancelRef.current();
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        const order = e.shiftKey ? [confirm, cancel] : [cancel, confirm];
+        // From either button go to the other; from anywhere else start at the first.
+        const next = document.activeElement === order[0]!.current ? order[1]! : order[0]!;
+        next.current?.focus();
+      }
+    };
+    // Capture phase on the document: works whatever holds focus (body, the dialog, a button).
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, []);
   return (
     <div className="uc-dialog-backdrop" onPointerDown={(e) => e.target === e.currentTarget && onCancel()}>
       <div
+        ref={dialog}
         role="alertdialog"
         aria-modal="true"
         aria-labelledby={`${id}-title`}
         aria-describedby={`${id}-desc`}
         className="uc-dialog"
-        onKeyDown={onKeyDown}
+        tabIndex={-1}
       >
         <div className="uc-dialog-head">
           <span className="uc-dialog-icon" aria-hidden>

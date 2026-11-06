@@ -2,6 +2,7 @@ import { Check } from 'lucide-react';
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type JSX,
@@ -38,13 +39,17 @@ export interface PopoverProps {
   footnote?: string;
   /** Receives the trigger element, e.g. to return focus after a follow-up dialog. */
   triggerRef?: RefObject<HTMLButtonElement | null>;
+  /** Which trigger edge the menu lines up with (default `start`; use `end` for right-side triggers). */
+  align?: 'start' | 'end';
 }
+
+const VIEWPORT_MARGIN = 8;
 
 /**
  * A dependency-free menu button. The menu opens above its trigger (the composer sits at the bottom
  * of the page). Keyboard: ArrowDown/ArrowUp on the trigger open it; inside, arrows move (wrapping),
  * Home/End jump, Enter/Space choose, Esc closes; focus returns to the trigger. Tab or a pointer
- * press outside closes it.
+ * press outside closes it. The menu is shifted sideways to stay inside the viewport.
  */
 export function Popover({
   label,
@@ -58,6 +63,7 @@ export function Popover({
   onSelect,
   footnote,
   triggerRef,
+  align = 'start',
 }: PopoverProps): JSX.Element {
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -65,6 +71,7 @@ export function Popover({
   const anchor = useRef<HTMLDivElement>(null);
   const ownTrigger = useRef<HTMLButtonElement>(null);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const panel = useRef<HTMLDivElement>(null);
   const triggerEl = () => ownTrigger.current;
 
   const close = (returnFocus: boolean) => {
@@ -79,6 +86,24 @@ export function Popover({
     const index = initial === 'last' ? items.length - 1 : Math.max(0, checked);
     itemRefs.current[index]?.focus();
     // Only on open: later item changes must not steal focus.
+  }, [open]);
+
+  // Keep the open menu inside the viewport (measured unshifted, then shifted sideways).
+  useLayoutEffect(() => {
+    const el = panel.current;
+    if (!open || !el) return;
+    const clamp = () => {
+      el.style.setProperty('--uc-popover-shift', '0px');
+      const r = el.getBoundingClientRect();
+      const vw = document.documentElement.clientWidth || window.innerWidth;
+      let shift = 0;
+      if (r.right > vw - VIEWPORT_MARGIN) shift = vw - VIEWPORT_MARGIN - r.right;
+      if (r.left + shift < VIEWPORT_MARGIN) shift = VIEWPORT_MARGIN - r.left;
+      el.style.setProperty('--uc-popover-shift', `${Math.round(shift)}px`);
+    };
+    clamp();
+    window.addEventListener('resize', clamp);
+    return () => window.removeEventListener('resize', clamp);
   }, [open]);
 
   // Close on a pointer press outside the trigger and menu.
@@ -171,7 +196,7 @@ export function Popover({
         {trigger}
       </button>
       {open && (
-        <div className="uc-popover">
+        <div ref={panel} className="uc-popover" data-align={align}>
           <div
             id={`${id}-menu`}
             role="menu"

@@ -264,7 +264,9 @@ function reduce(s: SessionState, e: UncageEvent): SessionState {
 
     case 'system.warning': {
       const { code, message } = e.payload;
-      return { ...s, lastWarning: { code, message, ...(e.runId !== undefined ? { runId: e.runId } : {}) } };
+      // A warning not raised for a run belongs to the run that was latest when it arrived.
+      const id = e.runId ?? latestRun(s.runs)?.id;
+      return { ...s, lastWarning: { code, message, ...(id !== undefined ? { runId: id } : {}) } };
     }
   }
 }

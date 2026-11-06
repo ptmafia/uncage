@@ -42,7 +42,7 @@ function rejectionText(t: Strings, r: AttachmentRejection, caps: RuntimeCapabili
   const general = caps && caps.maxBytes > 0 ? Math.min(caps.maxBytes, ATTACHMENT_LIMITS.maxBytes) : ATTACHMENT_LIMITS.maxBytes;
   const image = IMAGE_EXT.has(r.name.slice(r.name.lastIndexOf('.') + 1).toLowerCase());
   const max = image && caps?.maxImageBytes ? Math.min(caps.maxImageBytes, general) : general;
-  return t.rejectedSize(r.name, formatBytes(max).replace('.0 ', ' '));
+  return t.rejectedSize(r.name, formatBytes(max, { whole: true }));
 }
 
 const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
@@ -90,8 +90,9 @@ export function Composer(): JSX.Element {
   const canAttach = attachCaps !== undefined && (attachCaps.images || attachCaps.files);
   const attachDisabled = disabled || sending;
 
-  // ---- dictation: interim text previews after the text typed so far; final text is kept.
-  const dictation = useRef<{ base: string } | null>(null);
+  // ---- dictation: interim text previews after `base` (the text so far, finals included); a final
+  // result is appended to `base`. `preview` is the interim suffix currently shown after `base`.
+  const dictation = useRef<{ base: string; preview: string } | null>(null);
   const join = (base: string, chunk: string) =>
     base === '' || /\s$/.test(base) || /^\s/.test(chunk) || locale === 'zh-CN' ? base + chunk : `${base} ${chunk}`;
   const speech = useSpeechInput({
@@ -100,8 +101,11 @@ export function Composer(): JSX.Element {
       const d = dictation.current;
       if (!d) return;
       const next = join(d.base, chunk);
-      if (final) d.base = next;
       // A final result replaces the interim preview even when no new interim text follows.
+      if (final) {
+        d.base = next;
+        d.preview = '';
+      } else d.preview = next.slice(d.base.length);
       setText(next);
     },
   });
@@ -122,7 +126,7 @@ export function Composer(): JSX.Element {
         // Storage unavailable: the note simply shows again next time.
       }
     }
-    dictation.current = { base: text };
+    dictation.current = { base: text, preview: '' };
     speech.start();
     ref.current?.focus();
   };
@@ -166,15 +170,16 @@ export function Composer(): JSX.Element {
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const files = Array.from(e.clipboardData?.files ?? []);
-    if (files.length === 0 || !canAttach) return;
-    // Pasted files (e.g. a screenshot) become attachments instead of text.
+    // Clipboards with text (e.g. from an office app, or a copied file's name) paste the text.
+    const hasText = Array.from(e.clipboardData?.types ?? []).includes('text/plain');
+    if (files.length === 0 || hasText || !canAttach) return;
+    // Pasted files without text (e.g. a screenshot) become attachments.
     e.preventDefault();
     addFiles(files);
   };
 
   // ---- setting_reset: shown for the run it was raised at, until the next run starts.
-  const settingReset =
-    !controller.draft && warning?.code === 'setting_reset' && (warning.runId === undefined || warning.runId === run?.id);
+  const settingReset = !controller.draft && warning?.code === 'setting_reset' && warning.runId === run?.id;
 
   // Auto-grow: reset, then fit the content (CSS caps it at 40vh and scrolls beyond).
   useLayoutEffect(() => {
@@ -261,8 +266,18 @@ export function Composer(): JSX.Element {
           aria-label={t.composerLabel}
           placeholder={t.placeholder(name, canAttach)}
           onChange={(e) => {
-            setText(e.target.value);
-            if (dictation.current) dictation.current.base = e.target.value;
+            const value = e.target.value;
+            setText(value);
+            const d = dictation.current;
+            if (!d) return;
+            // An edit that leaves the interim preview at the end keeps dictating with the preview
+            // excluded from the base; any other edit (e.g. typing into the preview) ends dictation,
+            // so later results can never repeat text already in the box.
+            if (d.preview === '' || value.endsWith(d.preview)) d.base = value.slice(0, value.length - d.preview.length);
+            else {
+              dictation.current = null;
+              speech.stop();
+            }
           }}
           onKeyDown={onKeyDown}
           onPaste={onPaste}

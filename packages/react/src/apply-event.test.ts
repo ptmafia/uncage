@@ -146,4 +146,13 @@ describe('applyEvent', () => {
       runId: 'run_1',
     });
   });
+
+  it('a system.warning without a run is tagged with the latest run at the time', () => {
+    const ev = eventFactory();
+    const w = ev('system.warning', { code: 'setting_reset', message: 'm' });
+    const s = reduce([ev('run.started', { run: run() }), { ...w, sequence: 5, runId: undefined } as UncageEvent]);
+    expect(s.lastWarning).toEqual({ code: 'setting_reset', message: 'm', runId: 'run_1' });
+    const none = reduce([{ ...w, runId: undefined } as UncageEvent]);
+    expect(none.lastWarning).toEqual({ code: 'setting_reset', message: 'm' });
+  });
 });

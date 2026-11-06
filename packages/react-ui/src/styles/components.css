@@ -1002,7 +1002,7 @@
 .uc-composer-chips:empty {
   display: none;
 }
-.uc-root .uc-running-chip {
+.uc-root .uc-tool.uc-running-chip {
   height: 26px;
   padding: 0 10px 0 9px;
   gap: 6px;
@@ -1120,10 +1120,10 @@
 .uc-round {
   border-radius: 9999px;
 }
-/* Stop: a red circle with a square (ink-inverse keeps contrast in both themes). */
+/* Stop: a red circle with a white square. */
 .uc-root .uc-stop {
   background: var(--uncage-err-fg);
-  color: var(--uncage-ink-inverse);
+  color: var(--uncage-on-danger);
 }
 .uc-root .uc-stop:hover {
   background: color-mix(in srgb, var(--uncage-err-fg) 86%, var(--uncage-ink));
@@ -1331,6 +1331,7 @@
   position: absolute;
   bottom: calc(100% + 8px);
   left: 0;
+  translate: var(--uc-popover-shift, 0) 0;
   z-index: 40;
   width: max-content;
   min-width: 240px;
@@ -1340,6 +1341,10 @@
   border-radius: var(--uncage-radius-lg);
   background: var(--uncage-surface);
   box-shadow: var(--uncage-shadow-pop);
+}
+.uc-popover[data-align="end"] {
+  right: 0;
+  left: auto;
 }
 .uc-menu {
   display: flex;

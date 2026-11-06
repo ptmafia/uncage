@@ -46,6 +46,8 @@
   --uncage-err-fg: #a33a2a;
   --uncage-err-border: #f0d3cc;
   --uncage-err-surface: #fdf5f3;
+  /* Marks on a danger fill (the Stop square): white in both themes. */
+  --uncage-on-danger: #fff;
   --uncage-neutral-bg: #eeeae2;
   --uncage-neutral-fg: #6d665c;
   --uncage-info-bg: #e0e7ff;
@@ -144,6 +146,7 @@
   --uncage-err-fg: #f1a397;
   --uncage-err-border: #5d342c;
   --uncage-err-surface: #2e201d;
+  --uncage-on-danger: #fff;
   --uncage-neutral-bg: #35322d;
   --uncage-neutral-fg: #c1b9ad;
   --uncage-info-bg: #2b3254;
@@ -187,6 +190,7 @@
     --uncage-err-fg: #f1a397;
     --uncage-err-border: #5d342c;
     --uncage-err-surface: #2e201d;
+  --uncage-on-danger: #fff;
     --uncage-neutral-bg: #35322d;
     --uncage-neutral-fg: #c1b9ad;
     --uncage-info-bg: #2b3254;

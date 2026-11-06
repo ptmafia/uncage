@@ -10,11 +10,15 @@ export function formatClock(iso: string): string {
   return Number.isNaN(d.getTime()) ? '' : `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
-/** File size for chips: `512 B`, `1.2 KB`, `3.4 MB`. */
-export function formatBytes(n: number): string {
+/**
+ * File size for chips: `512 B`, `1.2 KB`, `3.4 MB`. With `whole`, a whole number drops its
+ * decimal (`10 MB`, for limits).
+ */
+export function formatBytes(n: number, o: { whole?: boolean } = {}): string {
+  const fmt = (v: number) => (o.whole && Number.isInteger(v) ? String(v) : v.toFixed(1));
   if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  if (n < 1024 * 1024) return `${fmt(n / 1024)} KB`;
+  return `${fmt(n / (1024 * 1024))} MB`;
 }
 
 /** Ends a server message with punctuation so copy can follow it. */

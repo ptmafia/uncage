@@ -64,7 +64,8 @@ export interface SessionState {
   pendingSettingsRunId?: string;
   /**
    * The most recent `system.warning` (e.g. `setting_reset`: a stored setting the runtime no longer
-   * offers was dropped when `runId` started).
+   * offers was dropped when `runId` started). `runId` is the run it was raised for, else the latest
+   * run when it arrived (absent if there was none), so UIs can hide it once a newer run starts.
    */
   lastWarning?: { code: string; message: string; runId?: string };
 }

@@ -409,7 +409,20 @@ describe('Composer toolbar', () => {
     const dialog = screen.getByRole('alertdialog');
     expect(dialog.textContent).toContain('Agent will run any command without asking. Continue?');
     expect(f.client.updateSettings).not.toHaveBeenCalled();
-    act(() => fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' })));
+    expect(dialog.tabIndex).toBe(-1);
+    // Clicking the dialog text moves focus off the buttons; Esc must still cancel.
+    act(() => (document.activeElement as HTMLElement).blur());
+    act(() => fireEvent.keyDown(document.body, { key: 'Escape' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(f.client.updateSettings).not.toHaveBeenCalled();
+    act(() => fireEvent.click(screen.getByRole('button', { name: /^Permissions/ })));
+    act(() => fireEvent.click(screen.getByRole('menuitemradio', { name: 'Bypass permissions' })));
+    const again = screen.getByRole('alertdialog');
+    // Tab from outside the dialog lands back inside it.
+    act(() => (document.activeElement as HTMLElement).blur());
+    act(() => fireEvent.keyDown(document.body, { key: 'Tab' }));
+    expect(again.contains(document.activeElement)).toBe(true);
+    act(() => fireEvent.click(within(again).getByRole('button', { name: 'Cancel' })));
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(f.client.updateSettings).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Permissions: Ask every time' })).toBeTruthy();
@@ -458,6 +471,18 @@ describe('Composer toolbar', () => {
     act(() => fireEvent.pointerDown(document.body));
     expect(screen.queryByRole('menu')).toBeNull();
     expect(f.client.updateSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it('a menu that would overflow the viewport is shifted back inside it', async () => {
+    await openSession(richClient());
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('uc-popover')
+        ? ({ left: window.innerWidth - 100, right: window.innerWidth + 140, top: 0, bottom: 0, width: 240, height: 0 } as DOMRect)
+        : ({ left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 } as DOMRect);
+    });
+    act(() => fireEvent.click(screen.getByRole('button', { name: /^Permissions/ })));
+    const panel = document.querySelector('.uc-popover') as HTMLElement;
+    expect(panel.style.getPropertyValue('--uc-popover-shift')).toBe('-148px');
   });
 
   it('zh-CN copy for the five permission labels and the bypass confirm', async () => {
@@ -512,6 +537,26 @@ describe('Composer attachments', () => {
     expect(screen.queryByRole('listitem', { name: /image\.png/ })).toBeNull();
   });
 
+  it('paste with text/plain keeps the default text paste and attaches nothing', async () => {
+    const f = richClient();
+    await openSession(f);
+    let notPrevented = true;
+    await act(async () => {
+      notPrevented = fireEvent.paste(textbox(), {
+        clipboardData: { files: [png()], types: ['Files', 'text/plain'], getData: () => 'some text' },
+      });
+    });
+    expect(notPrevented).toBe(true);
+    expect(f.client.uploadAttachment).not.toHaveBeenCalled();
+    expect(document.querySelector('.uc-attachment')).toBeNull();
+    let prevented = false;
+    await act(async () => {
+      prevented = !fireEvent.paste(textbox(), { clipboardData: { files: [png()], types: ['Files'], getData: () => '' } });
+    });
+    expect(prevented).toBe(true);
+    expect(screen.getByRole('listitem', { name: /image\.png/ })).toBeTruthy();
+  });
+
   it('drop files adds chips; unsupported shows caption', async () => {
     const f = richClient();
     await openSession(f);
@@ -523,6 +568,9 @@ describe('Composer attachments', () => {
     expect(screen.queryByText('Drop files to attach')).toBeNull();
     expect(screen.getByRole('listitem', { name: /notes\.md/ })).toBeTruthy();
     expect(screen.getByText('Unsupported file type: x.exe')).toBeTruthy();
+    const big = new File([new Uint8Array(10 * 1024 * 1024 + 1)], 'big.log', { type: 'text/plain' });
+    await act(async () => fireEvent.drop(box(), { dataTransfer: { types: ['Files'], files: [big] } }));
+    expect(screen.getByText('File too large (max 10 MB): big.log')).toBeTruthy();
     act(() => fireEvent.click(screen.getByRole('button', { name: 'Remove notes.md' })));
     expect(screen.queryByRole('listitem', { name: /notes\.md/ })).toBeNull();
   });
@@ -601,9 +649,27 @@ describe('Composer voice and running sessions', () => {
       // A final result without new interim text must replace the interim preview.
       act(() => instances[0]!.say('hello world', true));
       expect(textbox().value).toBe('Note: hello world');
-      act(() => fireEvent.click(mic));
-      expect(instances[0]!.stop).toHaveBeenCalled();
+      // Typing in front of the interim preview keeps dictating; the preview is not baked in.
+      act(() => instances[0]!.say('again', false));
+      expect(textbox().value).toBe('Note: hello world again');
+      act(() => fireEvent.change(textbox(), { target: { value: '> Note: hello world again' } }));
+      act(() => instances[0]!.say('again and more', true));
+      expect(textbox().value).toBe('> Note: hello world again and more');
+      // Editing the interim text itself ends dictation: later results never duplicate it.
+      act(() => instances[0]!.say('tail', false));
+      act(() => fireEvent.change(textbox(), { target: { value: '> Note: hello world again and more tail!' } }));
+      expect(instances[0]!.stop).toHaveBeenCalledTimes(1);
+      act(() => instances[0]!.say('tail', true));
+      expect(textbox().value).toBe('> Note: hello world again and more tail!');
+      expect(screen.getByRole('button', { name: 'Voice input' })).toBeTruthy();
+      act(() => fireEvent.click(screen.getByRole('button', { name: 'Voice input' })));
+      const mic2 = screen.getByRole('button', { name: 'Stop voice input' });
+      expect(instances).toHaveLength(2);
+      act(() => fireEvent.click(mic2));
+      expect(instances[1]!.stop).toHaveBeenCalled();
       expect(screen.getByRole('button', { name: 'Voice input' }).getAttribute('aria-pressed')).toBe('false');
+      // The privacy note shows only on first use.
+      expect(screen.getAllByText("Audio is processed by your browser vendor's speech service.")).toHaveLength(1);
     } finally {
       delete (window as unknown as { SpeechRecognition?: unknown }).SpeechRecognition;
       localStorage.removeItem('uncage.speechNoticeShown');
@@ -672,7 +738,9 @@ describe('Composer drafts and warnings', () => {
     expect(textbox().disabled).toBe(true);
     expect((screen.getByRole('button', { name: 'Attach files' }) as HTMLButtonElement).disabled).toBe(true);
     await act(async () => fireEvent.paste(textbox(), { clipboardData: { files: [png()], types: ['Files'], getData: () => '' } }));
-    expect(screen.queryByRole('listitem')).toBeNull();
+    await act(async () => fireEvent.drop(box(), { dataTransfer: { types: ['Files'], files: [png('drop.png')] } }));
+    expect(document.querySelector('.uc-attachment')).toBeNull();
+    expect(screen.queryByText('Drop files to attach')).toBeNull();
     await act(async () => resolve(session({ id: 'ses_new', capabilities: richCaps() })));
     await waitFor(() => expect(f.client.startRun).toHaveBeenCalledWith('ses_new', { prompt: 'go' }));
   });
@@ -686,5 +754,16 @@ describe('Composer drafts and warnings', () => {
       f.emit(ev('system.warning', { code: 'setting_reset', message: 'reset' }));
     });
     expect(screen.getByText('某项设置已重置：运行时不再提供该选项')).toBeTruthy();
+  });
+
+  it('a setting_reset warning without a run clears when the next run starts', async () => {
+    const f = richClient();
+    await openSession(f);
+    const ev = eventFactory();
+    const warning = ev('system.warning', { code: 'setting_reset', message: 'reset' });
+    act(() => f.emit({ ...warning, runId: undefined } as typeof warning));
+    expect(screen.getByText('A setting was reset: the runtime no longer offers it')).toBeTruthy();
+    act(() => f.emit(ev('run.started', { run: run({ state: 'running' }) })));
+    expect(screen.queryByText('A setting was reset: the runtime no longer offers it')).toBeNull();
   });
 });
