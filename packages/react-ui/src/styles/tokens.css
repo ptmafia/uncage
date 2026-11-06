@@ -1,0 +1,194 @@
+/*
+ * @uncage/react-ui design tokens. Visual language after Kumi: warm paper surfaces, ink text, an
+ * ink (not brand-blue) primary button; brand blue only for focus rings, links and the selection bar.
+ *
+ * Theme by overriding any `--uncage-*` variable on `:root` (light) or `[data-theme="dark"]`.
+ * `<AgentChat theme>` sets `data-theme` on its root: "light" | "dark" | "auto" (follows the OS).
+ */
+:root,
+[data-theme="light"],
+[data-theme="auto"] {
+  color-scheme: light;
+
+  /* Surfaces: warm paper, never cold grey */
+  --uncage-canvas: #faf8f4;
+  --uncage-surface: #ffffff;
+  --uncage-surface-2: #f3efe7;
+  --uncage-selected: #e8e2d6;
+  --uncage-hover: #f1ece3;
+  --uncage-border-strong: #e2dccf;
+  --uncage-border-soft: #ebe5da;
+  --uncage-divider: #f1ece3;
+  --uncage-user-bubble: #ece7de;
+  --uncage-overlay: rgb(43 41 38 / 0.18);
+
+  /* Text. ink-3 is the lightest tone for text that must be read; ink-4 is decorative only. */
+  --uncage-ink: #2b2926;
+  --uncage-ink-2: #5f5a52;
+  --uncage-ink-3: #736b60;
+  --uncage-ink-4: #857c70;
+  --uncage-ink-inverse: #ffffff;
+  /* Primary (ink) button hover */
+  --uncage-ink-hover: #403d39;
+
+  /* Accent (brand blue): focus ring, links, current-item bar. Never a button fill. */
+  --uncage-accent-ink: #3b5bdb;
+  --uncage-accent-soft: #e0e7ff;
+  --uncage-accent-ring: rgb(59 91 219 / 0.16);
+
+  /* Status */
+  --uncage-ok-bg: #e9f1ea;
+  --uncage-ok-fg: #2f6b3f;
+  --uncage-ok-mark: #5f8a6a;
+  --uncage-warn-bg: #fbf1e1;
+  --uncage-warn-fg: #94621a;
+  --uncage-warn-border: #ecd9b8;
+  --uncage-warn-surface: #fffaf1;
+  --uncage-err-bg: #fbece8;
+  --uncage-err-fg: #a33a2a;
+  --uncage-err-border: #f0d3cc;
+  --uncage-err-surface: #fdf5f3;
+  --uncage-neutral-bg: #eeeae2;
+  --uncage-neutral-fg: #6d665c;
+  --uncage-info-bg: #e0e7ff;
+  --uncage-info-fg: #3b5bdb;
+
+  /* Avatar */
+  --uncage-avatar-bg: #e3e7f3;
+  --uncage-avatar-fg: #3d4f8c;
+
+  /* Type */
+  --uncage-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, system-ui,
+    "PingFang SC", "Hiragino Sans", "Microsoft YaHei", sans-serif;
+  --uncage-font-serif: Georgia, "Times New Roman", "Songti SC", "Noto Serif SC", serif;
+  --uncage-font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --uncage-text-micro: 11px;
+  --uncage-text-micro-lh: 16px;
+  --uncage-text-caption: 12px;
+  --uncage-text-caption-lh: 18px;
+  --uncage-text-ui: 13px;
+  --uncage-text-ui-lh: 20px;
+  --uncage-text-body: 14px;
+  --uncage-text-body-lh: 24px;
+  --uncage-text-heading: 15px;
+  --uncage-text-heading-lh: 22px;
+  --uncage-text-title: 24px;
+  --uncage-text-title-lh: 32px;
+  --uncage-text-display: 28px;
+  --uncage-text-display-lh: 36px;
+
+  /* Shape and depth */
+  --uncage-radius-xs: 4px;
+  --uncage-radius-md: 8px;
+  --uncage-radius-lg: 14px;
+  --uncage-radius-xl: 18px;
+  --uncage-shadow-focus: 0 0 0 3px var(--uncage-accent-ring);
+  --uncage-shadow-composer: 0 2px 10px rgb(80 60 30 / 0.07);
+  --uncage-shadow-pop: 0 12px 32px rgb(40 30 15 / 0.16);
+
+  /* Motion: three durations, one easing, one loop */
+  --uncage-duration-fast: 120ms;
+  --uncage-duration-base: 180ms;
+  --uncage-duration-panel: 200ms;
+  --uncage-ease: cubic-bezier(0.2, 0, 0, 1);
+  --uncage-loop-breathe: 1.8s;
+
+  /* Layout */
+  --uncage-sidebar-width: 252px;
+  --uncage-column-width: 720px;
+  --uncage-column-padding: 24px;
+}
+
+/* Chinese UI: serif titles use Songti first, sans uses PingFang first. */
+.uc-root:lang(zh) {
+  --uncage-font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui,
+    sans-serif;
+  --uncage-font-serif: "Songti SC", "Noto Serif SC", "Source Han Serif SC", Georgia, serif;
+}
+
+/* Dark: warm charcoal, off-white text, brand blue one step lighter, low-luminance status fills. */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --uncage-canvas: #1d1c1a;
+  --uncage-surface: #252421;
+  --uncage-surface-2: #2d2b27;
+  --uncage-selected: #3b3832;
+  --uncage-hover: #312f2a;
+  --uncage-border-strong: #4a463e;
+  --uncage-border-soft: #3b3832;
+  --uncage-divider: #322f2a;
+  --uncage-user-bubble: #34312c;
+  --uncage-overlay: rgb(0 0 0 / 0.5);
+  --uncage-ink: #ede9e2;
+  --uncage-ink-2: #cdc6bb;
+  --uncage-ink-3: #a9a195;
+  --uncage-ink-4: #8e867a;
+  --uncage-ink-inverse: #1d1c1a;
+  --uncage-ink-hover: #d9d4cc;
+  --uncage-accent-ink: #93a6f2;
+  --uncage-accent-soft: #2b3254;
+  --uncage-accent-ring: rgb(147 166 242 / 0.3);
+  --uncage-ok-bg: #20352a;
+  --uncage-ok-fg: #93cca2;
+  --uncage-ok-mark: #84b391;
+  --uncage-warn-bg: #3b2f1b;
+  --uncage-warn-fg: #e6bb72;
+  --uncage-warn-border: #5b4827;
+  --uncage-warn-surface: #2a241a;
+  --uncage-err-bg: #3e2521;
+  --uncage-err-fg: #f1a397;
+  --uncage-err-border: #5d342c;
+  --uncage-err-surface: #2e201d;
+  --uncage-neutral-bg: #35322d;
+  --uncage-neutral-fg: #c1b9ad;
+  --uncage-info-bg: #2b3254;
+  --uncage-info-fg: #adbcf6;
+  --uncage-avatar-bg: #2b3254;
+  --uncage-avatar-fg: #adbcf6;
+  --uncage-shadow-composer: 0 2px 10px rgb(0 0 0 / 0.3);
+  --uncage-shadow-pop: 0 12px 32px rgb(0 0 0 / 0.45);
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-theme="auto"] {
+    color-scheme: dark;
+    --uncage-canvas: #1d1c1a;
+    --uncage-surface: #252421;
+    --uncage-surface-2: #2d2b27;
+    --uncage-selected: #3b3832;
+    --uncage-hover: #312f2a;
+    --uncage-border-strong: #4a463e;
+    --uncage-border-soft: #3b3832;
+    --uncage-divider: #322f2a;
+    --uncage-user-bubble: #34312c;
+    --uncage-overlay: rgb(0 0 0 / 0.5);
+    --uncage-ink: #ede9e2;
+    --uncage-ink-2: #cdc6bb;
+    --uncage-ink-3: #a9a195;
+    --uncage-ink-4: #8e867a;
+    --uncage-ink-inverse: #1d1c1a;
+    --uncage-ink-hover: #d9d4cc;
+    --uncage-accent-ink: #93a6f2;
+    --uncage-accent-soft: #2b3254;
+    --uncage-accent-ring: rgb(147 166 242 / 0.3);
+    --uncage-ok-bg: #20352a;
+    --uncage-ok-fg: #93cca2;
+    --uncage-ok-mark: #84b391;
+    --uncage-warn-bg: #3b2f1b;
+    --uncage-warn-fg: #e6bb72;
+    --uncage-warn-border: #5b4827;
+    --uncage-warn-surface: #2a241a;
+    --uncage-err-bg: #3e2521;
+    --uncage-err-fg: #f1a397;
+    --uncage-err-border: #5d342c;
+    --uncage-err-surface: #2e201d;
+    --uncage-neutral-bg: #35322d;
+    --uncage-neutral-fg: #c1b9ad;
+    --uncage-info-bg: #2b3254;
+    --uncage-info-fg: #adbcf6;
+    --uncage-avatar-bg: #2b3254;
+    --uncage-avatar-fg: #adbcf6;
+    --uncage-shadow-composer: 0 2px 10px rgb(0 0 0 / 0.3);
+    --uncage-shadow-pop: 0 12px 32px rgb(0 0 0 / 0.45);
+  }
+}
