@@ -2,7 +2,7 @@ import { useAttachments, useStoreSelector, type DraftAttachment } from '@uncage/
 import { FileText, Image as ImageIcon, X } from 'lucide-react';
 import type { JSX } from 'react';
 import { useUi } from '../context.js';
-import { formatBytes } from '../i18n.js';
+import { errorText, formatBytes } from '../i18n.js';
 
 function Chip({ item, uploading, disabled }: { item: DraftAttachment; uploading: boolean; disabled: boolean }): JSX.Element {
   const { t } = useUi();
@@ -13,7 +13,7 @@ function Chip({ item, uploading, disabled }: { item: DraftAttachment; uploading:
       className="uc-attachment"
       data-status={item.status}
       aria-label={[item.name, formatBytes(item.size), status].filter(Boolean).join(', ')}
-      {...(item.error ? { title: item.error.message } : {})}
+      {...(item.error ? { title: errorText(t, item.error).message } : {})}
     >
       <span className="uc-attachment-thumb" aria-hidden>
         {item.previewUrl ? <img src={item.previewUrl} alt="" /> : item.kind === 'image' ? <ImageIcon /> : <FileText />}

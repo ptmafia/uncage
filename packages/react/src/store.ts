@@ -106,8 +106,17 @@ const toClientError = (err: unknown): UncageClientError =>
         0,
       );
 
-const clientError = (code: UncageClientError['code'], message: string): UncageClientError =>
-  new UncageClientError({ code, message, retryable: false }, 0);
+const clientError = (
+  code: UncageClientError['code'],
+  message: string,
+  details?: Record<string, unknown>,
+): UncageClientError => new UncageClientError({ code, message, retryable: false, ...(details ? { details } : {}) }, 0);
+
+/**
+ * `details.reason` of the store's own error for a send blocked by an attachment whose upload
+ * failed (code `invalid_request`, `details.name` = the file name), so UIs can localize it.
+ */
+export const UPLOAD_FAILED_REASON = 'attachment_upload_failed';
 
 const ACTIVE_RUNS_POLL_MS = 3000;
 const SETTING_KEYS = ['model', 'effort', 'permissionMode'] as const;
@@ -446,7 +455,12 @@ export function createUncageStore(client: UncageClient): UncageStore {
         const failed = items.find((i) => i.status !== 'ready' || !i.attachment);
         if (failed) {
           const why = failed.error ? `: ${failed.error.message}` : '';
-          fail(clientError('invalid_request', `Attachment "${failed.name}" could not be uploaded${why}. Remove it to send.`));
+          fail(
+            clientError('invalid_request', `Attachment "${failed.name}" could not be uploaded${why}. Remove it to send.`, {
+              reason: UPLOAD_FAILED_REASON,
+              name: failed.name,
+            }),
+          );
           return false;
         }
         const attachmentIds = items.map((i) => i.attachment!.id);

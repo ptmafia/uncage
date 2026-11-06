@@ -33,6 +33,6 @@ export type {
   TimelineItem,
   ToolView,
 } from './state.js';
-export { checkAttachment, createUncageStore } from './store.js';
+export { checkAttachment, createUncageStore, UPLOAD_FAILED_REASON } from './store.js';
 export type { UncageStore } from './store.js';
 export type { ConnectionState } from '@uncage/client';

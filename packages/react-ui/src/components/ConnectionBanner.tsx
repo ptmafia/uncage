@@ -2,6 +2,7 @@ import { useSession, useUncageError } from '@uncage/react';
 import { CloudOff, Info, RefreshCw, X } from 'lucide-react';
 import type { JSX } from 'react';
 import { useUi } from '../context.js';
+import { errorText } from '../i18n.js';
 
 /**
  * Banners above the conversation: the live stream is reconnecting / offline, the history replay
@@ -13,6 +14,7 @@ export function ConnectionBanner(): JSX.Element | null {
   const { error, dismiss } = useUncageError();
   const conn = session && (connection === 'reconnecting' || connection === 'offline') ? connection : undefined;
   if (!conn && !(session && replayIncomplete) && !error) return null;
+  const shown = error && errorText(t, error);
   return (
     <div className="uc-banners">
       {conn && (
@@ -27,11 +29,11 @@ export function ConnectionBanner(): JSX.Element | null {
           <span>{t.replayIncomplete}</span>
         </p>
       )}
-      {error && (
+      {shown && (
         <div className="uc-banner" data-tone="err" role="alert">
           <span className="uc-banner-text">
-            {error.message}
-            {error.hint && <span className="uc-banner-hint"> {error.hint}</span>}
+            {shown.message}
+            {shown.hint && <span className="uc-banner-hint"> {shown.hint}</span>}
           </span>
           <button type="button" className="uc-btn uc-btn-ghost uc-btn-icon-sm" aria-label={t.dismiss} onClick={dismiss}>
             <X aria-hidden />

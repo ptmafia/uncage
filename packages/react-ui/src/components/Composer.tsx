@@ -21,7 +21,7 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { useChatController, useRuntimeInfo, useUi } from '../context.js';
-import { formatBytes, type Strings } from '../i18n.js';
+import { errorText, formatBytes, type Strings } from '../i18n.js';
 import { AttachmentList } from './AttachmentList.js';
 import { AttachButton, acceptList } from './composer/AttachButton.js';
 import { EffortMenu } from './composer/EffortMenu.js';
@@ -222,6 +222,11 @@ export function Composer(): JSX.Element {
       text: rejectionText(t, r, attachCaps),
       onDismiss: () => setDismissedRejections(attachments.rejected),
     })),
+    ...attachments.items.flatMap((item) =>
+      item.status === 'error' && item.error
+        ? [{ key: `upl-${item.localId}`, tone: 'err' as const, text: t.uploadFailedReason(item.name, errorText(t, item.error).message) }]
+        : [],
+    ),
     ...(speech.error && speech.error !== 'aborted' ? [{ key: 'mic', tone: 'err' as const, text: t.micError(speech.error) }] : []),
     ...(notice ? [{ key: 'notice', tone: 'muted' as const, text: t.speechNotice, onDismiss: () => setNotice(false) }] : []),
     ...(settingReset ? [{ key: 'reset', tone: 'muted' as const, text: t.settingReset }] : []),

@@ -1,4 +1,5 @@
-import type { EffortLevel, PermissionMode, RuntimeStatus } from '@uncage/protocol';
+import { UPLOAD_FAILED_REASON } from '@uncage/react';
+import { ATTACHMENT_LIMITS, type EffortLevel, type ErrorCode, type PermissionMode, type RuntimeStatus } from '@uncage/protocol';
 
 export type Locale = 'en' | 'zh-CN';
 
@@ -165,6 +166,23 @@ const en = {
   offline: 'Offline — updates are paused. Reload the page to reconnect.',
   replayIncomplete: 'Some earlier events are no longer available, so this history may be incomplete.',
   dismiss: 'Dismiss',
+  // Errors (by `UncageClientError.code`; unknown codes show the server message)
+  errors: {
+    attachment_type_unsupported: 'This file type is not supported.',
+    unsupported_capability: "The runtime doesn't support this feature or option.",
+    policy_denied: "The server's policy doesn't allow this.",
+    session_read_only: "This session is read-only and can't be continued. Start a new session.",
+    invalid_workspace: 'The workspace is outside the allowed folders.',
+    runtime_unavailable: "The runtime isn't available. Make sure it is installed and on your PATH.",
+    auth_required: 'The runtime needs you to sign in. Sign in from your terminal, then retry.',
+    session_busy: 'This session is busy with a run. Wait for it to finish or stop it, then send again.',
+    approval_expired: 'This approval has expired.',
+    approval_already_resolved: 'This approval was already handled.',
+    internal_error: 'Something went wrong on the server. Try again in a moment.',
+  } satisfies Partial<Record<ErrorCode, string>>,
+  attachmentTooLarge: (max: string) => `The attachment is too large (max ${max} each).`,
+  attachmentUploadFailed: (name: string) => `Attachment "${name}" failed to upload. Remove it to send.`,
+  uploadFailedReason: (name: string, reason: string) => `${name} failed to upload: ${reason}`,
 };
 
 export type Strings = typeof en;
@@ -297,6 +315,44 @@ const zhCN: Strings = {
   offline: '连接断开了，更新暂停。刷新页面重新连接。',
   replayIncomplete: '部分较早的事件已经不在了，这段历史可能不完整。',
   dismiss: '关闭',
+  errors: {
+    attachment_type_unsupported: '不支持这种文件类型。',
+    unsupported_capability: '当前运行时不支持这个功能或选项。',
+    policy_denied: '服务器策略不允许这个操作。',
+    session_read_only: '这个会话是只读的，无法继续。请新建一个会话。',
+    invalid_workspace: '工作目录不在允许的范围内。',
+    runtime_unavailable: '运行时现在用不了。请确认已安装，并且在 PATH 中。',
+    auth_required: '运行时需要登录。请先在终端里登录，再重试。',
+    session_busy: '这个会话正在运行，等它结束或先停止，再发送。',
+    approval_expired: '这个确认已过期。',
+    approval_already_resolved: '这个确认已经处理过了。',
+    internal_error: '服务出错了，请稍后重试。',
+  },
+  attachmentTooLarge: (max: string) => `附件太大了（单个上限 ${max}）。`,
+  attachmentUploadFailed: (name: string) => `附件「${name}」上传失败，移除后再发送。`,
+  uploadFailedReason: (name: string, reason: string) => `「${name}」上传失败：${reason}`,
 };
 
 export const STRINGS: Record<Locale, Strings> = { en, 'zh-CN': zhCN };
+
+/**
+ * The user-facing text for an error: a localized message for known codes (and for the store's
+ * upload-failed send error), without the server's English hint; otherwise the server's message
+ * and hint as sent.
+ */
+export function errorText(
+  t: Strings,
+  err: { code: ErrorCode; message: string; hint?: string; details?: Record<string, unknown> },
+): { message: string; hint?: string } {
+  const details = err.details ?? {};
+  if (details.reason === UPLOAD_FAILED_REASON && typeof details.name === 'string') {
+    return { message: t.attachmentUploadFailed(details.name) };
+  }
+  if (err.code === 'attachment_too_large') {
+    const max = typeof details.maxBytes === 'number' && details.maxBytes > 0 ? details.maxBytes : ATTACHMENT_LIMITS.maxBytes;
+    return { message: t.attachmentTooLarge(formatBytes(max, { whole: true })) };
+  }
+  const known = (t.errors as Partial<Record<ErrorCode, string>>)[err.code];
+  if (known) return { message: known };
+  return { message: err.message, ...(err.hint ? { hint: err.hint } : {}) };
+}

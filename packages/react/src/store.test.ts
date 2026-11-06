@@ -1,7 +1,7 @@
 import type { ActiveRunInfo, Attachment, RuntimeCapabilities, SessionSettings, UncageEvent } from '@uncage/protocol';
 import { ATTACHMENT_LIMITS } from '@uncage/protocol';
 import { describe, expect, it, vi } from 'vitest';
-import { createUncageStore } from './store.js';
+import { createUncageStore, UPLOAD_FAILED_REASON } from './store.js';
 import { approval, clientError, eventFactory, fakeClient, run, session, snapshot, T0 } from './test-fixtures.js';
 
 describe('createUncageStore', () => {
@@ -312,6 +312,21 @@ describe('composer: settings and attachments', () => {
     f.emit({ ...ev('session.updated', { session: session({ capabilities: caps, settings: { permissionMode: 'plan' } }) }), runId: undefined } as UncageEvent);
     expect(store.getState().active!.session.settings.permissionMode).toBe('plan');
     expect(store.getState().active!.pendingSettingsRunId).toBe('run_1');
+  });
+
+  it('a send blocked by a failed upload records a tagged invalid_request (for localization)', async () => {
+    const { f } = composerClient();
+    f.client.uploadAttachment.mockRejectedValueOnce(clientError('attachment_too_large', 413));
+    const store = createUncageStore(f.client);
+    await store.actions.selectSession('ses_1');
+    store.actions.addAttachments([fileOf('notes.md', 10, 'text/markdown')]);
+    await vi.waitFor(() => expect(store.getState().attachments.items[0]?.status).toBe('error'));
+    expect(await store.actions.sendPrompt('x')).toBe(false);
+    expect(f.client.startRun).not.toHaveBeenCalled();
+    expect(store.getState().lastError).toMatchObject({
+      code: 'invalid_request',
+      details: { reason: UPLOAD_FAILED_REASON, name: 'notes.md' },
+    });
   });
 
   it('attachments: oversize/unsupported rejected client-side without upload', async () => {

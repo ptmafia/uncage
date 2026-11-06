@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ApprovalRequest, Session, SessionSettings } from '@uncage/protocol';
+import { UncageClientError } from '@uncage/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentChat, UncageProvider, type AgentChatProps } from './index.js';
 import {
@@ -217,7 +218,7 @@ describe('Composer', () => {
     await act(async () => fireEvent.keyDown(input, { key: 'Enter' }));
     expect(f.client.startRun).toHaveBeenCalledTimes(1);
     expect(input.value).toBe('keep me');
-    expect(screen.getByRole('alert').textContent).toContain('Claude Code is not available.');
+    expect(screen.getByRole('alert').textContent).toBe("The runtime isn't available. Make sure it is installed and on your PATH.");
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Send' })));
     expect(f.client.startRun).toHaveBeenCalledTimes(2);
     expect(input.value).toBe('');
@@ -522,6 +523,33 @@ describe('Composer toolbar', () => {
   });
 });
 
+describe('ConnectionBanner errors (zh-CN)', () => {
+  it.each([
+    ['session_busy', 409, '这个会话正在运行，等它结束或先停止，再发送。'],
+    ['policy_denied', 403, '服务器策略不允许这个操作。'],
+    ['session_read_only', 409, '这个会话是只读的，无法继续。请新建一个会话。'],
+    ['runtime_unavailable', 503, '运行时现在用不了。请确认已安装，并且在 PATH 中。'],
+    ['auth_required', 401, '运行时需要登录。请先在终端里登录，再重试。'],
+    ['internal_error', 500, '服务出错了，请稍后重试。'],
+  ] as const)('%s → localized message, no English server hint', async (code, status, text) => {
+    const f = fakeClient();
+    f.client.startRun.mockRejectedValueOnce(clientError(code, status, 'English server message.', 'English hint.'));
+    await openSession(f, { locale: 'zh-CN' });
+    fireEvent.change(textbox(), { target: { value: 'hi' } });
+    await act(async () => fireEvent.keyDown(textbox(), { key: 'Enter' }));
+    expect(screen.getByRole('alert').textContent).toBe(text);
+  });
+
+  it('an unknown code falls back to the server message and hint', async () => {
+    const f = fakeClient();
+    f.client.startRun.mockRejectedValueOnce(clientError('invalid_request', 400, 'Prompt is empty.', 'Type something.'));
+    await openSession(f, { locale: 'zh-CN' });
+    fireEvent.change(textbox(), { target: { value: 'hi' } });
+    await act(async () => fireEvent.keyDown(textbox(), { key: 'Enter' }));
+    expect(screen.getByRole('alert').textContent).toBe('Prompt is empty. Type something.');
+  });
+});
+
 describe('Composer attachments', () => {
   it('paste image adds attachment chip', async () => {
     const f = richClient();
@@ -581,6 +609,30 @@ describe('Composer attachments', () => {
     await openSession(f);
     await act(async () => fireEvent.paste(textbox(), { clipboardData: { files: [png()], types: ['Files'], getData: () => '' } }));
     expect(screen.getByRole('listitem', { name: /image\.png/ }).getAttribute('data-status')).toBe('error');
+  });
+
+  it('zh-CN: a failed upload shows a localized reason (chip title + caption); sending shows the localized banner', async () => {
+    const f = richClient();
+    f.client.uploadAttachment.mockRejectedValueOnce(
+      new UncageClientError({ code: 'attachment_too_large', message: 'Attachment too large.', retryable: false, details: { maxBytes: 5 * 1024 * 1024 } }, 413),
+    );
+    await openSession(f, { locale: 'zh-CN' });
+    await act(async () => fireEvent.paste(textbox(), { clipboardData: { files: [png()], types: ['Files'], getData: () => '' } }));
+    const chip = screen.getByRole('listitem', { name: /image\.png/ });
+    expect(chip.getAttribute('title')).toBe('附件太大了（单个上限 5 MB）。');
+    expect(screen.getByText('「image.png」上传失败：附件太大了（单个上限 5 MB）。')).toBeTruthy();
+    fireEvent.change(textbox(), { target: { value: 'look' } });
+    await act(async () => fireEvent.keyDown(textbox(), { key: 'Enter' }));
+    expect(f.client.startRun).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert').textContent).toBe('附件「image.png」上传失败，移除后再发送。');
+  });
+
+  it('zh-CN: an unsupported type from the server is localized on the chip', async () => {
+    const f = richClient();
+    f.client.uploadAttachment.mockRejectedValueOnce(clientError('attachment_type_unsupported', 415, 'Unsupported attachment type.'));
+    await openSession(f, { locale: 'zh-CN' });
+    await act(async () => fireEvent.paste(textbox(), { clipboardData: { files: [png()], types: ['Files'], getData: () => '' } }));
+    expect(screen.getByRole('listitem', { name: /image\.png/ }).getAttribute('title')).toBe('不支持这种文件类型。');
   });
 
   it('UserMessage renders image thumbnails and file chips from run.attachments', async () => {
