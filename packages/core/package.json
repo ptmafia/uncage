@@ -26,6 +26,10 @@
   "dependencies": {
     "@electric-sql/pglite": "^0.5.15",
     "@uncage/protocol": "workspace:*",
-    "drizzle-orm": "^0.45.4"
+    "drizzle-orm": "^0.45.4",
+    "pino": "^10.4.0"
+  },
+  "devDependencies": {
+    "@uncage/testkit": "workspace:*"
   }
 }
