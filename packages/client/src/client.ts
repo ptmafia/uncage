@@ -15,7 +15,7 @@ import {
   type StartRunBody,
   type UncageEvent,
 } from '@uncage/protocol';
-import { UncageClientError } from './errors.js';
+import { ERROR_REASONS, UncageClientError } from './errors.js';
 import { parseSSE } from './sse.js';
 
 export type ConnectionState = 'connecting' | 'live' | 'reconnecting' | 'offline';
@@ -95,14 +95,35 @@ async function toError(res: Response): Promise<UncageClientError> {
       code: 'internal_error',
       message: `Request failed with HTTP ${res.status}.`,
       retryable: res.status >= 500,
+      details: { reason: ERROR_REASONS.httpStatus, status: res.status },
     },
     res.status,
   );
 }
 
+/** A fetch that never got a response (aborts excepted) → `internal_error` tagged `network`. */
+const networkError = (err: unknown): UncageClientError =>
+  new UncageClientError(
+    {
+      code: 'internal_error',
+      message: err instanceof Error ? err.message : String(err),
+      retryable: true,
+      details: { reason: ERROR_REASONS.network },
+    },
+    0,
+  );
+
 export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
   const baseUrl = (o.baseUrl ?? '/api/uncage').replace(/\/+$/, '');
-  const doFetch: typeof fetch = o.fetch ?? ((...args) => globalThis.fetch(...args));
+  const rawFetch: typeof fetch = o.fetch ?? ((...args) => globalThis.fetch(...args));
+  const doFetch = async (url: string, init: RequestInit): Promise<Response> => {
+    try {
+      return await rawFetch(url, init);
+    } catch (err) {
+      if (init.signal?.aborted) throw err;
+      throw networkError(err);
+    }
+  };
   const extraHeaders = () => o.headers?.() ?? {};
 
   async function request<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {

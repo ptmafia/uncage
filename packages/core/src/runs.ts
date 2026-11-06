@@ -181,7 +181,10 @@ export class RunManager {
     if (this.bySession.has(sessionId)) throw new UncageError('session_busy');
     const adapter = this.registry.find(session.runtimeId);
     if (!adapter) {
-      throw new UncageError('runtime_unavailable', { message: `Runtime ${session.runtimeId} is not registered.` });
+      throw new UncageError('runtime_unavailable', {
+        message: `Runtime ${session.runtimeId} is not registered.`,
+        details: { runtime: session.runtimeId },
+      });
     }
     if (session.readOnly) throw new UncageError('session_read_only', { hint: 'Start a new session' });
     if (session.settings.permissionMode === 'bypassPermissions' && !this.policy.allowBypass) {

@@ -43,13 +43,20 @@ const FORWARD_REQUEST_HEADERS = ['accept', 'content-type', 'idempotency-key', 'l
 /** Hop-by-hop or body-encoding headers that must not be copied from the upstream response. */
 const DROP_RESPONSE_HEADERS = new Set(['connection', 'keep-alive', 'transfer-encoding', 'content-encoding', 'content-length']);
 
-function errorResponse(code: ErrorCode, opts: { message?: string; hint?: string } = {}): Response {
+/** `details.reason` of the proxy's errors for a stopped or unreachable daemon (no token, connection refused). */
+const DAEMON_UNREACHABLE = 'daemon_unreachable';
+
+function errorResponse(
+  code: ErrorCode,
+  opts: { message?: string; hint?: string; details?: Record<string, unknown> } = {},
+): Response {
   const entry = ERROR_CATALOG[code];
   const error: ErrorBody = {
     code,
     message: opts.message ?? entry.message,
     hint: opts.hint ?? entry.hint,
     retryable: entry.retryable,
+    ...(opts.details ? { details: opts.details } : {}),
   };
   return Response.json({ error }, { status: entry.status });
 }
@@ -184,7 +191,11 @@ export function createUncageHandler(o: ProxyOptions = {}): UncageHandler {
 
     const auth = await resolveToken();
     if (!auth) {
-      return errorResponse('runtime_unavailable', { message: 'The Uncage daemon token was not found.', hint: SERVE_HINT });
+      return errorResponse('runtime_unavailable', {
+        message: 'The Uncage daemon token was not found.',
+        hint: SERVE_HINT,
+        details: { reason: DAEMON_UNREACHABLE },
+      });
     }
 
     const headers = new Headers({ authorization: `Bearer ${auth.token}` });
@@ -205,7 +216,11 @@ export function createUncageHandler(o: ProxyOptions = {}): UncageHandler {
       } as RequestInit);
     } catch (err) {
       if (req.signal.aborted) throw err;
-      return errorResponse('runtime_unavailable', { message: 'The Uncage daemon is not reachable.', hint: SERVE_HINT });
+      return errorResponse('runtime_unavailable', {
+        message: 'The Uncage daemon is not reachable.',
+        hint: SERVE_HINT,
+        details: { reason: DAEMON_UNREACHABLE },
+      });
     }
     // The daemon may have restarted with a new token; re-read the file next time.
     if (upstream.status === 401 && auth.fromFile) cachedFileToken = undefined;

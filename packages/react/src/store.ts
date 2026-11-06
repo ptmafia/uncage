@@ -148,7 +148,7 @@ function checkSettings(patch: Partial<SessionSettings>, caps: RuntimeCapabilitie
   if (patch.model !== undefined && patch.model.trim() === '') return clientError('invalid_request', 'model must not be empty.');
   if (!caps) return undefined;
   const unsupported = (key: string, value: string) =>
-    clientError('unsupported_capability', `The runtime does not support ${key} "${value}".`);
+    clientError('unsupported_capability', `The runtime does not support ${key} "${value}".`, { [key]: value });
   if (patch.model !== undefined && caps.models.length > 0 && !caps.models.some((m) => m.id === patch.model)) {
     return unsupported('model', patch.model);
   }

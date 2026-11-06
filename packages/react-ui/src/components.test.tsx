@@ -218,7 +218,8 @@ describe('Composer', () => {
     await act(async () => fireEvent.keyDown(input, { key: 'Enter' }));
     expect(f.client.startRun).toHaveBeenCalledTimes(1);
     expect(input.value).toBe('keep me');
-    expect(screen.getByRole('alert').textContent).toBe("The runtime isn't available. Make sure it is installed and on your PATH.");
+    // Localized headline; the server's hint (the install command) is kept under it.
+    expect(screen.getByRole('alert').textContent).toBe("The runtime isn't available. Install the runtime CLI.");
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Send' })));
     expect(f.client.startRun).toHaveBeenCalledTimes(2);
     expect(input.value).toBe('');
@@ -528,8 +529,6 @@ describe('ConnectionBanner errors (zh-CN)', () => {
     ['session_busy', 409, '这个会话正在运行，等它结束或先停止，再发送。'],
     ['policy_denied', 403, '服务器策略不允许这个操作。'],
     ['session_read_only', 409, '这个会话是只读的，无法继续。请新建一个会话。'],
-    ['runtime_unavailable', 503, '运行时现在用不了。请确认已安装，并且在 PATH 中。'],
-    ['auth_required', 401, '运行时需要登录。请先在终端里登录，再重试。'],
     ['internal_error', 500, '服务出错了，请稍后重试。'],
   ] as const)('%s → localized message, no English server hint', async (code, status, text) => {
     const f = fakeClient();
@@ -538,6 +537,49 @@ describe('ConnectionBanner errors (zh-CN)', () => {
     fireEvent.change(textbox(), { target: { value: 'hi' } });
     await act(async () => fireEvent.keyDown(textbox(), { key: 'Enter' }));
     expect(screen.getByRole('alert').textContent).toBe(text);
+  });
+
+  const sendFailing = async (err: UncageClientError) => {
+    const f = fakeClient();
+    f.client.startRun.mockRejectedValueOnce(err);
+    await openSession(f, { locale: 'zh-CN' });
+    fireEvent.change(textbox(), { target: { value: 'hi' } });
+    await act(async () => fireEvent.keyDown(textbox(), { key: 'Enter' }));
+    return screen.getByRole('alert').textContent;
+  };
+  const err = (code: UncageClientError['code'], status: number, details?: Record<string, unknown>, hint?: string) =>
+    new UncageClientError({ code, message: 'English server message.', retryable: false, ...(hint ? { hint } : {}), ...(details ? { details } : {}) }, status);
+
+  it('daemon_unreachable (proxy: daemon stopped) → start `uncage serve`, not the runtime install text', async () => {
+    expect(await sendFailing(err('runtime_unavailable', 503, { reason: 'daemon_unreachable' }, 'Run `uncage serve` first.'))).toBe(
+      'Uncage 服务没有运行，先在终端执行 `uncage serve`。',
+    );
+  });
+
+  it('runtime_unavailable / auth_required name the runtime and keep the server hint', async () => {
+    expect(await sendFailing(err('runtime_unavailable', 503, { runtime: 'claude' }, 'npm i -g @anthropic-ai/claude-code'))).toBe(
+      'Claude Code 现在用不了。 npm i -g @anthropic-ai/claude-code',
+    );
+    cleanup();
+    expect(await sendFailing(err('auth_required', 401, { runtime: 'claude' }, 'Run `claude` and log in'))).toBe(
+      'Claude Code 需要登录。 Run `claude` and log in',
+    );
+    cleanup();
+    expect(await sendFailing(err('runtime_unavailable', 503))).toBe('运行时现在用不了。');
+  });
+
+  it('unsupported_capability names the refused setting from details', async () => {
+    expect(await sendFailing(err('unsupported_capability', 422, { effort: 'max' }))).toBe('当前运行时不支持推理强度「最高」。');
+    cleanup();
+    expect(await sendFailing(err('unsupported_capability', 422, { model: 'opus-9' }))).toBe('当前运行时不支持模型「opus-9」。');
+    cleanup();
+    expect(await sendFailing(err('unsupported_capability', 422))).toBe('当前运行时不支持这个功能或选项。');
+  });
+
+  it('client-side transport failures say the server is unreachable', async () => {
+    expect(await sendFailing(err('internal_error', 0, { reason: 'network' }))).toBe('连不上服务器，请确认应用仍在运行后重试。');
+    cleanup();
+    expect(await sendFailing(err('internal_error', 502, { reason: 'http_status', status: 502 }))).toBe('连不上服务器（HTTP 502）。');
   });
 
   it('an unknown code falls back to the server message and hint', async () => {

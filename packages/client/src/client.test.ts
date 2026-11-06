@@ -45,6 +45,28 @@ describe('REST', () => {
     expect(fetch.mock.calls[0]![0]).toBe('/api/uncage/sessions/ses_1');
   });
 
+  it('a non-JSON error response and a network failure become tagged internal_error', async () => {
+    const html = createUncageClient({ fetch: (async () => new Response('<html>Bad Gateway</html>', { status: 502 })) as F as typeof fetch });
+    await expect(html.listSessions()).rejects.toMatchObject({ code: 'internal_error', status: 502, details: { reason: 'http_status', status: 502 } });
+    const down = createUncageClient({
+      fetch: (async () => {
+        throw new TypeError('Failed to fetch');
+      }) as F as typeof fetch,
+    });
+    const err = await down.listSessions().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UncageClientError);
+    expect(err).toMatchObject({ code: 'internal_error', status: 0, details: { reason: 'network' } });
+    // An aborted upload still rejects with the abort, not a network error.
+    const ac = new AbortController();
+    ac.abort();
+    const aborting = createUncageClient({
+      fetch: (async () => {
+        throw new DOMException('aborted', 'AbortError');
+      }) as F as typeof fetch,
+    });
+    await expect(aborting.uploadAttachment('ses_1', new File(['x'], 'a.md'), { signal: ac.signal })).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
   it('startRun sends Idempotency-Key', async () => {
     const fetch = vi.fn<F>(async () => json({ id: 'run_1' }, 202));
     const client = createUncageClient({ fetch, headers: () => ({ 'x-a': 'b' }) });

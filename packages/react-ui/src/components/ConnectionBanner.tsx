@@ -1,4 +1,4 @@
-import { useSession, useUncageError } from '@uncage/react';
+import { useSession, useStoreSelector, useUncageError } from '@uncage/react';
 import { CloudOff, Info, RefreshCw, X } from 'lucide-react';
 import type { JSX } from 'react';
 import { useUi } from '../context.js';
@@ -12,9 +12,10 @@ export function ConnectionBanner(): JSX.Element | null {
   const { t } = useUi();
   const { session, connection, replayIncomplete } = useSession();
   const { error, dismiss } = useUncageError();
+  const runtimes = useStoreSelector((s) => s.runtimes);
   const conn = session && (connection === 'reconnecting' || connection === 'offline') ? connection : undefined;
   if (!conn && !(session && replayIncomplete) && !error) return null;
-  const shown = error && errorText(t, error);
+  const shown = error && errorText(t, error, (id) => runtimes.find((r) => r.id === id)?.displayName ?? id);
   return (
     <div className="uc-banners">
       {conn && (

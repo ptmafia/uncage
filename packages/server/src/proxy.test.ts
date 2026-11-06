@@ -303,6 +303,7 @@ describe('createUncageHandler', () => {
     const body = (await res.json()) as { error: { code: string; hint: string } };
     expect(body.error.code).toBe('runtime_unavailable');
     expect(body.error.hint).toContain('Run `uncage serve` first');
+    expect(body.error).toMatchObject({ details: { reason: 'daemon_unreachable' } });
     expect(seen).toEqual([]);
   });
 
@@ -324,7 +325,10 @@ describe('createUncageHandler', () => {
     const h = createUncageHandler({ endpoint: 'http://127.0.0.1:1', token: 'tok' });
     const res = await h.GET(new Request('http://localhost/api/uncage/health'));
     expect(res.status).toBe(503);
-    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('runtime_unavailable');
+    expect(((await res.json()) as { error: unknown }).error).toMatchObject({
+      code: 'runtime_unavailable',
+      details: { reason: 'daemon_unreachable' },
+    });
   });
 
   it('404 outside basePath and no path escape from /v1', async () => {

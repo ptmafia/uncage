@@ -173,8 +173,8 @@ const en = {
     policy_denied: "The server's policy doesn't allow this.",
     session_read_only: "This session is read-only and can't be continued. Start a new session.",
     invalid_workspace: 'The workspace is outside the allowed folders.',
-    runtime_unavailable: "The runtime isn't available. Make sure it is installed and on your PATH.",
-    auth_required: 'The runtime needs you to sign in. Sign in from your terminal, then retry.',
+    runtime_unavailable: "The runtime isn't available.",
+    auth_required: 'The runtime needs you to sign in.',
     session_busy: 'This session is busy with a run. Wait for it to finish or stop it, then send again.',
     approval_expired: 'This approval has expired.',
     approval_already_resolved: 'This approval was already handled.',
@@ -183,6 +183,19 @@ const en = {
   attachmentTooLarge: (max: string) => `The attachment is too large (max ${max} each).`,
   attachmentUploadFailed: (name: string) => `Attachment "${name}" failed to upload. Remove it to send.`,
   uploadFailedReason: (name: string, reason: string) => `${name} failed to upload: ${reason}`,
+  authRequiredNamed: (name: string) => `${name} needs you to sign in.`,
+  daemonUnreachable: "The Uncage service isn't running. Start it with `uncage serve`.",
+  serverUnreachable: "Can't reach the server. Check that the app is still running, then retry.",
+  httpFailed: (status: number) => `Can't reach the server (HTTP ${status}).`,
+  unsupportedWhat: (what: string) => `The runtime doesn't support ${what}.`,
+  capability: {
+    model: (v: string) => `the model "${v}"`,
+    effort: (label: string) => `the "${label}" effort`,
+    permissionMode: (label: string) => `the "${label}" permission mode`,
+    scope: (v: string) => `the approval scope "${v}"`,
+    image: 'image attachments',
+    file: 'file attachments',
+  },
 };
 
 export type Strings = typeof en;
@@ -321,8 +334,8 @@ const zhCN: Strings = {
     policy_denied: '服务器策略不允许这个操作。',
     session_read_only: '这个会话是只读的，无法继续。请新建一个会话。',
     invalid_workspace: '工作目录不在允许的范围内。',
-    runtime_unavailable: '运行时现在用不了。请确认已安装，并且在 PATH 中。',
-    auth_required: '运行时需要登录。请先在终端里登录，再重试。',
+    runtime_unavailable: '运行时现在用不了。',
+    auth_required: '运行时需要登录。',
     session_busy: '这个会话正在运行，等它结束或先停止，再发送。',
     approval_expired: '这个确认已过期。',
     approval_already_resolved: '这个确认已经处理过了。',
@@ -331,22 +344,71 @@ const zhCN: Strings = {
   attachmentTooLarge: (max: string) => `附件太大了（单个上限 ${max}）。`,
   attachmentUploadFailed: (name: string) => `附件「${name}」上传失败，移除后再发送。`,
   uploadFailedReason: (name: string, reason: string) => `「${name}」上传失败：${reason}`,
+  authRequiredNamed: (name: string) => `${name} 需要登录。`,
+  daemonUnreachable: 'Uncage 服务没有运行，先在终端执行 `uncage serve`。',
+  serverUnreachable: '连不上服务器，请确认应用仍在运行后重试。',
+  httpFailed: (status: number) => `连不上服务器（HTTP ${status}）。`,
+  unsupportedWhat: (what: string) => `当前运行时不支持${what}。`,
+  capability: {
+    model: (v: string) => `模型「${v}」`,
+    effort: (label: string) => `推理强度「${label}」`,
+    permissionMode: (label: string) => `权限模式「${label}」`,
+    scope: (v: string) => `确认范围「${v}」`,
+    image: '图片附件',
+    file: '文件附件',
+  },
 };
 
 export const STRINGS: Record<Locale, Strings> = { en, 'zh-CN': zhCN };
 
+const str = (v: unknown): string | undefined => (typeof v === 'string' && v !== '' ? v : undefined);
+
+/** What an `unsupported_capability` error refused, from its details (core and store set one key). */
+function capabilityWhat(t: Strings, d: Record<string, unknown>): string | undefined {
+  const model = str(d.model);
+  if (model) return t.capability.model(model);
+  const effort = str(d.effort);
+  if (effort) return t.capability.effort(Object.hasOwn(t.efforts, effort) ? t.efforts[effort as EffortLevel] : effort);
+  const mode = str(d.permissionMode);
+  if (mode) {
+    return t.capability.permissionMode(Object.hasOwn(t.permissionModes, mode) ? t.permissionModes[mode as PermissionMode] : mode);
+  }
+  const scope = str(d.scope);
+  if (scope) return t.capability.scope(scope);
+  if (d.kind === 'image' || d.kind === 'file') return t.capability[d.kind];
+  return undefined;
+}
+
 /**
- * The user-facing text for an error: a localized message for known codes (and for the store's
- * upload-failed send error), without the server's English hint; otherwise the server's message
- * and hint as sent.
+ * The user-facing text for an error: a localized message for known codes, the proxy's
+ * daemon-unreachable errors, client-side transport failures and the store's upload-failed send
+ * error; otherwise the server's message and hint as sent. The server's hint is dropped (it is
+ * English) except for `runtime_unavailable` / `auth_required`, where it carries the install or
+ * login command. `nameOf` turns `details.runtime` (an id) into a display name.
  */
 export function errorText(
   t: Strings,
   err: { code: ErrorCode; message: string; hint?: string; details?: Record<string, unknown> },
+  nameOf: (runtimeId: string) => string = (id) => id,
 ): { message: string; hint?: string } {
   const details = err.details ?? {};
   if (details.reason === UPLOAD_FAILED_REASON && typeof details.name === 'string') {
     return { message: t.attachmentUploadFailed(details.name) };
+  }
+  if (details.reason === 'daemon_unreachable') return { message: t.daemonUnreachable };
+  if (err.code === 'internal_error' && details.reason === 'network') return { message: t.serverUnreachable };
+  if (err.code === 'internal_error' && details.reason === 'http_status' && typeof details.status === 'number') {
+    return { message: t.httpFailed(details.status) };
+  }
+  const withHint = (message: string) => ({ message, ...(err.hint ? { hint: err.hint } : {}) });
+  const runtime = str(details.runtime);
+  if (err.code === 'runtime_unavailable') {
+    return withHint(runtime ? t.runtimeUnavailable(nameOf(runtime)) : t.errors.runtime_unavailable);
+  }
+  if (err.code === 'auth_required') return withHint(runtime ? t.authRequiredNamed(nameOf(runtime)) : t.errors.auth_required);
+  if (err.code === 'unsupported_capability') {
+    const what = capabilityWhat(t, details);
+    return { message: what ? t.unsupportedWhat(what) : t.errors.unsupported_capability };
   }
   if (err.code === 'attachment_too_large') {
     const max = typeof details.maxBytes === 'number' && details.maxBytes > 0 ? details.maxBytes : ATTACHMENT_LIMITS.maxBytes;
