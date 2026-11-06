@@ -17,6 +17,8 @@ export const ErrorCodeSchema = z.enum([
   'runtime_disconnected',
   'policy_denied',
   'store_locked',
+  'attachment_too_large',
+  'attachment_type_unsupported',
   'internal_error',
 ]);
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
@@ -134,6 +136,18 @@ export const ERROR_CATALOG: Record<ErrorCode, ErrorCatalogEntry> = {
     message: 'The local data store is locked by another process.',
     hint: 'Stop the other Uncage daemon using this data directory and retry.',
     retryable: true,
+  },
+  attachment_too_large: {
+    status: 413,
+    message: 'The attachment is too large.',
+    hint: 'Attach files of at most 10 MB each.',
+    retryable: false,
+  },
+  attachment_type_unsupported: {
+    status: 415,
+    message: 'This attachment type is not supported.',
+    hint: 'Attach a png, jpg, jpeg, gif or webp image, or a supported text, code or pdf file.',
+    retryable: false,
   },
   internal_error: {
     status: 500,

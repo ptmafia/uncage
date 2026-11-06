@@ -67,6 +67,7 @@ export class SessionService {
       readOnly: false,
       createdAt: new Date().toISOString(),
       capabilities: adapter.capabilities(),
+      settings: { permissionMode: 'default' },
     };
     await this.store.createSession(session);
     await this.log.append(session.id, 'session.created', { session });

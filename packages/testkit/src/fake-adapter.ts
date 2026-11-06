@@ -11,6 +11,7 @@ import {
   type RuntimeEvent,
   type RuntimeProbe,
 } from '@uncage/protocol';
+import { ATTACHMENT_LIMITS } from '@uncage/protocol';
 
 export type FakeStep =
   | { text: string; chunks?: number; delayMs?: number }
@@ -44,6 +45,10 @@ const DEFAULT_CAPABILITIES: RuntimeCapabilities = {
   diffEvents: false,
   mcp: false,
   skills: 'unknown',
+  models: [],
+  efforts: [],
+  permissionModes: ['default'],
+  attachments: { images: false, files: false, maxBytes: ATTACHMENT_LIMITS.maxBytes },
 };
 
 /** Resolves true after `ms`, or false as soon as the signal aborts. */

@@ -3,7 +3,9 @@ import {
   ApprovalAvailableDecisionSchema,
   ApprovalCategorySchema,
   ApprovalTargetSchema,
+  AttachmentSchema,
   RuntimeStatusSchema,
+  SessionSettingsSchema,
   type RuntimeCapabilities,
 } from './domain.js';
 import { ErrorBodySchema } from './errors.js';
@@ -18,11 +20,16 @@ export const RuntimeProbeSchema = z.object({
 });
 export type RuntimeProbe = z.infer<typeof RuntimeProbeSchema>;
 
+export const ResolvedAttachmentSchema = AttachmentSchema.extend({ absPath: z.string() });
+export type ResolvedAttachment = z.infer<typeof ResolvedAttachmentSchema>;
+
 export const AdapterRunInputSchema = z.object({
   runId: z.string(),
   prompt: z.string(),
   cwd: z.string(),
   nativeSessionRef: z.string().optional(),
+  settings: SessionSettingsSchema,
+  attachments: z.array(ResolvedAttachmentSchema),
 });
 export type AdapterRunInput = z.infer<typeof AdapterRunInputSchema>;
 
@@ -88,6 +95,8 @@ export interface RuntimeAdapter {
   readonly displayName: string;
   probe(): Promise<RuntimeProbe>;
   capabilities(): RuntimeCapabilities;
+  /** Re-detect dynamic capabilities (e.g. model list). */
+  refreshCapabilities?(): Promise<RuntimeCapabilities>;
   /** Abort via ctx.signal. */
   run(input: AdapterRunInput, ctx: AdapterRunContext): AsyncIterable<RuntimeEvent>;
   dispose?(): Promise<void>;

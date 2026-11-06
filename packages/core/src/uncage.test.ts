@@ -10,6 +10,7 @@ import type {
   RuntimeEvent,
   UncageEvent,
 } from '@uncage/protocol';
+import { ATTACHMENT_LIMITS } from '@uncage/protocol';
 import { openPgliteStore } from './store/pglite-store.js';
 import { createUncage, type Uncage } from './uncage.js';
 import { eventsUntil, isTerminal } from './test-utils.js';
@@ -21,6 +22,10 @@ const CAPS: RuntimeCapabilities = {
   diffEvents: false,
   mcp: false,
   skills: 'unknown',
+  models: [],
+  efforts: [],
+  permissionModes: ['default'],
+  attachments: { images: false, files: false, maxBytes: ATTACHMENT_LIMITS.maxBytes },
 };
 
 /** A minimal hand-written adapter: `body` produces the events for each run. */
@@ -176,6 +181,7 @@ describe('createUncage', () => {
       readOnly: false,
       createdAt: now,
       capabilities: CAPS,
+      settings: { permissionMode: 'default' },
       activeRunId: 'run_1',
     });
     await store.createRun({ id: 'run_1', sessionId: 'ses_1', prompt: 'p', state: 'waiting_approval', createdAt: now });

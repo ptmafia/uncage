@@ -32,6 +32,7 @@ const toSession = (r: SessionRow): Session => ({
   readOnly: r.readOnly,
   createdAt: r.createdAt,
   capabilities: r.capabilities,
+  settings: { permissionMode: 'default' }, // TODO(Task 2): persisted column
   ...(r.activeRunId !== null ? { activeRunId: r.activeRunId } : {}),
 });
 

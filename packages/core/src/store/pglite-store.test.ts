@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ApprovalRequest, Run, Session } from '@uncage/protocol';
+import { ATTACHMENT_LIMITS } from '@uncage/protocol';
 import { UncageError } from '../errors.js';
 import { openPgliteStore } from './pglite-store.js';
 import type { Store } from './store.js';
@@ -14,6 +15,10 @@ const caps: Session['capabilities'] = {
   diffEvents: false,
   mcp: false,
   skills: 'unknown',
+  models: [],
+  efforts: [],
+  permissionModes: ['default'],
+  attachments: { images: false, files: false, maxBytes: ATTACHMENT_LIMITS.maxBytes },
 };
 const session = (id: string): Session => ({
   id,
@@ -24,6 +29,7 @@ const session = (id: string): Session => ({
   readOnly: false,
   createdAt: new Date().toISOString(),
   capabilities: caps,
+  settings: { permissionMode: 'default' },
 });
 const approval = (id: string, sessionId = 'A'): ApprovalRequest => ({
   id,

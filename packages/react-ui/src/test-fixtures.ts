@@ -10,6 +10,7 @@ import type {
   UncageEvent,
   UncageEventMap,
 } from '@uncage/protocol';
+import { ATTACHMENT_LIMITS } from '@uncage/protocol';
 import { vi } from 'vitest';
 
 export const T0 = new Date(Date.now() - 5_000).toISOString();
@@ -22,6 +23,10 @@ const capabilities = {
   diffEvents: false,
   mcp: false,
   skills: 'unknown' as const,
+  models: [],
+  efforts: [],
+  permissionModes: ['default' as const],
+  attachments: { images: false, files: false, maxBytes: ATTACHMENT_LIMITS.maxBytes },
 };
 
 export const session = (over: Partial<Session> = {}): Session => ({
@@ -33,6 +38,7 @@ export const session = (over: Partial<Session> = {}): Session => ({
   readOnly: false,
   createdAt: T0,
   capabilities,
+  settings: { permissionMode: 'default' },
   ...over,
 });
 

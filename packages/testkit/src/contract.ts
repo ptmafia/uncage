@@ -30,7 +30,7 @@ function makeCtx(decide: (i: NativeApprovalInput) => Promise<ApprovalOutcome>, s
   return { ctx, requests };
 }
 
-const input = (prompt: string) => ({ runId: 'run_contract', prompt, cwd: process.cwd() });
+const input = (prompt: string) => ({ runId: 'run_contract', prompt, cwd: process.cwd(), settings: { permissionMode: 'default' as const }, attachments: [] });
 
 export function runAdapterContract(
   name: string,

@@ -1,5 +1,6 @@
 import { collect, runAdapterContract } from '@uncage/testkit';
 import type { AdapterRunContext, ApprovalOutcome, NativeApprovalInput } from '@uncage/protocol';
+import { ATTACHMENT_LIMITS } from '@uncage/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { claudeAdapter } from './index.js';
 import { scriptedQuery } from './test-utils.js';
@@ -24,7 +25,8 @@ function ctxWith(outcome: ApprovalOutcome, signal = new AbortController().signal
   return { ctx, requests };
 }
 
-const run = { runId: 'run_1', prompt: 'approval', cwd: '/tmp/uncage-fixture' };
+const run = { runId: 'run_1', prompt: 'approval', cwd: '/tmp/uncage-fixture',
+  settings: { permissionMode: 'default' as const }, attachments: [] };
 
 describe('claudeAdapter', () => {
   it('identifies as Claude Code with the documented capabilities', () => {
@@ -38,6 +40,10 @@ describe('claudeAdapter', () => {
       diffEvents: false,
       mcp: true,
       skills: 'supported',
+      models: [],
+      efforts: [],
+      permissionModes: ['default'],
+      attachments: { images: false, files: false, maxBytes: ATTACHMENT_LIMITS.maxBytes },
     });
   });
 

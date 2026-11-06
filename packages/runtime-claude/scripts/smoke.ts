@@ -30,7 +30,7 @@ console.log('cwd', cwd);
 const events: RuntimeEvent[] = [];
 let approvals = 0;
 for await (const e of adapter.run(
-  { runId: 'run_smoke', prompt: 'Create a file hello.txt containing hi using the Write tool', cwd },
+  { runId: 'run_smoke', prompt: 'Create a file hello.txt containing hi using the Write tool', cwd, settings: { permissionMode: 'default' as const }, attachments: [] },
   {
     signal: AbortSignal.timeout(180_000),
     requestApproval: async (req) => {

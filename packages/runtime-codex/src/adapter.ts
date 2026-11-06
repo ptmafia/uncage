@@ -7,6 +7,7 @@ import {
   type RuntimeCapabilities,
   type RuntimeEvent,
 } from '@uncage/protocol';
+import { ATTACHMENT_LIMITS } from '@uncage/protocol';
 import { JsonRpcError, JsonRpcPeer } from './jsonrpc.js';
 import { createMapper, toDecision } from './map.js';
 import { probeCodex, type ExecFile } from './probe.js';
@@ -47,6 +48,10 @@ const CAPABILITIES: RuntimeCapabilities = {
   diffEvents: false,
   mcp: true,
   skills: 'unknown',
+  models: [],
+  efforts: [],
+  permissionModes: ['default'],
+  attachments: { images: false, files: false, maxBytes: ATTACHMENT_LIMITS.maxBytes },
 };
 
 const CLIENT_INFO: InitializeParams['clientInfo'] = { name: 'uncage', title: 'Uncage', version: '0.0.0' };

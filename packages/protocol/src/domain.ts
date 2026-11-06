@@ -36,6 +36,44 @@ export type RuntimeStatus = z.infer<typeof RuntimeStatusSchema>;
 export const ApprovalCategorySchema = z.enum(['shell', 'file', 'network', 'mcp', 'other']);
 export type ApprovalCategory = z.infer<typeof ApprovalCategorySchema>;
 
+export const PermissionModeSchema = z.enum([
+  'default',
+  'acceptEdits',
+  'plan',
+  'auto',
+  'bypassPermissions',
+]);
+export type PermissionMode = z.infer<typeof PermissionModeSchema>;
+
+export const EffortLevelSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max']);
+export type EffortLevel = z.infer<typeof EffortLevelSchema>;
+
+export const ModelOptionSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+});
+export type ModelOption = z.infer<typeof ModelOptionSchema>;
+
+export const SessionSettingsSchema = z.object({
+  model: z.string().optional(),
+  effort: EffortLevelSchema.optional(),
+  permissionMode: PermissionModeSchema,
+});
+export type SessionSettings = z.infer<typeof SessionSettingsSchema>;
+
+export const AttachmentSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  name: z.string(),
+  mime: z.string(),
+  size: z.number().int().nonnegative(),
+  kind: z.enum(['image', 'file']),
+  sha256: z.string(),
+  createdAt: z.string(),
+});
+export type Attachment = z.infer<typeof AttachmentSchema>;
+
 export const RuntimeCapabilitiesSchema = z.object({
   streaming: z.boolean(),
   approval: z.object({
@@ -47,6 +85,14 @@ export const RuntimeCapabilitiesSchema = z.object({
   diffEvents: z.boolean(),
   mcp: z.boolean(),
   skills: z.enum(['supported', 'partial', 'unknown']),
+  models: z.array(ModelOptionSchema),
+  efforts: z.array(EffortLevelSchema),
+  permissionModes: z.array(PermissionModeSchema),
+  attachments: z.object({
+    images: z.boolean(),
+    files: z.boolean(),
+    maxBytes: z.number().int().nonnegative(),
+  }),
 });
 export type RuntimeCapabilities = z.infer<typeof RuntimeCapabilitiesSchema>;
 
@@ -71,6 +117,7 @@ export const SessionSchema = z.object({
   readOnly: z.boolean(),
   createdAt: z.string(),
   capabilities: RuntimeCapabilitiesSchema,
+  settings: SessionSettingsSchema,
   activeRunId: z.string().optional(),
 });
 export type Session = z.infer<typeof SessionSchema>;
@@ -84,8 +131,18 @@ export const RunSchema = z.object({
   startedAt: z.string().optional(),
   endedAt: z.string().optional(),
   error: ErrorBodySchema.optional(),
+  attachments: z.array(AttachmentSchema).optional(),
 });
 export type Run = z.infer<typeof RunSchema>;
+
+export const ActiveRunInfoSchema = z.object({
+  runId: z.string(),
+  sessionId: z.string(),
+  sessionTitle: z.string(),
+  state: RunStateSchema,
+  startedAt: z.string().optional(),
+});
+export type ActiveRunInfo = z.infer<typeof ActiveRunInfoSchema>;
 
 export const ApprovalTargetSchema = z.object({
   command: z.string().optional(),

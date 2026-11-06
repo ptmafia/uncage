@@ -8,6 +8,7 @@ import type {
   RuntimeCapabilities,
   RuntimeEvent,
 } from '@uncage/protocol';
+import { ATTACHMENT_LIMITS } from '@uncage/protocol';
 import { CANCELLED_MESSAGE, DENIED_MESSAGE, EXPIRED_MESSAGE, categorize, createMapper, isResumeFailure } from './map.js';
 import { probeClaude, type ExecFile } from './probe.js';
 
@@ -30,6 +31,10 @@ const CAPABILITIES: RuntimeCapabilities = {
   diffEvents: false,
   mcp: true,
   skills: 'supported',
+  models: [],
+  efforts: [],
+  permissionModes: ['default'],
+  attachments: { images: false, files: false, maxBytes: ATTACHMENT_LIMITS.maxBytes },
 };
 
 /** After an interrupt, give Claude Code this long to wind down before killing it. */

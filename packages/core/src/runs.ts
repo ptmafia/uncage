@@ -209,6 +209,8 @@ export class RunManager {
           runId: entry.run.id,
           prompt: entry.run.prompt,
           cwd: entry.workspace,
+          settings: { permissionMode: 'default' }, // Task 2 reads the session's stored settings
+          attachments: [],
           ...(entry.nativeSessionRef !== undefined ? { nativeSessionRef: entry.nativeSessionRef } : {}),
         },
         { signal: entry.abort.signal, requestApproval: (i) => this.requestApproval(entry, i) },

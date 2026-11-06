@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { collect, fakeCodexPath, runAdapterContract } from '@uncage/testkit';
 import type { AdapterRunContext, ApprovalOutcome, NativeApprovalInput, RuntimeAdapter, RuntimeEvent } from '@uncage/protocol';
+import { ATTACHMENT_LIMITS } from '@uncage/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { codexAdapter } from './index.js';
 
@@ -32,6 +33,8 @@ const input = (prompt: string, nativeSessionRef?: string) => ({
   runId: 'run_1',
   prompt,
   cwd: '/tmp/uncage-fixture',
+  settings: { permissionMode: 'default' as const },
+  attachments: [],
   ...(nativeSessionRef ? { nativeSessionRef } : {}),
 });
 
@@ -61,6 +64,10 @@ describe('codexAdapter', () => {
       diffEvents: false,
       mcp: true,
       skills: 'unknown',
+      models: [],
+      efforts: [],
+      permissionModes: ['default'],
+      attachments: { images: false, files: false, maxBytes: ATTACHMENT_LIMITS.maxBytes },
     });
   });
 
