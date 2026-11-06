@@ -4,7 +4,8 @@
  *   1. `uncage serve` (the real CLI, real Claude Code adapter) on a tmp copy of live/fixture-repo,
  *      with its own tmp data dir and token file, so the user's ~/.uncage is never touched. HOME is
  *      left alone: Claude Code's login lives there.
- *   2. The nextjs-default-chat example (`next start`), its proxy given the token that serve created.
+ *   2. The nextjs-default-chat and react-headless-chat examples (`next start`), their proxies given
+ *      the token that serve created.
  *
  * Both processes' logs are written to live/results/stack.log.
  *
@@ -20,6 +21,7 @@ import { join } from 'node:path';
 
 const daemonPort = Number(process.env.LIVE_DAEMON_PORT ?? 4795);
 const appPort = Number(process.env.LIVE_APP_PORT ?? 3102);
+const headlessPort = Number(process.env.LIVE_HEADLESS_PORT ?? 3103);
 const controlPort = Number(process.env.LIVE_CONTROL_PORT ?? 4796);
 
 const repo = new URL('..', import.meta.url).pathname;
@@ -73,14 +75,17 @@ const ready = (async () => {
     root,
   );
   const token = readFileSync(tokenFile, 'utf8').trim();
-  const example = join(repo, 'examples/nextjs-default-chat');
-  await startUntil(
-    process.execPath,
-    [join(example, 'node_modules/next/dist/bin/next'), 'start', '-p', String(appPort)],
-    { UNCAGE_URL: `http://127.0.0.1:${daemonPort}`, UNCAGE_TOKEN: token },
-    'Ready',
-    example,
-  );
+  const startExample = (name: string, port: number) => {
+    const example = join(repo, 'examples', name);
+    return startUntil(
+      process.execPath,
+      [join(example, 'node_modules/next/dist/bin/next'), 'start', '-p', String(port)],
+      { UNCAGE_URL: `http://127.0.0.1:${daemonPort}`, UNCAGE_TOKEN: token },
+      'Ready',
+      example,
+    );
+  };
+  await Promise.all([startExample('nextjs-default-chat', appPort), startExample('react-headless-chat', headlessPort)]);
 })();
 ready.catch((err: unknown) => console.error(err));
 

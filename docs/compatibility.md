@@ -4,7 +4,7 @@ These are the versions each adapter has been verified against. Live checks run o
 
 | Runtime | Adapter | SDK / CLI version | Verified | Status |
 | --- | --- | --- | --- | --- |
-| Claude Code | `@uncage/runtime-claude` | `@anthropic-ai/claude-agent-sdk` 0.3.318 (bundled CLI 2.1.318); `claude` CLI on PATH 2.1.318 | 2026-11-06 | **Live E2E passed** (7/7, see the run record below). Live smoke passed earlier: one approval request (Write, auto-allowed), `tool.completed`, `run.completed`, `hello.txt` created. |
+| Claude Code | `@uncage/runtime-claude` | `@anthropic-ai/claude-agent-sdk` 0.3.318 (bundled CLI 2.1.318); `claude` CLI on PATH 2.1.318 | 2026-11-06 | **Live E2E passed** (10/10 on the latest run, see the run records below). A `resume` of a session Claude Code no longer has was checked live: it yields `native.session_lost` (the session becomes read-only). Live smoke passed earlier: one approval request (Write, auto-allowed), `tool.completed`, `run.completed`, `hello.txt` created. |
 | Codex | `@uncage/runtime-codex` | none (not installed on the test machine) | 2026-11-06 (mock only) | **Implemented, verified only against a fake app-server** (`@uncage/testkit` fake codex). Protocol facts were checked against the official `openai/codex` app-server-protocol schema and two third-party clients. Unverified against a real binary: whether `codex app-server` needs `--stdio` (one client passes it), and real-binary process and auth behavior. When it isn't installed, the UI and `uncage doctor` show `not_installed` with `npm i -g @openai/codex && codex login`. This is asserted live. |
 
 ## Live E2E run record
@@ -25,6 +25,22 @@ These are the versions each adapter has been verified against. Live checks run o
 | 7 | `curl` the daemon without a token → 401; with the token and `Origin: http://evil.test` → 403; the app proxy with a foreign Origin → 403 | ✓ |
 
 The HTML report, traces and the stack log are written to `e2e/live/results/`, which is gitignored.
+
+### Run 2: final-review fixes
+
+`UNCAGE_LIVE=1 pnpm e2e:live`, 2026-11-06: 10 passed in 1.8 min.
+
+- Environment: same as above (macOS 26.6.2 arm64, Node 24.15.0, pnpm 10.33.0, Playwright 1.65.0, Google Chrome 157.0.8103.39, Next.js 16.4.5, Claude Code CLI 2.1.318, Claude Agent SDK 0.3.318). Codex not installed.
+- Stack: as above, plus `examples/react-headless-chat` (`next start`) on a second port with the same token.
+- Specs 1–7 as above passed again (2: 19 s, 3: 14 s, 4: 5 s, 5: 28 s, 6: 6 s). New specs:
+
+| # | Spec | Result |
+| --- | --- | --- |
+| 8 | Bash `npm test`: reload (F5) while the approval is **pending**. After the reload the card is still pending and shows the command, the run is `waiting_approval`, one user bubble. Allow → run `completed`, line `approved` | ✓ 14 s |
+| 9 | Two tabs on the same live session both click Allow (requests held until both are sent, so they race at the daemon): statuses `[200, 409]`, both tabs show the approval `approved` and the run `completed`, no error toast | ✓ 6 s |
+| 10 | Golden path through `examples/react-headless-chat`: prompt → approval card with `npm test` → Allow → run `completed` | ✓ 14 s |
+
+Also checked live, outside Playwright: `query({ resume: '00000000-0000-0000-0000-000000000000' })` returns a `result` message with `subtype: 'error_during_execution'`, `num_turns: 0` and `errors: ['No conversation found with session ID: …']`, then the iterator throws `Claude Code returned an error result: No conversation found …`. The Claude adapter turns that into `native.session_lost` (fixture: `packages/runtime-claude/src/fixtures/resume-missing.json`).
 
 ### Claude Code behaviors observed live (2.1.318)
 

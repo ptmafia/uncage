@@ -3,8 +3,8 @@ import type { ExampleOptions } from './mock/fixtures.ts';
 
 /** Fixed ports so the examples' proxy can be pointed at the mock daemon. */
 export const PORTS = { daemon: 4793, control: 4794, defaultChat: 3100, headlessChat: 3101 } as const;
-/** The live stack (live-supervisor.ts): real `uncage serve` + nextjs-default-chat. */
-export const LIVE_PORTS = { daemon: 4795, control: 4796, app: 3102 } as const;
+/** The live stack (live-supervisor.ts): real `uncage serve` + both examples. */
+export const LIVE_PORTS = { daemon: 4795, control: 4796, app: 3102, headlessApp: 3103 } as const;
 
 const live = process.env.UNCAGE_LIVE === '1';
 const exampleEnv = { UNCAGE_URL: `http://127.0.0.1:${PORTS.daemon}`, UNCAGE_TOKEN: 'test-token' };
@@ -62,6 +62,7 @@ export default defineConfig<ExampleOptions>({
             LIVE_DAEMON_PORT: String(LIVE_PORTS.daemon),
             LIVE_CONTROL_PORT: String(LIVE_PORTS.control),
             LIVE_APP_PORT: String(LIVE_PORTS.app),
+            LIVE_HEADLESS_PORT: String(LIVE_PORTS.headlessApp),
           },
           reuseExistingServer: false,
           timeout: 120_000,

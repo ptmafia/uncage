@@ -1,6 +1,7 @@
 /**
  * Live golden path against REAL Claude Code: real `uncage serve` (live-supervisor.ts) on a tmp
- * copy of fixture-repo, driven through the nextjs-default-chat example in system Chrome.
+ * copy of fixture-repo, driven through the nextjs-default-chat example (and, for the golden path,
+ * react-headless-chat) in system Chrome.
  * Run with `UNCAGE_LIVE=1 pnpm e2e:live`. Assertions are on states, not on model text (except the
  * "42" continuity check). Model behaviour varies, so every run is driven by `drive()`, which
  * answers each approval card that appears until the run is terminal.
@@ -9,7 +10,7 @@ import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { expect, type Page } from '@playwright/test';
+import { expect, type Page, type Route } from '@playwright/test';
 import { LIVE_PORTS } from '../playwright.config.ts';
 import { chatFor, test, type Chat } from '../mock/fixtures.ts';
 
@@ -30,7 +31,7 @@ test.beforeAll(async () => {
   info = (await (await fetch(`http://127.0.0.1:${LIVE_PORTS.control}/info`)).json()) as Info;
 });
 
-const pendingCard = (chat: Chat) => chat.page.locator('section.uc-approval[data-state="pending"]').first();
+const pendingCard = (chat: Chat) => chat.approvalCard.and(chat.page.locator('[data-state="pending"]')).first();
 
 /** Approves (or denies) every approval card until the run is terminal; returns the cards' text. */
 async function drive(chat: Chat, decision: 'allow' | 'deny', timeout = RUN_TIMEOUT): Promise<{ state: string; cards: string[] }> {
@@ -155,6 +156,87 @@ test('context continuity: the next run remembers the previous one', async ({ pag
   await expect(chat.runStatus).not.toHaveAttribute('data-state', 'completed', { timeout: 30_000 });
   expect((await drive(chat, 'allow')).state).toBe('completed');
   await expect(chat.assistant.last()).toContainText('42');
+});
+
+/** A prompt that reliably needs one Bash approval and finishes quickly. */
+const NPM_TEST = '用 Bash 工具运行 `npm test`，然后用一句话告诉我结果';
+
+test('F5 while an approval is pending: the card is still pending after reload, and Allow completes the run', async ({ page }) => {
+  const chat = chatFor(page, 'default');
+  await chat.open();
+  await chat.send(NPM_TEST);
+  await expect(pendingCard(chat)).toBeVisible({ timeout: RUN_TIMEOUT });
+  await expect(pendingCard(chat)).toContainText('npm test');
+  await chat.sessionUrl();
+
+  await page.reload();
+  await expect(pendingCard(chat)).toBeVisible();
+  await expect(pendingCard(chat)).toContainText('npm test');
+  await expect(chat.userBubbles).toHaveCount(1);
+  await expect(chat.runStatus).toHaveAttribute('data-state', 'waiting_approval');
+
+  const { state } = await drive(chat, 'allow');
+  expect(state).toBe('completed');
+  await expect(chat.approvalLine.first()).toHaveAttribute('data-state', 'approved');
+  await expect(chat.alert).toHaveCount(0);
+});
+
+test('two tabs both click Allow: one 200, one 409, both converge to approved + completed', async ({ browser, page }) => {
+  const chat = chatFor(page, 'default');
+  await chat.open();
+  await chat.send(NPM_TEST);
+  await expect(pendingCard(chat)).toBeVisible({ timeout: RUN_TIMEOUT });
+  const url = await chat.sessionUrl();
+
+  const other = await browser.newContext();
+  try {
+    const page2 = await other.newPage();
+    const chat2 = chatFor(page2, 'default');
+    await page2.goto(url);
+    await expect(pendingCard(chat2)).toBeVisible();
+
+    // Hold both decision requests until both tabs have clicked, so they race at the daemon.
+    let release!: () => void;
+    const bothSent = new Promise<void>((resolve) => (release = resolve));
+    let arrived = 0;
+    const hold = async (route: Route) => {
+      if (++arrived === 2) release();
+      await bothSent;
+      await route.continue();
+    };
+    await page.route('**/api/uncage/approvals/*/decision', hold);
+    await page2.route('**/api/uncage/approvals/*/decision', hold);
+    const decision = (p: Page) => p.waitForResponse((r) => r.url().endsWith('/decision'));
+    const responses = Promise.all([decision(page), decision(page2)]);
+    await pendingCard(chat).getByRole('button', { name: '允许执行', exact: true }).click();
+    await pendingCard(chat2).getByRole('button', { name: '允许执行', exact: true }).click();
+    expect((await responses).map((r) => r.status()).sort()).toEqual([200, 409]);
+    await page.unrouteAll();
+    await page2.unrouteAll();
+
+    // Further approvals (if the model asks for more) are answered in the first tab.
+    expect((await drive(chat, 'allow')).state).toBe('completed');
+    for (const c of [chat, chat2]) {
+      await expect(c.approvalLine.first()).toHaveAttribute('data-state', 'approved');
+      await c.expectRunState('completed', { timeout: 30_000 });
+      await expect(c.alert).toHaveCount(0);
+    }
+  } finally {
+    await other.close();
+  }
+});
+
+test('headless example golden path: prompt → approval → Allow → completed', async ({ page }) => {
+  const chat = chatFor(page, 'headless');
+  await chat.open(`http://localhost:${LIVE_PORTS.headlessApp}/`);
+  await chat.send(NPM_TEST);
+
+  const { state, cards } = await drive(chat, 'allow');
+  expect(state).toBe('completed');
+  expect(cards.some((c) => c.includes('npm test')), `approval cards: ${cards.join(' | ')}`).toBe(true);
+  await expect(chat.approvalLine.first()).toHaveAttribute('data-state', 'approved');
+  await expect(chat.assistant.last()).not.toBeEmpty();
+  await expect(chat.alert).toHaveCount(0);
 });
 
 test('daemon auth: no token → 401, foreign Origin → 403 (daemon and proxy)', async () => {
