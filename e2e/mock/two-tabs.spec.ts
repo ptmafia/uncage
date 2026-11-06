@@ -26,8 +26,13 @@ test('two tabs approve', async ({ browser, page, chat, example }) => {
     await page.route('**/api/uncage/approvals/*/decision', hold);
     await page2.route('**/api/uncage/approvals/*/decision', hold);
 
+    const decision = (p: typeof page) => p.waitForResponse((r) => r.url().endsWith('/decision'));
+    const responses = Promise.all([decision(page), decision(page2)]);
     await chat.allow.click();
     await chat2.allow.click();
+    // One wins; the loser gets 409 approval_already_resolved, which the store treats as no error.
+    const statuses = (await responses).map((r) => r.status()).sort();
+    expect(statuses).toEqual([200, 409]);
 
     for (const c of [chat, chat2]) {
       await expect(c.approvalLine).toHaveAttribute('data-state', 'approved');

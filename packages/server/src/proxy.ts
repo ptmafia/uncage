@@ -64,6 +64,24 @@ function endOnUpstreamDrop(body: ReadableStream<Uint8Array>): ReadableStream<Uin
   });
 }
 
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * Same origin, or both loopback names for the same scheme and port: Next builds route-handler
+ * `req.url` with host `localhost` even when the browser is on `127.0.0.1`. A non-loopback Origin
+ * (e.g. a DNS-rebinding page on evil.com) must still match exactly.
+ */
+function sameOrigin(origin: string, url: URL): boolean {
+  if (origin === url.origin) return true;
+  let o: URL;
+  try {
+    o = new URL(origin);
+  } catch {
+    return false;
+  }
+  return o.protocol === url.protocol && o.port === url.port && LOOPBACK_HOSTS.has(o.hostname) && LOOPBACK_HOSTS.has(url.hostname);
+}
+
 const trimSlashes = (s: string): string => s.replace(/^\/+|\/+$/g, '');
 
 export function createUncageHandler(o: ProxyOptions = {}): UncageHandler {
@@ -88,7 +106,7 @@ export function createUncageHandler(o: ProxyOptions = {}): UncageHandler {
     // proxy enforces same-origin itself. Origin-less requests (server-side callers) proceed.
     const origin = req.headers.get('origin');
     const crossSiteFetch = req.method !== 'GET' && req.headers.get('sec-fetch-site') === 'cross-site';
-    if ((origin !== null && origin !== url.origin) || crossSiteFetch) return errorResponse('forbidden_origin');
+    if ((origin !== null && !sameOrigin(origin, url)) || crossSiteFetch) return errorResponse('forbidden_origin');
     if (!url.pathname.startsWith(`${basePath}/`)) return errorResponse('not_found');
     const endpoint = (o.endpoint ?? process.env.UNCAGE_URL ?? DEFAULT_ENDPOINT).replace(/\/+$/, '');
     const target = new URL(`${endpoint}/v1/${url.pathname.slice(basePath.length + 1)}${url.search}`);

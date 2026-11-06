@@ -6,14 +6,28 @@
  *   POST http://127.0.0.1:<CONTROL_PORT>/restart  SIGKILL the daemon, start it again, 200 when ready
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const port = Number(process.env.MOCK_PORT ?? 4793);
 const controlPort = Number(process.env.MOCK_CONTROL_PORT ?? 4794);
-const dataDir = mkdtempSync(join(tmpdir(), 'uncage-e2e-'));
+const TMP_PREFIX = 'uncage-e2e-';
+const STALE_MS = 60 * 60 * 1000;
+
+// Runs killed hard (e.g. Ctrl-C twice) cannot clean up; sweep their data dirs once they are stale.
+for (const name of readdirSync(tmpdir())) {
+  if (!name.startsWith(TMP_PREFIX)) continue;
+  const dir = join(tmpdir(), name);
+  try {
+    if (Date.now() - statSync(dir).mtimeMs > STALE_MS) rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // Raced with another sweep or not ours to remove: ignore.
+  }
+}
+
+const dataDir = mkdtempSync(join(tmpdir(), TMP_PREFIX));
 const serverScript = new URL('./mock-server.ts', import.meta.url).pathname;
 
 let child: ChildProcess | undefined;

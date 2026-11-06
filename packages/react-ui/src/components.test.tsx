@@ -227,7 +227,9 @@ describe('Composer', () => {
     const f = fakeClient();
     f.client.snapshot.mockImplementation(() => new Promise(() => {}));
     renderChat(f);
-    await act(async () => fireEvent.click(await screen.findByRole('button', { name: /Fix the build/ })));
+    // Find outside act(): findBy* toggles the act environment off while it polls.
+    const item = await screen.findByRole('button', { name: /Fix the build/ });
+    await act(async () => fireEvent.click(item));
     expect(textbox().disabled).toBe(true);
   });
 

@@ -44,7 +44,7 @@ export interface Chat {
   /** Error toasts inside the app (Next's own route announcer is also `role=alert`). */
   alert: Locator;
   /** Opens the empty chat and waits until the runtime list has loaded, so the first send counts. */
-  open(): Promise<void>;
+  open(url?: string): Promise<void>;
   send(prompt: string): Promise<void>;
   expectRunState(state: string, opts?: { timeout?: number }): Promise<void>;
   /** Waits until the page has put the active session into `?session=` and returns the URL. */
@@ -68,8 +68,8 @@ export function chatFor(page: Page, example: Example): Chat {
     deny: page.getByRole('button', { name: '拒绝', exact: true }),
     stop: page.getByRole('button', { name: '停止' }),
     alert: page.getByRole('main').getByRole('alert'),
-    async open() {
-      await page.goto('/');
+    async open(url = '/') {
+      await page.goto(url);
       await expect(page.locator(s.ready)).toBeVisible();
     },
     async send(prompt) {

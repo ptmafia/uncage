@@ -121,6 +121,20 @@ describe('createUncageHandler', () => {
     expect(seen.map((r) => r.url)).toEqual(['/v1/runs/run_1/cancel', '/v1/runs/run_1/cancel']);
   });
 
+  it('treats loopback names with the same scheme and port as one origin, nothing else', async () => {
+    const h = createUncageHandler({ endpoint, token: 'tok' });
+    const post = (origin: string) =>
+      h.POST(new Request('http://localhost:3000/api/uncage/runs/run_1/cancel', { method: 'POST', headers: { origin } }));
+    // Next builds req.url with host `localhost` while the browser is on 127.0.0.1.
+    expect((await post('http://127.0.0.1:3000')).status).toBe(200);
+    expect((await post('http://[::1]:3000')).status).toBe(200);
+    expect((await post('http://evil.com:3000')).status).toBe(403);
+    expect((await post('http://127.0.0.1:3001')).status).toBe(403);
+    expect((await post('https://127.0.0.1:3000')).status).toBe(403);
+    expect((await post('null')).status).toBe(403);
+    expect(seen).toHaveLength(2);
+  });
+
   it('forwards Last-Event-ID on GET', async () => {
     const h = createUncageHandler({ endpoint, token: 'tok', basePath: '/custom/' });
     await h.GET(new Request('http://app.local/custom/sessions/ses_1/events', { headers: { 'last-event-id': 'evt_0000000003' } }));

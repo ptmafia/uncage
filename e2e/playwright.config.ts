@@ -6,8 +6,8 @@ export const PORTS = { daemon: 4793, control: 4794, defaultChat: 3100, headlessC
 
 const live = process.env.UNCAGE_LIVE === '1';
 const exampleEnv = { UNCAGE_URL: `http://127.0.0.1:${PORTS.daemon}`, UNCAGE_TOKEN: 'test-token' };
-// The examples are browsed via `localhost`: Next builds route-handler `req.url` with host
-// `localhost`, and the proxy's same-origin check compares the browser Origin against it.
+// Next builds route-handler `req.url` with host `localhost`; loopback.spec.ts covers browsing
+// via 127.0.0.1 (the proxy treats loopback names on the same port as one origin).
 const nextStart = (dir: string, port: number) => ({
   command: `pnpm --dir ../examples/${dir} exec next start -p ${port}`,
   url: `http://localhost:${port}`,
@@ -54,6 +54,8 @@ export default defineConfig<ExampleOptions>({
           env: { MOCK_PORT: String(PORTS.daemon), MOCK_CONTROL_PORT: String(PORTS.control) },
           reuseExistingServer: false,
           timeout: 30_000,
+          // Playwright SIGKILLs web servers by default; SIGTERM lets the supervisor remove its tmp dir.
+          gracefulShutdown: { signal: 'SIGTERM', timeout: 5_000 },
         },
         nextStart('nextjs-default-chat', PORTS.defaultChat),
         nextStart('react-headless-chat', PORTS.headlessChat),
