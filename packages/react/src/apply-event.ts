@@ -14,6 +14,22 @@ const isTerminal = (state: Run['state']) => !ACTIVE_RUN_STATES.has(state);
 export const sameSettings = (a: SessionSettings, b: SessionSettings): boolean =>
   a.model === b.model && a.effort === b.effort && a.permissionMode === b.permissionMode;
 
+/**
+ * Sets the session (and its settings). A settings change while a run is active applies from the
+ * next run: it stays pending (`pendingSettingsRunId`) until that run ends, or until the settings
+ * return to the values the run started with (`pendingSettingsBase`, captured at the first change).
+ */
+export function withSessionSettings(s: SessionState, session: Session): SessionState {
+  const { pendingSettingsRunId: _id, pendingSettingsBase: _base, ...rest } = s;
+  void _id;
+  void _base;
+  const current = latestRun(s.runs);
+  if (current === undefined || isTerminal(current.state)) return { ...rest, session };
+  const base = s.pendingSettingsRunId === current.id && s.pendingSettingsBase ? s.pendingSettingsBase : s.session.settings;
+  if (sameSettings(base, session.settings)) return { ...rest, session };
+  return { ...rest, session, pendingSettingsRunId: current.id, pendingSettingsBase: base };
+}
+
 export function emptySessionState(session: Session): SessionState {
   return {
     session,
@@ -174,17 +190,10 @@ function reduce(s: SessionState, e: UncageEvent): SessionState {
   switch (e.type) {
     case 'session.created':
       return { ...s, session: e.payload.session };
-    case 'session.updated': {
+    case 'session.updated':
       // A settings PATCH (no runId) during an active run applies from the next run. A run-scoped
       // update (e.g. `setting_reset` at run start) already applies to that run.
-      const current = latestRun(s.runs);
-      const pending =
-        e.runId === undefined &&
-        current !== undefined &&
-        !isTerminal(current.state) &&
-        !sameSettings(s.session.settings, e.payload.session.settings);
-      return { ...s, session: e.payload.session, ...(pending ? { pendingSettingsRunId: current.id } : {}) };
-    }
+      return e.runId === undefined ? withSessionSettings(s, e.payload.session) : { ...s, session: e.payload.session };
 
     case 'run.started':
       return upsertRun(s, e.payload.run);

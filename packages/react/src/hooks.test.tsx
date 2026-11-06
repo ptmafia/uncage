@@ -130,6 +130,11 @@ describe('composer hooks', () => {
     await act(async () => void (await result.current.settings.update({ effort: 'high' })));
     expect(result.current.settings.settings.effort).toBe('high');
     expect(result.current.settings.pendingForNextRun).toBe(true);
+    // Back to the run-start values: nothing is pending any more.
+    await act(async () => void (await result.current.settings.update({ effort: 'low' })));
+    expect(result.current.settings.pendingForNextRun).toBe(false);
+    await act(async () => void (await result.current.settings.update({ effort: 'high' })));
+    expect(result.current.settings.pendingForNextRun).toBe(true);
     const ev = eventFactory();
     act(() => f.emit(ev('run.completed', { runId: 'run_1', durationMs: 1 })));
     expect(result.current.settings.pendingForNextRun).toBe(false);

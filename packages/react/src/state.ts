@@ -62,6 +62,8 @@ export interface SessionState {
    * run). Settings are "pending for the next run" while this run is still active.
    */
   pendingSettingsRunId?: string;
+  /** Internal: the settings `pendingSettingsRunId` started with; reverting to them clears pending. */
+  pendingSettingsBase?: SessionSettings;
   /**
    * The most recent `system.warning` (e.g. `setting_reset`: a stored setting the runtime no longer
    * offers was dropped when `runId` started). `runId` is the run it was raised for, else the latest

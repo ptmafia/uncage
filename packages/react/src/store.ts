@@ -19,6 +19,7 @@ import {
   settleRun,
   upsertApproval,
   upsertRun,
+  withSessionSettings,
 } from './apply-event.js';
 import {
   ACTIVE_RUN_STATES,
@@ -556,16 +557,9 @@ export function createUncageStore(client: UncageClient): UncageStore {
       try {
         const updated = await client.updateSettings(sessionId, patch);
         if (gen !== generation) return true;
-        updateActive(gen, (s) => {
-          if (sameSettings(s.session.settings, updated.settings)) return s;
-          const current = latestRun(s.runs);
-          const running = current !== undefined && ACTIVE_RUN_STATES.has(current.state);
-          return {
-            ...s,
-            session: { ...s.session, settings: updated.settings },
-            ...(running ? { pendingSettingsRunId: current.id } : {}),
-          };
-        });
+        updateActive(gen, (s) =>
+          sameSettings(s.session.settings, updated.settings) ? s : withSessionSettings(s, { ...s.session, settings: updated.settings }),
+        );
         const known = state.sessions.find((s) => s.id === sessionId);
         if (known) set({ sessions: rememberSession({ ...known, settings: updated.settings }) });
         return true;

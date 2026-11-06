@@ -312,6 +312,16 @@ describe('composer: settings and attachments', () => {
     f.emit({ ...ev('session.updated', { session: session({ capabilities: caps, settings: { permissionMode: 'plan' } }) }), runId: undefined } as UncageEvent);
     expect(store.getState().active!.session.settings.permissionMode).toBe('plan');
     expect(store.getState().active!.pendingSettingsRunId).toBe('run_1');
+    const patch = (settings: SessionSettings) =>
+      f.emit({ ...ev('session.updated', { session: session({ capabilities: caps, settings }) }), runId: undefined } as UncageEvent);
+    // A second change keeps the run-start values as the baseline...
+    patch({ permissionMode: 'acceptEdits' });
+    expect(store.getState().active!.pendingSettingsRunId).toBe('run_1');
+    // ...so reverting to them (from either tab) clears the pending state.
+    patch({ permissionMode: 'default' });
+    expect(store.getState().active!.pendingSettingsRunId).toBeUndefined();
+    patch({ permissionMode: 'plan' });
+    expect(store.getState().active!.pendingSettingsRunId).toBe('run_1');
   });
 
   it('a send blocked by a failed upload records a tagged invalid_request (for localization)', async () => {
