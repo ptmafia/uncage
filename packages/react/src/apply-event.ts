@@ -50,6 +50,21 @@ export function mergeSnapshot(s: SessionState, snap: SessionSnapshot): SessionSt
   return next;
 }
 
+/** Merges only a snapshot's pending approvals (version-guarded); runs and sequence untouched. */
+export function mergeSnapshotApprovals(s: SessionState, snap: SessionSnapshot): SessionState {
+  return snap.pendingApprovals.reduce(upsertApproval, s);
+}
+
+/**
+ * Applies a Run returned by the API (e.g. from cancel). Never regresses a terminal run; if the
+ * resulting run is terminal, its streaming messages and running tools are settled.
+ */
+export function settleRun(s: SessionState, run: Run): SessionState {
+  const next = upsertRun(s, run);
+  const merged = next.runs[run.id]!;
+  return isTerminal(merged.state) ? finishRun(next, run.id, merged.state, merged.endedAt) : next;
+}
+
 /**
  * Adds or updates a run and its user prompt message (`user_<runId>`). Unless `authoritative`,
  * a terminal run is never moved back to a non-terminal state (replayed or late events).

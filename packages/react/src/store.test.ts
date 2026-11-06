@@ -67,7 +67,79 @@ describe('createUncageStore', () => {
     expect(f.client.snapshot).toHaveBeenCalledTimes(2);
     expect(store.getState().pendingDecisions).toEqual({});
     expect(store.getState().lastError).toBeUndefined();
-    expect(store.getState().active!.runs.run_1!.state).toBe('running');
+    // The live stream owns runs: the snapshot reload does not overwrite them. The approval stays
+    // `pending` locally until the stream delivers `approval.resolved`.
+    expect(store.getState().active!.runs.run_1!.state).toBe('waiting_approval');
+    expect(store.getState().active!.approvals.apr_1!.state).toBe('pending');
+  });
+
+  it('decide 409 with a live stream: snapshot ahead does not drop events, snapshot behind does not regress', async () => {
+    let snap = snapshot({ runs: [run({ state: 'waiting_approval' })], pendingApprovals: [approval()], lastSequence: 2 });
+    const f = fakeClient(() => snap);
+    const store = createUncageStore(f.client);
+    await store.actions.selectSession('ses_1');
+    f.state('live');
+    const ev = eventFactory();
+    f.emit(ev('run.started', { run: run({ state: 'running' }) }));
+    f.emit(ev('approval.requested', { approval: approval() }));
+
+    // Snapshot is ahead of the stream (sequence 6) and claims the run is still running.
+    snap = snapshot({ runs: [run({ state: 'running' })], pendingApprovals: [], lastSequence: 6 });
+    f.client.decide.mockRejectedValueOnce(clientError('approval_already_resolved', 409));
+    await store.actions.decide('apr_1', 'allow');
+    expect(store.getState().active!.lastSequence).toBe(2);
+    expect(store.getState().active!.approvals.apr_1!.state).toBe('pending');
+
+    f.emit(ev('approval.resolved', { approval: approval({ state: 'approved', decision: 'allow', version: 3 }) }));
+    f.emit(ev('tool.started', { toolId: 'tool_1', name: 'Bash', title: 'ls', category: 'shell' }));
+    f.emit(ev('tool.completed', { toolId: 'tool_1', output: 'ok' }));
+    f.emit(ev('run.completed', { runId: 'run_1', durationMs: 1 }));
+    let active = store.getState().active!;
+    expect(active.lastSequence).toBe(6);
+    expect(active.approvals.apr_1!.state).toBe('approved');
+    expect(active.tools.tool_1!.status).toBe('completed');
+    expect(active.runs.run_1!.state).toBe('completed');
+
+    // Snapshot behind (run still running) after the stream completed the run: no regression.
+    f.client.decide.mockRejectedValueOnce(clientError('approval_already_resolved', 409));
+    await store.actions.decide('apr_1', 'deny');
+    active = store.getState().active!;
+    expect(active.runs.run_1!.state).toBe('completed');
+    expect(active.lastSequence).toBe(6);
+    await store.actions.sendPrompt('next');
+    expect(f.client.startRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancelRun returning a terminal run settles messages and tools even with the stream down', async () => {
+    const f = fakeClient();
+    const store = createUncageStore(f.client);
+    await store.actions.selectSession('ses_1');
+    const ev = eventFactory();
+    f.emit(ev('run.started', { run: run({ state: 'running' }) }));
+    f.emit(ev('message.started', { messageId: 'm1', role: 'assistant' }));
+    f.emit(ev('tool.started', { toolId: 't1', name: 'Bash', title: 'ls', category: 'shell' }));
+    f.state('reconnecting');
+    await store.actions.cancelRun();
+    const active = store.getState().active!;
+    expect(f.client.cancelRun).toHaveBeenCalledWith('run_1');
+    expect(active.runs.run_1!.state).toBe('cancelled');
+    expect(active.messages.m1!.streaming).toBe(false);
+    expect(active.tools.t1!.status).toBe('failed');
+  });
+
+  it('dispose closes the subscription and ignores late events; selectSession resumes', async () => {
+    const f = fakeClient();
+    const store = createUncageStore(f.client);
+    await store.actions.selectSession('ses_1');
+    const ev = eventFactory();
+    const late = f.subs[0]!;
+    store.dispose();
+    expect(late.closed).toBe(true);
+    late.onEvent(ev('run.started', { run: run() }));
+    expect(store.getState().active!.timeline).toEqual([]);
+    expect(store.getState().activeSessionId).toBe('ses_1');
+    await store.actions.selectSession('ses_1');
+    expect(f.subs.filter((s) => !s.closed)).toHaveLength(1);
   });
 
   it('decide 410 marks the approval expired', async () => {

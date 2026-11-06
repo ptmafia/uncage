@@ -1,4 +1,5 @@
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode, useEffect } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { useApprovals, useMessages, useRun, useSession, useSessions } from './hooks.js';
 import { UncageProvider } from './provider.js';
@@ -65,5 +66,30 @@ describe('hooks', () => {
     });
     expect(screen.getByTestId('state').textContent).toBe('completed:false:live:0');
     expect(screen.getAllByRole('listitem')).toHaveLength(2);
+  });
+
+  it('provider survives StrictMode remount and disposes the subscription on unmount', async () => {
+    const f = fakeClient();
+    function AutoSelect() {
+      const { select } = useSessions();
+      useEffect(() => void select('ses_1'), [select]);
+      return null;
+    }
+    const view = render(
+      <StrictMode>
+        <UncageProvider client={f.client}>
+          <AutoSelect />
+          <Chat />
+        </UncageProvider>
+      </StrictMode>,
+    );
+    await waitFor(() => expect(f.subs.filter((s) => !s.closed)).toHaveLength(1));
+    const ev = eventFactory();
+    act(() => {
+      f.emit(ev('run.started', { run: run({ prompt: 'restored' }) }));
+    });
+    expect(screen.getByText('user: restored')).toBeTruthy();
+    view.unmount();
+    expect(f.subs.every((s) => s.closed)).toBe(true);
   });
 });

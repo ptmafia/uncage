@@ -1,6 +1,14 @@
 import { UncageClientError, type UncageClient } from '@uncage/client';
 import type { CreateSessionBody, SessionSnapshot } from '@uncage/protocol';
-import { applyEvent, initialSessionState, mergeSnapshot, upsertApproval, upsertRun } from './apply-event.js';
+import {
+  applyEvent,
+  initialSessionState,
+  mergeSnapshot,
+  mergeSnapshotApprovals,
+  settleRun,
+  upsertApproval,
+  upsertRun,
+} from './apply-event.js';
 import { ACTIVE_RUN_STATES, latestRun, type SessionState, type StoreState } from './state.js';
 
 export interface UncageStore {
@@ -16,6 +24,11 @@ export interface UncageStore {
     decide(approvalId: string, d: 'allow' | 'deny', reason?: string): Promise<void>;
     dismissError(): void;
   };
+  /**
+   * Closes the live subscription and drops in-flight async results. State (including
+   * `activeSessionId`) is kept, so `selectSession(activeSessionId)` resumes.
+   */
+  dispose(): void;
 }
 
 const toClientError = (err: unknown): UncageClientError =>
@@ -73,11 +86,16 @@ export function createUncageStore(client: UncageClient): UncageStore {
     return sessions;
   };
 
-  const reloadSnapshot = async (gen: number, sessionId: string) => {
+  /**
+   * `authoritative` (only when the stream is dead): snapshot runs win and `lastSequence` jumps to
+   * the snapshot's. Otherwise the live stream owns runs and sequences, and only pending approvals
+   * are merged (version-guarded), so no event between local and snapshot sequence is dropped.
+   */
+  const reloadSnapshot = async (gen: number, sessionId: string, authoritative: boolean) => {
     const snap = await client.snapshot(sessionId);
     if (gen !== generation) return undefined;
     set({ sessions: rememberSession(snap) });
-    updateActive(gen, (s) => mergeSnapshot(s, snap));
+    updateActive(gen, (s) => (authoritative ? mergeSnapshot(s, snap) : mergeSnapshotApprovals(s, snap)));
     return snap;
   };
 
@@ -91,7 +109,7 @@ export function createUncageStore(client: UncageClient): UncageStore {
         if (err.code !== 'event_replay_unavailable') return fail(err);
         void (async () => {
           try {
-            const snap = await reloadSnapshot(gen, sessionId);
+            const snap = await reloadSnapshot(gen, sessionId, true);
             if (!snap) return;
             updateActive(gen, (s) => ({ ...s, replayIncomplete: true }));
             listen(gen, sessionId, snap.lastSequence);
@@ -176,7 +194,7 @@ export function createUncageStore(client: UncageClient): UncageStore {
       if (!current || !ACTIVE_RUN_STATES.has(current.state)) return;
       try {
         const run = await client.cancelRun(current.id);
-        updateActive(gen, (s) => upsertRun(s, run));
+        updateActive(gen, (s) => settleRun(s, run));
       } catch (err) {
         if (gen === generation) fail(err);
       }
@@ -197,7 +215,8 @@ export function createUncageStore(client: UncageClient): UncageStore {
       } catch (err) {
         const code = err instanceof UncageClientError ? err.code : undefined;
         if (code === 'approval_already_resolved' || code === 'approval_expired') {
-          // Someone else (or the TTL) resolved it: converge on server state instead of erroring.
+          // Someone else (or the TTL) resolved it: not an error. The live stream delivers the
+          // final `approval.resolved`; until then a 409'd approval stays `pending` locally.
           if (code === 'approval_expired') {
             updateActive(gen, (s) => {
               const a = s.approvals[approvalId];
@@ -205,7 +224,7 @@ export function createUncageStore(client: UncageClient): UncageStore {
             });
           }
           try {
-            await reloadSnapshot(gen, sessionId);
+            await reloadSnapshot(gen, sessionId, false);
           } catch (e) {
             if (gen === generation) fail(e);
           }
@@ -227,6 +246,13 @@ export function createUncageStore(client: UncageClient): UncageStore {
   };
 
   return {
+    dispose() {
+      generation++;
+      unsubscribe?.();
+      unsubscribe = undefined;
+      sending = false;
+      if (Object.keys(state.pendingDecisions).length > 0) set({ pendingDecisions: {} });
+    },
     getState: () => state,
     subscribe(fn) {
       listeners.add(fn);
