@@ -23,7 +23,7 @@
  * speak exactly these shapes.
  */
 
-/** Uncage's defaults for new and resumed threads. Never 'never' / 'danger-full-access'. */
+/** Uncage's defaults for new and resumed threads. 'never' / 'danger-full-access' only when allowBypass. */
 export const APPROVAL_POLICY = 'on-request';
 export const SANDBOX = 'workspace-write';
 /** The bypass pair, only ever sent when the server runs with `allowBypass`. */
@@ -121,22 +121,19 @@ export interface TurnStartParams {
  * Model (v2/Model.ts, subset) `{id, model, displayName, description, hidden, isDefault, ...}`.
  */
 export interface ModelListParams {
+  cursor?: string | null;
+  /** Explicit page size (`limit?: number | null` in the schema); results are followed via `nextCursor`. */
   limit?: number;
 }
+/** `model/list` is followed for at most this many pages of {@link MODEL_LIST_LIMIT} models. */
+export const MODEL_LIST_MAX_PAGES = 10;
+export const MODEL_LIST_LIMIT = 100;
 export interface ModelListResult {
   data: Array<{ id: string; model: string; displayName: string; description: string; hidden: boolean }>;
   nextCursor: string | null;
 }
 /** Efforts Uncage offers; each is a valid ReasoningEffort string on the wire. */
 export const EFFORTS = ['low', 'medium', 'high'] as const;
-/**
- * Permission modes with a faithful equivalent in the schema. `acceptEdits`, `plan` and `auto` have none
- * (AskForApproval has no "accept edits only" or plan variant), so they are not offered.
- */
-export const PERMISSION_POLICIES = {
-  default: { approvalPolicy: APPROVAL_POLICY, sandbox: 'workspace-write' },
-  bypassPermissions: { approvalPolicy: BYPASS_APPROVAL_POLICY, sandbox: 'danger-full-access' },
-} as const;
 /** [S] TurnStatus. */
 export type TurnStatus = 'completed' | 'interrupted' | 'failed' | 'inProgress';
 /** [S] TurnError (subset). `codexErrorInfo` is a string or an object variant. */

@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { fakeCodexPath } from '@uncage/testkit';
 import { afterEach, describe, expect, it } from 'vitest';
 import { JsonRpcPeer } from './jsonrpc.js';
-import { CLIENT_REQUEST, INITIALIZED, NOTIFY, REQUEST, type ThreadResult, type TurnStartResult } from './protocol.js';
+import { CLIENT_REQUEST, INITIALIZED, NOTIFY, REQUEST, type ModelListResult, type ThreadResult, type TurnStartResult } from './protocol.js';
 
 // The fake (in @uncage/testkit) cannot import protocol.ts; this guards the two against drifting apart.
 const peers: JsonRpcPeer[] = [];
@@ -32,7 +32,9 @@ describe('fake app-server speaks protocol.ts', () => {
     await peer.request(CLIENT_REQUEST.initialize, { clientInfo: { name: 'uncage', title: 'Uncage', version: '0.0.0' } });
     peer.notify(INITIALIZED, {});
     expect(await peer.request(CLIENT_REQUEST.accountRead, { refreshToken: false })).toHaveProperty('requiresOpenaiAuth');
-    expect(await peer.request(CLIENT_REQUEST.modelList, {})).toHaveProperty('data');
+    const models = await peer.request<ModelListResult>(CLIENT_REQUEST.modelList, {});
+    expect(models.data[0]).toEqual(expect.objectContaining({ model: expect.any(String), displayName: expect.any(String), hidden: expect.any(Boolean) }));
+    expect(models).toHaveProperty('nextCursor');
     const { thread } = await peer.request<ThreadResult>(CLIENT_REQUEST.threadStart, { cwd: '/tmp' });
     await peer.request(CLIENT_REQUEST.threadResume, { threadId: thread.id });
 

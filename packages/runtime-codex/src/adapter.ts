@@ -16,6 +16,8 @@ import {
   BYPASS_APPROVAL_POLICY,
   CLIENT_REQUEST,
   EFFORTS,
+  MODEL_LIST_LIMIT,
+  MODEL_LIST_MAX_PAGES,
   INITIALIZED,
   NOTIFY,
   type ModelListParams,
@@ -349,7 +351,15 @@ export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
     async refreshCapabilities() {
       try {
         const conn = await connect();
-        const { data } = await conn.peer.request<ModelListResult>(CLIENT_REQUEST.modelList, {} satisfies ModelListParams);
+        const data: ModelListResult['data'] = [];
+        let cursor: string | null = null;
+        for (let page = 0; page < MODEL_LIST_MAX_PAGES; page++) {
+          const params: ModelListParams = { limit: MODEL_LIST_LIMIT, ...(cursor ? { cursor } : {}) };
+          const res: ModelListResult = await conn.peer.request<ModelListResult>(CLIENT_REQUEST.modelList, params);
+          data.push(...res.data);
+          cursor = res.nextCursor;
+          if (!cursor) break;
+        }
         const listed = data
           .filter((m) => !m.hidden)
           .map((m) => ({ id: m.model, label: m.displayName || m.model, ...(m.description ? { description: m.description } : {}) }));

@@ -66,7 +66,8 @@ const sleep = (ms: number) =>
 const runIdemScope = (sessionId: string) => `run:${sessionId}`;
 /**
  * Drops stored settings the runtime no longer offers: `model`/`effort` fall back to the runtime
- * default (undefined), `permissionMode` to `default`. `reset` names the settings that changed.
+ * default (undefined), `permissionMode` to `default`. A model list of at most one entry is the fallback
+ * (the real list is unknown), so a stored `model` is kept then. `reset` names the settings that changed.
  */
 function effectiveSettings(
   current: SessionSettings,
@@ -74,7 +75,7 @@ function effectiveSettings(
 ): { settings: SessionSettings; reset: string[] } {
   const settings: SessionSettings = { ...current };
   const reset: string[] = [];
-  if (settings.model !== undefined && caps.models.length > 0 && !caps.models.some((m) => m.id === settings.model)) {
+  if (settings.model !== undefined && caps.models.length > 1 && !caps.models.some((m) => m.id === settings.model)) {
     delete settings.model;
     reset.push('model');
   }

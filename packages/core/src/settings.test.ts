@@ -219,7 +219,7 @@ describe('session settings', () => {
     await u1.sessions.updateSettings(s.id, { model: 'opus', effort: 'high', permissionMode: 'plan' });
     await u1.close();
 
-    const adapter = fake([{ text: 'ok' }], { ...RICH, models: [{ id: 'sonnet', label: 'Sonnet' }], efforts: ['low'] });
+    const adapter = fake([{ text: 'ok' }], { ...RICH, models: [{ id: 'default', label: 'Default' }, { id: 'sonnet', label: 'Sonnet' }], efforts: ['low'] });
     const u2 = await make([adapter], { dataDir });
     const s2 = await u2.sessions.get(s.id);
     await s2.startRun({ prompt: 'p' });
@@ -228,5 +228,23 @@ describe('session settings', () => {
     const warning = events.find((e) => e.type === 'system.warning');
     expect(warning?.type === 'system.warning' && warning.payload.code).toBe('setting_reset');
     expect((await s2.get()).settings).toEqual({ permissionMode: 'plan' });
+  });
+
+  it('startRun keeps a stored model when the runtime only has the fallback list (refresh failed)', async () => {
+    const dataDir = join(dir, 'data');
+    const opts = { dataDir, workspace: { allowedRoots: [dir], default: dir } };
+    const u1 = await createUncage({ adapters: [fake([], { ...RICH, models: [{ id: 'default', label: 'Default' }, { id: 'x', label: 'X' }] })], ...opts });
+    const s = await u1.sessions.create({ runtime: 'fake' });
+    await u1.sessions.updateSettings(s.id, { model: 'x', permissionMode: 'default' });
+    await u1.close();
+
+    const adapter = fake([{ text: 'ok' }], { ...RICH, models: [{ id: 'default', label: 'Default' }] });
+    const failing = { ...adapter, refreshCapabilities: () => Promise.reject(new Error('probe failed')) };
+    const u2 = await make([failing as typeof adapter], { dataDir });
+    const s2 = await u2.sessions.get(s.id);
+    await s2.startRun({ prompt: 'p' });
+    const events = await eventsUntil(s2, isTerminal);
+    expect(adapter.calls[0]?.settings.model).toBe('x');
+    expect(events.some((e) => e.type === 'system.warning')).toBe(false);
   });
 });
