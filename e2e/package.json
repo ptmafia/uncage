@@ -15,6 +15,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.65.0",
+    "@uncage/cli": "workspace:*",
     "@uncage/core": "workspace:*",
     "@uncage/protocol": "workspace:*",
     "@uncage/server": "workspace:*",
