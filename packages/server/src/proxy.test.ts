@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -11,6 +12,7 @@ interface Seen {
   url?: string;
   headers: IncomingHttpHeaders;
   body: string;
+  raw: Buffer;
 }
 
 let upstream: Server;
@@ -32,7 +34,8 @@ beforeEach(async () => {
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => chunks.push(c));
     req.on('end', () => {
-      seen.push({ method: req.method, url: req.url, headers: req.headers, body: Buffer.concat(chunks).toString() });
+      const raw = Buffer.concat(chunks);
+      seen.push({ method: req.method, url: req.url, headers: req.headers, body: raw.toString(), raw });
       respond(res);
     });
   });
@@ -140,6 +143,94 @@ describe('createUncageHandler', () => {
     expect((await post('https://127.0.0.1:3000')).status).toBe(403);
     expect((await post('null')).status).toBe(403);
     expect(seen).toHaveLength(2);
+  });
+
+  it('PATCH forwarded', async () => {
+    const h = createUncageHandler({ endpoint, token: 'tok' });
+    expect(typeof h.PATCH).toBe('function');
+    const res = await h.PATCH(
+      new Request('http://localhost:3000/api/uncage/sessions/ses_1/settings', {
+        method: 'PATCH',
+        headers: { origin: 'http://localhost:3000', 'content-type': 'application/json' },
+        body: JSON.stringify({ permissionMode: 'plan' }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(seen[0]).toMatchObject({ method: 'PATCH', url: '/v1/sessions/ses_1/settings', body: '{"permissionMode":"plan"}' });
+    expect(seen[0]?.headers.authorization).toBe('Bearer tok');
+  });
+
+  it('cross-origin PATCH → 403, not forwarded', async () => {
+    const h = createUncageHandler({ endpoint, token: 'tok' });
+    const res = await h.PATCH(
+      new Request('http://localhost:3000/api/uncage/sessions/ses_1/settings', {
+        method: 'PATCH',
+        headers: { origin: 'https://evil.example', 'content-type': 'application/json' },
+        body: '{"permissionMode":"bypassPermissions"}',
+      }),
+    );
+    expect(res.status).toBe(403);
+    expect(seen).toEqual([]);
+  });
+
+  it('binary body forwarded byte-identical (random 1 MB buffer sha256 equal)', async () => {
+    const h = createUncageHandler({ endpoint, token: 'tok' });
+    const bytes = randomBytes(1024 * 1024);
+    // Deliver the body as a stream of uneven chunks, as a browser upload would arrive.
+    let offset = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (offset >= bytes.length) return controller.close();
+        const n = Math.min(65_537, bytes.length - offset);
+        controller.enqueue(new Uint8Array(bytes.subarray(offset, offset + n)));
+        offset += n;
+      },
+    });
+    const res = await h.POST(
+      new Request('http://localhost:3000/api/uncage/sessions/ses_1/attachments', {
+        method: 'POST',
+        headers: { 'content-type': 'image/png', 'x-filename': encodeURIComponent('设计稿.png') },
+        body,
+        duplex: 'half',
+      } as RequestInit),
+    );
+    expect(res.status).toBe(200);
+    const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
+    expect(seen[0]?.raw.length).toBe(bytes.length);
+    expect(sha(seen[0]?.raw ?? Buffer.alloc(0))).toBe(sha(bytes));
+  });
+
+  it('X-Filename forwarded', async () => {
+    const h = createUncageHandler({ endpoint, token: 'tok' });
+    const name = encodeURIComponent('设计稿 v2.png');
+    await h.POST(
+      new Request('http://localhost:3000/api/uncage/sessions/ses_1/attachments', {
+        method: 'POST',
+        headers: { 'content-type': 'image/png', 'x-filename': name },
+        body: new Uint8Array([1, 2, 3]),
+      }),
+    );
+    expect(seen[0]?.headers['x-filename']).toBe(name);
+    expect(seen[0]?.headers['content-type']).toBe('image/png');
+  });
+
+  it('passes binary download responses and their headers through', async () => {
+    const bytes = randomBytes(256 * 1024);
+    respond = (res) => {
+      res.writeHead(200, {
+        'content-type': 'image/png',
+        'content-disposition': "inline; filename=\"_.png\"; filename*=UTF-8''%E8%AE%BE.png",
+        'x-content-type-options': 'nosniff',
+        'cache-control': 'private, max-age=31536000, immutable',
+      });
+      res.end(bytes);
+    };
+    const h = createUncageHandler({ endpoint, token: 'tok' });
+    const res = await h.GET(new Request('http://localhost:3000/api/uncage/attachments/att_1'));
+    expect(Buffer.from(await res.arrayBuffer()).equals(bytes)).toBe(true);
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(res.headers.get('cache-control')).toBe('private, max-age=31536000, immutable');
+    expect(res.headers.get('content-disposition')).toMatch(/^inline;/);
   });
 
   it('forwards Last-Event-ID on GET', async () => {

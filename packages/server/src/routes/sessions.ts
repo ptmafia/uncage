@@ -1,5 +1,11 @@
 import { UncageError } from '@uncage/core';
-import { CreateSessionBodySchema, parseEventId, StartRunBodySchema, type UncageEvent } from '@uncage/protocol';
+import {
+  CreateSessionBodySchema,
+  parseEventId,
+  StartRunBodySchema,
+  UpdateSessionSettingsBodySchema,
+  type UncageEvent,
+} from '@uncage/protocol';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { idempotencyKey, nonNegativeInt, parse, type RouteContext } from '../context.js';
 import { streamEvents } from '../sse.js';
@@ -37,6 +43,10 @@ export function sessionRoutes(app: FastifyInstance, ctx: RouteContext): void {
   });
 
   app.get<IdParams>('/v1/sessions/:id', async (request) => (await uncage.sessions.get(request.params.id)).snapshot());
+
+  app.patch<IdParams>('/v1/sessions/:id/settings', (request) =>
+    uncage.sessions.updateSettings(request.params.id, parse(UpdateSessionSettingsBodySchema, request.body)),
+  );
 
   app.post<IdParams>('/v1/sessions/:id/runs', async (request, reply) => {
     const key = idempotencyKey(request);

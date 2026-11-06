@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 export interface UncageConfig {
   server: { port: number; eventRetentionDays: number };
-  security: { allowedOrigins: string[]; approvalTtlMs: number };
+  security: { allowedOrigins: string[]; approvalTtlMs: number; allowBypass: boolean };
   workspace: { allowedRoots: string[]; default: string };
   runtimes: { claude: { enabled: boolean }; codex: { enabled: boolean; command?: string[] } };
 }
@@ -27,9 +27,11 @@ export const ConfigSchema = z
       .object({
         allowedOrigins: z.array(z.string()).default([]),
         approvalTtlMs: z.number().int().positive().default(600_000),
+        /** Enables the `bypassPermissions` permission mode. */
+        allowBypass: z.boolean().default(false),
       })
       .strict()
-      .default({ allowedOrigins: [], approvalTtlMs: 600_000 }),
+      .default({ allowedOrigins: [], approvalTtlMs: 600_000, allowBypass: false }),
     workspace: z
       .object({
         allowedRoots: z.array(z.string()).min(1).optional(),
@@ -61,7 +63,10 @@ function formatIssues(file: string, err: z.ZodError): string {
   return `Invalid ${file}:\n${lines.join('\n')}`;
 }
 
-/** Loads `./uncage.config.yaml` (optional), applies defaults, then env overrides (`UNCAGE_PORT`). */
+/**
+ * Loads `./uncage.config.yaml` (optional), applies defaults, then env overrides (`UNCAGE_PORT`;
+ * `UNCAGE_ALLOW_BYPASS=1` turns `security.allowBypass` on).
+ */
 export async function loadConfig(cwd: string, env: NodeJS.ProcessEnv): Promise<UncageConfig> {
   const path = join(cwd, CONFIG_FILE);
   let raw: unknown = {};
@@ -86,7 +91,7 @@ export async function loadConfig(cwd: string, env: NodeJS.ProcessEnv): Promise<U
 
   return {
     server: { port, eventRetentionDays: c.server.eventRetentionDays },
-    security: c.security,
+    security: { ...c.security, allowBypass: c.security.allowBypass || env.UNCAGE_ALLOW_BYPASS === '1' },
     workspace: {
       allowedRoots: c.workspace.allowedRoots ?? [cwd],
       default: c.workspace.default ?? c.workspace.allowedRoots?.[0] ?? cwd,

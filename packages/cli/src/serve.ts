@@ -27,6 +27,8 @@ export function createLogger(env: NodeJS.ProcessEnv = process.env, destination?:
 }
 
 export function buildAdapters(config: UncageConfig): RuntimeAdapter[] {
+  // TODO(composer Tasks 4/5): pass `allowBypass: config.security.allowBypass` into claudeAdapter /
+  // codexAdapter once their options accept it.
   const adapters: RuntimeAdapter[] = [];
   if (config.runtimes.claude.enabled) adapters.push(claudeAdapter());
   if (config.runtimes.codex.enabled) {
@@ -42,9 +44,15 @@ export function applyWorkspaceFlag(config: UncageConfig, dir: string, cwd: strin
   return { ...config, workspace: { default: abs, allowedRoots: zeroConfigRoots ? [abs] : config.workspace.allowedRoots } };
 }
 
-export function formatBanner(url: string, workspace: string, runtimes: Array<{ id: string; ok: boolean; reason?: string }>): string {
+export function formatBanner(
+  url: string,
+  workspace: string,
+  runtimes: Array<{ id: string; ok: boolean; reason?: string }>,
+  opts: { allowBypass?: boolean } = {},
+): string {
   const rt = runtimes.map((r) => `${r.id} ${r.ok ? '✓' : `✗${r.reason ? ` (${r.reason})` : ''}`}`).join(', ');
-  return `Uncage listening on ${url} · workspace ${workspace} · runtimes: ${rt || 'none'}`;
+  const banner = `Uncage listening on ${url} · workspace ${workspace} · runtimes: ${rt || 'none'}`;
+  return opts.allowBypass ? `${banner}\n⚠ bypassPermissions enabled` : banner;
 }
 
 export interface ServeOptions {
@@ -71,6 +79,7 @@ export async function serve(o: ServeOptions): Promise<void> {
     workspace: config.workspace,
     approvals: { ttlMs: config.security.approvalTtlMs },
     eventRetentionDays: config.server.eventRetentionDays,
+    security: { allowBypass: config.security.allowBypass },
     logger,
   });
   const server = await createUncageServer({
@@ -101,7 +110,7 @@ export async function serve(o: ServeOptions): Promise<void> {
       return { id: a.id, ok: p.status === 'available', reason: p.status === 'not_installed' ? 'not installed' : p.status };
     }),
   );
-  out(formatBanner(url, config.workspace.default, runtimes));
+  out(formatBanner(url, config.workspace.default, runtimes, { allowBypass: config.security.allowBypass }));
   out(`Token file: ${path}`);
 
   let stopping = false;

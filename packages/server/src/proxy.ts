@@ -3,7 +3,7 @@
  * fastify or @uncage/core so apps can mount it without pulling in the daemon.
  *
  *   // app/api/uncage/[...path]/route.ts
- *   export const { GET, POST } = createUncageHandler();
+ *   export const { GET, POST, PATCH } = createUncageHandler();
  */
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -31,6 +31,7 @@ export interface ProxyOptions {
 export interface UncageHandler {
   GET(req: Request): Promise<Response>;
   POST(req: Request): Promise<Response>;
+  PATCH(req: Request): Promise<Response>;
 }
 
 const DEFAULT_ENDPOINT = 'http://127.0.0.1:4783';
@@ -38,7 +39,7 @@ const DEFAULT_BASE_PATH = '/api/uncage';
 const SERVE_HINT = 'Run `uncage serve` first.';
 
 /** Request headers forwarded upstream; everything else (Origin, Cookie, Host, Authorization, …) is dropped. */
-const FORWARD_REQUEST_HEADERS = ['accept', 'content-type', 'idempotency-key', 'last-event-id'];
+const FORWARD_REQUEST_HEADERS = ['accept', 'content-type', 'idempotency-key', 'last-event-id', 'x-filename'];
 /** Hop-by-hop or body-encoding headers that must not be copied from the upstream response. */
 const DROP_RESPONSE_HEADERS = new Set(['connection', 'keep-alive', 'transfer-encoding', 'content-encoding', 'content-length']);
 
@@ -132,8 +133,10 @@ function resolveAllowedHosts(o: ProxyOptions): Set<string> {
 const trimSlashes = (s: string): string => s.replace(/^\/+|\/+$/g, '');
 
 /**
- * Creates the GET/POST route handlers. Requests whose `Host` header hostname is not allowed get 403
- * `forbidden_origin` and nothing is forwarded; this stops DNS-rebinding pages (evil.com resolving to
+ * Creates the GET/POST/PATCH route handlers. Request bodies (e.g. attachment uploads) stream upstream
+ * byte for byte, and response bodies (event streams, attachment downloads) stream back.
+ *
+ * Requests whose `Host` header hostname is not allowed get 403 `forbidden_origin` and nothing is forwarded; this stops DNS-rebinding pages (evil.com resolving to
  * 127.0.0.1, so Origin and Host agree) from driving the daemon through the host app. Allowed hosts
  * default to loopback names; set `allowedHosts: ['app.example.com']` or env `UNCAGE_ALLOWED_HOSTS`
  * (comma-separated) when serving the host app on another hostname.
@@ -216,5 +219,5 @@ export function createUncageHandler(o: ProxyOptions = {}): UncageHandler {
     return new Response(body, { status: upstream.status, statusText: upstream.statusText, headers: responseHeaders });
   };
 
-  return { GET: handle, POST: handle };
+  return { GET: handle, POST: handle, PATCH: handle };
 }

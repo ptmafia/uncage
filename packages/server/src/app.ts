@@ -7,6 +7,7 @@ import { authHook } from './auth.js';
 import type { RouteContext } from './context.js';
 import { sendError, toUncageError } from './errors.js';
 import { approvalRoutes } from './routes/approvals.js';
+import { attachmentRoutes } from './routes/attachments.js';
 import { healthRoutes } from './routes/health.js';
 import { runRoutes } from './routes/runs.js';
 import { runtimeRoutes } from './routes/runtimes.js';
@@ -61,7 +62,7 @@ export async function createUncageServer(o: ServerOptions): Promise<UncageServer
   );
 
   const ctx: RouteContext = { uncage: o.uncage, heartbeatMs: o.heartbeatMs ?? DEFAULT_HEARTBEAT_MS, shutdown: shutdown.signal };
-  for (const routes of [healthRoutes, runtimeRoutes, sessionRoutes, runRoutes, approvalRoutes]) routes(app, ctx);
+  for (const routes of [healthRoutes, runtimeRoutes, sessionRoutes, runRoutes, approvalRoutes, attachmentRoutes]) routes(app, ctx);
   await app.ready();
 
   let closing: Promise<void> | undefined;
