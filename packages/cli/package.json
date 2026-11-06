@@ -1,0 +1,31 @@
+{
+  "name": "@uncage/cli",
+  "version": "0.0.0",
+  "description": "The `uncage` command: serve the local daemon, run doctor, export events",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "uncage": "./dist/bin.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@uncage/core": "workspace:*",
+    "@uncage/protocol": "workspace:*",
+    "@uncage/runtime-claude": "workspace:*",
+    "@uncage/runtime-codex": "workspace:*",
+    "@uncage/server": "workspace:*",
+    "pino": "^10.4.0",
+    "yaml": "^2.8.0",
+    "zod": "^4.6.7"
+  }
+}

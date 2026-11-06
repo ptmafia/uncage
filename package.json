@@ -12,6 +12,7 @@
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
+    "uncage": "node packages/cli/dist/bin.js",
     "e2e:mock": "turbo run e2e:mock",
     "e2e:live": "turbo run e2e:live"
   },
