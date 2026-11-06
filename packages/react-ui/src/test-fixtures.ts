@@ -1,6 +1,7 @@
-import type { SubscribeHandlers, UncageClient } from '@uncage/client';
+import { UncageClientError, type SubscribeHandlers, type UncageClient } from '@uncage/client';
 import type {
   ApprovalRequest,
+  ErrorCode,
   EventType,
   Run,
   RuntimeInfo,
@@ -79,6 +80,9 @@ export const snapshot = (over: Partial<SessionSnapshot> = {}): SessionSnapshot =
   lastSequence: 0,
   ...over,
 });
+
+export const clientError = (code: ErrorCode, status: number, message: string = code, hint?: string) =>
+  new UncageClientError({ code, message, retryable: false, ...(hint ? { hint } : {}) }, status);
 
 /** Builds events with auto-incrementing sequences. */
 export function eventFactory(start = 1) {

@@ -1,4 +1,4 @@
-import { useMessages, useRun, useRuntimes, useSessions, useUncageStore } from '@uncage/react';
+import { useApprovals, useMessages, useRun, useRuntimes, useSession, useSessions, useUncageStore } from '@uncage/react';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { ChatControllerContext, cx, UncageUIProvider, useUi, type ChatComponents, type ChatController } from '../context.js';
 import type { Locale } from '../i18n.js';
@@ -14,7 +14,7 @@ import { SessionSidebar } from './SessionSidebar.js';
 export interface AgentChatProps {
   /** UI language (default `'en'`). */
   locale?: Locale;
-  /** Sets `data-theme` on the root (default `'light'`; `'auto'` follows the OS). */
+  /** Sets `data-theme` on the root (default `'auto'`: follows the OS). */
   theme?: 'light' | 'dark' | 'auto';
   /** Show the session sidebar (default `true`). */
   sidebar?: boolean;
@@ -30,7 +30,7 @@ export interface AgentChatProps {
 }
 
 /** Keeps a scroll container pinned to the bottom while the user has not scrolled up. */
-function useStickToBottom(dep: unknown) {
+function useStickToBottom(deps: unknown[]) {
   const ref = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   const onScroll = useCallback(() => {
@@ -40,7 +40,8 @@ function useStickToBottom(dep: unknown) {
   useLayoutEffect(() => {
     const el = ref.current;
     if (el && pinned.current) el.scrollTop = el.scrollHeight;
-  }, [dep]);
+    // Re-run whenever content that changes the height changes.
+  }, deps);
   return { ref, onScroll };
 }
 
@@ -57,8 +58,11 @@ function ChatLayout({ sidebar, theme, className, defaultRuntime, starterPrompts 
   const controller = useChatSession(defaultRuntime, starterPrompts);
   const { draft } = controller.value;
   const { activeSessionId, select } = useSessions();
-  const { messages } = useMessages();
-  const scroll = useStickToBottom(messages);
+  const { timeline, messages } = useMessages();
+  const { all: approvals } = useApprovals();
+  const { run } = useRun();
+  // Any content change (new item, streamed text, approval card, run status) keeps the view pinned.
+  const scroll = useStickToBottom([timeline, messages, approvals, run, draft]);
   const Composer = components.Composer ?? DefaultComposer;
   const EmptyState = components.EmptyState ?? DefaultEmptyState;
 
@@ -105,12 +109,14 @@ function useChatSession(defaultRuntime: string | undefined, starterPrompts: stri
   const store = useUncageStore();
   const { activeSessionId, create, select } = useSessions();
   const { runtimes } = useRuntimes();
+  const { session } = useSession();
   const { send } = useRun();
   const [newSession, setDraft] = useState(false);
   const [chosen, setChosen] = useState<string>();
   const creating = useRef(false);
   const draft = newSession || activeSessionId === undefined;
-  const runtimeId = pickRuntime(runtimes, chosen ?? defaultRuntime);
+  // A draft uses the runtime chosen for new sessions; an open session always uses its own runtime.
+  const runtimeId = draft ? pickRuntime(runtimes, chosen ?? defaultRuntime) : session?.runtimeId;
 
   const value = useMemo<ChatController>(
     () => ({
@@ -120,15 +126,16 @@ function useChatSession(defaultRuntime: string | undefined, starterPrompts: stri
       starterPrompts,
       async send(text) {
         if (!draft) return send(text);
-        if (runtimeId === undefined || creating.current) return;
+        if (runtimeId === undefined || creating.current) return false;
         creating.current = true;
         try {
           const id = await create({ runtime: runtimeId });
           setDraft(false);
           await select(id);
-          await store.actions.sendPrompt(text);
+          return await store.actions.sendPrompt(text);
         } catch {
           // createSession failures are recorded in the store's lastError (shown by ConnectionBanner).
+          return false;
         } finally {
           creating.current = false;
         }
@@ -146,7 +153,7 @@ function useChatSession(defaultRuntime: string | undefined, starterPrompts: stri
  */
 export function AgentChat({
   locale = 'en',
-  theme = 'light',
+  theme = 'auto',
   sidebar = true,
   defaultRuntime,
   starterPrompts,

@@ -17,7 +17,10 @@ export function Composer(): JSX.Element {
   const [text, setText] = useState('');
   const ref = useRef<HTMLTextAreaElement>(null);
 
+  const [sending, setSending] = useState(false);
   const active = !controller.draft && isActive;
+  // A session is selected but its snapshot has not loaded yet: nothing to send to.
+  const loading = !controller.draft && session === undefined;
   const readOnly = !controller.draft && session?.readOnly === true;
   const unavailable = info !== undefined && info.status !== 'available';
   const hint = readOnly
@@ -25,8 +28,8 @@ export function Composer(): JSX.Element {
     : unavailable
       ? [info.message ?? t.runtimeUnavailable(name), info.hint].filter(Boolean).join(' ')
       : undefined;
-  const disabled = readOnly || unavailable;
-  const canSend = !disabled && !active && text.trim().length > 0;
+  const disabled = loading || readOnly || unavailable;
+  const canSend = !disabled && !active && !sending && text.trim().length > 0;
 
   // Auto-grow: reset, then fit the content (CSS caps it at 40vh and scrolls beyond).
   useLayoutEffect(() => {
@@ -36,11 +39,16 @@ export function Composer(): JSX.Element {
     el.style.height = `${el.scrollHeight}px`;
   }, [text]);
 
-  const submit = () => {
+  // The text is cleared only once the run started; a failed or refused send keeps it.
+  const submit = async () => {
     if (!canSend) return;
-    const prompt = text.trim();
-    setText('');
-    void controller.send(prompt);
+    setSending(true);
+    try {
+      const sent = text;
+      if (await controller.send(sent.trim())) setText((now) => (now === sent ? '' : now));
+    } finally {
+      setSending(false);
+    }
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -48,7 +56,7 @@ export function Composer(): JSX.Element {
     // IME candidate confirmation (keyCode 229 covers Safari, which reports isComposing late).
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     e.preventDefault();
-    submit();
+    void submit();
   };
 
   return (
@@ -76,7 +84,7 @@ export function Composer(): JSX.Element {
               <Square className="uc-icon-stop" aria-hidden />
             </button>
           ) : (
-            <button type="button" className="uc-btn uc-btn-primary uc-btn-icon" aria-label={t.send} disabled={!canSend} onClick={submit}>
+            <button type="button" className="uc-btn uc-btn-primary uc-btn-icon" aria-label={t.send} disabled={!canSend} onClick={() => void submit()}>
               <ArrowUp aria-hidden />
             </button>
           )}

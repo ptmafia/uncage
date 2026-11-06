@@ -8,8 +8,6 @@
 :root,
 [data-theme="light"],
 [data-theme="auto"] {
-  color-scheme: light;
-
   /* Surfaces: warm paper, never cold grey */
   --uncage-canvas: #faf8f4;
   --uncage-surface: #ffffff;
@@ -104,6 +102,13 @@
   --uncage-font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui,
     sans-serif;
   --uncage-font-serif: "Songti SC", "Noto Serif SC", "Source Han Serif SC", Georgia, serif;
+}
+
+/* color-scheme is scoped to the themed container, never set on the host's :root. */
+.uc-root,
+[data-theme="light"],
+[data-theme="auto"] {
+  color-scheme: light;
 }
 
 /* Dark: warm charcoal, off-white text, brand blue one step lighter, low-luminance status fills. */

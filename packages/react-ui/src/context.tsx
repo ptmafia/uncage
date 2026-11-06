@@ -47,7 +47,8 @@ export interface ChatController {
   /** The runtime that will answer the next prompt. */
   runtimeId?: string;
   setRuntimeId(id: string): void;
-  send(text: string): Promise<void>;
+  /** Resolves `true` once a run was started (the composer clears its text only then). */
+  send(text: string): Promise<boolean>;
   starterPrompts: string[];
 }
 

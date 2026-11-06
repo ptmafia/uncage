@@ -81,7 +81,7 @@ export function useSession(): { session?: Session; connection: ConnectionState; 
   );
 }
 
-export function useRun(): { run?: Run; isActive: boolean; send(prompt: string): Promise<void>; cancel(): Promise<void> } {
+export function useRun(): { run?: Run; isActive: boolean; send(prompt: string): Promise<boolean>; cancel(): Promise<void> } {
   const store = useUncageStore();
   const runs = useStoreSelector((s) => s.active?.runs);
   return useMemo(() => {

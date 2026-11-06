@@ -19,7 +19,8 @@ export interface UncageStore {
     loadSessions(): Promise<void>;
     createSession(b: CreateSessionBody): Promise<string>;
     selectSession(id: string): Promise<void>;
-    sendPrompt(prompt: string): Promise<void>;
+    /** Resolves `true` when a run was started; `false` when nothing was sent (busy, no session, or failed). */
+    sendPrompt(prompt: string): Promise<boolean>;
     cancelRun(): Promise<void>;
     decide(approvalId: string, d: 'allow' | 'deny', reason?: string): Promise<void>;
     dismissError(): void;
@@ -173,16 +174,18 @@ export function createUncageStore(client: UncageClient): UncageStore {
     async sendPrompt(prompt) {
       const gen = generation;
       const active = state.active;
-      if (!active || sending) return;
+      if (!active || sending) return false;
       const current = latestRun(active.runs);
-      if (current && ACTIVE_RUN_STATES.has(current.state)) return;
+      if (current && ACTIVE_RUN_STATES.has(current.state)) return false;
       sending = true;
       try {
         const run = await client.startRun(active.session.id, { prompt });
         // Visible immediately even if `run.started` has not arrived yet; upsertRun is idempotent.
         updateActive(gen, (s) => (s.runs[run.id] ? s : upsertRun(s, run)));
+        return true;
       } catch (err) {
         if (gen === generation) fail(err);
+        return false;
       } finally {
         if (gen === generation) sending = false;
       }

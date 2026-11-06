@@ -27,12 +27,12 @@ describe('createUncageStore', () => {
     const store = createUncageStore(f.client);
     await store.actions.selectSession('ses_1');
     // Two rapid sends: the second must not POST while the first is in flight.
-    await Promise.all([store.actions.sendPrompt('one'), store.actions.sendPrompt('two')]);
+    expect(await Promise.all([store.actions.sendPrompt('one'), store.actions.sendPrompt('two')])).toEqual([true, false]);
     expect(f.client.startRun).toHaveBeenCalledTimes(1);
     // The run returned by startRun is visible before run.started arrives.
     expect(store.getState().active!.runs.run_1).toMatchObject({ prompt: 'one', state: 'queued' });
     expect(store.getState().active!.messages.user_run_1!.text).toBe('one');
-    await store.actions.sendPrompt('three');
+    expect(await store.actions.sendPrompt('three')).toBe(false);
     expect(f.client.startRun).toHaveBeenCalledTimes(1);
 
     // run.started for the same run does not duplicate the user message.
@@ -41,8 +41,19 @@ describe('createUncageStore', () => {
     expect(store.getState().active!.timeline).toEqual([{ kind: 'message', id: 'user_run_1' }]);
 
     f.emit(ev('run.completed', { runId: 'run_1', durationMs: 1 }));
-    await store.actions.sendPrompt('four');
+    expect(await store.actions.sendPrompt('four')).toBe(true);
     expect(f.client.startRun).toHaveBeenCalledTimes(2);
+  });
+
+  it('sendPrompt resolves false and records lastError when startRun fails, or with no session', async () => {
+    const f = fakeClient();
+    const store = createUncageStore(f.client);
+    expect(await store.actions.sendPrompt('no session')).toBe(false);
+    await store.actions.selectSession('ses_1');
+    f.client.startRun.mockRejectedValueOnce(clientError('session_busy', 409));
+    expect(await store.actions.sendPrompt('x')).toBe(false);
+    expect(store.getState().lastError?.code).toBe('session_busy');
+    expect(await store.actions.sendPrompt('y')).toBe(true);
   });
 
   it('decide 409 treated as resolved and snapshot reloaded', async () => {

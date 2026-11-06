@@ -1159,6 +1159,11 @@
     transition: none !important;
     scroll-behavior: auto !important;
   }
+  /* Also when the components are used outside .uc-root. */
+  .uc-spinner,
+  .uc-breathe::after {
+    animation: none !important;
+  }
   /* The breathing ring rests as a thin solid ring. */
   .uc-breathe::after {
     inset: -2px;

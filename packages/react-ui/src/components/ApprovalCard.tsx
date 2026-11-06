@@ -7,8 +7,9 @@ import { useUi } from '../context.js';
 const LIVE_STATES = new Set<ApprovalRequest['state']>(['pending', 'submitting', 'reconciling']);
 const INTERACTIVE = 'button, a, input, textarea, select, summary';
 
-function Spinner({ label }: { label: string }): JSX.Element {
-  return <span className="uc-spinner" role="status" aria-label={label} />;
+/** Decorative: the button carrying it is `aria-busy`, so its accessible name stays unchanged. */
+function Spinner(): JSX.Element {
+  return <span className="uc-spinner" aria-hidden />;
 }
 
 /** A terminal approval collapses to one honest line. */
@@ -99,12 +100,24 @@ export function ApprovalCard({ approval }: { approval: ApprovalRequest }): JSX.E
       <div className="uc-approval-bar">
         <span className="uc-approval-expiry">{t.expiresAt(approval.expiresAt)}</span>
         <div className="uc-approval-actions">
-          <button type="button" className="uc-btn uc-btn-secondary uc-btn-sm" disabled={disabled} onClick={() => choose('deny')}>
-            {busy === 'deny' && <Spinner label={t.working} />}
+          <button
+            type="button"
+            className="uc-btn uc-btn-secondary uc-btn-sm"
+            disabled={disabled}
+            aria-busy={busy === 'deny' || undefined}
+            onClick={() => choose('deny')}
+          >
+            {busy === 'deny' && <Spinner />}
             {t.deny}
           </button>
-          <button type="button" className="uc-btn uc-btn-primary uc-btn-sm" disabled={disabled} onClick={() => choose('allow')}>
-            {busy === 'allow' && <Spinner label={t.working} />}
+          <button
+            type="button"
+            className="uc-btn uc-btn-primary uc-btn-sm"
+            disabled={disabled}
+            aria-busy={busy === 'allow' || undefined}
+            onClick={() => choose('allow')}
+          >
+            {busy === 'allow' && <Spinner />}
             {t.allowOnce}
           </button>
         </div>

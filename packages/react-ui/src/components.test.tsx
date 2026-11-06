@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import type { ApprovalRequest } from '@uncage/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AgentChat, UncageProvider, type AgentChatProps } from './index.js';
-import { approval, eventFactory, fakeClient, run, runtime, session, snapshot } from './test-fixtures.js';
+import { approval, clientError, eventFactory, fakeClient, run, runtime, session, snapshot } from './test-fixtures.js';
 
 afterEach(cleanup);
 
@@ -63,7 +63,10 @@ describe('ApprovalCard', () => {
     expect(f.client.decide).toHaveBeenCalledWith('apr_1', { decision: 'allow', scope: 'once' });
     expect(allow.disabled).toBe(true);
     expect(deny.disabled).toBe(true);
-    expect(within(allow).getByRole('status', { name: 'Working…' })).toBeTruthy();
+    // The spinner is decorative; the button is aria-busy and keeps its accessible name.
+    expect(allow.getAttribute('aria-busy')).toBe('true');
+    expect(deny.getAttribute('aria-busy')).toBeNull();
+    expect(within(card).getByRole('button', { name: 'Allow once' })).toBe(allow);
     await act(async () => resolve(approval({ state: 'approved', decision: 'allow', version: 2 })));
     expect(screen.getByText('Allowed')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Allow once' })).toBeNull();
@@ -187,6 +190,45 @@ describe('Composer', () => {
     await act(async () => fireEvent.click(stop));
     expect(f.client.cancelRun).toHaveBeenCalledWith('run_1');
     expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy();
+  });
+
+  it('a failed send keeps the text and shows the error', async () => {
+    const f = fakeClient();
+    f.client.startRun.mockRejectedValueOnce(
+      clientError('runtime_unavailable', 503, 'Claude Code is not available.', 'Install the runtime CLI.'),
+    );
+    await openSession(f);
+    const input = textbox();
+    fireEvent.change(input, { target: { value: 'keep me' } });
+    await act(async () => fireEvent.keyDown(input, { key: 'Enter' }));
+    expect(f.client.startRun).toHaveBeenCalledTimes(1);
+    expect(input.value).toBe('keep me');
+    expect(screen.getByRole('alert').textContent).toContain('Claude Code is not available.');
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Send' })));
+    expect(f.client.startRun).toHaveBeenCalledTimes(2);
+    expect(input.value).toBe('');
+  });
+
+  it('an open session uses its own runtime, not the draft pick', async () => {
+    const f = fakeClient({
+      runtimes: [
+        runtime(),
+        runtime({ id: 'codex', displayName: 'Codex', status: 'not_installed', message: 'Codex CLI was not found on PATH.' }),
+      ],
+      snapshot: () => snapshot({ session: session({ runtimeId: 'codex' }) }),
+    });
+    await openSession(f, { defaultRuntime: 'claude' });
+    await screen.findByText('Codex CLI was not found on PATH.');
+    expect(textbox().disabled).toBe(true);
+    expect(textbox().placeholder).toBe('Ask Codex…');
+  });
+
+  it('is disabled while the selected session is still loading', async () => {
+    const f = fakeClient();
+    f.client.snapshot.mockImplementation(() => new Promise(() => {}));
+    renderChat(f);
+    await act(async () => fireEvent.click(await screen.findByRole('button', { name: /Fix the build/ })));
+    expect(textbox().disabled).toBe(true);
   });
 
   it('is disabled with a hint for a read-only session', async () => {
