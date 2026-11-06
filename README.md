@@ -2,7 +2,7 @@
 
 **Bring your agent to any app.** Use the harness you trust. Ship the experience you own.
 
-Uncage runs Claude Code (and Codex) as a local, approval-gated agent runtime and gives your web app a typed REST + SSE API, headless React hooks, and a ready-made chat UI. Your app gets streaming answers, tool steps, Allow/Deny approval cards, Stop, and reload-safe history, while the agent keeps running on your own machine under your own login.
+Uncage runs Claude Code (and Codex) as a local, approval-gated agent runtime and gives your web app a typed REST + SSE API, headless React hooks, and a ready-made chat UI. Your app gets streaming answers, tool steps, Allow/Deny approval cards, Stop, reload-safe history, and a composer with model, effort and permission-mode pickers, file and image attachments, and voice input, while the agent keeps running on your own machine under your own login.
 
 > Status: v0, macOS only. Claude Code is verified live (see [docs/compatibility.md](docs/compatibility.md)). Codex is implemented but not yet verified against a real binary (see [Codex status](#codex-status)).
 
@@ -80,6 +80,36 @@ export default function Page() {
 
 See [`examples/nextjs-default-chat`](examples/nextjs-default-chat). Restyle it with the `--uncage-*` CSS variables. All classes use the `uc-` prefix.
 
+## The composer
+
+`<AgentChat>`'s prompt box (Claude Code style) has these controls. Each one really changes what the runtime gets. The live E2E checks every one against real Claude Code (see [docs/compatibility.md](docs/compatibility.md)).
+
+| Control | What it does |
+| --- | --- |
+| **Model** (sparkle) | The runtime's own model list. For Claude Code that is `supportedModels()`, with `default` first |
+| **Effort** (brain) | `low`, `medium`, `high`, `xhigh`, `max` |
+| **Permissions** (shield) | `default` (ask before commands and edits), `acceptEdits` (edit files without asking, still ask for commands), `plan` (plan only, change nothing), `auto` (the runtime decides what needs you). `bypassPermissions` appears only when the server allows it (see below) |
+| **Attach** (+), drag and drop, paste | Images show as thumbnails, other files as chips. A pasted screenshot becomes an attachment, pasted text stays text |
+| **Voice** (mic) | Dictation through the browser's Web Speech API. Hidden in browsers without it |
+| **N running** chip | Runs in progress in any session on this server. Click it to jump to one |
+| **Send / Stop** | Enter sends, Shift+Enter is a new line, Enter while an IME is composing never sends. Stop cancels the run |
+
+Settings are stored per session. Before the first prompt they belong to the draft and apply when the session is created. In an open session a change applies **from the next run**. A run in progress and its open approval cards keep the settings it started with.
+
+**Bypass permissions** lets the agent run any command and edit any file without asking. It is off by default and the server never offers it then. A crafted `PATCH` gets 403 `policy_denied`. To allow it, set `security.allowBypass: true` in `uncage.config.yaml` or start the daemon with `UNCAGE_ALLOW_BYPASS=1`. `uncage serve` then prints a warning. Even then, choosing it in the UI asks for confirmation and a red banner stays on while it is active.
+
+> **Warning:** only allow bypass on a machine and workspace you are fine with the agent changing without review. It can delete files and run anything your user account can.
+
+**Attachments.**
+
+- Images: `png jpg jpeg gif webp`. Files: `txt md json csv yaml yml xml html css js ts tsx jsx py go rs java rb sh sql log pdf`.
+- At most 10 MB per file and 10 files per message. Claude Code caps images at 5 MB (the Anthropic API's limit).
+- Claude gets images inline. Other files are passed by path, and Claude reads them with its tools.
+- Uploads are stored in the session's workspace at `<workspace>/.uncage/attachments/<sessionId>/<attachmentId>-<name>`. Uploads that were never sent are deleted after 24 hours.
+- Add `.uncage/` to your project's `.gitignore`, so attachments are never committed.
+
+**Voice privacy.** The browser does the speech recognition, not Uncage. In Chrome the audio goes to Google's speech service. Uncage only ever sees the resulting text in the prompt box. The first use shows a note saying so.
+
 ## Custom UI (headless hooks)
 
 Build your own UI with `@uncage/react`. Wrap your app in `<UncageProvider>` and use these hooks. [`examples/react-headless-chat`](examples/react-headless-chat) is a complete chat built only from them.
@@ -94,8 +124,15 @@ Build your own UI with `@uncage/react`. Wrap your app in `<UncageProvider>` and 
 | `useApprovals()` | `{ pending, all }` | Approval cards |
 | `useApprovalActions()` | `{ decide(id, 'allow' \| 'deny'), pending }` | Allow and Deny buttons, with per-card in-flight state |
 | `useRuntimeCapabilities(id?)` | `RuntimeCapabilities` | Show only the features a runtime supports |
+| `useSessionSettings()` | `{ settings, capabilities, update(patch), pendingForNextRun }` | Model, effort and permission-mode pickers. In a draft they edit the draft, in a session they apply from the next run |
+| `useAttachments()` | `{ items, add(files), remove(localId), clear(), ready, rejected }` | Attach button and chips. `add` checks type, size and count, then uploads |
+| `useAttachmentUrl(id)` | `string` | `<img src>` for an attachment that was sent with a run |
+| `useRunningSessions()` | `{ runs, count }` | "N running" indicator across all sessions (polls every 3 s while the tab is visible) |
+| `useSpeechInput({ lang, onText })` | `{ supported, listening, start(), stop(), error }` | Dictation via the Web Speech API |
 | `useConnection()` | `'connecting' \| 'live' \| 'reconnecting' \| 'offline'` | Connection indicator |
 | `useUncageError()` | `{ error, dismiss }` | Error toast. Every error has a human `message` and a `hint` |
+
+Before the first prompt there is no session yet. Open a draft with `useUncageStore().actions.openDraft(runtimeId)` so settings and files can be picked. Then send with `commitDraft()` (creates the session, applies the draft settings, uploads queued files), then `selectSession(id)`, then `sendPrompt(text)`. The headless example does exactly this.
 
 Lower levels: `@uncage/client` (browser REST + resumable SSE, no React), the HTTP API itself (`/v1/*`, typed in `@uncage/protocol`), or embed the daemon in your own Node process with `createUncage()` (`@uncage/core`) + `createUncageServer()` (`@uncage/server`).
 
@@ -113,7 +150,7 @@ Lower levels: `@uncage/client` (browser REST + resumable SSE, no React), the HTT
   ```
 
   The list **replaces** the default, so add the loopback names back if you still use them. Use bare hostnames with no scheme or port: the port of the `Host` header is ignored. Bracket IPv6 addresses (`[::1]`). Entries are trimmed and lowercased. Behind a reverse proxy, make sure it forwards the original `Host` header (e.g. nginx `proxy_set_header Host $host;`), since that is what the check sees.
-- **Every tool call is approved by a person.** Claude Code runs with `permissionMode: 'default'`, and `bypassPermissions` cannot be configured. Claude Code still auto-allows what it considers safe (reads, searches, and some read-only shell commands). Everything else becomes an approval card, and pending approvals expire after 10 minutes.
+- **Tool calls are approved by a person by default.** New sessions use `permissionMode: 'default'`. Claude Code still auto-allows what it considers safe (reads, searches, and some read-only shell commands). Everything else becomes an approval card, and pending approvals expire after 10 minutes. A user can pick `acceptEdits`, `plan` or `auto` per session in the composer. `bypassPermissions` (no approvals at all) is available only when the server opts in with `security.allowBypass` / `UNCAGE_ALLOW_BYPASS=1`; otherwise it is never offered and refused with 403 `policy_denied` (see [The composer](#the-composer)).
 - **Workspaces are fenced.** A session's workspace must resolve (after `realpath`, so symlinks are followed) inside `workspace.allowedRoots`. By default that is the directory `uncage serve` was started in, or the `--workspace` folder.
 - **No telemetry.** Logs redact tokens and authorization headers, and they don't contain prompt text at info level. (Next.js, used by the examples, has its own telemetry. Turn it off with `NEXT_TELEMETRY_DISABLED=1`.)
 
@@ -128,6 +165,7 @@ server:
 security:
   allowedOrigins: []      # origins allowed to call the daemon directly (CORS-style); keep empty with the proxy
   approvalTtlMs: 600000
+  allowBypass: false      # true offers the bypassPermissions mode (no approvals). Env: UNCAGE_ALLOW_BYPASS=1
 workspace:
   allowedRoots: [/Users/me/code]
   default: /Users/me/code/my-app
@@ -138,7 +176,7 @@ runtimes:
 
 | CLI | |
 | --- | --- |
-| `uncage serve [--port n] [--workspace dir] [--data-dir dir] [--token-file file]` | Start the daemon. Env: `UNCAGE_PORT`, `UNCAGE_LOG_LEVEL` |
+| `uncage serve [--port n] [--workspace dir] [--data-dir dir] [--token-file file]` | Start the daemon. Env: `UNCAGE_PORT`, `UNCAGE_LOG_LEVEL`, `UNCAGE_ALLOW_BYPASS=1` |
 | `uncage doctor [--data-dir dir] [--token-file file]` | Check Node, data dir, token, server and runtimes, with a fix for each failure |
 | `uncage doctor --export-events <sessionId> [--out file] [--include-content]` | Export a session's events for a bug report (content redacted unless `--include-content`) |
 
@@ -172,7 +210,7 @@ UNCAGE_LIVE=1 pnpm e2e:live      # Playwright against REAL Claude Code (uses a l
 pnpm --filter @uncage/runtime-claude smoke   # one real Claude run, prints the raw SDK messages
 ```
 
-The E2E suites and smoke scripts run TypeScript files directly with `node`, so they need **Node 22.18 or newer**, which strips types by default. They use your installed Google Chrome and never download a browser. The live suite starts its own `uncage serve` on a tmp copy of [`e2e/live/fixture-repo`](e2e/live/fixture-repo), with its own data dir and token file, so it leaves `~/.uncage` alone. Its HTML report and traces go to `e2e/live/results/`.
+The E2E suites and smoke scripts run TypeScript files directly with `node`, so they need **Node 22.18 or newer**, which strips types by default. They use your installed Google Chrome and never download a browser. The live suite starts its own `uncage serve` on a tmp copy of [`e2e/live/fixture-repo`](e2e/live/fixture-repo), with its own data dir and token file, so it leaves `~/.uncage` alone. Its HTML report and traces go to `e2e/live/results/`. For the bypass spec it starts a second `uncage serve` with `UNCAGE_ALLOW_BYPASS=1` on another tmp copy of the fixture.
 
 ## Troubleshooting
 

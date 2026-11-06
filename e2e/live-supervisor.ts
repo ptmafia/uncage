@@ -7,11 +7,15 @@
  *   2. The nextjs-default-chat and react-headless-chat examples (`next start`), their proxies given
  *      the token that serve created.
  *
- * Both processes' logs are written to live/results/stack.log.
+ *   3. A second `uncage serve` with UNCAGE_ALLOW_BYPASS=1 on its own tmp copy of the fixture (own
+ *      data dir and token), and nextjs-default-chat in front of it, for the bypassPermissions spec.
+ *      Bypass lets the agent run commands without approval, so it only ever sees that tmp copy.
+ *
+ * All processes' logs are written to live/results/stack.log.
  *
  * Control endpoint for the specs:
- *   GET http://127.0.0.1:<LIVE_CONTROL_PORT>/ready  200 once both are listening
- *   GET http://127.0.0.1:<LIVE_CONTROL_PORT>/info   { workspace, tokenFile, daemonUrl }
+ *   GET http://127.0.0.1:<LIVE_CONTROL_PORT>/ready  200 once everything is listening
+ *   GET http://127.0.0.1:<LIVE_CONTROL_PORT>/info   { workspace, tokenFile, daemonUrl, bypass: { workspace, tokenFile, daemonUrl } }
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs';
@@ -23,13 +27,20 @@ const daemonPort = Number(process.env.LIVE_DAEMON_PORT ?? 4795);
 const appPort = Number(process.env.LIVE_APP_PORT ?? 3102);
 const headlessPort = Number(process.env.LIVE_HEADLESS_PORT ?? 3103);
 const controlPort = Number(process.env.LIVE_CONTROL_PORT ?? 4796);
+const bypassDaemonPort = Number(process.env.LIVE_BYPASS_DAEMON_PORT ?? 4798);
+const bypassAppPort = Number(process.env.LIVE_BYPASS_APP_PORT ?? 3105);
 
 const repo = new URL('..', import.meta.url).pathname;
 const root = mkdtempSync(join(tmpdir(), 'uncage-live-'));
-const workspace = join(root, 'workspace');
-const dataDir = join(root, 'data');
-const tokenFile = join(root, 'token');
-cpSync(join(repo, 'e2e/live/fixture-repo'), workspace, { recursive: true });
+/** One `uncage serve` instance's tmp paths: a fresh copy of the fixture repo, data dir, token file. */
+function stackDirs(name: string) {
+  const dir = join(root, name);
+  const workspace = join(dir, 'workspace');
+  cpSync(join(repo, 'e2e/live/fixture-repo'), workspace, { recursive: true });
+  return { workspace, dataDir: join(dir, 'data'), tokenFile: join(dir, 'token') };
+}
+const main = stackDirs('main');
+const bypass = stackDirs('bypass');
 
 const children: ChildProcess[] = [];
 // Daemon/app logs go to a file next to the Playwright report instead of flooding the test output.
@@ -55,38 +66,53 @@ function startUntil(cmd: string, args: string[], env: NodeJS.ProcessEnv, marker:
   });
 }
 
-const ready = (async () => {
+/** Starts `uncage serve` on `dirs`, then nextjs-default-chat (and optionally the headless example) in front of it. */
+async function startStack(
+  dirs: ReturnType<typeof stackDirs>,
+  port: number,
+  env: NodeJS.ProcessEnv,
+  apps: Array<[name: string, port: number]>,
+): Promise<void> {
   await startUntil(
     process.execPath,
     [
       join(repo, 'packages/cli/dist/bin.js'),
       'serve',
       '--port',
-      String(daemonPort),
+      String(port),
       '--workspace',
-      workspace,
+      dirs.workspace,
       '--data-dir',
-      dataDir,
+      dirs.dataDir,
       '--token-file',
-      tokenFile,
+      dirs.tokenFile,
     ],
-    {},
+    env,
     'Uncage listening on',
     root,
   );
-  const token = readFileSync(tokenFile, 'utf8').trim();
-  const startExample = (name: string, port: number) => {
+  const token = readFileSync(dirs.tokenFile, 'utf8').trim();
+  const startExample = (name: string, appPort: number) => {
     const example = join(repo, 'examples', name);
     return startUntil(
       process.execPath,
-      [join(example, 'node_modules/next/dist/bin/next'), 'start', '-p', String(port)],
-      { UNCAGE_URL: `http://127.0.0.1:${daemonPort}`, UNCAGE_TOKEN: token },
+      [join(example, 'node_modules/next/dist/bin/next'), 'start', '-p', String(appPort)],
+      { UNCAGE_URL: `http://127.0.0.1:${port}`, UNCAGE_TOKEN: token },
       'Ready',
       example,
     );
   };
-  await Promise.all([startExample('nextjs-default-chat', appPort), startExample('react-headless-chat', headlessPort)]);
-})();
+  await Promise.all(apps.map(([name, appPort]) => startExample(name, appPort)));
+}
+
+// The user's environment may set UNCAGE_ALLOW_BYPASS: the main stack must never allow bypass.
+const ready = Promise.all([
+  startStack(main, daemonPort, { UNCAGE_ALLOW_BYPASS: '' }, [
+    ['nextjs-default-chat', appPort],
+    ['react-headless-chat', headlessPort],
+  ]),
+  startStack(bypass, bypassDaemonPort, { UNCAGE_ALLOW_BYPASS: '1' }, [['nextjs-default-chat', bypassAppPort]]),
+]);
 ready.catch((err: unknown) => console.error(err));
 
 const control = createServer((req, res) => {
@@ -99,7 +125,14 @@ const control = createServer((req, res) => {
   }
   if (req.method === 'GET' && req.url === '/info') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ workspace, tokenFile, daemonUrl: `http://127.0.0.1:${daemonPort}` }));
+    res.end(
+      JSON.stringify({
+        workspace: main.workspace,
+        tokenFile: main.tokenFile,
+        daemonUrl: `http://127.0.0.1:${daemonPort}`,
+        bypass: { workspace: bypass.workspace, tokenFile: bypass.tokenFile, daemonUrl: `http://127.0.0.1:${bypassDaemonPort}` },
+      }),
+    );
     return;
   }
   res.writeHead(404).end();

@@ -27,6 +27,8 @@ export type FakeStep =
     }
   | { approval: NativeApprovalInput; onDeny?: 'continue' | 'fail' }
   | { waitMs: number }
+  /** Replies with what the run received: `describeRunInput(input)`. */
+  | { echo: true }
   | { crash: string }
   | { fail: ErrorBody };
 
@@ -50,6 +52,16 @@ const DEFAULT_CAPABILITIES: RuntimeCapabilities = {
   permissionModes: ['default'],
   attachments: { images: false, files: false, maxBytes: ATTACHMENT_LIMITS.maxBytes },
 };
+
+/**
+ * What a run received, for specs to assert that settings and attachments reach the runtime:
+ * `settings: model=<id|-> effort=<level|-> mode=<permissionMode>; attachments: <names|->`.
+ */
+export function describeRunInput(input: AdapterRunInput): string {
+  const { model, effort, permissionMode } = input.settings;
+  const names = input.attachments.map((a) => a.name).join(',');
+  return `settings: model=${model ?? '-'} effort=${effort ?? '-'} mode=${permissionMode}; attachments: ${names || '-'}`;
+}
 
 /** Resolves true after `ms`, or false as soon as the signal aborts. */
 const sleep = (ms: number, signal: AbortSignal): Promise<boolean> =>
@@ -99,8 +111,9 @@ export function createFakeAdapter(
     const steps = typeof opts.script === 'function' ? opts.script(input) : opts.script;
     const interrupted = (): RuntimeEvent => ({ type: 'run.interrupted', reason: 'aborted' });
 
-    for (const step of steps) {
+    for (const scripted of steps) {
       if (ctx.signal.aborted) return yield interrupted();
+      const step: FakeStep = 'echo' in scripted ? { text: describeRunInput(input) } : scripted;
 
       if ('text' in step) {
         const messageId = newId('msg');

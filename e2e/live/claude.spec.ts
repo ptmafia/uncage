@@ -7,21 +7,25 @@
  * answers each approval card that appears until the run is terminal.
  */
 import { execFile } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { expect, type Page, type Route } from '@playwright/test';
 import { LIVE_PORTS } from '../playwright.config.ts';
-import { chatFor, test, type Chat } from '../mock/fixtures.ts';
+import { chatFor, menuLabels, pickMenu, test, type Chat } from '../mock/fixtures.ts';
 
 const run = promisify(execFile);
 const RUN_TIMEOUT = 180_000;
 const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'interrupted']);
 
-interface Info {
+interface Stack {
   workspace: string;
   tokenFile: string;
   daemonUrl: string;
+}
+interface Info extends Stack {
+  /** The second `uncage serve`, with UNCAGE_ALLOW_BYPASS=1 (nextjs-default-chat on LIVE_PORTS.bypassApp). */
+  bypass: Stack;
 }
 let info: Info;
 
@@ -249,4 +253,189 @@ test('daemon auth: no token → 401, foreign Origin → 403 (daemon and proxy)',
   expect(await status(runtimes, `Authorization: Bearer ${token}`)).toBe('200');
   expect(await status(runtimes, `Authorization: Bearer ${token}`, 'Origin: http://evil.test')).toBe('403');
   expect(await status(`http://localhost:${LIVE_PORTS.app}/api/uncage/runtimes`, 'Origin: http://evil.test')).toBe('403');
+});
+
+// ---- Composer controls on the real runtime (each in a new session, via nextjs-default-chat). ----
+
+const OK_PROMPT = 'Reply with just the word OK. Do not use any tools.';
+const WRITE_A = 'Use your Write tool to create the file a.txt in the current directory with the content hello. Do not use Bash.';
+
+interface SessionSnapshot {
+  session: { id: string; settings: { model?: string; effort?: string; permissionMode: string } };
+  runs: { id: string; state: string; error?: { code: string; message: string } }[];
+}
+interface RuntimeRow {
+  id: string;
+  capabilities?: { models: { id: string; label: string }[]; modelsAuthoritative?: boolean; permissionModes: string[] };
+}
+
+/** GET on a live daemon with its token. */
+async function api<T>(stack: Stack, path: string): Promise<T> {
+  const token = readFileSync(stack.tokenFile, 'utf8').trim();
+  const res = await fetch(`${stack.daemonUrl}${path}`, { headers: { authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`GET ${path} → ${res.status}`);
+  return (await res.json()) as T;
+}
+
+/** The open session's server-side snapshot (settings + runs). */
+async function snapshotOf(chat: Chat, stack: Stack = info): Promise<SessionSnapshot> {
+  const id = new URL(await chat.sessionUrl()).searchParams.get('session');
+  return api<SessionSnapshot>(stack, `/v1/sessions/${id}`);
+}
+
+/** Facts the docs record (live/results/composer-live.json). */
+const facts: Record<string, unknown> = {};
+test.afterAll(() => {
+  if (Object.keys(facts).length === 0) return;
+  writeFileSync(join(import.meta.dirname, 'results/composer-live.json'), `${JSON.stringify(facts, null, 2)}\n`);
+});
+
+test('model: the menu lists supportedModels(); a non-default model is stored and its run completes', async ({ page }) => {
+  // The model list is read from Claude Code in the background after startup.
+  await expect
+    .poll(async () => (await api<RuntimeRow[]>(info, '/v1/runtimes')).find((r) => r.id === 'claude')?.capabilities?.modelsAuthoritative, {
+      timeout: 60_000,
+    })
+    .toBe(true);
+  const models = (await api<RuntimeRow[]>(info, '/v1/runtimes')).find((r) => r.id === 'claude')!.capabilities!.models;
+  const listed = models.filter((m) => m.id !== 'default');
+  expect(listed.length).toBeGreaterThanOrEqual(1);
+
+  const chat = chatFor(page, 'default');
+  await chat.open();
+  expect(await menuLabels(page, '模型')).toEqual(models.map((m) => m.label));
+  // Prefer the fastest model for cost; any non-default one proves the point.
+  const pick = listed.find((m) => /haiku/i.test(`${m.id} ${m.label}`)) ?? listed[0]!;
+  facts.models = models.map((m) => m.id);
+  facts.pickedModel = pick.id;
+  await pickMenu(page, '模型', pick.label);
+  await chat.send(OK_PROMPT);
+  expect((await drive(chat, 'deny')).state).toBe('completed');
+  const snap = await snapshotOf(chat);
+  expect(snap.session.settings.model).toBe(pick.id);
+  expect(snap.runs.at(-1)?.state).toBe('completed');
+});
+
+test('effort low: stored, and the run completes', async ({ page }) => {
+  const chat = chatFor(page, 'default');
+  await chat.open();
+  await pickMenu(page, '推理强度', '低');
+  await chat.send(OK_PROMPT);
+  expect((await drive(chat, 'deny')).state).toBe('completed');
+  expect((await snapshotOf(chat)).session.settings.effort).toBe('low');
+});
+
+test('acceptEdits: a file edit needs no approval and the file is written', async ({ page }) => {
+  rmSync(join(info.workspace, 'a.txt'), { force: true });
+  const chat = chatFor(page, 'default');
+  await chat.open();
+  // allowBypass is off on this server: bypass is not offered.
+  expect(await menuLabels(page, '权限')).toEqual(['每次询问', '自动接受编辑', '计划模式', '自动模式']);
+  await pickMenu(page, '权限', '自动接受编辑');
+  await chat.send(WRITE_A);
+  const { state, cards } = await drive(chat, 'deny');
+  expect(state).toBe('completed');
+  expect(cards, `approval cards: ${cards.join(' | ')}`).toEqual([]);
+  expect(readFileSync(join(info.workspace, 'a.txt'), 'utf8')).toContain('hello');
+});
+
+test('plan: the same prompt creates no file and the run completes', async ({ page }) => {
+  rmSync(join(info.workspace, 'a.txt'), { force: true });
+  const chat = chatFor(page, 'default');
+  await chat.open();
+  await pickMenu(page, '权限', '计划模式');
+  await chat.send(WRITE_A);
+  // Claude may offer to leave plan mode (ExitPlanMode → an approval card): decline it.
+  const { state, cards } = await drive(chat, 'deny');
+  facts.planCards = cards;
+  expect(state).toBe('completed');
+  expect(existsSync(join(info.workspace, 'a.txt'))).toBe(false);
+  expect((await snapshotOf(chat)).session.settings.permissionMode).toBe('plan');
+});
+
+test('default mode: a Bash command still asks for approval', async ({ page }) => {
+  const chat = chatFor(page, 'default');
+  await chat.open();
+  await expect(page.getByRole('button', { name: '权限：每次询问' })).toBeVisible();
+  await chat.send(NPM_TEST);
+  await expect(pendingCard(chat)).toBeVisible({ timeout: RUN_TIMEOUT });
+  await expect(pendingCard(chat)).toContainText('npm test');
+  expect((await drive(chat, 'allow')).state).toBe('completed');
+});
+
+test('image attachment: Claude reads the text in uncage-42.png', async ({ page }) => {
+  const chat = chatFor(page, 'default');
+  await chat.open();
+  await page.locator('input.uc-file-input').setInputFiles(join(import.meta.dirname, '../fixtures/uncage-42.png'));
+  await expect(page.locator('.uc-attachments .uc-attachment')).toHaveCount(1);
+  await chat.send('What text is in the image? Answer with the text only.');
+  expect((await drive(chat, 'deny')).state).toBe('completed');
+  await expect(page.locator('.uc-user-thumb img')).toHaveAttribute('alt', 'uncage-42.png');
+  await expect(chat.assistant.last()).toContainText('UNCAGE-42');
+});
+
+test('file attachment: Claude reads the secret word from the attached notes.md', async ({ page }) => {
+  // The attachment must be the only copy Claude can find.
+  rmSync(join(info.workspace, 'notes.md'), { force: true });
+  const chat = chatFor(page, 'default');
+  await chat.open();
+  await page.locator('input.uc-file-input').setInputFiles(join(import.meta.dirname, 'fixture-repo/notes.md'));
+  await expect(page.locator('.uc-attachments .uc-attachment')).toHaveCount(1);
+  await chat.send('What is the secret word in the attached file?');
+  expect((await drive(chat, 'allow')).state).toBe('completed');
+  await expect(page.locator('.uc-user-attachments .uc-file-chip')).toContainText('notes.md');
+  await expect(chat.assistant.last()).toContainText('marmalade');
+});
+
+test('auto: the run completes, or fails with unsupported_capability', async ({ page }) => {
+  const chat = chatFor(page, 'default');
+  await chat.open();
+  await pickMenu(page, '权限', '自动模式');
+  await chat.send(OK_PROMPT);
+  const { state } = await drive(chat, 'deny');
+  const run = (await snapshotOf(chat)).runs.at(-1);
+  facts.auto = { state, error: run?.error ?? null };
+  if (state === 'failed') expect(run?.error?.code).toBe('unsupported_capability');
+  else expect(state).toBe('completed');
+});
+
+test('running chip: 1 while a run waits in another session; it jumps back to that session', async ({ page }) => {
+  const chat = chatFor(page, 'default');
+  await chat.open();
+  await chat.send(NPM_TEST);
+  await expect(pendingCard(chat)).toBeVisible({ timeout: RUN_TIMEOUT });
+  const sessionId = new URL(await chat.sessionUrl()).searchParams.get('session');
+
+  await page.getByRole('button', { name: '新建会话' }).first().click();
+  await expect(chat.userBubbles).toHaveCount(0);
+  const chip = page.locator('.uc-running-chip');
+  await expect(chip).toHaveText('1 个运行中');
+  await chip.click();
+  await page.getByRole('menuitem').first().click();
+  await expect(page).toHaveURL(new RegExp(`session=${sessionId}`));
+  await expect(pendingCard(chat)).toBeVisible();
+  expect((await drive(chat, 'allow')).state).toBe('completed');
+  await expect(chip).toHaveCount(0, { timeout: 10_000 });
+});
+
+test('bypassPermissions (UNCAGE_ALLOW_BYPASS=1 server): confirm, banner, Bash runs without approval', async ({ page }) => {
+  const target = join(info.bypass.workspace, 'bypass.txt');
+  rmSync(target, { force: true });
+  const chat = chatFor(page, 'default');
+  await chat.open(`http://localhost:${LIVE_PORTS.bypassApp}/`);
+  expect(await menuLabels(page, '权限')).toContain('完全放行');
+  await pickMenu(page, '权限', '完全放行');
+  const dialog = page.getByRole('alertdialog');
+  await expect(dialog).toContainText('Agent 将不经询问执行任何命令');
+  await dialog.getByRole('button', { name: '开启' }).click();
+  await expect(page.getByRole('button', { name: '权限：完全放行' })).toBeVisible();
+
+  // Harmless, and confined to the bypass server's tmp copy of the fixture repo.
+  await chat.send('用 Bash 工具运行 `echo bypass-ok > bypass.txt`，然后说完成');
+  const { state, cards } = await drive(chat, 'deny');
+  expect(state).toBe('completed');
+  expect(cards, `approval cards: ${cards.join(' | ')}`).toEqual([]);
+  await expect(page.locator('.uc-bypass-banner')).toBeVisible();
+  expect(readFileSync(target, 'utf8').trim()).toBe('bypass-ok');
+  expect((await snapshotOf(chat, info.bypass)).session.settings.permissionMode).toBe('bypassPermissions');
 });

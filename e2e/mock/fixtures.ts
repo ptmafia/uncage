@@ -86,6 +86,20 @@ export function chatFor(page: Page, example: Example): Chat {
   };
 }
 
+/** react-ui composer: picks `item` from the menu whose trigger is labelled "<title>：<value>". */
+export async function pickMenu(page: Page, title: string, item: string): Promise<void> {
+  await page.getByRole('button', { name: new RegExp(`^${title}：`) }).click();
+  await page.getByRole('menuitemradio', { name: item, exact: true }).click();
+}
+
+/** react-ui composer: the labels listed in a composer menu (opened, read, closed). */
+export async function menuLabels(page: Page, title: string): Promise<string[]> {
+  await page.getByRole('button', { name: new RegExp(`^${title}：`) }).click();
+  const labels = await page.getByRole('menuitemradio').locator('.uc-menu-label').allInnerTexts();
+  await page.keyboard.press('Escape');
+  return labels;
+}
+
 /** Set per project in playwright.config.ts. */
 export interface ExampleOptions {
   example: Example;
