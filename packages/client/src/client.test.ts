@@ -57,6 +57,80 @@ describe('REST', () => {
     expect(init!.body).toBe('{"prompt":"hi"}');
   });
 
+  it('updateSettings uses PATCH', async () => {
+    const fetch = vi.fn<F>(async () => json({ id: 'ses_1' }));
+    await createUncageClient({ fetch }).updateSettings('ses_1', { effort: 'high' });
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe('/api/uncage/sessions/ses_1/settings');
+    expect(init!.method).toBe('PATCH');
+    expect(init!.body).toBe('{"effort":"high"}');
+  });
+
+  it('upload sends raw blob + headers and parses Attachment', async () => {
+    const att = { id: 'att_1', name: 'a b.png' };
+    const fetch = vi.fn<F>(async () => json(att, 201));
+    const file = new File([new Uint8Array([1, 2])], 'a b.png', { type: 'image/png' });
+    const ctl = new AbortController();
+    const out = await createUncageClient({ fetch, headers: () => ({ 'x-a': 'b' }) }).uploadAttachment('ses_1', file, {
+      signal: ctl.signal,
+    });
+    expect(out).toEqual(att);
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe('/api/uncage/sessions/ses_1/attachments');
+    expect(init!.method).toBe('POST');
+    expect(init!.body).toBe(file);
+    expect(init!.signal).toBe(ctl.signal);
+    const h = init!.headers as Record<string, string>;
+    expect(h['content-type']).toBe('image/png');
+    expect(h['x-filename']).toBe('a%20b.png');
+    expect(h['x-a']).toBe('b');
+  });
+
+  it.each([
+    ['', 'p.PNG', 'image/png'],
+    ['', 'p.jpg', 'image/jpeg'],
+    ['', 'p.jpeg', 'image/jpeg'],
+    ['', 'p.gif', 'image/gif'],
+    ['', 'p.webp', 'image/webp'],
+    ['image/jpg', 'p.jpg', 'image/jpeg'],
+    ['', 'notes.md', 'application/octet-stream'],
+    ['', 'noext', 'application/octet-stream'],
+    ['text/markdown', 'notes.md', 'text/markdown'],
+  ])('upload content-type for type %j name %s is %s', async (type, name, expected) => {
+    const fetch = vi.fn<F>(async () => json({ id: 'att_1' }, 201));
+    await createUncageClient({ fetch }).uploadAttachment('s', new File(['x'], name, { type }));
+    expect((fetch.mock.calls[0]![1]!.headers as Record<string, string>)['content-type']).toBe(expected);
+  });
+
+  it('413 becomes UncageClientError attachment_too_large', async () => {
+    const fetch = vi.fn<F>(async () =>
+      json({ error: { code: 'attachment_too_large', message: 'big', retryable: false, requestId: 'r' } }, 413),
+    );
+    const err = await createUncageClient({ fetch })
+      .uploadAttachment('s', new File(['x'], 'a.png', { type: 'image/png' }))
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UncageClientError);
+    expect(err).toMatchObject({ code: 'attachment_too_large', status: 413 });
+  });
+
+  it('attachmentUrl builds from baseUrl', () => {
+    expect(createUncageClient({ baseUrl: '/x/' }).attachmentUrl('att 1')).toBe('/x/attachments/att%201');
+  });
+
+  it('listActiveRuns GET /runs?active=1', async () => {
+    const fetch = vi.fn<F>(async () => json([{ runId: 'run_1' }]));
+    expect(await createUncageClient({ fetch }).listActiveRuns()).toEqual([{ runId: 'run_1' }]);
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe('/api/uncage/runs?active=1');
+    expect(init!.method).toBe('GET');
+  });
+
+  it('startRun forwards attachmentIds', async () => {
+    const fetch = vi.fn<F>(async () => json({ id: 'run_1' }, 202));
+    await createUncageClient({ fetch }).startRun('ses_1', { prompt: 'hi', attachmentIds: ['a1'] });
+    expect(fetch.mock.calls[0]![1]!.body).toBe('{"prompt":"hi","attachmentIds":["a1"]}');
+  });
+
   it('cancelRun sends an empty JSON object body', async () => {
     const fetch = vi.fn<F>(async () => json({ id: 'run_1' }, 202));
     await createUncageClient({ fetch }).cancelRun('run_1');

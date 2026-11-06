@@ -1,13 +1,16 @@
 import {
   ErrorBodySchema,
   UncageEventSchema,
+  type ActiveRunInfo,
   type ApprovalDecision,
   type ApprovalRequest,
+  type Attachment,
   type CreateSessionBody,
   type ErrorBody,
   type Run,
   type RuntimeInfo,
   type Session,
+  type SessionSettings,
   type SessionSnapshot,
   type StartRunBody,
   type UncageEvent,
@@ -32,6 +35,10 @@ export interface UncageClient {
   snapshot(sessionId: string): Promise<SessionSnapshot>;
   startRun(sessionId: string, b: StartRunBody): Promise<Run>;
   cancelRun(runId: string): Promise<Run>;
+  updateSettings(sessionId: string, patch: Partial<SessionSettings>): Promise<Session>;
+  uploadAttachment(sessionId: string, file: Blob & { name: string }, opts?: { signal?: AbortSignal }): Promise<Attachment>;
+  attachmentUrl(attachmentId: string): string;
+  listActiveRuns(): Promise<ActiveRunInfo[]>;
   decide(approvalId: string, d: ApprovalDecision, idempotencyKey?: string): Promise<ApprovalRequest>;
   subscribe(sessionId: string, h: SubscribeHandlers): () => void;
 }
@@ -56,6 +63,24 @@ const sleep = (ms: number, signal: AbortSignal) =>
       resolve();
     }
   });
+
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+};
+
+/** Canonical Content-Type for an upload: browsers often leave `type` empty or send `image/jpg`. */
+function uploadContentType(file: Blob & { name: string }): string {
+  const declared = (file.type.split(';')[0] ?? '').trim().toLowerCase();
+  if (declared === 'image/jpg') return 'image/jpeg';
+  if (declared) return declared;
+  const dot = file.name.lastIndexOf('.');
+  const ext = dot < 0 ? '' : file.name.slice(dot + 1).toLowerCase();
+  return Object.hasOwn(IMAGE_MIME_BY_EXT, ext) ? IMAGE_MIME_BY_EXT[ext]! : 'application/octet-stream';
+}
 
 async function toError(res: Response): Promise<UncageClientError> {
   let body: ErrorBody | undefined;
@@ -92,6 +117,27 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
   }
 
   const enc = encodeURIComponent;
+
+  async function uploadAttachment(
+    sessionId: string,
+    file: Blob & { name: string },
+    opts: { signal?: AbortSignal } = {},
+  ): Promise<Attachment> {
+    const init: RequestInit = {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        ...extraHeaders(),
+        'content-type': uploadContentType(file),
+        'x-filename': enc(file.name),
+      },
+      body: file,
+    };
+    if (opts.signal) init.signal = opts.signal;
+    const res = await doFetch(`${baseUrl}/sessions/${enc(sessionId)}/attachments`, init);
+    if (!res.ok) throw await toError(res);
+    return (await res.json()) as Attachment;
+  }
 
   function subscribe(sessionId: string, h: SubscribeHandlers): () => void {
     const controller = new AbortController();
@@ -191,6 +237,10 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
     snapshot: (id) => request('GET', `/sessions/${enc(id)}`),
     startRun: (id, b) =>
       request('POST', `/sessions/${enc(id)}/runs`, b, { 'idempotency-key': globalThis.crypto.randomUUID() }),
+    updateSettings: (id, patch) => request('PATCH', `/sessions/${enc(id)}/settings`, patch),
+    uploadAttachment,
+    attachmentUrl: (id) => `${baseUrl}/attachments/${enc(id)}`,
+    listActiveRuns: () => request('GET', '/runs?active=1'),
     cancelRun: (id) => request('POST', `/runs/${enc(id)}/cancel`, {}),
     decide: (id, d, key) =>
       request('POST', `/approvals/${enc(id)}/decision`, d, { 'idempotency-key': key ?? globalThis.crypto.randomUUID() }),

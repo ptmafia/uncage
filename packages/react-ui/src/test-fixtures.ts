@@ -126,6 +126,12 @@ export function fakeClient(
       run({ id: `run_${++runCount}`, sessionId, prompt: b.prompt }),
     ),
     cancelRun: vi.fn(async (id: string) => run({ id, state: 'cancelled' })),
+    updateSettings: vi.fn(async () => session()),
+    uploadAttachment: vi.fn(async () => {
+      throw new Error('fakeClient.uploadAttachment not stubbed');
+    }),
+    attachmentUrl: vi.fn((id: string) => `/api/uncage/attachments/${id}`),
+    listActiveRuns: vi.fn(async () => []),
     decide: vi.fn(async (id: string) => approval({ id, state: 'approved', decision: 'allow', version: 2 })),
     subscribe: vi.fn((sessionId: string, h: SubscribeHandlers) => {
       const sub = { ...h, sessionId, closed: false };
