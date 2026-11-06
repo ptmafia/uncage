@@ -82,7 +82,7 @@ See [`examples/nextjs-default-chat`](examples/nextjs-default-chat). Restyle it w
 
 ## The composer
 
-`<AgentChat>`'s prompt box (Claude Code style) has these controls. Each one really changes what the runtime gets. The live E2E checks every one against real Claude Code (see [docs/compatibility.md](docs/compatibility.md)).
+`<AgentChat>`'s prompt box (Claude Code style) has these controls. Each one really changes what the runtime gets. The live E2E against real Claude Code covers model, effort, the permission modes (including bypass), image and file attachments added with the + button, and the running chip. Drag and drop and paste are covered by the mock E2E. Voice input is [pending manual verification](docs/compatibility.md#voice-input-pending-manual-verification-by-the-user-requires-microphone). See [docs/compatibility.md](docs/compatibility.md).
 
 | Control | What it does |
 | --- | --- |

@@ -3,7 +3,7 @@
  * copy of fixture-repo, driven through the nextjs-default-chat example (and, for the golden path,
  * react-headless-chat) in system Chrome.
  * Run with `UNCAGE_LIVE=1 pnpm e2e:live`. Assertions are on states, not on model text (except the
- * "42" continuity check). Model behaviour varies, so every run is driven by `drive()`, which
+ * "42" continuity check and the attachment checks: `UNCAGE-42` from the image, `marmalade` from the file). Model behaviour varies, so every run is driven by `drive()`, which
  * answers each approval card that appears until the run is terminal.
  */
 import { execFile } from 'node:child_process';
@@ -382,7 +382,10 @@ test('file attachment: Claude reads the secret word from the attached notes.md',
   await page.locator('input.uc-file-input').setInputFiles(join(import.meta.dirname, 'fixture-repo/notes.md'));
   await expect(page.locator('.uc-attachments .uc-attachment')).toHaveCount(1);
   await chat.send('What is the secret word in the attached file?');
-  expect((await drive(chat, 'allow')).state).toBe('completed');
+  // Deny anything that asks (e.g. a search outside the workspace): the answer must come from the attachment.
+  const { state, cards } = await drive(chat, 'deny');
+  expect(state).toBe('completed');
+  expect(cards, `approval cards: ${cards.join(' | ')}`).toEqual([]);
   await expect(page.locator('.uc-user-attachments .uc-file-chip')).toContainText('notes.md');
   await expect(chat.assistant.last()).toContainText('marmalade');
 });

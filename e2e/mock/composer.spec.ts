@@ -83,6 +83,46 @@ test.describe('default chat (react-ui)', () => {
     await expectBubble();
   });
 
+  test('drag and drop and paste attach files; pasted text stays text', async ({ chat, page }) => {
+    await chat.open();
+    // Synthetic DataTransfer events: what the browser dispatches for a real drop / paste.
+    await page.evaluate(() => {
+      const box = document.querySelector('.uc-composer')!;
+      const dt = new DataTransfer();
+      dt.items.add(new File(['dropped'], 'dropped.txt', { type: 'text/plain' }));
+      for (const type of ['dragenter', 'dragover', 'drop']) {
+        box.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
+      }
+    });
+    const chips = page.locator('.uc-attachments .uc-attachment');
+    await expect(chips).toHaveCount(1);
+    await expect(chips.first()).toContainText('dropped.txt');
+
+    await chat.input.focus();
+    await page.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.items.add(new File([new Uint8Array([137, 80, 78, 71])], 'screenshot.png', { type: 'image/png' }));
+      document.querySelector('.uc-composer-input')!.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
+    });
+    await expect(chips).toHaveCount(2);
+    await expect(chips.nth(1)).toContainText('screenshot.png');
+
+    // Clipboard with text (and a file, as office apps put both): the text is pasted, no attachment.
+    const defaultPrevented = await page.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.setData('text/plain', 'hello');
+      dt.items.add(new File(['x'], 'copied.txt', { type: 'text/plain' }));
+      const e = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt });
+      document.querySelector('.uc-composer-input')!.dispatchEvent(e);
+      return e.defaultPrevented;
+    });
+    expect(defaultPrevented).toBe(false);
+    await expect(chips).toHaveCount(2);
+
+    await chat.send('echo');
+    await expect(chat.assistant.last()).toContainText(/attachments: (dropped\.txt,screenshot\.png|screenshot\.png,dropped\.txt)$/);
+  });
+
   test('11 files: 10 attach, the 11th is refused with the count limit', async ({ chat, page }) => {
     await chat.open();
     const files = Array.from({ length: 11 }, (_, i) => ({ name: `f${i + 1}.txt`, mimeType: 'text/plain', buffer: Buffer.from(`file ${i + 1}`) }));
