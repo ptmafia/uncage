@@ -262,7 +262,9 @@ function reduce(s: SessionState, e: UncageEvent): SessionState {
     case 'approval.resolved':
       return upsertApproval(s, e.payload.approval);
 
-    case 'system.warning':
-      return s;
+    case 'system.warning': {
+      const { code, message } = e.payload;
+      return { ...s, lastWarning: { code, message, ...(e.runId !== undefined ? { runId: e.runId } : {}) } };
+    }
   }
 }

@@ -52,6 +52,13 @@ export interface ChatController {
   starterPrompts: string[];
   /** Leaves the open session for a new draft (the read-only banner's "New session" button). */
   startNewSession?(): void;
+  /**
+   * True from the moment the first prompt starts creating the session until that session is
+   * open: the composer accepts no input or files meanwhile.
+   */
+  committing?: boolean;
+  /** Opens another session (e.g. from the running-sessions chip). */
+  openSession?(id: string): void;
 }
 
 export const ChatControllerContext = createContext<ChatController | null>(null);

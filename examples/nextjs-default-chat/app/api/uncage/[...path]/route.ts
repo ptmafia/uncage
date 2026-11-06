@@ -4,4 +4,4 @@ import { createUncageHandler } from '@uncage/server/proxy';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export const { GET, POST } = createUncageHandler();
+export const { GET, POST, PATCH } = createUncageHandler();

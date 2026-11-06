@@ -1,4 +1,4 @@
-import type { RuntimeStatus } from '@uncage/protocol';
+import type { EffortLevel, PermissionMode, RuntimeStatus } from '@uncage/protocol';
 
 export type Locale = 'en' | 'zh-CN';
 
@@ -8,6 +8,13 @@ const pad2 = (n: number) => String(n).padStart(2, '0');
 export function formatClock(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? '' : `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+/** File size for chips: `512 B`, `1.2 KB`, `3.4 MB`. */
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /** Ends a server message with punctuation so copy can follow it. */
@@ -71,10 +78,76 @@ const en = {
   approvalFailed: "Your decision didn't go through",
   // Composer
   composerLabel: 'Message',
-  placeholder: (name: string) => `Ask ${name}…`,
+  placeholder: (name: string, canAttach: boolean) => (canAttach ? `Message ${name}, attach files…` : `Message ${name}…`),
   send: 'Send',
   stop: 'Stop',
   readOnlyHint: "This session can't be continued. Its history is still available.",
+  runActive: 'A run is in progress',
+  // Composer settings
+  labelled: (title: string, value: string) => `${title}: ${value}`,
+  modelTitle: 'Model',
+  effortTitle: 'Effort',
+  permissionTitle: 'Permissions',
+  defaultOption: 'Default',
+  appliesNextRun: 'Applies to the next run',
+  efforts: {
+    low: 'Low',
+    medium: 'Medium',
+    high: 'High',
+    xhigh: 'Extra high',
+    max: 'Max',
+  } satisfies Record<EffortLevel, string>,
+  effortHints: {
+    low: 'Fastest, least thinking',
+    medium: 'Balanced',
+    high: 'Thinks harder',
+    xhigh: 'Thinks much harder',
+    max: 'Deepest thinking, slowest',
+  } satisfies Record<EffortLevel, string>,
+  permissionModes: {
+    default: 'Ask every time',
+    acceptEdits: 'Accept edits',
+    plan: 'Plan mode',
+    auto: 'Auto mode',
+    bypassPermissions: 'Bypass permissions',
+  } satisfies Record<PermissionMode, string>,
+  permissionHints: {
+    default: 'Asks before running commands or editing files',
+    acceptEdits: 'Edits files without asking; asks before commands',
+    plan: 'Plans and explains first; changes nothing',
+    auto: 'The runtime decides what needs your OK',
+    bypassPermissions: 'Runs anything without asking',
+  } satisfies Record<PermissionMode, string>,
+  bypassConfirm: 'Agent will run any command without asking. Continue?',
+  cancel: 'Cancel',
+  enable: 'Enable',
+  bypassBanner: 'Bypass permissions is on: the agent runs any command without asking.',
+  settingReset: 'A setting was reset: the runtime no longer offers it',
+  // Attachments
+  attach: 'Attach files',
+  removeAttachment: (name: string) => `Remove ${name}`,
+  attachmentsLabel: 'Attachments',
+  uploading: 'Uploading',
+  uploadFailed: 'Upload failed',
+  dropToAttach: 'Drop files to attach',
+  rejectedType: (name: string) => `Unsupported file type: ${name}`,
+  rejectedSize: (name: string, max: string) => `File too large (max ${max}): ${name}`,
+  rejectedCount: (name: string, max: number) => `At most ${max} attachments per message: ${name}`,
+  openImage: (name: string) => `Open ${name} in a new tab`,
+  // Voice
+  micStart: 'Voice input',
+  micStop: 'Stop voice input',
+  speechNotice: "Audio is processed by your browser vendor's speech service.",
+  micError: (code: string) =>
+    code === 'not-allowed' || code === 'service-not-allowed'
+      ? 'Microphone access was blocked. Allow it in the browser to dictate.'
+      : code === 'no-speech'
+        ? 'No speech was detected.'
+        : `Voice input stopped (${code}).`,
+  // Running sessions
+  runningCount: (n: number) => `${n} running`,
+  runningSessions: 'Running sessions',
+  waitingState: 'Waiting for you',
   // Run status
   running: 'Running',
   queued: 'Starting',
@@ -143,10 +216,72 @@ const zhCN: Strings = {
   cancelled: '已取消',
   approvalFailed: '你的决定没能提交',
   composerLabel: '消息',
-  placeholder: (name: string) => `问 ${name}…`,
+  placeholder: (name: string, canAttach: boolean) => (canAttach ? `给 ${name} 发消息，可添加附件…` : `给 ${name} 发消息…`),
   send: '发送',
   stop: '停止',
   readOnlyHint: '这个会话无法继续了，历史仍可查看。',
+  runActive: '正在运行',
+  labelled: (title: string, value: string) => `${title}：${value}`,
+  modelTitle: '模型',
+  effortTitle: '推理强度',
+  permissionTitle: '权限',
+  defaultOption: '默认',
+  appliesNextRun: '下一次运行生效',
+  efforts: {
+    low: '低',
+    medium: '中',
+    high: '高',
+    xhigh: '超高',
+    max: '最高',
+  },
+  effortHints: {
+    low: '最快，思考最少',
+    medium: '均衡',
+    high: '想得更深',
+    xhigh: '想得更深入',
+    max: '思考最深，最慢',
+  },
+  permissionModes: {
+    default: '每次询问',
+    acceptEdits: '自动接受编辑',
+    plan: '计划模式',
+    auto: '自动模式',
+    bypassPermissions: '完全放行',
+  },
+  permissionHints: {
+    default: '执行命令或修改文件前都先问你',
+    acceptEdits: '直接修改文件，执行命令前先问你',
+    plan: '先规划和说明，不做任何改动',
+    auto: '由运行时判断哪些操作需要你确认',
+    bypassPermissions: '不经询问执行任何操作',
+  },
+  bypassConfirm: 'Agent 将不经询问执行任何命令，确定开启？',
+  cancel: '取消',
+  enable: '开启',
+  bypassBanner: '已开启完全放行：Agent 会不经询问执行任何命令。',
+  settingReset: '某项设置已重置：运行时不再提供该选项',
+  attach: '添加附件',
+  removeAttachment: (name: string) => `移除 ${name}`,
+  attachmentsLabel: '附件',
+  uploading: '上传中',
+  uploadFailed: '上传失败',
+  dropToAttach: '松开以添加附件',
+  rejectedType: (name: string) => `不支持的文件类型：${name}`,
+  rejectedSize: (name: string, max: string) => `文件太大（上限 ${max}）：${name}`,
+  rejectedCount: (name: string, max: number) => `每条消息最多 ${max} 个附件：${name}`,
+  openImage: (name: string) => `在新标签页打开 ${name}`,
+  micStart: '语音输入',
+  micStop: '停止语音输入',
+  speechNotice: '语音由浏览器厂商的语音服务处理。',
+  micError: (code: string) =>
+    code === 'not-allowed' || code === 'service-not-allowed'
+      ? '麦克风权限被拦截了，请在浏览器里允许后再试。'
+      : code === 'no-speech'
+        ? '没有听到声音。'
+        : `语音输入已停止（${code}）。`,
+  runningCount: (n: number) => `${n} 个运行中`,
+  runningSessions: '运行中的会话',
+  waitingState: '等你处理',
   running: '运行中',
   queued: '正在启动',
   waitingForYou: (n: number) => `${n} 项等你处理`,

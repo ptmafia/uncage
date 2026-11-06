@@ -1,7 +1,18 @@
-import { useApprovals, useMessages, useRun, useRuntimes, useSession, useSessions, useUncageStore } from '@uncage/react';
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react';
+import {
+  isDraft,
+  useApprovals,
+  useMessages,
+  useRun,
+  useRuntimes,
+  useSession,
+  useSessions,
+  useStoreSelector,
+  useUncageStore,
+} from '@uncage/react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { ChatControllerContext, cx, UncageUIProvider, useUi, type ChatComponents, type ChatController } from '../context.js';
 import type { Locale } from '../i18n.js';
+import { BypassBanner } from './BypassBanner.js';
 import { Composer as DefaultComposer } from './Composer.js';
 import { ConnectionBanner } from './ConnectionBanner.js';
 import { ConversationHeader } from './ConversationHeader.js';
@@ -72,18 +83,18 @@ function ChatLayout({ sidebar, theme, className, defaultRuntime, starterPrompts 
         {sidebar && (
           <SessionSidebar
             {...(draft ? { activeId: undefined } : activeSessionId !== undefined ? { activeId: activeSessionId } : {})}
-            onSelect={(id) => {
-              controller.setDraft(false);
-              void select(id);
-            }}
-            onNew={() => controller.setDraft(true)}
+            onSelect={(id) => void select(id)}
+            onNew={() => controller.value.startNewSession?.()}
           />
         )}
         <main className="uc-main">
           {!draft && <ConversationHeader />}
           <div className="uc-scroll" ref={scroll.ref} onScroll={scroll.onScroll}>
             <div className="uc-column">
-              <ConnectionBanner />
+              <div className="uc-top-banners">
+                <BypassBanner />
+                <ConnectionBanner />
+              </div>
               {draft ? <EmptyState /> : <MessageList />}
             </div>
           </div>
@@ -102,49 +113,72 @@ function ChatLayout({ sidebar, theme, className, defaultRuntime, starterPrompts 
 const NO_PROMPTS: string[] = [];
 
 /**
- * The chat's draft/session controller. With no session open (or after "New session") the chat is
- * a draft: the first prompt creates a session with the chosen runtime, opens it, then sends.
+ * The chat's draft/session controller, over the store's draft. With no session open (or after
+ * "New session") the chat is a draft on the chosen runtime: settings and files picked in the
+ * composer stay in the draft; the first prompt commits it (creates the session and applies them),
+ * opens the new session, then sends. The composer stays disabled until the session is open.
  */
 function useChatSession(defaultRuntime: string | undefined, starterPrompts: string[]) {
   const store = useUncageStore();
-  const { activeSessionId, create, select } = useSessions();
+  const { select } = useSessions();
   const { runtimes } = useRuntimes();
   const { session } = useSession();
   const { send } = useRun();
-  const [newSession, setDraft] = useState(false);
+  const draft = useStoreSelector(isDraft);
+  const draftRuntime = useStoreSelector((s) => s.draft.runtimeId);
   const [chosen, setChosen] = useState<string>();
-  const creating = useRef(false);
-  const draft = newSession || activeSessionId === undefined;
+  const [committing, setCommitting] = useState(false);
+  const busy = useRef(false);
+  const preferred = pickRuntime(runtimes, chosen ?? defaultRuntime);
+  const draftKnown = draftRuntime !== undefined && runtimes.some((r) => r.id === draftRuntime);
   // A draft uses the runtime chosen for new sessions; an open session always uses its own runtime.
-  const runtimeId = draft ? pickRuntime(runtimes, chosen ?? defaultRuntime) : session?.runtimeId;
+  const runtimeId = draft ? (draftKnown ? draftRuntime : preferred) : session?.runtimeId;
+
+  // Keep the store's draft on a listed runtime, so its capabilities drive the composer. Not while
+  // committing: the committed draft is closed but the new session is not open yet, and reopening
+  // a draft then would drop the files moving to the new session.
+  useEffect(() => {
+    if (draft && !committing && !draftKnown && preferred !== undefined) store.actions.openDraft(preferred);
+  }, [store, draft, committing, draftKnown, preferred]);
 
   const value = useMemo<ChatController>(
     () => ({
       draft,
       ...(runtimeId !== undefined ? { runtimeId } : {}),
-      setRuntimeId: setChosen,
+      setRuntimeId(id) {
+        setChosen(id);
+        store.actions.openDraft(id);
+      },
       starterPrompts,
-      startNewSession: () => setDraft(true),
+      committing,
+      startNewSession: () => store.actions.openDraft(preferred),
+      openSession: (id) => void select(id),
       async send(text) {
         if (!draft) return send(text);
-        if (runtimeId === undefined || creating.current) return false;
-        creating.current = true;
+        if (runtimeId === undefined || busy.current) return false;
+        busy.current = true;
+        setCommitting(true);
         try {
-          const id = await create({ runtime: runtimeId });
-          setDraft(false);
+          let id: string;
+          try {
+            id = await store.actions.commitDraft(draftKnown ? {} : { runtime: runtimeId });
+          } catch {
+            // Recorded in the store's lastError (shown by ConnectionBanner); the draft is kept.
+            return false;
+          }
+          // No input until the new session is open: files added in between would be dropped.
           await select(id);
+          setCommitting(false);
           return await store.actions.sendPrompt(text);
-        } catch {
-          // createSession failures are recorded in the store's lastError (shown by ConnectionBanner).
-          return false;
         } finally {
-          creating.current = false;
+          busy.current = false;
+          setCommitting(false);
         }
       },
     }),
-    [draft, runtimeId, starterPrompts, send, create, select, store],
+    [store, draft, draftKnown, runtimeId, preferred, starterPrompts, committing, send, select],
   );
-  return { value, setDraft };
+  return { value };
 }
 
 /**

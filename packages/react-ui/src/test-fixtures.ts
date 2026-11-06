@@ -1,11 +1,15 @@
 import { UncageClientError, type SubscribeHandlers, type UncageClient } from '@uncage/client';
 import type {
+  ActiveRunInfo,
   ApprovalRequest,
+  Attachment,
+  RuntimeCapabilities,
   ErrorCode,
   EventType,
   Run,
   RuntimeInfo,
   Session,
+  SessionSettings,
   SessionSnapshot,
   UncageEvent,
   UncageEventMap,
@@ -28,6 +32,32 @@ const capabilities = {
   permissionModes: ['default' as const],
   attachments: { images: false, files: false, maxBytes: ATTACHMENT_LIMITS.maxBytes },
 };
+
+/** Capabilities with every composer control populated (bypass only when `bypass`). */
+export const richCaps = (bypass = false): RuntimeCapabilities => ({
+  ...capabilities,
+  models: [
+    { id: 'default', label: 'Default', description: 'The runtime default' },
+    { id: 'opus', label: 'Opus', description: 'Most capable' },
+    { id: 'sonnet', label: 'Sonnet' },
+  ],
+  modelsAuthoritative: true,
+  efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+  permissionModes: ['default', 'acceptEdits', 'plan', 'auto', ...(bypass ? (['bypassPermissions'] as const) : [])],
+  attachments: { images: true, files: true, maxBytes: ATTACHMENT_LIMITS.maxBytes },
+});
+
+export const attachment = (over: Partial<Attachment> = {}): Attachment => ({
+  id: 'att_1',
+  sessionId: 'ses_1',
+  name: 'shot.png',
+  mime: 'image/png',
+  size: 2048,
+  kind: 'image',
+  sha256: 'x',
+  createdAt: T0,
+  ...over,
+});
 
 export const session = (over: Partial<Session> = {}): Session => ({
   id: 'ses_1',
@@ -112,6 +142,7 @@ export function fakeClient(
 ) {
   const subs: (SubscribeHandlers & { sessionId: string; closed: boolean })[] = [];
   let runCount = 0;
+  let uploadCount = 0;
   const snap = opts.snapshot ?? (() => snapshot());
   const client = {
     health: vi.fn(async () => ({ ok: true as const, protocol: '1.0' as const })),
@@ -126,12 +157,14 @@ export function fakeClient(
       run({ id: `run_${++runCount}`, sessionId, prompt: b.prompt }),
     ),
     cancelRun: vi.fn(async (id: string) => run({ id, state: 'cancelled' })),
-    updateSettings: vi.fn(async () => session()),
-    uploadAttachment: vi.fn(async () => {
-      throw new Error('fakeClient.uploadAttachment not stubbed');
-    }),
+    updateSettings: vi.fn(async (id: string, patch: Partial<SessionSettings>) =>
+      session({ id, settings: { permissionMode: 'default', ...patch } }),
+    ),
+    uploadAttachment: vi.fn(async (sessionId: string, file: Blob & { name: string }) =>
+      attachment({ id: `att_${++uploadCount}`, sessionId, name: file.name, size: file.size, mime: file.type }),
+    ),
     attachmentUrl: vi.fn((id: string) => `/api/uncage/attachments/${id}`),
-    listActiveRuns: vi.fn(async () => []),
+    listActiveRuns: vi.fn(async (): Promise<ActiveRunInfo[]> => []),
     decide: vi.fn(async (id: string) => approval({ id, state: 'approved', decision: 'allow', version: 2 })),
     subscribe: vi.fn((sessionId: string, h: SubscribeHandlers) => {
       const sub = { ...h, sessionId, closed: false };

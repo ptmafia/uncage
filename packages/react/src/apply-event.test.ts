@@ -133,4 +133,17 @@ describe('applyEvent', () => {
       { kind: 'approval', id: 'apr_1' },
     ]);
   });
+
+  it('system.warning is kept as lastWarning with its run', () => {
+    const ev = eventFactory();
+    const s = reduce([
+      ev('run.started', { run: run() }),
+      ev('system.warning', { code: 'setting_reset', message: 'The runtime no longer supports the selected model.' }),
+    ]);
+    expect(s.lastWarning).toEqual({
+      code: 'setting_reset',
+      message: 'The runtime no longer supports the selected model.',
+      runId: 'run_1',
+    });
+  });
 });

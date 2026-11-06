@@ -427,7 +427,62 @@
 }
 .uc-user {
   display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.uc-user-attachments {
+  display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
+  gap: 6px;
+  max-width: 80%;
+}
+.uc-user-thumb {
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--uncage-border-soft);
+  border-radius: var(--uncage-radius-md);
+  outline: none;
+}
+.uc-user-thumb:focus-visible {
+  box-shadow: var(--uncage-shadow-focus);
+}
+.uc-user-thumb img {
+  display: block;
+  width: auto;
+  max-width: 200px;
+  height: 96px;
+  object-fit: cover;
+}
+.uc-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--uncage-border-soft);
+  border-radius: var(--uncage-radius-md);
+  background: var(--uncage-surface);
+  font-size: var(--uncage-text-caption);
+  line-height: var(--uncage-text-caption-lh);
+  color: var(--uncage-ink);
+}
+.uc-file-chip svg {
+  width: 14px;
+  height: 14px;
+  color: var(--uncage-ink-3);
+}
+.uc-file-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.uc-file-chip-size {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--uncage-ink-3);
 }
 .uc-user-bubble {
   max-width: 80%;
@@ -925,7 +980,7 @@
   white-space: nowrap;
 }
 
-/* ---------- Composer ---------- */
+/* ---------- Composer (Claude Code–style box) ---------- */
 .uc-composer-hint {
   padding: 0 4px;
   font-size: var(--uncage-text-caption);
@@ -937,11 +992,39 @@
   flex-direction: column;
   gap: 6px;
 }
-.uc-composer {
+/* Chips above the box (running sessions), left-aligned. */
+.uc-composer-chips {
   display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 10px 10px 10px 16px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.uc-composer-chips:empty {
+  display: none;
+}
+.uc-root .uc-running-chip {
+  height: 26px;
+  padding: 0 10px 0 9px;
+  gap: 6px;
+  border: 1px solid var(--uncage-border-soft);
+  border-radius: 9999px;
+  background: var(--uncage-surface);
+  color: var(--uncage-ink-2);
+  font-size: var(--uncage-text-caption);
+  line-height: var(--uncage-text-caption-lh);
+  font-weight: 500;
+}
+.uc-running-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--uncage-accent-ink);
+}
+.uc-composer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px 10px;
   border: 1px solid var(--uncage-border-strong);
   border-radius: var(--uncage-radius-xl);
   background: var(--uncage-surface);
@@ -955,13 +1038,15 @@
   background: var(--uncage-surface-2);
   box-shadow: none;
 }
+.uc-composer[data-dragging] {
+  border-color: var(--uncage-accent-ink);
+}
 .uc-composer-input {
   display: block;
-  flex: 1;
-  min-width: 0;
+  width: 100%;
   min-height: 24px;
   max-height: 40vh;
-  margin: 0 0 4px;
+  margin: 0 0 8px;
   padding: 0;
   overflow-y: auto;
   border: 0;
@@ -981,13 +1066,437 @@
 }
 .uc-composer-bar {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 -6px 0 -8px;
+}
+.uc-composer-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.uc-composer-actions {
+  display: flex;
   flex-shrink: 0;
   align-items: center;
+  gap: 6px;
 }
-.uc-composer-bar .uc-icon-stop {
+/* Ghost toolbar buttons: h-8, text-ui, ink-2. */
+.uc-root .uc-tool {
+  height: 32px;
+  padding: 0 8px;
+  gap: 6px;
+  font-weight: 400;
+  color: var(--uncage-ink-2);
+}
+.uc-root .uc-tool[aria-expanded="true"] {
+  background: var(--uncage-hover);
+  color: var(--uncage-ink);
+}
+.uc-root .uc-tool[data-tone="err"] {
+  color: var(--uncage-err-fg);
+}
+.uc-root .uc-tool:disabled {
+  opacity: 0.55;
+}
+.uc-tool-icon {
+  width: 32px;
+  padding: 0;
+}
+.uc-tool-label {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.uc-btn .uc-tool-chevron {
+  width: 14px;
+  height: 14px;
+  margin-left: -2px;
+  color: var(--uncage-ink-4);
+}
+.uc-round {
+  border-radius: 9999px;
+}
+/* Stop: a red circle with a square (ink-inverse keeps contrast in both themes). */
+.uc-root .uc-stop {
+  background: var(--uncage-err-fg);
+  color: var(--uncage-ink-inverse);
+}
+.uc-root .uc-stop:hover {
+  background: color-mix(in srgb, var(--uncage-err-fg) 86%, var(--uncage-ink));
+}
+.uc-stop .uc-icon-stop {
   width: 12px;
   height: 12px;
   fill: currentColor;
+}
+.uc-composer-running {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 32px;
+  color: var(--uncage-ink-3);
+}
+.uc-composer-running .uc-spinner {
+  width: 16px;
+  height: 16px;
+  border-width: 2px;
+  border-color: var(--uncage-border-strong);
+  border-top-color: var(--uncage-accent-ink);
+}
+/* Dictation: accent while listening with a pulsing ring (static under reduced motion). */
+.uc-root .uc-mic-on {
+  color: var(--uncage-accent-ink);
+  background: var(--uncage-accent-soft);
+}
+.uc-mic-on::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 0 var(--uncage-accent-ring);
+  animation: uc-pulse var(--uncage-loop-breathe) var(--uncage-ease) infinite;
+  pointer-events: none;
+}
+@keyframes uc-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--uncage-accent-ring);
+  }
+  70% {
+    box-shadow: 0 0 0 8px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+/* Drag-and-drop overlay over the whole box. */
+.uc-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px dashed var(--uncage-accent-ink);
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--uncage-accent-soft) 92%, transparent);
+  color: var(--uncage-accent-ink);
+  font-size: var(--uncage-text-ui);
+  font-weight: 500;
+  pointer-events: none;
+}
+/* Captions under the box: rejected files, mic errors, the speech note, setting resets. */
+.uc-composer-captions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 4px;
+}
+.uc-composer-caption {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--uncage-text-caption);
+  line-height: var(--uncage-text-caption-lh);
+  color: var(--uncage-ink-3);
+}
+.uc-composer-caption[data-tone="err"] {
+  color: var(--uncage-err-fg);
+}
+.uc-caption-dismiss,
+.uc-attachment-remove {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  cursor: pointer;
+  outline: none;
+}
+.uc-root .uc-caption-dismiss,
+.uc-root .uc-attachment-remove {
+  color: var(--uncage-ink-3);
+}
+.uc-root .uc-caption-dismiss:hover,
+.uc-root .uc-attachment-remove:hover {
+  background: var(--uncage-hover);
+  color: var(--uncage-ink);
+}
+.uc-caption-dismiss:focus-visible,
+.uc-attachment-remove:focus-visible {
+  box-shadow: var(--uncage-shadow-focus);
+}
+.uc-caption-dismiss svg,
+.uc-attachment-remove svg {
+  width: 12px;
+  height: 12px;
+}
+.uc-attachment-remove:disabled {
+  visibility: hidden;
+}
+
+/* ---------- Composer attachments ---------- */
+.uc-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+}
+.uc-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 240px;
+  padding: 4px 6px 4px 4px;
+  border: 1px solid var(--uncage-border-soft);
+  border-radius: var(--uncage-radius-md);
+  background: var(--uncage-surface-2);
+}
+.uc-attachment[data-status="error"] {
+  border-color: var(--uncage-err-fg);
+  background: var(--uncage-err-surface);
+}
+.uc-attachment-thumb {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--uncage-surface);
+  color: var(--uncage-ink-3);
+}
+.uc-attachment-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.uc-attachment-thumb svg {
+  width: 18px;
+  height: 18px;
+}
+.uc-attachment-busy {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--uncage-surface) 60%, transparent);
+  color: var(--uncage-ink-2);
+}
+.uc-attachment-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.uc-attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--uncage-text-caption);
+  line-height: var(--uncage-text-caption-lh);
+  font-weight: 500;
+  color: var(--uncage-ink);
+}
+.uc-attachment-meta {
+  font-size: var(--uncage-text-micro);
+  line-height: var(--uncage-text-micro-lh);
+  font-variant-numeric: tabular-nums;
+  color: var(--uncage-ink-3);
+}
+.uc-attachment[data-status="error"] .uc-attachment-meta {
+  color: var(--uncage-err-fg);
+}
+
+/* ---------- Menus (popover above the trigger) ---------- */
+.uc-popover-anchor {
+  position: relative;
+  display: inline-flex;
+}
+.uc-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 40;
+  width: max-content;
+  min-width: 240px;
+  max-width: min(320px, calc(100vw - 32px));
+  padding: 4px;
+  border: 1px solid var(--uncage-border-soft);
+  border-radius: var(--uncage-radius-lg);
+  background: var(--uncage-surface);
+  box-shadow: var(--uncage-shadow-pop);
+}
+.uc-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.uc-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--uncage-radius-md);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+  transition: background-color var(--uncage-duration-fast) var(--uncage-ease);
+}
+.uc-root .uc-menu-item {
+  color: var(--uncage-ink);
+}
+.uc-menu-item:hover,
+.uc-menu-item:focus-visible,
+.uc-menu-item:focus {
+  background: var(--uncage-hover);
+}
+.uc-menu-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.uc-menu-label {
+  font-size: var(--uncage-text-ui);
+  line-height: var(--uncage-text-ui-lh);
+  font-weight: 500;
+}
+.uc-menu-item[data-tone="err"] .uc-menu-label {
+  color: var(--uncage-err-fg);
+}
+.uc-menu-desc {
+  font-size: var(--uncage-text-caption);
+  line-height: var(--uncage-text-caption-lh);
+  color: var(--uncage-ink-3);
+}
+.uc-menu-check {
+  display: inline-flex;
+  width: 16px;
+  color: var(--uncage-ink);
+}
+.uc-menu-check svg {
+  width: 16px;
+  height: 16px;
+}
+.uc-menu-foot {
+  margin-top: 4px;
+  padding: 6px 10px 4px;
+  border-top: 1px solid var(--uncage-divider);
+  font-size: var(--uncage-text-caption);
+  line-height: var(--uncage-text-caption-lh);
+  color: var(--uncage-ink-3);
+}
+
+/* ---------- Bypass: banner and confirm dialog ---------- */
+/* Bypass and connection banners stay pinned at the top of the conversation. */
+.uc-top-banners {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+}
+.uc-top-banners:empty {
+  display: none;
+}
+.uc-top-banners > .uc-banners {
+  position: static;
+  padding-top: 0;
+}
+.uc-bypass-banner {
+  align-items: center;
+}
+.uc-bypass-banner > svg {
+  margin-top: 0;
+}
+.uc-bypass-banner .uc-banner-text {
+  padding-top: 0;
+}
+.uc-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--uncage-overlay);
+}
+.uc-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(400px, 100%);
+  padding: 20px;
+  border: 1px solid var(--uncage-border-soft);
+  border-radius: var(--uncage-radius-lg);
+  background: var(--uncage-surface);
+  box-shadow: var(--uncage-shadow-pop);
+  color: var(--uncage-ink);
+}
+.uc-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.uc-dialog-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  background: var(--uncage-err-bg);
+  color: var(--uncage-err-fg);
+}
+.uc-dialog-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.uc-dialog-title {
+  font-size: var(--uncage-text-heading);
+  line-height: var(--uncage-text-heading-lh);
+  font-weight: 600;
+}
+.uc-dialog-body {
+  font-size: var(--uncage-text-ui);
+  line-height: var(--uncage-text-ui-lh);
+  color: var(--uncage-ink-2);
+}
+.uc-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+.uc-root .uc-btn-danger {
+  background: var(--uncage-err-fg);
+  color: var(--uncage-ink-inverse);
+}
+.uc-root .uc-btn-danger:hover {
+  background: color-mix(in srgb, var(--uncage-err-fg) 86%, var(--uncage-ink));
 }
 
 /* ---------- Empty state ---------- */
@@ -1170,8 +1679,13 @@
   }
   /* Also when the components are used outside .uc-root. */
   .uc-spinner,
-  .uc-breathe::after {
+  .uc-breathe::after,
+  .uc-mic-on::after {
     animation: none !important;
+  }
+  /* The listening ring rests as a static ring. */
+  .uc-mic-on::after {
+    box-shadow: 0 0 0 2px var(--uncage-accent-ring);
   }
   /* The breathing ring rests as a thin solid ring. */
   .uc-breathe::after {
