@@ -192,14 +192,14 @@ export async function openPgliteStore(opts: { dataDir: string | 'memory://' }): 
     return map(row as never);
   };
 
-  /** Attaches the attachments each run consumed (`run.attachments`), oldest first. */
+  /** Attaches the attachments each run consumed (`run.attachments`), in pick (`attachmentIds`) order. */
   const withAttachments = async (rows: RunRow[]): Promise<Run[]> => {
     if (rows.length === 0) return [];
     const atts = await db
       .select()
       .from(attachments)
       .where(inArray(attachments.referencedByRun, rows.map((r) => r.id)))
-      .orderBy(asc(attachments.createdAt), asc(attachments.id));
+      .orderBy(asc(attachments.runPosition), asc(attachments.createdAt), asc(attachments.id));
     const byRun = new Map<string, Attachment[]>();
     for (const a of atts) {
       const list = byRun.get(a.referencedByRun as string) ?? [];
@@ -415,13 +415,18 @@ export async function openPgliteStore(opts: { dataDir: string | 'memory://' }): 
       const unique = new Set(ids).size;
       try {
         return await db.transaction(async (tx) => {
-          const rows = await tx
-            .update(attachments)
-            .set({ referencedByRun: runId })
-            .where(and(inArray(attachments.id, ids), isNull(attachments.referencedByRun)))
-            .returning({ id: attachments.id });
-          if (rows.length !== unique || unique !== ids.length) throw new PartialMark();
-          return rows.length;
+          if (unique !== ids.length) throw new PartialMark();
+          let marked = 0;
+          for (const [i, id] of ids.entries()) {
+            const rows = await tx
+              .update(attachments)
+              .set({ referencedByRun: runId, runPosition: i })
+              .where(and(eq(attachments.id, id), isNull(attachments.referencedByRun)))
+              .returning({ id: attachments.id });
+            if (rows.length !== 1) throw new PartialMark();
+            marked++;
+          }
+          return marked;
         });
       } catch (e) {
         if (e instanceof PartialMark) return 0;
@@ -429,7 +434,7 @@ export async function openPgliteStore(opts: { dataDir: string | 'memory://' }): 
       }
     },
     async releaseAttachments(runId) {
-      await db.update(attachments).set({ referencedByRun: null }).where(eq(attachments.referencedByRun, runId));
+      await db.update(attachments).set({ referencedByRun: null, runPosition: null }).where(eq(attachments.referencedByRun, runId));
     },
     async deleteOrphanAttachments(olderThan) {
       const rows = await db

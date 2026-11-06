@@ -82,7 +82,8 @@ CREATE TABLE attachments (
   sha256 text NOT NULL,
   abs_path text NOT NULL,
   created_at text NOT NULL,
-  referenced_by_run text
+  referenced_by_run text,
+  run_position integer
 );
 CREATE INDEX attachments_session_idx ON attachments (session_id);
 CREATE INDEX attachments_run_idx ON attachments (referenced_by_run);

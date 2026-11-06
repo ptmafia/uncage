@@ -11,8 +11,8 @@ import { chatFor, expect, menuLabels, pickMenu, test } from './fixtures.ts';
 const IMAGE = { name: 'uncage-42.png', mimeType: 'image/png', buffer: readFileSync(new URL('../fixtures/uncage-42.png', import.meta.url)) };
 const NOTES = { name: 'notes.md', mimeType: 'text/markdown', buffer: Buffer.from('# Notes\n\nthe secret word is marmalade\n') };
 const echoed = (s: string) => `settings: ${s}`;
-// Core hands a run its attachments oldest upload first, so the order depends on which upload finished first.
-const BOTH = String.raw`(uncage-42\.png,notes\.md|notes\.md,uncage-42\.png)`;
+// Runs receive their attachments in pick (attachmentIds) order, whichever upload finished first.
+const BOTH = String.raw`uncage-42\.png,notes\.md`;
 
 /** Cancels runs other specs may have left active, so the running count starts from 0. */
 async function cancelActiveRuns(): Promise<void> {

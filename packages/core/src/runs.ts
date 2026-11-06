@@ -272,7 +272,7 @@ export class RunManager {
 
   /**
    * Every id must exist, belong to this session and not have been sent with a run yet; otherwise
-   * `invalid_request` and no run is created. Returned oldest first, as runs are hydrated.
+   * `invalid_request` and no run is created. Returned in `ids` (pick) order.
    */
   private async resolveAttachments(sessionId: string, ids: string[]): Promise<ResolvedAttachment[]> {
     if (ids.length === 0) return [];
@@ -286,7 +286,11 @@ export class RunManager {
         details: { attachmentIds: ids.filter((id) => !ok.has(id)) },
       });
     }
-    return usable.map((a) => ({ ...publicAttachment(a), absPath: a.absPath }));
+    const byId = new Map(usable.map((a) => [a.id, a]));
+    return ids.map((id) => {
+      const a = byId.get(id)!;
+      return { ...publicAttachment(a), absPath: a.absPath };
+    });
   }
 
   /** Aborts the run, cancels its pending approvals, waits ≤5 s, and marks it cancelled. */

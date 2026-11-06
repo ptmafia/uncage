@@ -87,7 +87,7 @@ Also checked live, outside Playwright: `query({ resume: '00000000-0000-0000-0000
 | 20 | Bypass (allowBypass server): the menu offers `完全放行`, and choosing it opens the confirm dialog. After `开启`, "用 Bash 工具运行 `echo bypass-ok > bypass.txt`": **no** approval card, run `completed`, the red bypass banner is visible, `bypass.txt` contains `bypass-ok` (in the bypass server's tmp workspace), and the session stores `bypassPermissions` | ✓ 5 s |
 
 - The mock E2E (`pnpm e2e:mock`, `e2e/mock/composer.spec.ts`) covers the same controls against the fake runtime. Its `echo` prompt replies with the settings and attachment names the adapter received. It also covers drag and drop, paste (a file-only clipboard attaches, a clipboard with text pastes text), reload, the 11-file count rejection, bypass being absent without `allowBypass`, and the mic button with an injected fake `SpeechRecognition`.
-- Attachment order: core hands a run its attachments oldest upload first. So when several files are attached at once, the runtime sees them in upload-completion order, not in the order they were picked.
+- Attachment order: a run receives its attachments in the order they were picked (the `attachmentIds` order), whichever upload finished first. The same order is stored with the run, so bubbles keep it after a reload.
 
 ### Voice input: pending manual verification by the user (requires microphone)
 

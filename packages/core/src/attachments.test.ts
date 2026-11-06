@@ -353,6 +353,31 @@ describe('attachments', () => {
     expect((await u.runs.get(run.id)).attachments).toEqual([img, doc]);
   });
 
+  it('keeps pick (attachmentIds) order end to end, including after reopen', async () => {
+    const dataDir = join(dir, 'data');
+    const adapter = fake();
+    const u1 = await createUncage({ adapters: [adapter], dataDir, workspace: { allowedRoots: [dir], default: dir } });
+    const s = await u1.sessions.create({ runtime: 'fake' });
+    const b = await u1.attachments.add(s.id, { name: 'b.md', mime: 'text/plain', body: bytes('b') });
+    await new Promise((r) => setTimeout(r, 5));
+    const a = await u1.attachments.add(s.id, { name: 'a.md', mime: 'text/plain', body: bytes('a') });
+    const run = await s.startRun({ prompt: 'p', attachmentIds: [a.id, b.id] });
+    expect(run.attachments?.map((x) => x.id)).toEqual([a.id, b.id]);
+    await eventsUntil(s, isTerminal);
+    expect((adapter.calls[0]?.attachments ?? []).map((x) => x.id)).toEqual([a.id, b.id]);
+    expect((await s.snapshot()).runs[0]?.attachments?.map((x) => x.id)).toEqual([a.id, b.id]);
+    await u1.close();
+
+    const u2 = await createUncage({ adapters: [fake()], dataDir, workspace: { allowedRoots: [dir], default: dir } });
+    try {
+      const snap = await (await u2.sessions.get(s.id)).snapshot();
+      expect(snap.runs[0]?.attachments?.map((x) => x.id)).toEqual([a.id, b.id]);
+      expect((await u2.runs.get(run.id)).attachments?.map((x) => x.id)).toEqual([a.id, b.id]);
+    } finally {
+      await u2.close();
+    }
+  });
+
   it('pruneOrphans deletes only unreferenced older than cutoff', async () => {
     const u = await make([fake()]);
     const s = await u.sessions.create({ runtime: 'fake' });
@@ -415,11 +440,22 @@ describe('store attachments', () => {
     expect(await store.markAttachmentsReferenced(['a1'], 'run_2')).toBe(0);
     expect((await store.getAttachment('a1'))?.referencedByRun).toBe('run_1');
     expect((await store.listAttachments(['a1', 'a2', 'zz'])).map((a) => a.id).sort()).toEqual(['a1', 'a2']);
+    expect(await store.markAttachmentsReferenced(['a2', 'a2'], 'run_8')).toBe(0);
     expect(await store.markAttachmentsReferenced(['a2'], 'run_9')).toBe(1);
     await store.releaseAttachments('run_9');
     expect((await store.getAttachment('a2'))?.referencedByRun).toBeUndefined();
     const rows = await store.deleteOrphanAttachments(new Date('2026-06-01T00:00:00.000Z'));
     expect(rows.map((r) => r.absPath)).toEqual(['/b']);
     expect(await store.getAttachment('a2')).toBeNull();
+  });
+
+  it('released attachments can be re-sent in a different order', async () => {
+    const base = { sessionId: 's1', mime: 'text/plain', size: 1, kind: 'file' as const, sha256: 'x', createdAt: '2026-01-01T00:00:00.000Z' };
+    for (const id of ['x1', 'x2', 'x3']) await store.createAttachment({ ...base, id, name: id, absPath: `/${id}` });
+    expect(await store.markAttachmentsReferenced(['x3', 'x1', 'x2'], 'run_a')).toBe(3);
+    await store.releaseAttachments('run_a');
+    expect(await store.markAttachmentsReferenced(['x2', 'x3', 'x1'], 'run_b')).toBe(3);
+    await store.createRun({ id: 'run_b', sessionId: 's1', prompt: 'p', state: 'queued', createdAt: new Date().toISOString() });
+    expect((await store.getRun('run_b'))?.attachments?.map((a) => a.id)).toEqual(['x2', 'x3', 'x1']);
   });
 });

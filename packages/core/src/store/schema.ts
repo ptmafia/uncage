@@ -94,6 +94,8 @@ export const attachments = pgTable(
     absPath: text('abs_path').notNull(),
     createdAt: text('created_at').notNull(),
     referencedByRun: text('referenced_by_run'),
+    /** Index in the run's `attachmentIds` (pick order); null while unreferenced. */
+    runPosition: integer('run_position'),
   },
   (t) => [index('attachments_session_idx').on(t.sessionId), index('attachments_run_idx').on(t.referencedByRun)],
 );
