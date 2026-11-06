@@ -77,7 +77,16 @@ Uncage 是本地优先的开源 Agent Runtime 集成套件：把 Claude Code / C
 - **Workspace**：`POST /v1/sessions` 可选传 `workspace` 路径，必须经 realpath 后位于 `allowedRoots` 内（零配置时 `allowedRoots = [启动目录]`，默认 workspace 即启动目录）；越界返回 `invalid_workspace`。默认 UI 不做目录选择器。
 - **断线与审批时效**：浏览器断开不影响 Run，继续执行并持久化事件；未决审批默认 TTL 10 分钟（可配置），过期后向 Runtime 返回拒绝并发 `approval.updated(expired)`。刷新在 TTL 内都能恢复审批。服务重启时，运行中的 Run 标 interrupted，未决审批标 expired。
 - ESM-only 包输出。
-- UI 视觉：简洁、可主题化（CSS 变量）、支持暗色；不追求设计稿级精细度。
+- **默认 UI 视觉参考 Kumi**（用户要求；参考源：`ptmafia/kumi-ai`，本机 `~/Downloads/kumi-reply-lang/src/styles/tokens.css`、`docs/design-system.md`、`src/features/conversation/*`）。复刻其视觉语言而非拷贝源码：
+  - 暖纸色画布（canvas `#faf8f4` / surface `#fff` / surface-2 `#f3efe7`），墨色文本 `#2b2926`，主按钮为墨色而非品牌蓝；品牌蓝 `#3b5bdb` 只用于焦点环、链接、选中条。暗色值取自 Kumi `tokens-dark.css`。
+  - 字号：UI 13/20、对话正文 14/24、标题用衬线（Georgia）；字重不超过 semibold；圆角 md 8 / lg 14 / xl 18。
+  - 用户消息右侧气泡（user-bubble `#ece7de`）；助手消息无气泡、带署名行 + 计时；Markdown 渲染。
+  - 工具执行**不装盒**：标题行“N 步 · 用时 ›”+ 左侧细线串起的单行步骤，运行中展开、完成后折叠。
+  - 唯一装盒的是审批卡：琥珀色 warn-surface `#fffaf1` + warn-border `#ecd9b8`，标题“需要你确认：{tool}”，可展开参数详情，右下“拒绝”（次要）/“允许执行”（墨色主按钮），显示过期时间；过期后变一行“确认已过期”。
+  - 动效克制：同一时刻只有一个元素在动（呼吸点 / 微光文字），尊重 `prefers-reduced-motion`。
+  - 文案语气：称“你”、「」引号、“ · ”分隔、不用感叹号、状态如实（如“没继续：你拒绝了「X」”）。
+- **样式交付方式**（我方判断）：`@uncage/react-ui` 作为库发布，不强制宿主使用 Tailwind。采用纯 CSS + CSS 变量（`--uncage-*` 前缀，类名 `uc-` 前缀），宿主 `import '@uncage/react-ui/styles.css'`，通过覆盖变量主题化；暗色由 `data-theme="dark"` 或 `prefers-color-scheme` 启用。图标用 `lucide-react`。
+- **界面语言**（我方判断）：内置 `en` 与 `zh-CN` 两套文案，`locale` prop 切换，默认 `en`（开源面向全球）；示例应用使用 `zh-CN`。
 
 ## 6. 测试分层
 
