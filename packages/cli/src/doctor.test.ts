@@ -100,4 +100,21 @@ describe('exportEvents', () => {
     const out = await exportEvents({ sessionId: 's', config, home, fetch: f, includeContent: true });
     expect(JSON.stringify(out)).toContain('rm -rf /secret');
   });
+
+  it('redacts prompts, titles, descriptions, errors but keeps ids and states', async () => {
+    const { home, config } = await setup();
+    const evs = [
+      { eventId: 'evt_1', sequence: 1, sessionId: 'ses_1', runId: 'run_1', type: 'run.started', occurredAt: '2026-01-01T00:00:00Z', payload: { run: { id: 'run_1', state: 'running', prompt: 'SECRETPROMPT', startedAt: 'x' } } },
+      { sequence: 2, type: 'message.completed', payload: { messageId: 'msg_1', text: 'SECRETTEXT' } },
+      { sequence: 3, type: 'approval.requested', payload: { approval: { id: 'apr_1', category: 'shell', title: 'SECRETTITLE', description: 'SECRETDESC', target: { command: 'SECRETCMD' }, availableDecisions: ['allow_once'] } } },
+      { sequence: 4, type: 'tool.failed', payload: { toolId: 'tool_1', error: 'SECRETERR' } },
+      { sequence: 5, type: 'run.failed', payload: { runId: 'run_1', error: { code: 'internal_error', message: 'SECRETMSG', retryable: false } } },
+    ];
+    const f = (async (url: string) => new Response(JSON.stringify(url.includes('after=0') ? evs : []))) as unknown as typeof fetch;
+    const text = JSON.stringify(await exportEvents({ sessionId: 's', config, home, fetch: f, includeContent: false }));
+    expect(text).not.toMatch(/SECRET/);
+    for (const keep of ['evt_1', 'run_1', 'running', 'apr_1', 'shell', 'allow_once', 'tool_1', 'internal_error', 'msg_1']) {
+      expect(text).toContain(keep);
+    }
+  });
 });

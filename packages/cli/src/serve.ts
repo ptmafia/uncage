@@ -103,8 +103,12 @@ export async function serve(o: ServeOptions): Promise<void> {
 
   let stopping = false;
   const stop = (signal: string) => {
-    if (stopping) return;
+    if (stopping) {
+      logger.warn({ signal }, 'forced exit');
+      process.exit(1);
+    }
     stopping = true;
+    setTimeout(() => process.exit(1), 10_000).unref();
     logger.info({ signal }, 'shutting down');
     server
       .close()

@@ -148,25 +148,19 @@ export function formatChecks(checks: DoctorCheck[]): string {
 
 const PAGE = 1000;
 
-function redactValue(v: unknown): string {
-  const n = typeof v === 'string' ? v.length : (JSON.stringify(v) ?? '').length;
-  return `[redacted ${n} chars]`;
-}
+const SAFE_KEYS = new Set([
+  'id', 'type', 'state', 'status', 'sequence', 'eventId', 'occurredAt', 'createdAt', 'startedAt', 'endedAt',
+  'expiresAt', 'durationMs', 'category', 'name', 'chunkIndex', 'version', 'code', 'retryable', 'decision',
+  'scope', 'runtimeId', 'schemaVersion', 'readOnly', 'allowedScopes', 'availableDecisions', 'capabilities',
+]);
 
-/** Replaces `input`, `text`, `output` and `target.command` anywhere in a payload. */
-function redact(v: unknown, parentKey = ''): unknown {
-  if (Array.isArray(v)) return v.map((x) => redact(x, parentKey));
-  if (v && typeof v === 'object') {
-    return Object.fromEntries(
-      Object.entries(v).map(([k, x]) => {
-        if (x === undefined || x === null) return [k, x];
-        if (k === 'input' || k === 'text' || k === 'output' || (k === 'command' && parentKey === 'target')) {
-          return [k, redactValue(x)];
-        }
-        return [k, redact(x, k)];
-      }),
-    );
-  }
+const isSafeKey = (k: string): boolean => SAFE_KEYS.has(k) || k.endsWith('Id');
+
+/** Allowlist redaction: every string not under a known-safe key becomes a length placeholder. Structure is kept. */
+function redact(v: unknown, key = ''): unknown {
+  if (typeof v === 'string') return isSafeKey(key) ? v : `[redacted ${v.length} chars]`;
+  if (Array.isArray(v)) return v.map((x) => redact(x, key));
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, redact(x, k)]));
   return v;
 }
 
