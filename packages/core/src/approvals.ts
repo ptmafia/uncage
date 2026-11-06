@@ -141,21 +141,43 @@ export class ApprovalBridge {
     }
     this.forget(id);
 
-    const resolved = await this.store.casApproval(
-      id,
-      { state: 'submitting', version: claimed.version },
-      { state: d.decision === 'allow' ? 'approved' : 'denied', version: claimed.version + 1 },
-    );
-    if (!resolved) throw new UncageError('internal_error', { message: `Approval ${id} changed while submitting.` });
-    await this.log.append(resolved.sessionId, 'approval.resolved', { approval: resolved }, resolved.runId);
-    await this.store.putIdempotent(idempotencyKey, idemScope(id), hash, resolved);
-    // Resolve after `approval.resolved` is committed so it precedes the adapter's follow-up events.
-    handle.resolve(
-      d.decision === 'allow'
-        ? { decision: 'allow' }
-        : { decision: 'deny', ...(d.reason !== undefined ? { reason: d.reason } : {}) },
-    );
-    return resolved;
+    // From here the native callback is ours alone: it must be resolved on every path, or the
+    // adapter (and its run) would wait forever. Until the decision is committed it gets `cancelled`.
+    let outcome: ApprovalOutcome = { decision: 'cancelled' };
+    try {
+      let resolved: ApprovalRequest | null;
+      try {
+        resolved = await this.store.casApproval(
+          id,
+          { state: 'submitting', version: claimed.version },
+          { state: d.decision === 'allow' ? 'approved' : 'denied', version: claimed.version + 1 },
+        );
+        if (!resolved) throw new UncageError('internal_error', { message: `Approval ${id} changed while submitting.` });
+      } catch (e) {
+        await this.markFailed(id, claimed.version);
+        throw e;
+      }
+      outcome =
+        d.decision === 'allow'
+          ? { decision: 'allow' }
+          : { decision: 'deny', ...(d.reason !== undefined ? { reason: d.reason } : {}) };
+      await this.log.append(resolved.sessionId, 'approval.resolved', { approval: resolved }, resolved.runId);
+      await this.store.putIdempotent(idempotencyKey, idemScope(id), hash, resolved);
+      return resolved;
+    } finally {
+      // Resolve after `approval.resolved` is committed so it precedes the adapter's follow-up events.
+      handle.resolve(outcome);
+    }
+  }
+
+  /** Best effort: a decision that could not be committed leaves the row `failed`, not `submitting`. */
+  private async markFailed(id: string, version: number): Promise<void> {
+    try {
+      const failed = await this.store.casApproval(id, { state: 'submitting', version }, { state: 'failed', version: version + 1 });
+      if (failed) await this.log.append(failed.sessionId, 'approval.updated', { approval: failed }, failed.runId);
+    } catch (e) {
+      this.logger.error({ err: e, approvalId: id }, 'could not mark approval failed');
+    }
   }
 
   /** TTL expiry: CAS pending → expired, emit `approval.updated`, resolve `{decision:'expired'}`. */

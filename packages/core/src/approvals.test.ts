@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createFakeAdapter, type FakeStep } from '@uncage/testkit';
 import type { ApprovalOutcome, ApprovalRequest, NativeApprovalInput, RuntimeAdapter } from '@uncage/protocol';
+import { openPgliteStore } from './store/pglite-store.js';
+import type { Store } from './store/store.js';
 import { createUncage, type Uncage } from './uncage.js';
 import type { SessionHandle } from './sessions.js';
 import { eventsUntil, isTerminal } from './test-utils.js';
@@ -37,13 +39,14 @@ describe('approval bridge', () => {
     uncage = undefined;
   });
 
-  async function setup(opts: { ttlMs?: number; steps?: FakeStep[] } = {}) {
+  async function setup(opts: { ttlMs?: number; steps?: FakeStep[]; store?: Store } = {}) {
     const adapter = recordingOutcomes(
       createFakeAdapter({ script: opts.steps ?? [approvalStep, { text: 'done' }] }),
     );
     uncage = await createUncage({
       adapters: [adapter],
       dataDir: 'memory://',
+      ...(opts.store !== undefined ? { store: opts.store } : {}),
       ...(opts.ttlMs !== undefined ? { approvals: { ttlMs: opts.ttlMs } } : {}),
     });
     const session = await uncage.sessions.create({ runtime: 'fake' });
@@ -109,6 +112,29 @@ describe('approval bridge', () => {
       uncage.approvals.decide(approval.id, { decision: 'deny', scope: 'once' }, 'other'),
     ).rejects.toMatchObject({ code: 'approval_already_resolved' });
     await waitTerminal(session);
+  });
+
+  it('a store failure while committing the decision still releases the adapter and marks the row failed', async () => {
+    const store = await openPgliteStore({ dataDir: 'memory://' });
+    const realCas = store.casApproval.bind(store);
+    let failNext = true;
+    store.casApproval = (id, expect, next) => {
+      if (failNext && (next.state === 'approved' || next.state === 'denied')) {
+        failNext = false;
+        return Promise.reject(new Error('disk full'));
+      }
+      return realCas(id, expect, next);
+    };
+    const { uncage, adapter, session, approval } = await setup({ store });
+
+    await expect(uncage.approvals.decide(approval.id, { decision: 'allow', scope: 'once' }, 'k')).rejects.toThrow('disk full');
+    const events = await waitTerminal(session);
+    expect(adapter.outcomes).toEqual([{ decision: 'cancelled' }]);
+    const [row] = await uncage.approvals.list({ sessionId: session.id });
+    expect(row).toMatchObject({ id: approval.id, state: 'failed', version: 3 });
+    const updated = events.filter((e) => e.type === 'approval.updated');
+    expect(updated.map((e) => e.payload.approval.state)).toEqual(['failed']);
+    expect(await uncage.approvals.list({ sessionId: session.id, pendingOnly: true })).toEqual([]);
   });
 
   it('rejects session scope with unsupported_capability', async () => {
