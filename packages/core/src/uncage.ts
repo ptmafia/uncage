@@ -15,7 +15,7 @@ import { EventLog } from './event-log.js';
 import { silentLog, type Log } from './logger.js';
 import { AdapterRegistry } from './registry.js';
 import { ACTIVE_RUN_STATES, RunManager } from './runs.js';
-import { SessionService, type SessionHandle } from './sessions.js';
+import { SessionService, type SessionHandle, type WorkspaceConfig } from './sessions.js';
 import { openPgliteStore } from './store/pglite-store.js';
 import type { Store } from './store/store.js';
 
@@ -60,12 +60,13 @@ export async function createUncage(opts: UncageOptions): Promise<Uncage> {
   const store = opts.store ?? (await openPgliteStore({ dataDir: opts.dataDir ?? join(homedir(), '.uncage', 'data') }));
   const log = new EventLog(store);
   const bridge = new ApprovalBridge(store, log, opts.approvals?.ttlMs ?? DEFAULT_TTL_MS, logger);
-  const runs = new RunManager(store, log, bridge, registry, logger);
   const cwd = process.cwd();
-  const sessions = new SessionService(store, log, registry, runs, {
+  const workspace: WorkspaceConfig = {
     allowedRoots: opts.workspace?.allowedRoots ?? [cwd],
     default: opts.workspace?.default ?? cwd,
-  });
+  };
+  const runs = new RunManager(store, log, bridge, registry, logger, workspace);
+  const sessions = new SessionService(store, log, registry, runs, workspace);
 
   const retentionMs = (opts.eventRetentionDays ?? DEFAULT_RETENTION_DAYS) * DAY_MS;
   const prune = async () => {

@@ -15,7 +15,9 @@ import { UncageError } from './errors.js';
 import type { EventLog } from './event-log.js';
 import type { Log } from './logger.js';
 import type { AdapterRegistry } from './registry.js';
+import type { WorkspaceConfig } from './sessions.js';
 import type { Store } from './store/store.js';
+import { resolveWorkspace } from './workspace.js';
 
 export const ACTIVE_RUN_STATES: RunState[] = ['queued', 'running', 'waiting_approval'];
 const CANCEL_GRACE_MS = 5_000;
@@ -66,6 +68,7 @@ export class RunManager {
     private readonly bridge: ApprovalBridge,
     private readonly registry: AdapterRegistry,
     private readonly logger: Log,
+    private readonly workspaceConfig: WorkspaceConfig,
   ) {}
 
   async get(id: string): Promise<Run> {
@@ -111,6 +114,15 @@ export class RunManager {
       throw new UncageError('runtime_unavailable', { message: `Runtime ${session.runtimeId} is not registered.` });
     }
     if (session.readOnly) throw new UncageError('session_read_only', { hint: 'Start a new session' });
+    // allowedRoots may have changed since the session was created (config edit, another --workspace).
+    const workspace = await resolveWorkspace(session.workspace, this.workspaceConfig).catch((e: unknown) => {
+      throw new UncageError('invalid_workspace', {
+        message: "This session's workspace is outside the allowed roots.",
+        hint: "This session's workspace is outside the allowed roots; start a new session",
+        details: { workspace: session.workspace },
+        cause: e,
+      });
+    });
 
     const run: Run = {
       id: newId('run'),
@@ -123,7 +135,7 @@ export class RunManager {
     const entry: ActiveRun = {
       run,
       sessionId,
-      workspace: session.workspace,
+      workspace,
       ...(session.nativeSessionRef !== undefined ? { nativeSessionRef: session.nativeSessionRef } : {}),
       adapter,
       abort: new AbortController(),

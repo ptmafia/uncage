@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -329,6 +329,27 @@ describe('createUncage', () => {
       code: 'session_read_only',
       hint: 'Start a new session',
     });
+  });
+
+  it('startRun rechecks the workspace against the current allowedRoots', async () => {
+    const rootA = join(dir, 'a');
+    const rootB = join(dir, 'b');
+    mkdirSync(rootA);
+    mkdirSync(rootB);
+    const dataDir = join(dir, 'data');
+    const u1 = await createUncage({ adapters: [fake([])], dataDir, workspace: { allowedRoots: [rootA], default: rootA } });
+    const s1 = await u1.sessions.create({ runtime: 'fake' });
+    await u1.close();
+
+    const adapter = fake([]);
+    const u2 = await make([adapter], { dataDir, workspace: { allowedRoots: [rootB], default: rootB } });
+    const s2 = await u2.sessions.get(s1.id);
+    await expect(s2.startRun({ prompt: 'p' })).rejects.toMatchObject({
+      code: 'invalid_workspace',
+      hint: "This session's workspace is outside the allowed roots; start a new session",
+    });
+    expect((await s2.get()).status).toBe('ready');
+    expect((await s2.snapshot()).runs).toEqual([]);
   });
 
   it('validates runtime, workspace and ids', async () => {
