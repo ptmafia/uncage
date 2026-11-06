@@ -127,8 +127,12 @@ describe('createUncageHandler', () => {
   it('treats loopback names with the same scheme and port as one origin, nothing else', async () => {
     const h = createUncageHandler({ endpoint, token: 'tok' });
     const post = (origin: string) =>
-      h.POST(new Request('http://localhost:3000/api/uncage/runs/run_1/cancel', { method: 'POST', headers: { origin } }));
-    // Next builds req.url with host `localhost` while the browser is on 127.0.0.1.
+      h.POST(
+        new Request('http://localhost:3000/api/uncage/runs/run_1/cancel', {
+          method: 'POST',
+          headers: { origin, host: 'localhost:3000' },
+        }),
+      );
     expect((await post('http://127.0.0.1:3000')).status).toBe(200);
     expect((await post('http://[::1]:3000')).status).toBe(200);
     expect((await post('http://evil.com:3000')).status).toBe(403);
@@ -241,53 +245,97 @@ describe('createUncageHandler', () => {
   });
 
   describe('allowed hosts (DNS rebinding)', () => {
-    const status = async (h: ReturnType<typeof createUncageHandler>, url: string, origin?: string) =>
-      (await h.GET(new Request(url, origin ? { headers: { origin } } : {}))).status;
+    // Next builds route-handler req.url from its own configured hostname, whatever the browser
+    // asked for, so every request URL here is localhost:3000 and only the Host header varies.
+    const NEXT_URL = 'http://localhost:3000/api/uncage/health';
+    const req = (host: string | undefined, origin?: string, url = NEXT_URL, method = 'GET') =>
+      new Request(url, {
+        method,
+        headers: { ...(host === undefined ? {} : { host }), ...(origin ? { origin } : {}) },
+      });
+    const status = async (h: ReturnType<typeof createUncageHandler>, host: string | undefined, origin?: string, url?: string) =>
+      (await h.GET(req(host, origin, url))).status;
 
-    it('rejects a rebound host even when Origin matches it, forwarding nothing', async () => {
+    it('rejects a rebound Host even though req.url is localhost, forwarding nothing', async () => {
       const h = createUncageHandler({ endpoint, token: 'tok' });
-      const res = await h.POST(
-        new Request('http://evil.com:3000/api/uncage/sessions', { method: 'POST', headers: { origin: 'http://evil.com:3000' } }),
-      );
+      const res = await h.POST(req('evil.com:3000', 'http://evil.com:3000', 'http://localhost:3000/api/uncage/sessions', 'POST'));
       expect(res.status).toBe(403);
       const { error } = (await res.json()) as { error: { code: string; message: string; hint: string } };
       expect(error.code).toBe('forbidden_origin');
       expect(error.message).toContain('evil.com');
       expect(error.hint).toContain('UNCAGE_ALLOWED_HOSTS');
+      // A same-origin GET carries no Origin at all: the Host check alone must stop it.
+      expect(await status(h, 'evil.com:3000')).toBe(403);
+      expect(await status(h, 'EVIL.com')).toBe(403);
       expect(seen).toHaveLength(0);
     });
 
-    it('allows localhost, 127.0.0.1 and [::1] by default', async () => {
+    it('ignores X-Forwarded-Host', async () => {
       const h = createUncageHandler({ endpoint, token: 'tok' });
-      for (const host of ['localhost:3000', '127.0.0.1:3000', '[::1]:3000']) {
-        expect(await status(h, `http://${host}/api/uncage/health`, `http://${host}`)).toBe(200);
+      const res = await h.GET(new Request(NEXT_URL, { headers: { host: 'evil.com:3000', 'x-forwarded-host': 'localhost:3000' } }));
+      expect(res.status).toBe(403);
+      const ok = await h.GET(new Request(NEXT_URL, { headers: { host: 'localhost:3000', 'x-forwarded-host': 'evil.com' } }));
+      expect(ok.status).toBe(200);
+      expect(seen).toHaveLength(1);
+    });
+
+    it('rejects a malformed Host header', async () => {
+      const h = createUncageHandler({ endpoint, token: 'tok' });
+      for (const host of ['localhost:3000/evil', 'user@localhost:3000', '::1', 'local host']) {
+        expect(await status(h, host), host).toBe(403);
       }
+      expect(seen).toHaveLength(0);
+    });
+
+    it('allows localhost, 127.0.0.1 and [::1] by default (any port, case-insensitive)', async () => {
+      const h = createUncageHandler({ endpoint, token: 'tok' });
+      for (const host of ['localhost:3000', '127.0.0.1:3000', '[::1]:3000', 'LOCALHOST:3000', '127.0.0.1']) {
+        expect(await status(h, host, `http://${host.toLowerCase()}`), host).toBe(200);
+      }
+      // No Host header at all (server-side callers): req.url's host is used.
+      expect(await status(h, undefined)).toBe(200);
+      expect(seen).toHaveLength(6);
+    });
+
+    it('compares Origin with scheme://Host, treating loopback names on the same port as one', async () => {
+      const h = createUncageHandler({ endpoint, token: 'tok' });
+      expect(await status(h, '127.0.0.1:3000', 'http://127.0.0.1:3000')).toBe(200);
+      expect(await status(h, '127.0.0.1:3000', 'http://localhost:3000')).toBe(200);
+      expect(await status(h, '127.0.0.1:3000', 'http://127.0.0.1:3001')).toBe(403);
+      expect(await status(h, '127.0.0.1:3000', 'https://127.0.0.1:3000')).toBe(403);
+      expect(await status(h, '127.0.0.1:3000', 'http://evil.com:3000')).toBe(403);
+      // Host on another port than req.url: the browser's view (the Host header) wins.
+      expect(await status(h, 'localhost:4000', 'http://localhost:4000')).toBe(200);
+      expect(await status(h, 'localhost:4000', 'http://localhost:3000')).toBe(403);
       expect(seen).toHaveLength(3);
     });
 
-    it('allowedHosts replaces the default set', async () => {
+    it('allowedHosts replaces the default set and works although req.url says localhost', async () => {
       const h = createUncageHandler({ endpoint, token: 'tok', allowedHosts: ['app.example.com'] });
-      expect(await status(h, 'https://app.example.com/api/uncage/health', 'https://app.example.com')).toBe(200);
-      expect(await status(h, 'http://localhost:3000/api/uncage/health')).toBe(403);
-      expect(seen).toHaveLength(1);
+      expect(await status(h, 'app.example.com', 'http://app.example.com')).toBe(200);
+      expect(await status(h, 'app.example.com:3000', 'http://app.example.com:3000')).toBe(200);
+      expect(await status(h, 'app.example.com', 'https://app.example.com', 'https://localhost/api/uncage/health')).toBe(200);
+      expect(await status(h, 'app.example.com', 'http://evil.com')).toBe(403);
+      expect(await status(h, 'localhost:3000')).toBe(403);
+      expect(seen).toHaveLength(3);
     });
 
     it('normalizes allowedHosts like the env var (trim, lowercase, drop empty)', async () => {
       const h = createUncageHandler({ endpoint, token: 'tok', allowedHosts: ['  App.Example.COM ', '', ' '] });
-      expect(await status(h, 'https://app.example.com/api/uncage/health', 'https://app.example.com')).toBe(200);
-      expect(await status(h, 'http://localhost:3000/api/uncage/health')).toBe(403);
+      expect(await status(h, 'app.example.com', 'http://app.example.com')).toBe(200);
+      expect(await status(h, 'localhost:3000')).toBe(403);
       // Nothing left after normalization: same as absent, so the loopback default applies.
       const empty = createUncageHandler({ endpoint, token: 'tok', allowedHosts: ['  '] });
-      expect(await status(empty, 'http://localhost:3000/api/uncage/health')).toBe(200);
+      expect(await status(empty, 'localhost:3000')).toBe(200);
     });
 
     it('reads UNCAGE_ALLOWED_HOSTS when the option is absent', async () => {
       process.env.UNCAGE_ALLOWED_HOSTS = 'app.example.com, other.example.com';
       const h = createUncageHandler({ endpoint, token: 'tok' });
-      expect(await status(h, 'https://other.example.com/api/uncage/health')).toBe(200);
-      expect(await status(h, 'http://evil.com/api/uncage/health')).toBe(403);
+      expect(await status(h, 'other.example.com')).toBe(200);
+      expect(await status(h, 'evil.com')).toBe(403);
       const explicit = createUncageHandler({ endpoint, token: 'tok', allowedHosts: ['x.example.com'] });
-      expect(await status(explicit, 'https://other.example.com/api/uncage/health')).toBe(403);
+      expect(await status(explicit, 'other.example.com')).toBe(403);
     });
   });
 });

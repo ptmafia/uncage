@@ -18,7 +18,8 @@ export interface ProxyOptions {
   /** The route prefix the handler is mounted under. Defaults to `/api/uncage`. */
   basePath?: string;
   /**
-   * Hostnames the proxy answers to, matched against the request URL's hostname. A non-empty list
+   * Hostnames the proxy answers to, matched against the request's `Host` header (port stripped;
+   * `X-Forwarded-Host` is ignored). A non-empty list
    * REPLACES the default (add the loopback names yourself if you still need them). Entries are bare
    * hostnames with no scheme or port; IPv6 literals are bracketed (`[::1]`). Entries are trimmed and
    * lowercased, and empty ones dropped. Defaults to env `UNCAGE_ALLOWED_HOSTS` (comma-separated, same
@@ -75,19 +76,46 @@ function endOnUpstreamDrop(body: ReadableStream<Uint8Array>): ReadableStream<Uin
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 /**
- * Same origin, or both loopback names for the same scheme and port: Next builds route-handler
- * `req.url` with host `localhost` even when the browser is on `127.0.0.1`. A non-loopback Origin
- * (e.g. a DNS-rebinding page on evil.com) must still match exactly.
+ * The browser-facing host, from the `Host` header. Next builds route-handler `req.url` from the
+ * server's own configured hostname (e.g. `localhost:3000`), not from what the browser asked for,
+ * so `req.url` cannot be used for the DNS-rebinding check. `X-Forwarded-Host` is never trusted.
+ * Falls back to `req.url`'s host only when the header is absent (browsers always send it).
+ * Returns `undefined` for an unparseable header.
  */
-function sameOrigin(origin: string, url: URL): boolean {
-  if (origin === url.origin) return true;
+function requestHost(req: Request, url: URL): { host: string; hostname: string } | undefined {
+  const raw = req.headers.get('host')?.trim().toLowerCase();
+  if (!raw) return { host: url.host, hostname: url.hostname };
+  let parsed: URL;
+  try {
+    parsed = new URL(`http://${raw}`);
+  } catch {
+    return undefined;
+  }
+  // Reject anything beyond host[:port] (userinfo, path, …) smuggled into the header.
+  if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) return undefined;
+  const portSuffix = /:(\d+)$/.exec(raw);
+  const hostname = parsed.hostname; // IPv6 stays bracketed: `[::1]`
+  return { host: portSuffix ? `${hostname}:${portSuffix[1]}` : hostname, hostname };
+}
+
+/**
+ * Origin equals `scheme://<Host header>`, or both are loopback names for the same scheme and port
+ * (`localhost` vs `127.0.0.1` vs `[::1]`). A non-loopback Origin must match exactly.
+ */
+function sameOrigin(origin: string, expected: URL): boolean {
+  if (origin === expected.origin) return true;
   let o: URL;
   try {
     o = new URL(origin);
   } catch {
     return false;
   }
-  return o.protocol === url.protocol && o.port === url.port && LOOPBACK_HOSTS.has(o.hostname) && LOOPBACK_HOSTS.has(url.hostname);
+  return (
+    o.protocol === expected.protocol &&
+    o.port === expected.port &&
+    LOOPBACK_HOSTS.has(o.hostname) &&
+    LOOPBACK_HOSTS.has(expected.hostname)
+  );
 }
 
 const normalizeHosts = (hosts: readonly string[] | undefined): string[] =>
@@ -104,7 +132,7 @@ function resolveAllowedHosts(o: ProxyOptions): Set<string> {
 const trimSlashes = (s: string): string => s.replace(/^\/+|\/+$/g, '');
 
 /**
- * Creates the GET/POST route handlers. Requests whose URL hostname is not allowed get 403
+ * Creates the GET/POST route handlers. Requests whose `Host` header hostname is not allowed get 403
  * `forbidden_origin` and nothing is forwarded; this stops DNS-rebinding pages (evil.com resolving to
  * 127.0.0.1, so Origin and Host agree) from driving the daemon through the host app. Allowed hosts
  * default to loopback names; set `allowedHosts: ['app.example.com']` or env `UNCAGE_ALLOWED_HOSTS`
@@ -129,17 +157,22 @@ export function createUncageHandler(o: ProxyOptions = {}): UncageHandler {
 
   const handle = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
-    if (!allowedHosts.has(url.hostname)) {
+    const host = requestHost(req, url);
+    if (!host) return errorResponse('forbidden_origin', { message: 'The request Host header is invalid.' });
+    if (!allowedHosts.has(host.hostname)) {
       return errorResponse('forbidden_origin', {
-        message: `Host ${url.hostname} is not allowed to use the Uncage proxy.`,
+        message: `Host ${host.hostname} is not allowed to use the Uncage proxy.`,
         hint: 'Add this host to createUncageHandler({ allowedHosts }) or UNCAGE_ALLOWED_HOSTS',
       });
     }
     // The daemon's Origin check cannot see the browser's Origin (it is stripped below), so the
-    // proxy enforces same-origin itself. Origin-less requests (server-side callers) proceed.
+    // proxy enforces same-origin itself against the browser-facing origin (scheme from req.url,
+    // host from the Host header). Origin-less requests (same-origin GETs, server-side callers)
+    // proceed: the Host check above already covers them.
     const origin = req.headers.get('origin');
     const crossSiteFetch = req.method !== 'GET' && req.headers.get('sec-fetch-site') === 'cross-site';
-    if ((origin !== null && !sameOrigin(origin, url)) || crossSiteFetch) return errorResponse('forbidden_origin');
+    const expected = new URL(`${url.protocol}//${host.host}`);
+    if ((origin !== null && !sameOrigin(origin, expected)) || crossSiteFetch) return errorResponse('forbidden_origin');
     if (!url.pathname.startsWith(`${basePath}/`)) return errorResponse('not_found');
     const endpoint = (o.endpoint ?? process.env.UNCAGE_URL ?? DEFAULT_ENDPOINT).replace(/\/+$/, '');
     const target = new URL(`${endpoint}/v1/${url.pathname.slice(basePath.length + 1)}${url.search}`);

@@ -104,15 +104,15 @@ Lower levels: `@uncage/client` (browser REST + resumable SSE, no React), the HTT
 - **Loopback only.** The daemon binds to `127.0.0.1:4783`. Requests whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>` get 403.
 - **Bearer token.** Every `/v1/*` call needs `Authorization: Bearer <token>`. The token is in `~/.uncage/token` (mode 600). It is never logged, never put in events, and never sent to the browser. Without it you get 401.
 - **No cross-origin browsers.** A request with an `Origin` header gets 403 unless that origin is listed in `security.allowedOrigins` in `uncage.config.yaml`. The list is empty by default. Browsers talk to the daemon only through your app's same-origin proxy (`createUncageHandler`).
-- **The proxy rejects cross-origin requests, too.** A request whose `Origin` differs from the app's own origin gets 403 `forbidden_origin`, and so does a non-GET request marked `Sec-Fetch-Site: cross-site`. Loopback names count as one origin when the scheme and port match (`localhost:3000` = `127.0.0.1:3000`).
-- **DNS-rebinding guard.** The proxy only answers to allowed hostnames. By default these are `localhost`, `127.0.0.1` and `[::1]`, on any port. If your app is served under another hostname (a LAN name, a dev domain, a tunnel), list it:
+- **The proxy rejects cross-origin requests, too.** A request whose `Origin` differs from the origin the browser is on (the request scheme plus its `Host` header) gets 403 `forbidden_origin`, and so does a non-GET request marked `Sec-Fetch-Site: cross-site`. Loopback names count as one origin when the scheme and port match (`localhost:3000` = `127.0.0.1:3000`).
+- **DNS-rebinding guard.** The proxy only answers to allowed hostnames, checked against the browser's `Host` header (Next's `req.url` always carries the server's own hostname, so it can't be used; `X-Forwarded-Host` is ignored). By default these are `localhost`, `127.0.0.1` and `[::1]`, on any port. If your app is served under another hostname (a LAN name, a dev domain, a tunnel), list it:
 
   ```ts
   createUncageHandler({ allowedHosts: ['app.example.com', 'localhost'] });
   // or: UNCAGE_ALLOWED_HOSTS=app.example.com,localhost
   ```
 
-  The list **replaces** the default, so add the loopback names back if you still use them. Use bare hostnames with no scheme or port. Bracket IPv6 addresses (`[::1]`). Entries are trimmed and lowercased.
+  The list **replaces** the default, so add the loopback names back if you still use them. Use bare hostnames with no scheme or port: the port of the `Host` header is ignored. Bracket IPv6 addresses (`[::1]`). Entries are trimmed and lowercased. Behind a reverse proxy, make sure it forwards the original `Host` header (e.g. nginx `proxy_set_header Host $host;`), since that is what the check sees.
 - **Every tool call is approved by a person.** Claude Code runs with `permissionMode: 'default'`, and `bypassPermissions` cannot be configured. Claude Code still auto-allows what it considers safe (reads, searches, and some read-only shell commands). Everything else becomes an approval card, and pending approvals expire after 10 minutes.
 - **Workspaces are fenced.** A session's workspace must resolve (after `realpath`, so symlinks are followed) inside `workspace.allowedRoots`. By default that is the directory `uncage serve` was started in, or the `--workspace` folder.
 - **No telemetry.** Logs redact tokens and authorization headers, and they don't contain prompt text at info level. (Next.js, used by the examples, has its own telemetry. Turn it off with `NEXT_TELEMETRY_DISABLED=1`.)
@@ -177,7 +177,7 @@ The E2E suites and smoke scripts run TypeScript files directly with `node`, so t
 ## Troubleshooting
 
 - **"The Uncage daemon is not reachable" / "token was not found"**: start `pnpm uncage serve` first. If the daemon was started with `--token-file`, give the app `UNCAGE_TOKEN`.
-- **403 `forbidden_origin` in the app**: you are browsing the app through a hostname that isn't loopback, for example the `Network:` URL that `next dev` prints. Add it to `allowedHosts` / `UNCAGE_ALLOWED_HOSTS` (see [Security model](#security-model)).
+- **403 `forbidden_origin` in the app**: the `Host` your browser sends isn't an allowed hostname, for example you opened the `Network:` URL that `next dev` prints, a dev domain, or a tunnel. Add that hostname (without the port) to `allowedHosts` / `UNCAGE_ALLOWED_HOSTS` (see [Security model](#security-model)). The error message names the rejected host. Behind a reverse proxy, check that it passes the original `Host` header through.
 - **Port 4783 in use**: another `uncage serve` is running, or use `--port 4784` and set `UNCAGE_URL=http://127.0.0.1:4784` for the app.
 - **Claude Code shows "需要登录" (auth required)**: run `claude`, type `/login`, then restart `uncage serve`.
 - Run `pnpm uncage doctor`. Every failing check prints its fix.
