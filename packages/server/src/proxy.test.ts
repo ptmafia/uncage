@@ -272,6 +272,15 @@ describe('createUncageHandler', () => {
       expect(seen).toHaveLength(1);
     });
 
+    it('normalizes allowedHosts like the env var (trim, lowercase, drop empty)', async () => {
+      const h = createUncageHandler({ endpoint, token: 'tok', allowedHosts: ['  App.Example.COM ', '', ' '] });
+      expect(await status(h, 'https://app.example.com/api/uncage/health', 'https://app.example.com')).toBe(200);
+      expect(await status(h, 'http://localhost:3000/api/uncage/health')).toBe(403);
+      // Nothing left after normalization: same as absent, so the loopback default applies.
+      const empty = createUncageHandler({ endpoint, token: 'tok', allowedHosts: ['  '] });
+      expect(await status(empty, 'http://localhost:3000/api/uncage/health')).toBe(200);
+    });
+
     it('reads UNCAGE_ALLOWED_HOSTS when the option is absent', async () => {
       process.env.UNCAGE_ALLOWED_HOSTS = 'app.example.com, other.example.com';
       const h = createUncageHandler({ endpoint, token: 'tok' });

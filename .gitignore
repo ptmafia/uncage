@@ -11,3 +11,4 @@ playwright-report/
 .superpowers/
 next-env.d.ts
 *.tsbuildinfo
+e2e/live/results/

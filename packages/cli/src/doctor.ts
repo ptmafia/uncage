@@ -19,6 +19,8 @@ export interface DoctorDeps {
   home: string;
   /** Overrides the data dir (`--data-dir`). Defaults to `<home>/.uncage/data`. */
   dataDir?: string;
+  /** Overrides the token file (`--token-file`). Defaults to `<home>/.uncage/token`. */
+  tokenFile?: string;
 }
 
 const RUNTIME_FIX: Record<string, string> = {
@@ -28,9 +30,9 @@ const RUNTIME_FIX: Record<string, string> = {
 /** A codex problem alone never fails doctor. */
 const OPTIONAL_RUNTIMES = new Set(['codex']);
 
-async function readToken(home: string): Promise<string | undefined> {
+async function readToken(path: string): Promise<string | undefined> {
   try {
-    return (await readFile(tokenPath(home), 'utf8')).trim() || undefined;
+    return (await readFile(path, 'utf8')).trim() || undefined;
   } catch {
     return undefined;
   }
@@ -64,7 +66,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
     });
   }
 
-  const tp = tokenPath(home);
+  const tp = deps.tokenFile ?? tokenPath(home);
   try {
     const mode = (await stat(tp)).mode & 0o777;
     if (mode === 0o600) checks.push({ id: 'token', label: 'Token file', ok: true, detail: `${tp} (mode 600)` });
@@ -83,7 +85,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
 
   const url = `http://127.0.0.1:${config.server.port}/v1/health`;
   try {
-    const token = await readToken(home);
+    const token = await readToken(tp);
     const res = await deps.fetch(url, { headers: token ? { authorization: `Bearer ${token}` } : {} });
     if (res.ok) checks.push({ id: 'server', label: 'Server reachable', ok: true, detail: url });
     else {
@@ -176,12 +178,15 @@ export interface ExportEventsOptions {
   home: string;
   fetch: typeof fetch;
   includeContent: boolean;
+  /** Overrides the token file (`--token-file`). Defaults to `<home>/.uncage/token`. */
+  tokenFile?: string;
 }
 
 /** Pulls a session's events over the HTTP JSON endpoint (never touches PGlite). Redacted unless includeContent. */
 export async function exportEvents(o: ExportEventsOptions): Promise<unknown[]> {
-  const token = await readToken(o.home);
-  if (!token) throw new Error(`No token at ${tokenPath(o.home)}. Run: uncage serve`);
+  const tp = o.tokenFile ?? tokenPath(o.home);
+  const token = await readToken(tp);
+  if (!token) throw new Error(`No token at ${tp}. Run: uncage serve`);
   const base = `http://127.0.0.1:${o.config.server.port}`;
   const all: Array<{ sequence: number; payload?: unknown } & Record<string, unknown>> = [];
   let after = 0;

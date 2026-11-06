@@ -1,0 +1,12 @@
+{
+  "name": "uncage-live-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tiny repo the live Claude E2E runs against (copied to a tmp dir per run)",
+  "type": "module",
+  "scripts": {
+    "test": "node test.js",
+    "wait21": "sleep 21",
+    "wait61": "sleep 61"
+  }
+}

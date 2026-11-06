@@ -18,8 +18,11 @@ export interface ProxyOptions {
   /** The route prefix the handler is mounted under. Defaults to `/api/uncage`. */
   basePath?: string;
   /**
-   * Hostnames (no port) the proxy answers to, matched against the request URL's hostname. Defaults to
-   * env `UNCAGE_ALLOWED_HOSTS` (comma-separated), else loopback only: `localhost`, `127.0.0.1`, `[::1]`.
+   * Hostnames the proxy answers to, matched against the request URL's hostname. A non-empty list
+   * REPLACES the default (add the loopback names yourself if you still need them). Entries are bare
+   * hostnames with no scheme or port; IPv6 literals are bracketed (`[::1]`). Entries are trimmed and
+   * lowercased, and empty ones dropped. Defaults to env `UNCAGE_ALLOWED_HOSTS` (comma-separated, same
+   * rules), else loopback only: `localhost`, `127.0.0.1`, `[::1]` (any port).
    */
   allowedHosts?: string[];
 }
@@ -87,10 +90,15 @@ function sameOrigin(origin: string, url: URL): boolean {
   return o.protocol === url.protocol && o.port === url.port && LOOPBACK_HOSTS.has(o.hostname) && LOOPBACK_HOSTS.has(url.hostname);
 }
 
+const normalizeHosts = (hosts: readonly string[] | undefined): string[] =>
+  (hosts ?? []).map((h) => h.trim().toLowerCase()).filter(Boolean);
+
+/** Option first, then env; a list that is empty after normalization counts as absent. */
 function resolveAllowedHosts(o: ProxyOptions): Set<string> {
-  const fromEnv = process.env.UNCAGE_ALLOWED_HOSTS?.split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
-  const list = o.allowedHosts ?? (fromEnv && fromEnv.length > 0 ? fromEnv : undefined);
-  return list ? new Set(list.map((h) => h.toLowerCase())) : LOOPBACK_HOSTS;
+  const fromOption = normalizeHosts(o.allowedHosts);
+  if (fromOption.length > 0) return new Set(fromOption);
+  const fromEnv = normalizeHosts(process.env.UNCAGE_ALLOWED_HOSTS?.split(','));
+  return fromEnv.length > 0 ? new Set(fromEnv) : LOOPBACK_HOSTS;
 }
 
 const trimSlashes = (s: string): string => s.replace(/^\/+|\/+$/g, '');

@@ -1,18 +1,25 @@
 import { randomBytes } from 'node:crypto';
 import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 export function tokenPath(home: string = homedir()): string {
   return join(home, '.uncage', 'token');
 }
 
 /** Returns the bearer token from `~/.uncage/token`, creating it (mode 0600, dir 0700) if missing. */
-export async function ensureToken(
+export function ensureToken(
   home: string = homedir(),
   warn: (msg: string) => void = () => undefined,
 ): Promise<{ token: string; path: string }> {
-  const path = tokenPath(home);
+  return ensureTokenAt(tokenPath(home), warn);
+}
+
+/** Like ensureToken, for an explicit token file (`--token-file`). */
+export async function ensureTokenAt(
+  path: string,
+  warn: (msg: string) => void = () => undefined,
+): Promise<{ token: string; path: string }> {
   try {
     const st = await stat(path);
     const token = (await readFile(path, 'utf8')).trim();
@@ -26,7 +33,7 @@ export async function ensureToken(
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
   }
-  await mkdir(join(home, '.uncage'), { recursive: true, mode: 0o700 });
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const token = randomBytes(32).toString('base64url');
   await writeFile(path, `${token}\n`, { mode: 0o600 });
   await chmod(path, 0o600);

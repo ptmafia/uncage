@@ -1,5 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
+import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { loadConfig } from './config.js';
 import { doctorExitCode, exportEvents, formatChecks, runDoctor } from './doctor.js';
@@ -8,8 +9,9 @@ import { applyWorkspaceFlag, buildAdapters, serve } from './serve.js';
 const HELP = `uncage - run AI coding agents behind a local, approval-gated API
 
 Usage:
-  uncage serve  [--port <n>] [--workspace <dir>] [--data-dir <dir>]
-  uncage doctor [--export-events <sessionId> [--out <file>] [--include-content]]
+  uncage serve  [--port <n>] [--workspace <dir>] [--data-dir <dir>] [--token-file <file>]
+  uncage doctor [--data-dir <dir>] [--token-file <file>]
+                [--export-events <sessionId> [--out <file>] [--include-content]]
 
 Zero-config: "uncage serve" works with no setup (optional ./uncage.config.yaml).
 Env: UNCAGE_PORT, UNCAGE_LOG_LEVEL.`;
@@ -29,11 +31,16 @@ async function main(argv: string[]): Promise<number> {
         port: { type: 'string' },
         workspace: { type: 'string' },
         'data-dir': { type: 'string' },
+        'token-file': { type: 'string' },
       },
     });
     let config = await loadConfig(cwd, values.port ? { ...process.env, UNCAGE_PORT: values.port } : process.env);
     if (values.workspace) config = applyWorkspaceFlag(config, values.workspace, cwd);
-    await serve({ config, ...(values['data-dir'] ? { dataDir: values['data-dir'] } : {}) });
+    await serve({
+      config,
+      ...(values['data-dir'] ? { dataDir: resolve(cwd, values['data-dir']) } : {}),
+      ...(values['token-file'] ? { tokenFile: resolve(cwd, values['token-file']) } : {}),
+    });
     return -1; // keep running until a signal arrives
   }
 
@@ -45,8 +52,10 @@ async function main(argv: string[]): Promise<number> {
         out: { type: 'string' },
         'include-content': { type: 'boolean', default: false },
         'data-dir': { type: 'string' },
+        'token-file': { type: 'string' },
       },
     });
+    const tokenFile = values['token-file'] ? { tokenFile: resolve(cwd, values['token-file']) } : {};
     const config = await loadConfig(cwd, process.env);
     const home = homedir();
     const sessionId = values['export-events'];
@@ -56,6 +65,7 @@ async function main(argv: string[]): Promise<number> {
         config,
         home,
         fetch,
+        ...tokenFile,
         includeContent: values['include-content'] ?? false,
       });
       const json = JSON.stringify(events, null, 2);
@@ -72,7 +82,8 @@ async function main(argv: string[]): Promise<number> {
       adapters: buildAdapters(config),
       fetch,
       home,
-      ...(values['data-dir'] ? { dataDir: values['data-dir'] } : {}),
+      ...tokenFile,
+      ...(values['data-dir'] ? { dataDir: resolve(cwd, values['data-dir']) } : {}),
     });
     console.log(formatChecks(checks));
     return doctorExitCode(checks);

@@ -7,7 +7,7 @@ import { codexAdapter } from '@uncage/runtime-codex';
 import { createUncageServer } from '@uncage/server';
 import pino, { type Logger } from 'pino';
 import type { UncageConfig } from './config.js';
-import { ensureToken } from './token.js';
+import { ensureToken, ensureTokenAt } from './token.js';
 
 export const REDACT_PATHS = [
   'req.headers.authorization',
@@ -50,6 +50,8 @@ export function formatBanner(url: string, workspace: string, runtimes: Array<{ i
 export interface ServeOptions {
   config: UncageConfig;
   dataDir?: string;
+  /** Token file to use/create instead of `<home>/.uncage/token` (`--token-file`). */
+  tokenFile?: string;
   home?: string;
   out?: (line: string) => void;
 }
@@ -58,7 +60,8 @@ export async function serve(o: ServeOptions): Promise<void> {
   const out = o.out ?? ((l) => console.log(l));
   const home = o.home ?? homedir();
   const logger = createLogger();
-  const { token, path } = await ensureToken(home, (m) => logger.warn(m));
+  const warn = (m: string) => logger.warn(m);
+  const { token, path } = await (o.tokenFile ? ensureTokenAt(o.tokenFile, warn) : ensureToken(home, warn));
   const { config } = o;
   const adapters = buildAdapters(config);
 

@@ -2,7 +2,7 @@ import { mkdtemp, stat, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { ensureToken } from './token.js';
+import { ensureToken, ensureTokenAt } from './token.js';
 
 const home = () => mkdtemp(join(tmpdir(), 'uncage-home-'));
 
@@ -28,5 +28,14 @@ describe('ensureToken', () => {
     expect((await stat(p)).mode & 0o777).toBe(0o600);
     expect(warn).toHaveBeenCalledOnce();
     expect(warn.mock.calls[0]?.[0]).toContain(p);
+  });
+
+  it('ensureTokenAt uses an explicit path (for --token-file), creating its directory', async () => {
+    const h = await home();
+    const p = join(h, 'nested', 'tok');
+    const a = await ensureTokenAt(p);
+    expect(a.path).toBe(p);
+    expect((await stat(p)).mode & 0o777).toBe(0o600);
+    expect((await ensureTokenAt(p)).token).toBe(a.token);
   });
 });

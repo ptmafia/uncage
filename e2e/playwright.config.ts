@@ -3,6 +3,8 @@ import type { ExampleOptions } from './mock/fixtures.ts';
 
 /** Fixed ports so the examples' proxy can be pointed at the mock daemon. */
 export const PORTS = { daemon: 4793, control: 4794, defaultChat: 3100, headlessChat: 3101 } as const;
+/** The live stack (live-supervisor.ts): real `uncage serve` + nextjs-default-chat. */
+export const LIVE_PORTS = { daemon: 4795, control: 4796, app: 3102 } as const;
 
 const live = process.env.UNCAGE_LIVE === '1';
 const exampleEnv = { UNCAGE_URL: `http://127.0.0.1:${PORTS.daemon}`, UNCAGE_TOKEN: 'test-token' };
@@ -23,10 +25,13 @@ export default defineConfig<ExampleOptions>({
   workers: 1,
   forbidOnly: !!process.env.CI,
   retries: 0,
-  reporter: 'list',
+  reporter: live
+    ? [['list'], ['html', { outputFolder: 'live/results/report', open: 'never' }]]
+    : 'list',
+  ...(live ? { outputDir: 'live/results/artifacts' } : {}),
   timeout: 30_000,
   expect: { timeout: 10_000 },
-  use: { channel: 'chrome', headless: true, trace: 'retain-on-failure' },
+  use: { channel: 'chrome', headless: true, trace: live ? 'on' : 'retain-on-failure' },
   projects: [
     {
       name: 'mock-default',
@@ -42,11 +47,29 @@ export default defineConfig<ExampleOptions>({
       // Real Claude Code via a real `uncage serve` (Task 13). Skipped unless UNCAGE_LIVE=1.
       name: 'live-claude',
       testDir: './live',
+      // Real model turns: minutes per spec, not seconds.
+      timeout: 600_000,
+      use: { example: 'default', baseURL: `http://localhost:${LIVE_PORTS.app}` },
       ...(live ? {} : { testIgnore: '**' }),
     },
   ],
   webServer: live
-    ? []
+    ? [
+        {
+          command: 'node live-supervisor.ts',
+          url: `http://127.0.0.1:${LIVE_PORTS.control}/ready`,
+          env: {
+            LIVE_DAEMON_PORT: String(LIVE_PORTS.daemon),
+            LIVE_CONTROL_PORT: String(LIVE_PORTS.control),
+            LIVE_APP_PORT: String(LIVE_PORTS.app),
+          },
+          reuseExistingServer: false,
+          timeout: 120_000,
+          stdout: 'ignore',
+          // SIGTERM lets the supervisor stop uncage serve gracefully and remove its tmp dir.
+          gracefulShutdown: { signal: 'SIGTERM', timeout: 20_000 },
+        },
+      ]
     : [
         {
           command: `node mock-supervisor.ts`,

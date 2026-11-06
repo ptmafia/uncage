@@ -5,7 +5,7 @@ import type { RuntimeAdapter, RuntimeProbe } from '@uncage/protocol';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from './config.js';
 import { doctorExitCode, exportEvents, formatChecks, runDoctor } from './doctor.js';
-import { ensureToken } from './token.js';
+import { ensureToken, ensureTokenAt } from './token.js';
 
 const adapter = (id: string, probe: RuntimeProbe): RuntimeAdapter =>
   ({ id, displayName: id, probe: async () => probe }) as unknown as RuntimeAdapter;
@@ -67,6 +67,22 @@ describe('runDoctor', () => {
     const t = checks.find((c) => c.id === 'token');
     expect(t?.ok).toBe(false);
     expect(t?.fix).toBe('uncage serve');
+  });
+
+  it('checks and sends the token from tokenFile when given', async () => {
+    const { config } = await setup();
+    const dir = await mkdtemp(join(tmpdir(), 'uncage-tf-'));
+    const { path, token } = await ensureTokenAt(join(dir, 'my-token'));
+    let auth = '';
+    const f = (async (_u: string, init: RequestInit) => {
+      auth = (init.headers as Record<string, string>).authorization ?? '';
+      return new Response('{}');
+    }) as unknown as typeof fetch;
+    const empty = await mkdtemp(join(tmpdir(), 'uncage-empty-'));
+    const checks = await runDoctor({ config, home: empty, tokenFile: path, fetch: f, adapters: [] });
+    expect(checks.find((c) => c.id === 'token')).toMatchObject({ ok: true });
+    expect(checks.find((c) => c.id === 'token')?.detail).toContain(path);
+    expect(auth).toBe(`Bearer ${token}`);
   });
 });
 
