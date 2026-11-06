@@ -1,0 +1,31 @@
+{
+  "name": "@uncage/testkit",
+  "version": "0.0.0",
+  "description": "Fake runtime adapter and adapter contract suite for Uncage tests",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@uncage/protocol": "workspace:*",
+    "vitest": "^5.1.0"
+  }
+}
