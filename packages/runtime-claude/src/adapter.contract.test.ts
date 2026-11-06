@@ -1,8 +1,11 @@
 import { collect, runAdapterContract } from '@uncage/testkit';
-import type { AdapterRunContext, ApprovalOutcome, NativeApprovalInput } from '@uncage/protocol';
-import { ATTACHMENT_LIMITS } from '@uncage/protocol';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { AdapterRunContext, AdapterRunInput, ApprovalOutcome, NativeApprovalInput } from '@uncage/protocol';
+import type { Options, Query, SDKUserMessage, query } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { claudeAdapter } from './index.js';
+import { CLAUDE_FALLBACK_MODELS, claudeAdapter, claudeCapabilities } from './index.js';
 import { scriptedQuery } from './test-utils.js';
 
 const versionOk = () => Promise.resolve({ stdout: '2.1.318 (Claude Code)\n' });
@@ -33,18 +36,8 @@ describe('claudeAdapter', () => {
     const a = claudeAdapter({ query: scriptedQuery().query });
     expect(a.id).toBe('claude');
     expect(a.displayName).toBe('Claude Code');
-    expect(a.capabilities()).toEqual({
-      streaming: true,
-      approval: { once: true, session: false, types: ['shell', 'file', 'network', 'mcp', 'other'] },
-      nativeResume: true,
-      diffEvents: false,
-      mcp: true,
-      skills: 'supported',
-      models: [],
-      efforts: [],
-      permissionModes: ['default'],
-      attachments: { images: false, files: false, maxBytes: ATTACHMENT_LIMITS.maxBytes },
-    });
+    expect(a.capabilities()).toEqual(claudeCapabilities({ models: CLAUDE_FALLBACK_MODELS, allowBypass: false }));
+    expect(claudeAdapter({ allowBypass: true }).capabilities().permissionModes).toContain('bypassPermissions');
   });
 
   it('passes safe options to query()', async () => {
@@ -185,6 +178,167 @@ describe('claudeAdapter', () => {
       await vi.advanceTimersByTimeAsync(20_000);
       expect(s.calls[0]!.options.abortController!.signal.aborted).toBe(false);
     });
+  });
+});
+
+describe('session settings', () => {
+  const runWith = async (settings: AdapterRunInput['settings'], o: { allowBypass?: boolean; model?: string } = {}) => {
+    const s = scriptedQuery();
+    const events = await collect(
+      claudeAdapter({ query: s.query, ...o }).run({ ...run, prompt: 'simple', settings }, ctxWith({ decision: 'allow' }).ctx),
+    );
+    return { events, options: s.calls[0]?.options };
+  };
+
+  it('run passes model/effort/permissionMode to query options', async () => {
+    const { options } = await runWith({ model: 'opus', effort: 'xhigh', permissionMode: 'acceptEdits' });
+    expect(options).toMatchObject({ model: 'opus', effort: 'xhigh', permissionMode: 'acceptEdits' });
+    expect(typeof options!.canUseTool).toBe('function');
+  });
+
+  it("omits model for 'default' and when unset; omits effort when unset", async () => {
+    const a = await runWith({ model: 'default', permissionMode: 'plan' });
+    expect(a.options).not.toHaveProperty('model');
+    expect(a.options).not.toHaveProperty('effort');
+    expect(a.options!.permissionMode).toBe('plan');
+    const b = await runWith({ permissionMode: 'default' });
+    expect(b.options).not.toHaveProperty('model');
+  });
+
+  it('bypass sets allowDangerouslySkipPermissions true; other modes never set it', async () => {
+    const bypass = await runWith({ permissionMode: 'bypassPermissions' }, { allowBypass: true });
+    expect(bypass.options).toMatchObject({ permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true });
+    expect(typeof bypass.options!.canUseTool).toBe('function');
+    for (const permissionMode of ['default', 'acceptEdits', 'plan', 'auto'] as const) {
+      const { options } = await runWith({ permissionMode }, { allowBypass: true });
+      expect(options!.permissionMode).toBe(permissionMode);
+      expect(options).not.toHaveProperty('allowDangerouslySkipPermissions');
+      expect(typeof options!.canUseTool).toBe('function');
+    }
+  });
+
+  it('refuses bypass when the adapter was not allowed it, without starting Claude Code', async () => {
+    const { events, options } = await runWith({ permissionMode: 'bypassPermissions' });
+    expect(options).toBeUndefined();
+    expect(events).toEqual([{ type: 'run.failed', error: expect.objectContaining({ code: 'policy_denied' }) as unknown }]);
+  });
+
+  it('attachments are sent as one streaming-input user message', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'uncage-adapter-'));
+    const absPath = join(dir, 'a.png');
+    writeFileSync(absPath, Buffer.from([1, 2, 3]));
+    const attachment = { id: 'att_1', sessionId: 's', name: 'a.png', mime: 'image/png', size: 3, kind: 'image' as const,
+      sha256: 'x', createdAt: '2026-11-07T00:00:00.000Z', absPath };
+    const s = scriptedQuery();
+    const events = await collect(
+      claudeAdapter({ query: s.query }).run({ ...run, prompt: 'what is this', attachments: [attachment] }, ctxWith({ decision: 'allow' }).ctx),
+    );
+    expect(events.at(-1)).toEqual({ type: 'run.completed' });
+    const raw = s.calls[0]!.rawPrompt;
+    if (typeof raw === 'string') throw new Error('expected streaming input');
+    const msgs: unknown[] = [];
+    for await (const m of raw) msgs.push(m);
+    expect(msgs).toHaveLength(1);
+    expect((msgs[0] as SDKUserMessage).message.content).toEqual([
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AQID' } },
+      { type: 'text', text: 'what is this' },
+    ]);
+  });
+
+  it('an unreadable attachment fails the run without starting Claude Code', async () => {
+    const attachment = { id: 'att_1', sessionId: 's', name: 'a.png', mime: 'image/png', size: 3, kind: 'image' as const,
+      sha256: 'x', createdAt: '2026-11-07T00:00:00.000Z', absPath: '/nonexistent/uncage/a.png' };
+    const s = scriptedQuery();
+    const events = await collect(
+      claudeAdapter({ query: s.query }).run({ ...run, prompt: 'x', attachments: [attachment] }, ctxWith({ decision: 'allow' }).ctx),
+    );
+    expect(s.calls).toHaveLength(0);
+    expect(events).toEqual([{ type: 'run.failed', error: expect.objectContaining({ code: 'invalid_request' }) as unknown }]);
+  });
+});
+
+/** A query() stand-in for refreshCapabilities: records the call and answers supportedModels(). */
+function modelsQuery(supportedModels: () => Promise<unknown>) {
+  const calls: Array<{ prompt: unknown; options: Options; interrupted: boolean }> = [];
+  const fn = ((params: { prompt: unknown; options?: Options }) => {
+    const call = { prompt: params.prompt, options: params.options ?? {}, interrupted: false };
+    calls.push(call);
+    const signal = call.options.abortController!.signal;
+    // Like the SDK's iterator: nothing arrives until the process is aborted, then it rejects.
+    const iterator = {
+      next: () =>
+        new Promise<IteratorResult<never>>((_, reject) =>
+          signal.addEventListener('abort', () => reject(new Error('Operation aborted')), { once: true }),
+        ),
+    };
+    return Object.assign(iterator, {
+      supportedModels,
+      interrupt: async () => {
+        call.interrupted = true;
+      },
+    }) as unknown as Query;
+  }) as typeof query;
+  return { query: fn, calls };
+}
+
+describe('refreshCapabilities', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const INFOS = [
+    { value: 'default', displayName: 'Default (recommended)', description: 'Fable 5.1' },
+    { value: 'opus', displayName: 'Opus 5.5', description: 'For complex work' },
+  ];
+
+  it('lists models via supportedModels() without sending a turn, then shuts the probe down', async () => {
+    const m = modelsQuery(() => Promise.resolve(INFOS));
+    const a = claudeAdapter({ query: m.query, executable: '/opt/claude' });
+    const caps = await a.refreshCapabilities!();
+    expect(caps.models).toEqual([
+      { id: 'default', label: 'Default (recommended)', description: 'Fable 5.1' },
+      { id: 'opus', label: 'Opus 5.5', description: 'For complex work' },
+    ]);
+    expect(a.capabilities().models).toEqual(caps.models);
+    expect(m.calls).toHaveLength(1);
+    const call = m.calls[0]!;
+    expect(call.options.pathToClaudeCodeExecutable).toBe('/opt/claude');
+    expect(call.interrupted).toBe(true);
+    expect(call.options.abortController!.signal.aborted).toBe(true);
+    // The prompt is streaming input that never yields: no model turn is sent.
+    const it = (call.prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]();
+    const first = await Promise.race([it.next(), new Promise((r) => setTimeout(() => r('pending'), 20))]);
+    expect(first).toBe('pending');
+  });
+
+  it('caches the model list for 10 minutes', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const m = modelsQuery(() => Promise.resolve(INFOS));
+    const a = claudeAdapter({ query: m.query });
+    await a.refreshCapabilities!();
+    vi.setSystemTime(Date.now() + 9 * 60_000);
+    await a.refreshCapabilities!();
+    expect(m.calls).toHaveLength(1);
+    vi.setSystemTime(Date.now() + 2 * 60_000);
+    await a.refreshCapabilities!();
+    expect(m.calls).toHaveLength(2);
+  });
+
+  it('refreshCapabilities falls back on error', async () => {
+    const m = modelsQuery(() => Promise.reject(new Error('spawn claude ENOENT')));
+    const a = claudeAdapter({ query: m.query, allowBypass: true });
+    const caps = await a.refreshCapabilities!();
+    expect(caps).toEqual(claudeCapabilities({ models: CLAUDE_FALLBACK_MODELS, allowBypass: true }));
+    expect(m.calls[0]!.options.abortController!.signal.aborted).toBe(true);
+  });
+
+  it('falls back when query() itself throws', async () => {
+    const a = claudeAdapter({
+      query: (() => {
+        throw new Error('boom');
+      }) as unknown as typeof query,
+    });
+    expect((await a.refreshCapabilities!()).models).toEqual(CLAUDE_FALLBACK_MODELS);
   });
 });
 

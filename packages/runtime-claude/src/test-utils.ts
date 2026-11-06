@@ -36,7 +36,9 @@ function deniedResult(source: SDKMessage, message: string): SDKMessage {
 }
 
 export interface ScriptedCall {
+  /** The prompt string; streaming input (attachments) replays the `simple` script. */
   prompt: string;
+  rawPrompt: string | AsyncIterable<unknown>;
   options: Options;
   interrupted: boolean;
   permission?: PermissionResult;
@@ -52,7 +54,9 @@ export function scriptedQuery(): { query: typeof query; calls: ScriptedCall[] } 
 
   const fn = ((params: { prompt: string | AsyncIterable<unknown>; options?: Options }) => {
     const options = params.options ?? {};
-    const call: ScriptedCall = { prompt: String(params.prompt), options, interrupted: false };
+    const rawPrompt = params.prompt;
+    const prompt = typeof rawPrompt === 'string' ? rawPrompt : 'simple';
+    const call: ScriptedCall = { prompt, rawPrompt, options, interrupted: false };
     calls.push(call);
     const signal = options.abortController?.signal;
 

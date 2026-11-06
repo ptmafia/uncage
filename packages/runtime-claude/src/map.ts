@@ -41,7 +41,7 @@ function resultText(content: unknown): string {
     .join('\n');
 }
 
-function runFailed(code: ErrorCode, message: string | undefined): RuntimeEvent {
+export function runFailed(code: ErrorCode, message: string | undefined): RuntimeEvent {
   const entry = ERROR_CATALOG[code];
   return {
     type: 'run.failed',

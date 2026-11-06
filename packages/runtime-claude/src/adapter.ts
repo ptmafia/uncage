@@ -1,15 +1,17 @@
-import { query as sdkQuery, type CanUseTool, type PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import { query as sdkQuery, type CanUseTool, type PermissionResult, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type {
   AdapterRunContext,
   AdapterRunInput,
   ApprovalOutcome,
+  ModelOption,
   NativeApprovalInput,
   RuntimeAdapter,
   RuntimeCapabilities,
   RuntimeEvent,
 } from '@uncage/protocol';
-import { ATTACHMENT_LIMITS } from '@uncage/protocol';
-import { CANCELLED_MESSAGE, DENIED_MESSAGE, EXPIRED_MESSAGE, categorize, createMapper, isResumeFailure } from './map.js';
+import { CLAUDE_FALLBACK_MODELS, claudeCapabilities, toModelOptions } from './capabilities.js';
+import { buildPrompt } from './input.js';
+import { CANCELLED_MESSAGE, DENIED_MESSAGE, EXPIRED_MESSAGE, categorize, createMapper, isResumeFailure, runFailed } from './map.js';
 import { probeClaude, type ExecFile } from './probe.js';
 
 export interface ClaudeAdapterOptions {
@@ -17,25 +19,22 @@ export interface ClaudeAdapterOptions {
   query?: typeof sdkQuery;
   /** Defaults to ['project']. */
   settingSources?: Array<'user' | 'project' | 'local'>;
+  /** Used when a session has no model setting. */
   model?: string;
+  /** Server policy `security.allowBypass`: offer and accept `bypassPermissions`. Default false. */
+  allowBypass?: boolean;
   /** Path to the Claude Code executable (`pathToClaudeCodeExecutable`); also used by probe(). */
   executable?: string;
   /** Probe injection. */
   execFile?: ExecFile;
 }
 
-const CAPABILITIES: RuntimeCapabilities = {
-  streaming: true,
-  approval: { once: true, session: false, types: ['shell', 'file', 'network', 'mcp', 'other'] },
-  nativeResume: true,
-  diffEvents: false,
-  mcp: true,
-  skills: 'supported',
-  models: [],
-  efforts: [],
-  permissionModes: ['default'],
-  attachments: { images: false, files: false, maxBytes: ATTACHMENT_LIMITS.maxBytes },
-};
+/** How long a `supportedModels()` answer is reused. */
+const MODELS_TTL_MS = 10 * 60_000;
+/** Give up on a model-list probe after this long (keeps the previous list). */
+const MODELS_TIMEOUT_MS = 15_000;
+/** How long the model-list probe waits for its interrupt before killing Claude Code. */
+const PROBE_INTERRUPT_MS = 2_000;
 
 /** After an interrupt, give Claude Code this long to wind down before killing it. */
 const KILL_GRACE_MS = 3_000;
@@ -84,13 +83,82 @@ const defined = <T extends object>(o: T): T =>
 
 const strOrUndef = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
 
+/** Rejects after `ms` (the timer never keeps the process alive). */
+function timeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const t = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+    timer.unref();
+  });
+  return Promise.race([p, t]).finally(() => clearTimeout(timer));
+}
+
+/** Streaming input that never yields: the CLI starts and answers control requests, but no turn is sent. */
+function silentInput(): AsyncIterable<SDKUserMessage> {
+  return { [Symbol.asyncIterator]: () => ({ next: () => new Promise<IteratorResult<SDKUserMessage>>(() => undefined) }) };
+}
+
 export function claudeAdapter(o: ClaudeAdapterOptions = {}): RuntimeAdapter {
   const queryFn = o.query ?? sdkQuery;
   const settingSources = o.settingSources ?? ['project'];
+  const allowBypass = o.allowBypass === true;
+  let models: ModelOption[] = CLAUDE_FALLBACK_MODELS;
+  let modelsAt = -Infinity;
+  let modelsInflight: Promise<void> | undefined;
+
+  const capabilities = (): RuntimeCapabilities => claudeCapabilities({ models, allowBypass });
+
+  /** Reads `supportedModels()` from a short-lived Claude Code process; keeps the current list on any error. */
+  async function loadModels(): Promise<void> {
+    const abortController = new AbortController();
+    let q: ReturnType<typeof sdkQuery> | undefined;
+    try {
+      q = queryFn({
+        prompt: silentInput(),
+        options: defined({ abortController, settingSources, pathToClaudeCodeExecutable: o.executable }),
+      });
+      const list = toModelOptions(await timeout(q.supportedModels(), MODELS_TIMEOUT_MS, 'supportedModels() timed out'));
+      models = list;
+      modelsAt = Date.now();
+    } catch {
+      // Keep the current (fallback) list; the registry asks again later.
+    } finally {
+      if (q) {
+        const probe = q;
+        await timeout(Promise.resolve().then(() => probe.interrupt()), PROBE_INTERRUPT_MS, 'interrupt timed out').catch(() => undefined);
+        abortController.abort();
+        // Drain so the aborted iterator's rejection is observed.
+        void (async () => {
+          while (!(await probe.next()).done);
+        })().catch(() => undefined);
+      }
+    }
+  }
+
+  async function refreshCapabilities(): Promise<RuntimeCapabilities> {
+    if (Date.now() - modelsAt >= MODELS_TTL_MS) {
+      modelsInflight ??= loadModels().finally(() => {
+        modelsInflight = undefined;
+      });
+      await modelsInflight;
+    }
+    return capabilities();
+  }
 
   async function* run(input: AdapterRunInput, ctx: AdapterRunContext): AsyncGenerator<RuntimeEvent> {
     const interrupted: RuntimeEvent = { type: 'run.interrupted', reason: 'aborted' };
     if (ctx.signal.aborted) return yield interrupted;
+    const { settings } = input;
+    // Core enforces the policy; refuse here too so a bypass can never reach Claude Code unless allowed.
+    if (settings.permissionMode === 'bypassPermissions' && !allowBypass) {
+      return yield runFailed('policy_denied', 'bypassPermissions is not allowed on this server.');
+    }
+    let prompt: string | AsyncIterable<SDKUserMessage>;
+    try {
+      prompt = await buildPrompt(input.prompt, input.attachments);
+    } catch (err) {
+      return yield runFailed('invalid_request', `Could not read an attachment: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     const abortController = new AbortController();
     const denials = new Map<string, string>();
@@ -123,16 +191,20 @@ export function claudeAdapter(o: ClaudeAdapterOptions = {}): RuntimeAdapter {
     };
 
     const q = queryFn({
-      prompt: input.prompt,
+      prompt,
       options: defined({
         cwd: input.cwd,
         resume: input.nativeSessionRef,
-        permissionMode: 'default' as const,
+        permissionMode: settings.permissionMode,
+        allowDangerouslySkipPermissions: settings.permissionMode === 'bypassPermissions' ? true : undefined,
         includePartialMessages: true,
         settingSources,
         abortController,
+        // Registered in every mode: whatever the mode leaves to the user still goes through Uncage.
         canUseTool,
-        model: o.model,
+        // 'default' means the CLI's own choice.
+        model: settings.model === 'default' ? undefined : (settings.model ?? o.model),
+        effort: settings.effort,
         pathToClaudeCodeExecutable: o.executable,
       }),
     });
@@ -190,7 +262,8 @@ export function claudeAdapter(o: ClaudeAdapterOptions = {}): RuntimeAdapter {
     id: 'claude',
     displayName: 'Claude Code',
     probe: () => probeClaude(o.executable, o.execFile),
-    capabilities: () => CAPABILITIES,
+    capabilities,
+    refreshCapabilities,
     run,
   };
 }

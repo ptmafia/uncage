@@ -1,13 +1,38 @@
-// Manual smoke test against real Claude Code (spends tokens). Run: pnpm --filter @uncage/runtime-claude smoke
+// Manual smoke test against real Claude Code (spends tokens). Run: pnpm --filter @uncage/runtime-claude smoke [flags]
+//   (no flags)                    write hello.txt in `default` mode → exactly one approval
+//   --permission-mode <mode>      run the write in that mode (`acceptEdits` → no approval requested)
+//   --image <png>                 send the image; the answer must contain UNCAGE-42; then resume the
+//                                 session with an attached .md file (streaming input + resume)
+//   --model <id> --effort <level> session settings for every run
+// Always checks that refreshCapabilities() reads ≥1 model from supportedModels().
 // Raw SDK messages are recorded to <tmp>/sdk-messages.jsonl for checking fixture shapes.
-import { appendFileSync, existsSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { appendFileSync, copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
+import { parseArgs } from 'node:util';
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { RuntimeEvent } from '@uncage/protocol';
+import type { AdapterRunInput, EffortLevel, PermissionMode, ResolvedAttachment, RuntimeEvent } from '@uncage/protocol';
 
 type Mod = typeof import('../src/index.js');
-const { claudeAdapter } = (await import(new URL('../dist/index.js', import.meta.url).href)) as Mod;
+const { claudeAdapter, CLAUDE_FALLBACK_MODELS } = (await import(new URL('../dist/index.js', import.meta.url).href)) as Mod;
+
+const { values: args } = parseArgs({
+  // `pnpm smoke -- --flag` forwards the `--`.
+  args: process.argv.slice(2).filter((a) => a !== '--'),
+  options: {
+    image: { type: 'string' },
+    model: { type: 'string' },
+    effort: { type: 'string' },
+    'permission-mode': { type: 'string', default: 'default' },
+  },
+});
+const permissionMode = args['permission-mode'] as PermissionMode;
+const settings: AdapterRunInput['settings'] = {
+  permissionMode,
+  ...(args.model ? { model: args.model } : {}),
+  ...(args.effort ? { effort: args.effort as EffortLevel } : {}),
+};
 
 const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'uncage-claude-smoke-')));
 const record = join(cwd, 'sdk-messages.jsonl');
@@ -15,43 +40,92 @@ const record = join(cwd, 'sdk-messages.jsonl');
 const recordingQuery: typeof query = (params) => {
   const q = query(params);
   const next = q.next.bind(q);
-  q.next = async (...args) => {
-    const r = await next(...args);
+  q.next = async (...a) => {
+    const r = await next(...a);
     if (!r.done) appendFileSync(record, JSON.stringify(r.value) + '\n');
     return r;
   };
   return q;
 };
 
-const adapter = claudeAdapter({ query: recordingQuery });
+const adapter = claudeAdapter({ query: recordingQuery, allowBypass: permissionMode === 'bypassPermissions' });
 console.log('probe', await adapter.probe());
-console.log('cwd', cwd);
+console.log('cwd', cwd, 'settings', settings);
 
-const events: RuntimeEvent[] = [];
-let approvals = 0;
-for await (const e of adapter.run(
-  { runId: 'run_smoke', prompt: 'Create a file hello.txt containing hi using the Write tool', cwd, settings: { permissionMode: 'default' as const }, attachments: [] },
-  {
-    signal: AbortSignal.timeout(180_000),
-    requestApproval: async (req) => {
-      approvals++;
-      console.log('approval requested (auto-allow):', JSON.stringify(req));
-      return { decision: 'allow' };
-    },
-  },
-)) {
-  events.push(e);
-  if (e.type !== 'message.delta') console.log(e.type, JSON.stringify(e));
+const caps = await adapter.refreshCapabilities!();
+console.log('models', caps.models.map((m) => m.id).join(', '));
+const checks: Record<string, boolean> = {
+  supportedModels: caps.models !== CLAUDE_FALLBACK_MODELS && caps.models.length >= 1,
+};
+
+function attachment(absPath: string, kind: 'image' | 'file', mime: string): ResolvedAttachment {
+  const bytes = readFileSync(absPath);
+  return {
+    id: `att_${basename(absPath)}`, sessionId: 'smoke', name: basename(absPath), mime, size: statSync(absPath).size, kind,
+    sha256: createHash('sha256').update(bytes).digest('hex'), createdAt: new Date().toISOString(), absPath,
+  };
 }
 
-const file = join(cwd, 'hello.txt');
-const checks = {
-  oneApproval: approvals === 1,
-  toolCompleted: events.some((e) => e.type === 'tool.completed'),
-  runCompleted: events.at(-1)?.type === 'run.completed',
-  helloExists: existsSync(file),
-};
-console.log('hello.txt:', existsSync(file) ? JSON.stringify(readFileSync(file, 'utf8')) : '(missing)');
+async function runOnce(prompt: string, attachments: ResolvedAttachment[], nativeSessionRef?: string) {
+  const events: RuntimeEvent[] = [];
+  let approvals = 0;
+  let answer = '';
+  let ref: string | undefined;
+  for await (const e of adapter.run(
+    { runId: `run_smoke_${Date.now()}`, prompt, cwd, settings, attachments, ...(nativeSessionRef ? { nativeSessionRef } : {}) },
+    {
+      signal: AbortSignal.timeout(180_000),
+      requestApproval: async (req) => {
+        approvals++;
+        console.log('approval requested (auto-allow):', JSON.stringify(req));
+        return { decision: 'allow' };
+      },
+    },
+  )) {
+    events.push(e);
+    if (e.type === 'message.completed') answer += e.text;
+    if (e.type === 'native.session') ref = e.ref;
+    if (e.type !== 'message.delta') console.log(e.type, JSON.stringify(e));
+  }
+  return { events, approvals, answer, ref, completed: events.at(-1)?.type === 'run.completed' };
+}
+
+if (args.image) {
+  const png = join(cwd, 'uncage-42.png');
+  copyFileSync(resolve(args.image), png);
+  const first = await runOnce('What text is shown in this image? Reply with the text only.', [attachment(png, 'image', 'image/png')]);
+  console.log('answer 1:', JSON.stringify(first.answer));
+  checks.imageCompleted = first.completed;
+  checks.imageAnswer = first.answer.includes('UNCAGE-42');
+
+  // Resume the same Claude session with streaming input again (a file attachment this time).
+  const md = join(cwd, 'note.md');
+  writeFileSync(md, 'The secret word is ZEBRA-9.\n');
+  const second = await runOnce(
+    'Reply with two things on one line: the text from the image I sent earlier, and the secret word in the attached file.',
+    [attachment(md, 'file', 'text/markdown')],
+    first.ref,
+  );
+  console.log('answer 2:', JSON.stringify(second.answer));
+  checks.resumeCompleted = second.completed;
+  checks.resumeRemembersImage = second.answer.includes('UNCAGE-42');
+  checks.resumeReadsFile = second.answer.includes('ZEBRA-9');
+} else {
+  const r = await runOnce('Create a file hello.txt containing hi using the Write tool', []);
+  const file = join(cwd, 'hello.txt');
+  console.log('hello.txt:', existsSync(file) ? JSON.stringify(readFileSync(file, 'utf8')) : '(missing)');
+  checks.approvals = permissionMode === 'default' ? r.approvals === 1 : r.approvals === 0;
+  checks.toolCompleted = r.events.some((e) => e.type === 'tool.completed');
+  checks.runCompleted = r.completed;
+  checks.helloExists = existsSync(file);
+}
+
+const init = readFileSync(record, 'utf8')
+  .split('\n')
+  .filter(Boolean)
+  .map((l) => JSON.parse(l) as { type: string; subtype?: string; model?: string; permissionMode?: string })
+  .find((m) => m.type === 'system' && m.subtype === 'init');
+console.log('init model:', init?.model, 'permissionMode:', init?.permissionMode);
 console.log('raw messages:', record);
 console.log('checks', checks);
 process.exit(Object.values(checks).every(Boolean) ? 0 : 1);

@@ -1,5 +1,5 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": { "types": ["node"], "noEmit": true, "lib": ["ES2023", "DOM"], "allowImportingTsExtensions": true },
-  "include": ["*.ts", "mock", "live"]
+  "include": ["*.ts", "mock", "live", "scripts"]
 }

@@ -1,6 +1,20 @@
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Writable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { createLogger, formatBanner } from './serve.js';
+import { loadConfig } from './config.js';
+import { buildAdapters, createLogger, formatBanner } from './serve.js';
+
+describe('buildAdapters', () => {
+  it('passes security.allowBypass to the Claude adapter', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'uncage-cli-'));
+    const claude = async (env: NodeJS.ProcessEnv) =>
+      buildAdapters(await loadConfig(cwd, env)).find((a) => a.id === 'claude')!.capabilities().permissionModes;
+    expect(await claude({})).not.toContain('bypassPermissions');
+    expect(await claude({ UNCAGE_ALLOW_BYPASS: '1' })).toContain('bypassPermissions');
+  });
+});
 
 describe('createLogger', () => {
   it('redacts token and authorization', () => {
