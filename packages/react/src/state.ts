@@ -1,5 +1,14 @@
 import type { ConnectionState, UncageClientError } from '@uncage/client';
-import type { ApprovalCategory, ApprovalRequest, Run, RuntimeInfo, Session } from '@uncage/protocol';
+import type {
+  ActiveRunInfo,
+  ApprovalCategory,
+  ApprovalRequest,
+  Attachment,
+  Run,
+  RuntimeInfo,
+  Session,
+  SessionSettings,
+} from '@uncage/protocol';
 
 export interface MessageView {
   id: string;
@@ -48,6 +57,48 @@ export interface SessionState {
   timeline: TimelineItem[];
   /** Internal: `message.delta` reassembly cursors, keyed by messageId. */
   chunks: Record<string, ChunkCursor>;
+  /**
+   * The run that was active when the session's settings last changed (they apply from the next
+   * run). Settings are "pending for the next run" while this run is still active.
+   */
+  pendingSettingsRunId?: string;
+}
+
+/** A file picked in the composer: validated client-side, then uploaded to the session. */
+export interface DraftAttachment {
+  localId: string;
+  name: string;
+  size: number;
+  kind: 'image' | 'file' | null;
+  /** Object URL for image previews; revoked on remove/clear/send/dispose. */
+  previewUrl?: string;
+  /** `uploading` also covers files queued until a draft's session exists. */
+  status: 'uploading' | 'ready' | 'error';
+  attachment?: Attachment;
+  error?: UncageClientError;
+}
+
+export interface AttachmentRejection {
+  name: string;
+  reason: 'type' | 'size' | 'count';
+}
+
+export interface AttachmentsState {
+  /** The session the items upload to; undefined while they are queued for a draft. */
+  sessionId?: string;
+  items: DraftAttachment[];
+  /** Files refused by the most recent `addAttachments` call. */
+  rejected: AttachmentRejection[];
+}
+
+/**
+ * A new conversation that has no session yet. `open` is set by `openDraft` and cleared by
+ * `selectSession`/`commitDraft`/`closeDraft`; with no active session the store is a draft too.
+ */
+export interface DraftState {
+  open: boolean;
+  runtimeId?: string;
+  settings: SessionSettings;
 }
 
 export interface StoreState {
@@ -59,7 +110,17 @@ export interface StoreState {
   active?: SessionState;
   pendingDecisions: Record<string, 'allow' | 'deny'>;
   lastError?: UncageClientError;
+  draft: DraftState;
+  attachments: AttachmentsState;
+  /** Active runs across all sessions on the server (polled while watched). */
+  activeRuns: ActiveRunInfo[];
 }
+
+/** Settings of a freshly created session (core's default). */
+export const DEFAULT_SETTINGS: SessionSettings = { permissionMode: 'default' };
+
+/** True when the composer targets a draft (no session yet) rather than the active session. */
+export const isDraft = (s: StoreState): boolean => s.draft.open || s.activeSessionId === undefined;
 
 export const ACTIVE_RUN_STATES: ReadonlySet<Run['state']> = new Set(['queued', 'running', 'waiting_approval']);
 

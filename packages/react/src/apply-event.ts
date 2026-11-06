@@ -1,6 +1,7 @@
-import type { ApprovalRequest, Run, Session, SessionSnapshot, UncageEvent } from '@uncage/protocol';
+import type { ApprovalRequest, Run, Session, SessionSettings, SessionSnapshot, UncageEvent } from '@uncage/protocol';
 import {
   ACTIVE_RUN_STATES,
+  latestRun,
   userMessageId,
   type MessageView,
   type SessionState,
@@ -9,6 +10,9 @@ import {
 } from './state.js';
 
 const isTerminal = (state: Run['state']) => !ACTIVE_RUN_STATES.has(state);
+
+export const sameSettings = (a: SessionSettings, b: SessionSettings): boolean =>
+  a.model === b.model && a.effort === b.effort && a.permissionMode === b.permissionMode;
 
 export function emptySessionState(session: Session): SessionState {
   return {
@@ -169,8 +173,18 @@ function reduce(s: SessionState, e: UncageEvent): SessionState {
   const runId = e.runId ?? '';
   switch (e.type) {
     case 'session.created':
-    case 'session.updated':
       return { ...s, session: e.payload.session };
+    case 'session.updated': {
+      // A settings PATCH (no runId) during an active run applies from the next run. A run-scoped
+      // update (e.g. `setting_reset` at run start) already applies to that run.
+      const current = latestRun(s.runs);
+      const pending =
+        e.runId === undefined &&
+        current !== undefined &&
+        !isTerminal(current.state) &&
+        !sameSettings(s.session.settings, e.payload.session.settings);
+      return { ...s, session: e.payload.session, ...(pending ? { pendingSettingsRunId: current.id } : {}) };
+    }
 
     case 'run.started':
       return upsertRun(s, e.payload.run);

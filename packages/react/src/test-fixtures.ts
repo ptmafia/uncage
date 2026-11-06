@@ -1,10 +1,12 @@
 import type { ConnectionState, SubscribeHandlers, UncageClient } from '@uncage/client';
 import { UncageClientError } from '@uncage/client';
 import type {
+  ActiveRunInfo,
   ApprovalRequest,
   ErrorCode,
   EventType,
   Run,
+  RuntimeInfo,
   Session,
   SessionSnapshot,
   UncageEvent,
@@ -99,7 +101,7 @@ export function fakeClient(snap: () => SessionSnapshot = () => snapshot()) {
   let runCount = 0;
   const client = {
     health: vi.fn(async () => ({ ok: true as const, protocol: '1.0' as const })),
-    runtimes: vi.fn(async () => []),
+    runtimes: vi.fn(async (): Promise<RuntimeInfo[]> => []),
     createSession: vi.fn(async () => session()),
     listSessions: vi.fn(async () => [session()]),
     snapshot: vi.fn(async () => snap()),
@@ -107,12 +109,12 @@ export function fakeClient(snap: () => SessionSnapshot = () => snapshot()) {
       run({ id: `run_${++runCount}`, sessionId, prompt: b.prompt }),
     ),
     cancelRun: vi.fn(async (id: string) => run({ id, state: 'cancelled' })),
-    updateSettings: vi.fn(async () => session()),
-    uploadAttachment: vi.fn(async () => {
+    updateSettings: vi.fn<UncageClient['updateSettings']>(async () => session()),
+    uploadAttachment: vi.fn<UncageClient['uploadAttachment']>(async () => {
       throw new Error('fakeClient.uploadAttachment not stubbed');
     }),
     attachmentUrl: vi.fn((id: string) => `/api/uncage/attachments/${id}`),
-    listActiveRuns: vi.fn(async () => []),
+    listActiveRuns: vi.fn(async (): Promise<ActiveRunInfo[]> => []),
     decide: vi.fn(async (id: string) => approval({ id, state: 'approved', decision: 'allow', version: 2 })),
     subscribe: vi.fn((sessionId: string, h: SubscribeHandlers) => {
       const sub = { ...h, sessionId, closed: false };

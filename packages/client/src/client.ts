@@ -73,7 +73,7 @@ const IMAGE_MIME_BY_EXT: Record<string, string> = {
 };
 
 /** Canonical Content-Type for an upload: browsers often leave `type` empty or send `image/jpg`. */
-function uploadContentType(file: Blob & { name: string }): string {
+export function uploadContentType(file: Blob & { name: string }): string {
   const declared = (file.type.split(';')[0] ?? '').trim().toLowerCase();
   if (declared === 'image/jpg') return 'image/jpeg';
   if (declared) return declared;

@@ -1,8 +1,28 @@
 import type { ConnectionState, UncageClientError } from '@uncage/client';
-import type { ApprovalRequest, CreateSessionBody, Run, RuntimeCapabilities, RuntimeInfo, Session } from '@uncage/protocol';
+import type {
+  ActiveRunInfo,
+  ApprovalRequest,
+  CreateSessionBody,
+  Run,
+  RuntimeCapabilities,
+  RuntimeInfo,
+  Session,
+  SessionSettings,
+} from '@uncage/protocol';
 import { useContext, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { UncageStoreContext } from './provider.js';
-import { ACTIVE_RUN_STATES, latestRun, type MessageView, type StoreState, type TimelineItem, type ToolView } from './state.js';
+import {
+  ACTIVE_RUN_STATES,
+  DEFAULT_SETTINGS,
+  isDraft,
+  latestRun,
+  type AttachmentRejection,
+  type DraftAttachment,
+  type MessageView,
+  type StoreState,
+  type TimelineItem,
+  type ToolView,
+} from './state.js';
 import type { UncageStore } from './store.js';
 
 const EMPTY_RECORD: Record<string, never> = {};
@@ -136,4 +156,85 @@ export function useUncageError(): { error?: UncageClientError; dismiss(): void }
   const store = useUncageStore();
   const error = useStoreSelector((s) => s.lastError);
   return useMemo(() => ({ ...(error ? { error } : {}), dismiss: store.actions.dismissError }), [store, error]);
+}
+
+/**
+ * Settings the composer edits. With an open session: its settings and capabilities; an update
+ * applies from the next run (`pendingForNextRun` while a run started before the change is still
+ * active). In a draft (no session yet): the draft settings, validated against the draft runtime
+ * and applied by `commitDraft` right after the session is created.
+ */
+export function useSessionSettings(): {
+  settings: SessionSettings;
+  capabilities?: RuntimeCapabilities;
+  update(patch: Partial<SessionSettings>): Promise<boolean>;
+  pendingForNextRun: boolean;
+} {
+  const store = useUncageStore();
+  const draft = useStoreSelector(isDraft);
+  const draftState = useStoreSelector((s) => s.draft);
+  const runtimes = useStoreSelector((s) => s.runtimes);
+  const session = useStoreSelector((s) => s.active?.session);
+  const runs = useStoreSelector((s) => s.active?.runs);
+  const pendingRunId = useStoreSelector((s) => s.active?.pendingSettingsRunId);
+  return useMemo(() => {
+    const update = store.actions.updateSettings;
+    if (draft) {
+      const capabilities = runtimes.find((r) => r.id === draftState.runtimeId)?.capabilities;
+      return { settings: draftState.settings, ...(capabilities ? { capabilities } : {}), update, pendingForNextRun: false };
+    }
+    const pendingRun = pendingRunId !== undefined ? runs?.[pendingRunId] : undefined;
+    return {
+      settings: session?.settings ?? DEFAULT_SETTINGS,
+      ...(session ? { capabilities: session.capabilities } : {}),
+      update,
+      pendingForNextRun: pendingRun !== undefined && ACTIVE_RUN_STATES.has(pendingRun.state),
+    };
+  }, [store, draft, draftState, runtimes, session, runs, pendingRunId]);
+}
+
+/**
+ * Composer attachments. `add` validates client-side (type, runtime capability, size, at most
+ * `ATTACHMENT_LIMITS.maxPerMessage`) and uploads to the open session; in a draft, files queue and
+ * upload right after `commitDraft`. `ready` is false while an upload is in flight or has failed
+ * (queued draft files count as ready: `sendPrompt` waits for their uploads).
+ */
+export function useAttachments(): {
+  items: DraftAttachment[];
+  add(files: File[]): void;
+  remove(localId: string): void;
+  clear(): void;
+  ready: boolean;
+  rejected: AttachmentRejection[];
+} {
+  const store = useUncageStore();
+  const attachments = useStoreSelector((s) => s.attachments);
+  return useMemo(() => {
+    const queued = attachments.sessionId === undefined;
+    return {
+      items: attachments.items,
+      rejected: attachments.rejected,
+      ready: attachments.items.every((i) => i.status === 'ready' || (queued && i.status === 'uploading')),
+      add: store.actions.addAttachments,
+      remove: store.actions.removeAttachment,
+      clear: store.actions.clearAttachments,
+    };
+  }, [store, attachments]);
+}
+
+/**
+ * Active runs across all sessions on the server. Polls every 3 s while the document is visible and
+ * refreshes on local run events, for as long as a component uses the hook.
+ */
+export function useRunningSessions(): { runs: ActiveRunInfo[]; count: number } {
+  const store = useUncageStore();
+  const runs = useStoreSelector((s) => s.activeRuns);
+  useEffect(() => store.actions.watchActiveRuns(), [store]);
+  return useMemo(() => ({ runs, count: runs.length }), [runs]);
+}
+
+/** The URL of an attachment's content, for `<img src>` or links. */
+export function useAttachmentUrl(attachmentId: string): string {
+  const store = useUncageStore();
+  return useMemo(() => store.attachmentUrl(attachmentId), [store, attachmentId]);
 }
