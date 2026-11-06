@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import { access, constants, mkdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { RuntimeAdapter } from '@uncage/protocol';
@@ -8,6 +9,8 @@ export interface DoctorCheck {
   id: string;
   label: string;
   ok: boolean;
+  /** A non-fatal problem: printed with `!` and never affects the exit code. */
+  warn?: boolean;
   detail?: string;
   fix?: string;
 }
@@ -21,6 +24,8 @@ export interface DoctorDeps {
   dataDir?: string;
   /** Overrides the token file (`--token-file`). Defaults to `<home>/.uncage/token`. */
   tokenFile?: string;
+  /** The git executable used for the `.uncage/` ignore check. Defaults to `git`. */
+  gitCommand?: string;
 }
 
 const RUNTIME_FIX: Record<string, string> = {
@@ -36,6 +41,45 @@ async function readToken(path: string): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+}
+
+/** Exit code of `git <args>` run in `cwd`, or null when git cannot be started (e.g. not installed). */
+function gitExit(git: string, args: string[], cwd: string): Promise<number | null> {
+  return new Promise((done) => {
+    execFile(git, args, { cwd, timeout: 5000 }, (err) => {
+      if (!err) return done(0);
+      const code = (err as NodeJS.ErrnoException & { code?: unknown }).code;
+      done(typeof code === 'number' ? code : null);
+    });
+  });
+}
+
+/**
+ * Warns (non-fatal) for each configured workspace that is a git repo where `.uncage/` (attachment
+ * storage) is not ignored. Probes `.uncage/attachments`: `git check-ignore .uncage` misses both a
+ * root `.uncage/` pattern before the directory exists and the `.uncage/.gitignore` Uncage writes.
+ * Skipped when git is missing or the workspace is not a repo.
+ */
+async function uncageIgnoreChecks(workspaces: string[], git: string): Promise<DoctorCheck[]> {
+  const checks: DoctorCheck[] = [];
+  for (const ws of new Set(workspaces)) {
+    if ((await gitExit(git, ['rev-parse', '--is-inside-work-tree'], ws)) !== 0) continue;
+    const ignored = await gitExit(git, ['check-ignore', '-q', '.uncage/attachments'], ws);
+    if (ignored === null) continue;
+    const label = 'Attachments ignored by git';
+    if (ignored === 0) checks.push({ id: `gitignore.${ws}`, label, ok: true, detail: `${ws}/.uncage/` });
+    else {
+      checks.push({
+        id: `gitignore.${ws}`,
+        label,
+        ok: false,
+        warn: true,
+        detail: `${ws} is a git repo and .uncage/ (uploaded attachments) is not ignored`,
+        fix: `mkdir -p '${ws}/.uncage' && printf '*\\n' > '${ws}/.uncage/.gitignore'   # Uncage also writes it on the first upload`,
+      });
+    }
+  }
+  return checks;
 }
 
 export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
@@ -131,18 +175,19 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
       });
     }
   }
+  checks.push(...(await uncageIgnoreChecks([config.workspace.default, ...config.workspace.allowedRoots], deps.gitCommand ?? 'git')));
   return checks;
 }
 
-/** 1 if any required check failed; codex failures are not required. */
+/** 1 if any required check failed; codex failures and warnings are not required. */
 export function doctorExitCode(checks: DoctorCheck[]): number {
-  return checks.some((c) => !c.ok && !OPTIONAL_RUNTIMES.has(c.id.replace(/^runtime\./, ''))) ? 1 : 0;
+  return checks.some((c) => !c.ok && !c.warn && !OPTIONAL_RUNTIMES.has(c.id.replace(/^runtime\./, ''))) ? 1 : 0;
 }
 
 export function formatChecks(checks: DoctorCheck[]): string {
   return checks
     .map((c) => {
-      const line = `${c.ok ? '✓' : '✗'} ${c.label}${c.detail ? ` — ${c.detail}` : ''}`;
+      const line = `${c.ok ? '✓' : c.warn ? '!' : '✗'} ${c.label}${c.detail ? ` — ${c.detail}` : ''}`;
       return c.fix && !c.ok ? `${line}\n    fix: ${c.fix}` : line;
     })
     .join('\n');

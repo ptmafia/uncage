@@ -1,4 +1,5 @@
-import { mkdtemp } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { RuntimeAdapter, RuntimeProbe } from '@uncage/protocol';
@@ -21,6 +22,52 @@ async function setup() {
   const config = await loadConfig(home, {});
   return { home, config };
 }
+
+async function gitRepo(): Promise<string> {
+  const repo = await realpath(await mkdtemp(join(tmpdir(), 'uncage-repo-')));
+  execFileSync('git', ['init', '-q', repo]);
+  return repo;
+}
+
+describe('runDoctor: .uncage/ git ignore hint', () => {
+  const inWorkspace = async (repo: string, gitCommand?: string) => {
+    const { home, config } = await setup();
+    return runDoctor({
+      config: { ...config, workspace: { allowedRoots: [repo], default: repo } },
+      home,
+      fetch: okFetch,
+      adapters: [],
+      ...(gitCommand ? { gitCommand } : {}),
+    });
+  };
+
+  it('warns (non-fatal) when the workspace is a git repo and .uncage/ is not ignored', async () => {
+    const repo = await gitRepo();
+    const checks = await inWorkspace(repo);
+    const c = checks.find((x) => x.id === `gitignore.${repo}`);
+    expect(c).toMatchObject({ ok: false, warn: true });
+    expect(c?.fix).toContain('.uncage/.gitignore');
+    expect(doctorExitCode(checks)).toBe(0);
+    expect(formatChecks(checks)).toContain('! Attachments ignored by git');
+  });
+
+  it('passes when the repo ignores .uncage/ (root pattern before the dir exists, or .uncage/.gitignore)', async () => {
+    const a = await gitRepo();
+    await writeFile(join(a, '.gitignore'), '.uncage/\n');
+    expect((await inWorkspace(a)).find((x) => x.id === `gitignore.${a}`)).toMatchObject({ ok: true });
+    const b = await gitRepo();
+    await mkdir(join(b, '.uncage'));
+    await writeFile(join(b, '.uncage', '.gitignore'), '*\n');
+    expect((await inWorkspace(b)).find((x) => x.id === `gitignore.${b}`)).toMatchObject({ ok: true });
+  });
+
+  it('is skipped when the workspace is not a git repo or git is missing', async () => {
+    const plain = await realpath(await mkdtemp(join(tmpdir(), 'uncage-plain-')));
+    expect((await inWorkspace(plain)).some((x) => x.id.startsWith('gitignore.'))).toBe(false);
+    const repo = await gitRepo();
+    expect((await inWorkspace(repo, join(plain, 'no-such-git'))).some((x) => x.id.startsWith('gitignore.'))).toBe(false);
+  });
+});
 
 describe('runDoctor', () => {
   it('marks codex not_installed with npm fix line and does not fail overall', async () => {

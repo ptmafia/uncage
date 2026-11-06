@@ -378,6 +378,29 @@ describe('attachments', () => {
     }
   });
 
+  it('writes .uncage/.gitignore (*) once and never touches the workspace .gitignore', async () => {
+    writeFileSync(join(ws, '.gitignore'), 'node_modules\n');
+    const u = await make([fake()]);
+    const s = await u.sessions.create({ runtime: 'fake' });
+    await u.attachments.add(s.id, { name: 'a.md', mime: 'text/plain', body: bytes('a') });
+    const gi = join(ws, '.uncage', '.gitignore');
+    expect(readFileSync(gi, 'utf8')).toBe('*\n');
+    expect(statSync(gi).mode & 0o777).toBe(0o600);
+    expect(readFileSync(join(ws, '.gitignore'), 'utf8')).toBe('node_modules\n');
+    // An existing file is left alone.
+    writeFileSync(gi, 'custom\n');
+    await u.attachments.add(s.id, { name: 'b.md', mime: 'text/plain', body: bytes('b') });
+    expect(readFileSync(gi, 'utf8')).toBe('custom\n');
+  });
+
+  it('adds .uncage/.gitignore when .uncage already exists without one', async () => {
+    mkdirSync(join(ws, '.uncage'), { mode: 0o700 });
+    const u = await make([fake()]);
+    const s = await u.sessions.create({ runtime: 'fake' });
+    await u.attachments.add(s.id, { name: 'a.md', mime: 'text/plain', body: bytes('a') });
+    expect(readFileSync(join(ws, '.uncage', '.gitignore'), 'utf8')).toBe('*\n');
+  });
+
   it('pruneOrphans deletes only unreferenced older than cutoff', async () => {
     const u = await make([fake()]);
     const s = await u.sessions.create({ runtime: 'fake' });

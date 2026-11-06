@@ -106,7 +106,7 @@ Settings are stored per session. Before the first prompt they belong to the draf
 - At most 10 MB per file and 10 files per message. Claude Code caps images at 5 MB (the Anthropic API's limit).
 - Claude gets images inline. Other files are passed by path, and Claude reads them with its tools.
 - Uploads are stored in the session's workspace at `<workspace>/.uncage/attachments/<sessionId>/<attachmentId>-<name>`. Uploads that were never sent are deleted after 24 hours.
-- Add `.uncage/` to your project's `.gitignore`, so attachments are never committed.
+- Uncage writes `.uncage/.gitignore` (`*`) when it creates `.uncage/`, so attachments are never committed. Your own `.gitignore` is never touched. `uncage doctor` warns (non-fatal) when a workspace is a git repo and `.uncage/` is still not ignored.
 
 **Voice privacy.** The browser does the speech recognition, not Uncage. In Chrome the audio goes to Google's speech service. Uncage only ever sees the resulting text in the prompt box. The first use shows a note saying so.
 
@@ -177,7 +177,7 @@ runtimes:
 | CLI | |
 | --- | --- |
 | `uncage serve [--port n] [--workspace dir] [--data-dir dir] [--token-file file]` | Start the daemon. Env: `UNCAGE_PORT`, `UNCAGE_LOG_LEVEL`, `UNCAGE_ALLOW_BYPASS=1` |
-| `uncage doctor [--data-dir dir] [--token-file file]` | Check Node, data dir, token, server and runtimes, with a fix for each failure |
+| `uncage doctor [--data-dir dir] [--token-file file]` | Check Node, data dir, token, server and runtimes, with a fix for each failure. Warns (`!`, non-fatal) when a workspace is a git repo that does not ignore `.uncage/` |
 | `uncage doctor --export-events <sessionId> [--out file] [--include-content]` | Export a session's events for a bug report (content redacted unless `--include-content`) |
 
 Proxy env (host app): `UNCAGE_URL` (default `http://127.0.0.1:4783`), `UNCAGE_TOKEN` (default: read `~/.uncage/token`), `UNCAGE_ALLOWED_HOSTS`. If you start the daemon with `--token-file`, pass that token to the app as `UNCAGE_TOKEN`.

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, open, readdir, realpath, rename, rm } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   ATTACHMENT_LIMITS,
@@ -107,7 +107,20 @@ async function ensureAttachmentDir(workspace: string, sessionId: string): Promis
     }
   }
   if ((await realpath(dir)) !== dir) throw escapes();
+  await ensureUncageGitignore(join(workspace, '.uncage'));
   return dir;
+}
+
+/**
+ * Keeps `.uncage/` out of git: writes `.uncage/.gitignore` (`*`, 0600) when it is absent. An
+ * existing file is never overwritten, and the workspace's own `.gitignore` is never touched.
+ */
+async function ensureUncageGitignore(uncageDir: string): Promise<void> {
+  try {
+    await writeFile(join(uncageDir, '.gitignore'), '*\n', { flag: 'wx', mode: 0o600 });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+  }
 }
 
 const TMP_PREFIX = '.tmp-';
