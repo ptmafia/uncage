@@ -106,6 +106,22 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
       h.onState?.(s);
     };
 
+    // A throwing consumer must neither tear down the stream nor be mistaken for a network failure.
+    const guard = (fn: () => void) => {
+      try {
+        fn();
+      } catch (err) {
+        console.error('[uncage] subscriber handler threw', err);
+        queueMicrotask(() => {
+          throw err;
+        });
+      }
+    };
+    const terminal = (err: UncageClientError) => {
+      setState('offline');
+      guard(() => h.onError?.(err));
+    };
+
     const run = async () => {
       setState('connecting');
       let attempt = 0;
@@ -117,9 +133,11 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
           const res = await doFetch(`${baseUrl}/sessions/${enc(sessionId)}/events?after=${lastSequence}`, { headers, signal });
           if (!res.ok) {
             const err = await toError(res);
-            h.onError?.(err);
             // Definitive client errors will not fix themselves; the caller must resubscribe.
-            if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) return;
+            if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) {
+              terminal(err);
+              return;
+            }
             throw err;
           }
           if (!res.body) throw new Error('empty response body');
@@ -130,9 +148,10 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
             if (frame.event === 'error') {
               const parsed = ErrorBodySchema.safeParse(safeJson(frame.data));
               if (parsed.success) {
-                const err = new UncageClientError(parsed.data, 200);
-                h.onError?.(err);
-                if (parsed.data.code === 'event_replay_unavailable') return;
+                if (parsed.data.code === 'event_replay_unavailable') {
+                  terminal(new UncageClientError(parsed.data, 200));
+                  return;
+                }
               }
               continue;
             }
@@ -147,7 +166,7 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
             if (parsed.data.sequence <= lastSequence) continue;
             lastSequence = parsed.data.sequence;
             if (frame.id) lastEventId = frame.id;
-            h.onEvent(parsed.data);
+            guard(() => h.onEvent(parsed.data));
           }
         } catch {
           // fall through to backoff (aborts exit via the loop condition)

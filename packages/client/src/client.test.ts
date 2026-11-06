@@ -93,9 +93,16 @@ describe('subscribe', () => {
     const body = { code: 'event_replay_unavailable', message: 'gone', retryable: false };
     const fetch = vi.fn(async () => sseResponse([`event: error\ndata: ${JSON.stringify(body)}\n\n`]));
     const errors: UncageClientError[] = [];
-    createUncageClient({ fetch }).subscribe('ses_1', { after: 5, onEvent: () => undefined, onError: (e) => errors.push(e) });
+    const states: ConnectionState[] = [];
+    createUncageClient({ fetch }).subscribe('ses_1', {
+      after: 5,
+      onEvent: () => undefined,
+      onState: (s) => states.push(s),
+      onError: (e) => errors.push(e),
+    });
     await vi.advanceTimersByTimeAsync(10_000);
     expect(errors.map((e) => e.code)).toEqual(['event_replay_unavailable']);
+    expect(states.at(-1)).toBe('offline');
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -124,5 +131,52 @@ describe('subscribe', () => {
     unsub();
     expect(events).toEqual([1]);
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('a throwing onEvent does not tear down the stream or reconnect', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const uncaught: unknown[] = [];
+    const onUncaught = (e: unknown) => uncaught.push(e);
+    process.on('uncaughtException', onUncaught);
+    const fetch = vi.fn<F>(async () => sseResponse([frame(1), frame(2)]));
+    const events: number[] = [];
+    const unsub = createUncageClient({ fetch }).subscribe('ses_1', {
+      after: 0,
+      onEvent: (e) => {
+        events.push(e.sequence);
+        if (e.sequence === 1) throw new Error('reducer bug');
+      },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    unsub();
+    await new Promise((r) => setImmediate(r));
+    process.off('uncaughtException', onUncaught);
+    expect(events).toEqual([1, 2]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(uncaught).toHaveLength(1);
+  });
+
+  it('transient failures drive state only; terminal 4xx calls onError and goes offline', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const err = (code: string, status: number) =>
+      json({ error: { code, message: 'm', retryable: status >= 500 } }, status);
+    const fetch = vi
+      .fn<F>()
+      .mockResolvedValueOnce(err('internal_error', 503))
+      .mockRejectedValueOnce(new Error('net'))
+      .mockResolvedValueOnce(err('not_found', 404));
+    const errors: string[] = [];
+    const states: ConnectionState[] = [];
+    createUncageClient({ fetch }).subscribe('ses_1', {
+      after: 0,
+      onEvent: () => undefined,
+      onState: (s) => states.push(s),
+      onError: (e) => errors.push(e.code),
+    });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(errors).toEqual(['not_found']);
+    expect(states).toEqual(['connecting', 'reconnecting', 'offline']);
   });
 });
