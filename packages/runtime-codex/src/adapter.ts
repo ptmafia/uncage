@@ -12,6 +12,7 @@ import { createMapper, toDecision } from './map.js';
 import { probeCodex, type ExecFile } from './probe.js';
 import {
   APPROVAL_POLICY,
+  CLIENT_REQUEST,
   INITIALIZED,
   NOTIFY,
   REQUEST,
@@ -92,6 +93,12 @@ interface Connection {
   sinks: Map<string, ThreadSink>;
 }
 
+/** The answer to a server request no run will handle: `cancel` for approvals, method-not-found otherwise. */
+function unanswered(method: string): Promise<ApprovalResult> {
+  if (APPROVAL_METHODS.has(method)) return Promise.resolve({ decision: 'cancel' });
+  return Promise.reject(new JsonRpcError(method, -32601, `Unsupported request: ${method}`));
+}
+
 /** A tiny single-consumer async queue. */
 function createQueue<T>() {
   const items: T[] = [];
@@ -139,7 +146,7 @@ export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
     const attempt = (async (): Promise<Connection> => {
       const proc = spawn(executable, args, { env: o.env ?? process.env, stdio: 'pipe' });
       let spawnError: Error | undefined;
-      proc.once('error', (err) => (spawnError = err));
+      proc.on('error', (err) => (spawnError ??= err));
       const peer = new JsonRpcPeer(proc, { requestTimeoutMs });
       const conn: Connection = { peer, sinks: new Map() };
       peer.onNotification((method, params) => {
@@ -151,15 +158,14 @@ export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
         // Queued with the notifications so the request is mapped after the item/started that precedes it.
         if (sink) return new Promise((respond) => sink.push({ kind: 'request', method, params, respond }));
         // Nobody is waiting on this thread any more (the run ended): never leave Codex blocked.
-        if (APPROVAL_METHODS.has(method)) return Promise.resolve({ decision: 'cancel' });
-        return Promise.reject(new JsonRpcError(method, -32601, `Unsupported request: ${method}`));
+        return unanswered(method);
       });
       peer.onExit(() => {
         if (current === attempt) current = undefined;
         for (const sink of conn.sinks.values()) sink.push({ kind: 'exit' });
       });
       try {
-        await peer.request('initialize', { clientInfo: CLIENT_INFO } satisfies InitializeParams);
+        await peer.request(CLIENT_REQUEST.initialize, { clientInfo: CLIENT_INFO } satisfies InitializeParams);
         peer.notify(INITIALIZED, {});
       } catch (err) {
         await peer.close();
@@ -222,11 +228,11 @@ export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
 
       const policy = { cwd: input.cwd, approvalPolicy: APPROVAL_POLICY, sandbox: SANDBOX } as const;
       const thread = input.nativeSessionRef
-        ? conn.peer.request<ThreadResult>('thread/resume', {
+        ? conn.peer.request<ThreadResult>(CLIENT_REQUEST.threadResume, {
             threadId: input.nativeSessionRef,
             ...policy,
           } satisfies ThreadResumeParams)
-        : conn.peer.request<ThreadResult>('thread/start', policy satisfies ThreadStartParams);
+        : conn.peer.request<ThreadResult>(CLIENT_REQUEST.threadStart, policy satisfies ThreadStartParams);
       let threadResult: ThreadResult | typeof ABORTED;
       try {
         threadResult = await untilAborted(thread, ctx.signal);
@@ -239,7 +245,7 @@ export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
       conn.sinks.set(threadId, sink);
       yield { type: 'native.session', ref: threadId };
 
-      turnStart = conn.peer.request<TurnStartResult>('turn/start', {
+      turnStart = conn.peer.request<TurnStartResult>(CLIENT_REQUEST.turnStart, {
         threadId,
         input: [{ type: 'text', text: input.prompt }],
       } satisfies TurnStartParams);
@@ -282,7 +288,7 @@ export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
       ctx.signal.removeEventListener('abort', wake);
       done.abort();
       // Requests that arrived but were never handled must still be answered.
-      for (const item of queue.drain()) if (item.kind === 'request') item.respond(Promise.resolve({ decision: 'cancel' }));
+      for (const item of queue.drain()) if (item.kind === 'request') item.respond(unanswered(item.method));
       if (conn && threadId !== undefined) {
         if (conn.sinks.get(threadId) === sink) conn.sinks.delete(threadId);
         // Aborted, or the consumer stopped early: stop the turn so Codex does not keep working.
@@ -290,7 +296,7 @@ export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
           const { peer } = conn;
           const tid = threadId;
           void turnStart
-            .then((r) => peer.request('turn/interrupt', { threadId: tid, turnId: r.turn.id } satisfies TurnInterruptParams))
+            .then((r) => peer.request(CLIENT_REQUEST.turnInterrupt, { threadId: tid, turnId: r.turn.id } satisfies TurnInterruptParams))
             .catch(() => undefined);
         }
       }
@@ -304,7 +310,7 @@ export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
     probe: () =>
       probeCodex(executable, o.execFile, async (params) => {
         const conn = await connect();
-        return conn.peer.request<AccountReadResult>('account/read', params satisfies AccountReadParams);
+        return conn.peer.request<AccountReadResult>(CLIENT_REQUEST.accountRead, params satisfies AccountReadParams);
       }),
     run,
     async dispose() {

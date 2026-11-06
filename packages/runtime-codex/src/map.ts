@@ -9,6 +9,7 @@ import {
 import {
   NOTIFY,
   REQUEST,
+  UNAUTHORIZED_ERROR_INFO,
   type ApprovalDecision,
   type CommandApprovalParams,
   type DeltaNotification,
@@ -206,7 +207,7 @@ export function createMapper(): CodexMapper {
         if (turn.status === 'interrupted') {
           return [...out, { type: 'run.interrupted', reason: turn.error?.message || 'interrupted' }];
         }
-        const code: ErrorCode = turn.error?.codexErrorInfo === 'unauthorized' ? 'auth_required' : 'internal_error';
+        const code: ErrorCode = turn.error?.codexErrorInfo === UNAUTHORIZED_ERROR_INFO ? 'auth_required' : 'internal_error';
         return [...out, runFailed(code, turn.error?.message)];
       }
       default:

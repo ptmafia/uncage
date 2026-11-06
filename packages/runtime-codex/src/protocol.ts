@@ -27,6 +27,17 @@
 export const APPROVAL_POLICY = 'on-request';
 export const SANDBOX = 'workspace-write';
 
+// ---- Client → server requests ------------------------------------------------------------------
+/** [S] ClientRequest method names. */
+export const CLIENT_REQUEST = {
+  initialize: 'initialize',
+  threadStart: 'thread/start',
+  threadResume: 'thread/resume',
+  turnStart: 'turn/start',
+  turnInterrupt: 'turn/interrupt',
+  accountRead: 'account/read',
+} as const;
+
 // ---- Handshake ----------------------------------------------------------------------------------
 /** [S] InitializeParams. `capabilities` is `Option<…>` and may be omitted. */
 export interface InitializeParams {
@@ -79,6 +90,8 @@ export interface TurnError {
   message: string;
   codexErrorInfo?: unknown;
 }
+/** [S] CodexErrorInfo variant for an authentication failure. */
+export const UNAUTHORIZED_ERROR_INFO = 'unauthorized';
 /** [S] Turn (subset). */
 export interface Turn {
   id: string;

@@ -61,7 +61,8 @@ export class JsonRpcPeer {
         resolve();
       });
       // Spawn failures (e.g. ENOENT) emit 'error' and never 'exit'.
-      proc.once('error', () => {
+      // `on`, not `once`: a later 'error' (e.g. a failed kill) must never go unhandled.
+      proc.on('error', () => {
         this.handleExit(null);
         resolve();
       });
