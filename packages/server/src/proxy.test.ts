@@ -18,7 +18,9 @@ let endpoint: string;
 let seen: Seen[];
 let respond: (res: import('node:http').ServerResponse) => void;
 let home: string;
-const savedEnv = { HOME: process.env.HOME, UNCAGE_TOKEN: process.env.UNCAGE_TOKEN, UNCAGE_URL: process.env.UNCAGE_URL };
+const savedEnv = { HOME: process.env.HOME, UNCAGE_TOKEN: process.env.UNCAGE_TOKEN, UNCAGE_URL: process.env.UNCAGE_URL,
+  UNCAGE_ALLOWED_HOSTS: process.env.UNCAGE_ALLOWED_HOSTS,
+};
 
 beforeEach(async () => {
   seen = [];
@@ -40,6 +42,7 @@ beforeEach(async () => {
   process.env.HOME = home;
   delete process.env.UNCAGE_TOKEN;
   delete process.env.UNCAGE_URL;
+  delete process.env.UNCAGE_ALLOWED_HOSTS;
 });
 
 afterEach(async () => {
@@ -56,10 +59,10 @@ describe('createUncageHandler', () => {
   it('adds bearer, strips Origin/Cookie', async () => {
     const h = createUncageHandler({ endpoint, token: 'tok' });
     const res = await h.POST(
-      new Request('http://app.local:3000/api/uncage/sessions/ses_1/runs?x=1', {
+      new Request('http://localhost:3000/api/uncage/sessions/ses_1/runs?x=1', {
         method: 'POST',
         headers: {
-          origin: 'http://app.local:3000',
+          origin: 'http://localhost:3000',
           cookie: 'session=secret',
           authorization: 'Bearer browser-supplied',
           'content-type': 'application/json',
@@ -89,7 +92,7 @@ describe('createUncageHandler', () => {
   it('cross-origin POST → 403 forbidden_origin, not forwarded', async () => {
     const h = createUncageHandler({ endpoint, token: 'tok' });
     const res = await h.POST(
-      new Request('http://app.local:3000/api/uncage/runs/run_1/cancel', {
+      new Request('http://localhost:3000/api/uncage/runs/run_1/cancel', {
         method: 'POST',
         headers: { origin: 'https://evil.example' },
       }),
@@ -98,7 +101,7 @@ describe('createUncageHandler', () => {
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe('forbidden_origin');
 
     const crossSite = await h.POST(
-      new Request('http://app.local:3000/api/uncage/runs/run_1/cancel', {
+      new Request('http://localhost:3000/api/uncage/runs/run_1/cancel', {
         method: 'POST',
         headers: { 'sec-fetch-site': 'cross-site' },
       }),
@@ -110,13 +113,13 @@ describe('createUncageHandler', () => {
   it('same-origin POST and Origin-less POST are forwarded', async () => {
     const h = createUncageHandler({ endpoint, token: 'tok' });
     const same = await h.POST(
-      new Request('http://app.local:3000/api/uncage/runs/run_1/cancel', {
+      new Request('http://localhost:3000/api/uncage/runs/run_1/cancel', {
         method: 'POST',
-        headers: { origin: 'http://app.local:3000', 'sec-fetch-site': 'same-origin' },
+        headers: { origin: 'http://localhost:3000', 'sec-fetch-site': 'same-origin' },
       }),
     );
     expect(same.status).toBe(200);
-    const none = await h.POST(new Request('http://app.local:3000/api/uncage/runs/run_1/cancel', { method: 'POST' }));
+    const none = await h.POST(new Request('http://localhost:3000/api/uncage/runs/run_1/cancel', { method: 'POST' }));
     expect(none.status).toBe(200);
     expect(seen.map((r) => r.url)).toEqual(['/v1/runs/run_1/cancel', '/v1/runs/run_1/cancel']);
   });
@@ -137,7 +140,7 @@ describe('createUncageHandler', () => {
 
   it('forwards Last-Event-ID on GET', async () => {
     const h = createUncageHandler({ endpoint, token: 'tok', basePath: '/custom/' });
-    await h.GET(new Request('http://app.local/custom/sessions/ses_1/events', { headers: { 'last-event-id': 'evt_0000000003' } }));
+    await h.GET(new Request('http://localhost/custom/sessions/ses_1/events', { headers: { 'last-event-id': 'evt_0000000003' } }));
     expect(seen[0]?.url).toBe('/v1/sessions/ses_1/events');
     expect(seen[0]?.headers['last-event-id']).toBe('evt_0000000003');
   });
@@ -155,7 +158,7 @@ describe('createUncageHandler', () => {
       });
     };
     const h = createUncageHandler({ endpoint, token: 'tok' });
-    const res = await h.GET(new Request('http://app.local/api/uncage/sessions/ses_1/events'));
+    const res = await h.GET(new Request('http://localhost/api/uncage/sessions/ses_1/events'));
     expect(res.headers.get('content-type')).toBe('text/event-stream');
     expect(res.headers.get('cache-control')).toBe('no-cache, no-transform');
     const reader = res.body!.getReader();
@@ -181,7 +184,7 @@ describe('createUncageHandler', () => {
       setTimeout(() => res.socket?.destroy(), 20);
     };
     const h = createUncageHandler({ endpoint, token: 'tok' });
-    const res = await h.GET(new Request('http://app.local/api/uncage/sessions/ses_1/events'));
+    const res = await h.GET(new Request('http://localhost/api/uncage/sessions/ses_1/events'));
     // A daemon restart is routine: the browser just sees the stream end and reconnects, and the
     // host app (Next) logs no "failed to pipe response" error.
     expect(await res.text()).toBe(frame);
@@ -193,14 +196,14 @@ describe('createUncageHandler', () => {
       res.end('{"error":{"code":"session_busy"}}');
     };
     const h = createUncageHandler({ endpoint, token: 'tok' });
-    const res = await h.POST(new Request('http://app.local/api/uncage/runs/run_1/cancel', { method: 'POST' }));
+    const res = await h.POST(new Request('http://localhost/api/uncage/runs/run_1/cancel', { method: 'POST' }));
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: { code: 'session_busy' } });
   });
 
   it('503 with hint when token missing', async () => {
     const h = createUncageHandler({ endpoint });
-    const res = await h.GET(new Request('http://app.local/api/uncage/health'));
+    const res = await h.GET(new Request('http://localhost/api/uncage/health'));
     expect(res.status).toBe(503);
     const body = (await res.json()) as { error: { code: string; hint: string } };
     expect(body.error.code).toBe('runtime_unavailable');
@@ -210,30 +213,72 @@ describe('createUncageHandler', () => {
 
   it('reads the token from env, else ~/.uncage/token lazily', async () => {
     const h = createUncageHandler({ endpoint });
-    expect((await h.GET(new Request('http://app.local/api/uncage/health'))).status).toBe(503);
+    expect((await h.GET(new Request('http://localhost/api/uncage/health'))).status).toBe(503);
 
     mkdirSync(join(home, '.uncage'));
     writeFileSync(join(home, '.uncage', 'token'), 'file-token\n', { mode: 0o600 });
-    await h.GET(new Request('http://app.local/api/uncage/health'));
+    await h.GET(new Request('http://localhost/api/uncage/health'));
     expect(seen.at(-1)?.headers.authorization).toBe('Bearer file-token');
 
     process.env.UNCAGE_TOKEN = 'env-token';
-    await h.GET(new Request('http://app.local/api/uncage/health'));
+    await h.GET(new Request('http://localhost/api/uncage/health'));
     expect(seen.at(-1)?.headers.authorization).toBe('Bearer env-token');
   });
 
   it('503 when the daemon is unreachable', async () => {
     const h = createUncageHandler({ endpoint: 'http://127.0.0.1:1', token: 'tok' });
-    const res = await h.GET(new Request('http://app.local/api/uncage/health'));
+    const res = await h.GET(new Request('http://localhost/api/uncage/health'));
     expect(res.status).toBe(503);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe('runtime_unavailable');
   });
 
   it('404 outside basePath and no path escape from /v1', async () => {
     const h = createUncageHandler({ endpoint, token: 'tok' });
-    expect((await h.GET(new Request('http://app.local/other/health'))).status).toBe(404);
-    expect((await h.GET(new Request('http://app.local/api/uncage-x/health'))).status).toBe(404);
-    expect((await h.GET(new Request('http://app.local/api/uncage/%2e%2e/secret'))).status).toBe(404);
+    expect((await h.GET(new Request('http://localhost/other/health'))).status).toBe(404);
+    expect((await h.GET(new Request('http://localhost/api/uncage-x/health'))).status).toBe(404);
+    expect((await h.GET(new Request('http://localhost/api/uncage/%2e%2e/secret'))).status).toBe(404);
     expect(seen).toEqual([]);
+  });
+
+  describe('allowed hosts (DNS rebinding)', () => {
+    const status = async (h: ReturnType<typeof createUncageHandler>, url: string, origin?: string) =>
+      (await h.GET(new Request(url, origin ? { headers: { origin } } : {}))).status;
+
+    it('rejects a rebound host even when Origin matches it, forwarding nothing', async () => {
+      const h = createUncageHandler({ endpoint, token: 'tok' });
+      const res = await h.POST(
+        new Request('http://evil.com:3000/api/uncage/sessions', { method: 'POST', headers: { origin: 'http://evil.com:3000' } }),
+      );
+      expect(res.status).toBe(403);
+      const { error } = (await res.json()) as { error: { code: string; message: string; hint: string } };
+      expect(error.code).toBe('forbidden_origin');
+      expect(error.message).toContain('evil.com');
+      expect(error.hint).toContain('UNCAGE_ALLOWED_HOSTS');
+      expect(seen).toHaveLength(0);
+    });
+
+    it('allows localhost, 127.0.0.1 and [::1] by default', async () => {
+      const h = createUncageHandler({ endpoint, token: 'tok' });
+      for (const host of ['localhost:3000', '127.0.0.1:3000', '[::1]:3000']) {
+        expect(await status(h, `http://${host}/api/uncage/health`, `http://${host}`)).toBe(200);
+      }
+      expect(seen).toHaveLength(3);
+    });
+
+    it('allowedHosts replaces the default set', async () => {
+      const h = createUncageHandler({ endpoint, token: 'tok', allowedHosts: ['app.example.com'] });
+      expect(await status(h, 'https://app.example.com/api/uncage/health', 'https://app.example.com')).toBe(200);
+      expect(await status(h, 'http://localhost:3000/api/uncage/health')).toBe(403);
+      expect(seen).toHaveLength(1);
+    });
+
+    it('reads UNCAGE_ALLOWED_HOSTS when the option is absent', async () => {
+      process.env.UNCAGE_ALLOWED_HOSTS = 'app.example.com, other.example.com';
+      const h = createUncageHandler({ endpoint, token: 'tok' });
+      expect(await status(h, 'https://other.example.com/api/uncage/health')).toBe(200);
+      expect(await status(h, 'http://evil.com/api/uncage/health')).toBe(403);
+      const explicit = createUncageHandler({ endpoint, token: 'tok', allowedHosts: ['x.example.com'] });
+      expect(await status(explicit, 'https://other.example.com/api/uncage/health')).toBe(403);
+    });
   });
 });

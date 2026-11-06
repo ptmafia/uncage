@@ -17,6 +17,11 @@ export interface ProxyOptions {
   token?: string;
   /** The route prefix the handler is mounted under. Defaults to `/api/uncage`. */
   basePath?: string;
+  /**
+   * Hostnames (no port) the proxy answers to, matched against the request URL's hostname. Defaults to
+   * env `UNCAGE_ALLOWED_HOSTS` (comma-separated), else loopback only: `localhost`, `127.0.0.1`, `[::1]`.
+   */
+  allowedHosts?: string[];
 }
 
 export interface UncageHandler {
@@ -82,10 +87,24 @@ function sameOrigin(origin: string, url: URL): boolean {
   return o.protocol === url.protocol && o.port === url.port && LOOPBACK_HOSTS.has(o.hostname) && LOOPBACK_HOSTS.has(url.hostname);
 }
 
+function resolveAllowedHosts(o: ProxyOptions): Set<string> {
+  const fromEnv = process.env.UNCAGE_ALLOWED_HOSTS?.split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+  const list = o.allowedHosts ?? (fromEnv && fromEnv.length > 0 ? fromEnv : undefined);
+  return list ? new Set(list.map((h) => h.toLowerCase())) : LOOPBACK_HOSTS;
+}
+
 const trimSlashes = (s: string): string => s.replace(/^\/+|\/+$/g, '');
 
+/**
+ * Creates the GET/POST route handlers. Requests whose URL hostname is not allowed get 403
+ * `forbidden_origin` and nothing is forwarded; this stops DNS-rebinding pages (evil.com resolving to
+ * 127.0.0.1, so Origin and Host agree) from driving the daemon through the host app. Allowed hosts
+ * default to loopback names; set `allowedHosts: ['app.example.com']` or env `UNCAGE_ALLOWED_HOSTS`
+ * (comma-separated) when serving the host app on another hostname.
+ */
 export function createUncageHandler(o: ProxyOptions = {}): UncageHandler {
   const basePath = `/${trimSlashes(o.basePath ?? DEFAULT_BASE_PATH)}`;
+  const allowedHosts = resolveAllowedHosts(o);
   let cachedFileToken: string | undefined;
 
   const resolveToken = async (): Promise<{ token: string; fromFile: boolean } | undefined> => {
@@ -102,6 +121,12 @@ export function createUncageHandler(o: ProxyOptions = {}): UncageHandler {
 
   const handle = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
+    if (!allowedHosts.has(url.hostname)) {
+      return errorResponse('forbidden_origin', {
+        message: `Host ${url.hostname} is not allowed to use the Uncage proxy.`,
+        hint: 'Add this host to createUncageHandler({ allowedHosts }) or UNCAGE_ALLOWED_HOSTS',
+      });
+    }
     // The daemon's Origin check cannot see the browser's Origin (it is stripped below), so the
     // proxy enforces same-origin itself. Origin-less requests (server-side callers) proceed.
     const origin = req.headers.get('origin');
