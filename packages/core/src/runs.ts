@@ -182,6 +182,8 @@ export class RunManager {
       e.closing = true;
       e.abort.abort();
     }
+    // Release adapters blocked on an approval (they may not watch the signal), as cancel() does.
+    await Promise.all(entries.map((e) => this.bridge.abandonRun(e.sessionId, e.run.id, 'expired')));
     await Promise.race([Promise.all(entries.map((e) => e.done)), sleep(CANCEL_GRACE_MS)]);
     await Promise.all(entries.map((e) => this.finish(e, { state: 'interrupted', reason: 'server_shutdown' })));
   }
@@ -212,7 +214,8 @@ export class RunManager {
   }
 
   private settle(entry: ActiveRun, t: Terminal | undefined): Terminal {
-    if (t?.state === 'completed' || t?.state === 'failed') return t;
+    // Once shutdown or cancel has begun, its outcome wins over whatever the adapter reports
+    // afterwards (e.g. run.completed after its approval was released as expired/cancelled).
     if (entry.closing) return { state: 'interrupted', reason: 'server_shutdown' };
     if (entry.cancelRequested) return { state: 'cancelled' };
     return t ?? { state: 'interrupted', reason: 'runtime_disconnected' };

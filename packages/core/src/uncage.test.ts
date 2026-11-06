@@ -347,6 +347,34 @@ describe('createUncage', () => {
     await expect(u2.sessions.create({ runtime: 'gone' })).rejects.toMatchObject({ code: 'runtime_unavailable' });
   });
 
+  it('close() releases approvals whose adapter ignores the abort signal', async () => {
+    const adapter = inlineAdapter(async function* () {
+      // No signal handling: a canUseTool-style callback just awaits the decision.
+      yield { type: 'tool.started', toolId: 't1', name: 'shell', title: 'ls', category: 'shell' };
+      await adapterCtx.requestApproval({ category: 'shell', title: 'ls', target: { command: 'ls' } });
+      yield { type: 'run.completed' };
+    });
+    let adapterCtx!: Parameters<RuntimeAdapter['run']>[1];
+    const run0 = adapter.run.bind(adapter);
+    adapter.run = (input, ctx) => {
+      adapterCtx = ctx;
+      return run0(input, ctx);
+    };
+    const u = await createUncage({ adapters: [adapter], dataDir: dir });
+    const session = await u.sessions.create({ runtime: 'inline' });
+    const run = await session.startRun({ prompt: 'p' });
+    await eventsUntil(session, (e) => e.type === 'approval.requested');
+    const t0 = Date.now();
+    await u.close();
+    expect(Date.now() - t0).toBeLessThan(1_000);
+
+    const u2 = await make([adapter], { dataDir: dir });
+    expect(await u2.runs.get(run.id)).toMatchObject({ state: 'interrupted' });
+    expect((await u2.approvals.list({ sessionId: session.id })).map((a) => a.state)).toEqual(['expired']);
+    const events = await eventsUntil(await u2.sessions.get(session.id), isTerminal);
+    expect(events.at(-1)?.payload).toMatchObject({ reason: 'server_shutdown' });
+  });
+
   it('close() interrupts active runs', async () => {
     const u = await createUncage({ adapters: [fake([{ waitMs: 10_000 }])], dataDir: dir });
     const session = await u.sessions.create({ runtime: 'fake' });
