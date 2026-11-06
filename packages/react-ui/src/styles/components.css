@@ -405,6 +405,15 @@
 .uc-banner-hint {
   color: var(--uncage-ink-2);
 }
+.uc-readonly {
+  align-items: center;
+}
+.uc-readonly > svg {
+  margin-top: 0;
+}
+.uc-readonly .uc-banner-text {
+  padding-top: 0;
+}
 .uc-banner .uc-btn-icon-sm {
   margin: -2px -6px -2px 0;
 }

@@ -233,11 +233,30 @@ describe('Composer', () => {
     expect(textbox().disabled).toBe(true);
   });
 
-  it('is disabled with a hint for a read-only session', async () => {
+  it('is disabled with a banner for a read-only session', async () => {
     const f = fakeClient({ snapshot: () => snapshot({ session: session({ readOnly: true }) }) });
     await openSession(f);
     expect(textbox().disabled).toBe(true);
-    expect(screen.getByText(/read-only/)).toBeTruthy();
+    const banner = document.querySelector('.uc-readonly') as HTMLElement;
+    expect(banner.getAttribute('role')).toBe('status');
+    expect(banner.textContent).toContain("This session can't be continued. Its history is still available.");
+    expect(within(banner).getByRole('button', { name: 'New session' })).toBeTruthy();
+  });
+
+  it('a session that turns read-only mid-session shows the zh-CN banner; 新建会话 opens a draft', async () => {
+    const f = fakeClient();
+    await openSession(f, { locale: 'zh-CN' });
+    expect(textbox().disabled).toBe(false);
+    const ev = eventFactory();
+    act(() => f.emit(ev('session.updated', { session: session({ readOnly: true }) })));
+    expect(textbox().disabled).toBe(true);
+    const banner = document.querySelector('.uc-readonly') as HTMLElement;
+    expect(banner.textContent).toContain('这个会话无法继续了，历史仍可查看。');
+    // The history stays on screen until the user leaves it.
+    expect(screen.getByRole('heading', { name: 'Fix the build' })).toBeTruthy();
+    await act(async () => fireEvent.click(within(banner).getByRole('button', { name: '新建会话' })));
+    expect(document.querySelector('.uc-readonly')).toBeNull();
+    expect(textbox().disabled).toBe(false);
   });
 });
 

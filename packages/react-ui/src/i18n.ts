@@ -74,7 +74,7 @@ const en = {
   placeholder: (name: string) => `Ask ${name}…`,
   send: 'Send',
   stop: 'Stop',
-  readOnlyHint: 'This session is read-only — its runtime can no longer continue it. Start a new session to keep going.',
+  readOnlyHint: "This session can't be continued. Its history is still available.",
   // Run status
   running: 'Running',
   queued: 'Starting',
@@ -146,7 +146,7 @@ const zhCN: Strings = {
   placeholder: (name: string) => `问 ${name}…`,
   send: '发送',
   stop: '停止',
-  readOnlyHint: '这个会话只能查看：运行时没法再接着它继续。新建会话后继续。',
+  readOnlyHint: '这个会话无法继续了，历史仍可查看。',
   running: '运行中',
   queued: '正在启动',
   waitingForYou: (n: number) => `${n} 项等你处理`,

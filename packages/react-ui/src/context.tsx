@@ -50,6 +50,8 @@ export interface ChatController {
   /** Resolves `true` once a run was started (the composer clears its text only then). */
   send(text: string): Promise<boolean>;
   starterPrompts: string[];
+  /** Leaves the open session for a new draft (the read-only banner's "New session" button). */
+  startNewSession?(): void;
 }
 
 export const ChatControllerContext = createContext<ChatController | null>(null);

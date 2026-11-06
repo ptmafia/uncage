@@ -124,6 +124,7 @@ function useChatSession(defaultRuntime: string | undefined, starterPrompts: stri
       ...(runtimeId !== undefined ? { runtimeId } : {}),
       setRuntimeId: setChosen,
       starterPrompts,
+      startNewSession: () => setDraft(true),
       async send(text) {
         if (!draft) return send(text);
         if (runtimeId === undefined || creating.current) return false;

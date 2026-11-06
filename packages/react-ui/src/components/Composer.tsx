@@ -1,12 +1,13 @@
 import { useRun, useSession } from '@uncage/react';
-import { ArrowUp, Square } from 'lucide-react';
+import { ArrowUp, Lock, Square } from 'lucide-react';
 import { useLayoutEffect, useRef, useState, type JSX, type KeyboardEvent } from 'react';
 import { useChatController, useRuntimeInfo, useUi } from '../context.js';
 
 /**
  * Prompt input pinned under the conversation. Enter sends, Shift+Enter inserts a newline, Enter
  * while an IME is composing is ignored. The send button turns into Stop while a run is active.
- * Disabled (with a hint) when the runtime is unavailable or the session is read-only.
+ * Disabled (with a hint) when the runtime is unavailable, or with a banner offering a new session
+ * when the session is read-only (its runtime can't continue it; the history stays readable).
  */
 export function Composer(): JSX.Element {
   const { t } = useUi();
@@ -23,11 +24,8 @@ export function Composer(): JSX.Element {
   const loading = !controller.draft && session === undefined;
   const readOnly = !controller.draft && session?.readOnly === true;
   const unavailable = info !== undefined && info.status !== 'available';
-  const hint = readOnly
-    ? t.readOnlyHint
-    : unavailable
-      ? [info.message ?? t.runtimeUnavailable(name), info.hint].filter(Boolean).join(' ')
-      : undefined;
+  const hint =
+    !readOnly && unavailable ? [info.message ?? t.runtimeUnavailable(name), info.hint].filter(Boolean).join(' ') : undefined;
   const disabled = loading || readOnly || unavailable;
   const canSend = !disabled && !active && !sending && text.trim().length > 0;
 
@@ -61,6 +59,17 @@ export function Composer(): JSX.Element {
 
   return (
     <div className="uc-composer-wrap">
+      {readOnly && (
+        <div className="uc-banner uc-readonly" data-tone="warn" role="status">
+          <Lock aria-hidden />
+          <span className="uc-banner-text">{t.readOnlyHint}</span>
+          {controller.startNewSession && (
+            <button type="button" className="uc-btn uc-btn-secondary uc-btn-sm" onClick={controller.startNewSession}>
+              {t.newSession}
+            </button>
+          )}
+        </div>
+      )}
       {hint && (
         <p className="uc-composer-hint" role="note">
           {hint}
