@@ -118,6 +118,9 @@ async function ensureAttachmentDir(workspace: string, sessionId: string): Promis
 
 const TMP_PREFIX = '.tmp-';
 
+/** 5242880 → "5 MB". */
+const formatMB = (bytes: number): string => `${+(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
 /** Attachment files live at `<workspace>/.uncage/attachments/<sessionId>/<attachmentId>-<safeName>`. */
 export class AttachmentService {
   constructor(
@@ -142,7 +145,14 @@ export class AttachmentService {
         details: { kind },
       });
     }
-    const maxBytes = caps.maxBytes > 0 ? Math.min(caps.maxBytes, ATTACHMENT_LIMITS.maxBytes) : ATTACHMENT_LIMITS.maxBytes;
+    const generalMax = caps.maxBytes > 0 ? Math.min(caps.maxBytes, ATTACHMENT_LIMITS.maxBytes) : ATTACHMENT_LIMITS.maxBytes;
+    const imageCap = kind === 'image' && caps.maxImageBytes !== undefined && caps.maxImageBytes > 0 && caps.maxImageBytes < generalMax;
+    const maxBytes = imageCap ? caps.maxImageBytes! : generalMax;
+    const tooLarge = (): UncageError =>
+      new UncageError('attachment_too_large', {
+        details: { maxBytes },
+        ...(imageCap ? { hint: `This runtime accepts images of at most ${formatMB(maxBytes)} each.` } : {}),
+      });
 
     const workspace = await resolveWorkspace(session.workspace, this.workspace).catch((e: unknown) => {
       throw new UncageError('invalid_workspace', {
@@ -165,9 +175,7 @@ export class AttachmentService {
           input.body instanceof Uint8Array ? [input.body] : input.body;
         for await (const chunk of chunks) {
           size += chunk.byteLength;
-          if (size > maxBytes) {
-            throw new UncageError('attachment_too_large', { details: { maxBytes } });
-          }
+          if (size > maxBytes) throw tooLarge();
           hash.update(chunk);
           await fh.write(chunk);
         }

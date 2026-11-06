@@ -22,7 +22,7 @@ describe('claudeCapabilities', () => {
       models,
       efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
       permissionModes: ['default', 'acceptEdits', 'plan', 'auto'],
-      attachments: { images: true, files: true, maxBytes: ATTACHMENT_LIMITS.maxBytes },
+      attachments: { images: true, files: true, maxBytes: ATTACHMENT_LIMITS.maxBytes, maxImageBytes: 5 * 1024 * 1024 },
     });
   });
 

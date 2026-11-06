@@ -92,6 +92,8 @@ export const RuntimeCapabilitiesSchema = z.object({
     images: z.boolean(),
     files: z.boolean(),
     maxBytes: z.number().int().nonnegative(),
+    /** A tighter per-image limit, when the runtime has one (e.g. the Anthropic API's 5 MB). */
+    maxImageBytes: z.number().int().nonnegative().optional(),
   }),
 });
 export type RuntimeCapabilities = z.infer<typeof RuntimeCapabilitiesSchema>;

@@ -162,6 +162,22 @@ describe('attachments', () => {
     expect(ok.size).toBe(ATTACHMENT_LIMITS.maxBytes);
   });
 
+  it('enforces capabilities.attachments.maxImageBytes for images only, leaving no file', async () => {
+    const MB5 = 5 * 1024 * 1024;
+    const u = await make([fake([], { attachments: { images: true, files: true, maxBytes: ATTACHMENT_LIMITS.maxBytes, maxImageBytes: MB5 } })]);
+    const s = await u.sessions.create({ runtime: 'fake' });
+    const err = await u.attachments
+      .add(s.id, { name: 'big.png', mime: 'image/png', body: new Uint8Array(MB5 + 1) })
+      .catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'attachment_too_large', details: { maxBytes: MB5 } });
+    expect((err as { hint: string }).hint).toMatch(/5 MB/);
+    expect((err as { hint: string }).hint).toMatch(/image/i);
+    expect(existsSync(attDir(s.id)) ? readdirSync(attDir(s.id)) : []).toEqual([]);
+    expect((await u.attachments.add(s.id, { name: 'ok.png', mime: 'image/png', body: new Uint8Array(MB5) })).size).toBe(MB5);
+    // Files keep the general limit.
+    expect((await u.attachments.add(s.id, { name: 'f.txt', mime: 'text/plain', body: new Uint8Array(MB5 + 1) })).size).toBe(MB5 + 1);
+  });
+
   it('rejects .exe', async () => {
     const u = await make([fake()]);
     const s = await u.sessions.create({ runtime: 'fake' });

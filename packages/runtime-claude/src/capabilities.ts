@@ -13,6 +13,8 @@ export const CLAUDE_FALLBACK_MODELS: ModelOption[] = [
   { id: 'haiku', label: 'Haiku' },
 ];
 
+export const CLAUDE_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
 const SAFE_PERMISSION_MODES: PermissionMode[] = ['default', 'acceptEdits', 'plan', 'auto'];
 
 export function claudeCapabilities(o: { models: ModelOption[]; allowBypass: boolean }): RuntimeCapabilities {
@@ -26,7 +28,8 @@ export function claudeCapabilities(o: { models: ModelOption[]; allowBypass: bool
     models: o.models,
     efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
     permissionModes: o.allowBypass ? [...SAFE_PERMISSION_MODES, 'bypassPermissions'] : [...SAFE_PERMISSION_MODES],
-    attachments: { images: true, files: true, maxBytes: ATTACHMENT_LIMITS.maxBytes },
+    // The Anthropic API rejects images over 5 MB.
+    attachments: { images: true, files: true, maxBytes: ATTACHMENT_LIMITS.maxBytes, maxImageBytes: CLAUDE_MAX_IMAGE_BYTES },
   };
 }
 

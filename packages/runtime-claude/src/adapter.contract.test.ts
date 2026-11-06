@@ -245,6 +245,17 @@ describe('session settings', () => {
     ]);
   });
 
+  it('an unreadable file attachment fails the run without starting Claude Code', async () => {
+    const attachment = { id: 'att_1', sessionId: 's', name: 'a.md', mime: 'text/markdown', size: 3, kind: 'file' as const,
+      sha256: 'x', createdAt: '2026-11-07T00:00:00.000Z', absPath: '/nonexistent/uncage/a.md' };
+    const s = scriptedQuery();
+    const events = await collect(
+      claudeAdapter({ query: s.query }).run({ ...run, prompt: 'x', attachments: [attachment] }, ctxWith({ decision: 'allow' }).ctx),
+    );
+    expect(s.calls).toHaveLength(0);
+    expect(events).toEqual([{ type: 'run.failed', error: expect.objectContaining({ code: 'invalid_request' }) as unknown }]);
+  });
+
   it('an unreadable attachment fails the run without starting Claude Code', async () => {
     const attachment = { id: 'att_1', sessionId: 's', name: 'a.png', mime: 'image/png', size: 3, kind: 'image' as const,
       sha256: 'x', createdAt: '2026-11-07T00:00:00.000Z', absPath: '/nonexistent/uncage/a.png' };
@@ -295,6 +306,7 @@ describe('refreshCapabilities', () => {
     const m = modelsQuery(() => Promise.resolve(INFOS));
     const a = claudeAdapter({ query: m.query, executable: '/opt/claude' });
     const caps = await a.refreshCapabilities!();
+    expect(m.calls[0]!.options.settingSources).toEqual([]);
     expect(caps.models).toEqual([
       { id: 'default', label: 'Default (recommended)', description: 'Fable 5.1' },
       { id: 'opus', label: 'Opus 5.5', description: 'For complex work' },
@@ -330,6 +342,21 @@ describe('refreshCapabilities', () => {
     const caps = await a.refreshCapabilities!();
     expect(caps).toEqual(claudeCapabilities({ models: CLAUDE_FALLBACK_MODELS, allowBypass: true }));
     expect(m.calls[0]!.options.abortController!.signal.aborted).toBe(true);
+  });
+
+  it('backs off 60 s after a failed probe, keeping the fallback models', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    let fail = true;
+    const m = modelsQuery(() => (fail ? Promise.reject(new Error('boom')) : Promise.resolve(INFOS)));
+    const a = claudeAdapter({ query: m.query });
+    expect((await a.refreshCapabilities!()).models).toEqual(CLAUDE_FALLBACK_MODELS);
+    fail = false;
+    vi.setSystemTime(Date.now() + 59_000);
+    expect((await a.refreshCapabilities!()).models).toEqual(CLAUDE_FALLBACK_MODELS);
+    expect(m.calls).toHaveLength(1);
+    vi.setSystemTime(Date.now() + 2_000);
+    expect((await a.refreshCapabilities!()).models.map((x) => x.id)).toEqual(['default', 'opus']);
+    expect(m.calls).toHaveLength(2);
   });
 
   it('falls back when query() itself throws', async () => {

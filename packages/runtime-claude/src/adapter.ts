@@ -31,6 +31,8 @@ export interface ClaudeAdapterOptions {
 
 /** How long a `supportedModels()` answer is reused. */
 const MODELS_TTL_MS = 10 * 60_000;
+/** After a failed model-list probe, don't probe again for this long. */
+const MODELS_RETRY_MS = 60_000;
 /** Give up on a model-list probe after this long (keeps the previous list). */
 const MODELS_TIMEOUT_MS = 15_000;
 /** How long the model-list probe waits for its interrupt before killing Claude Code. */
@@ -103,7 +105,8 @@ export function claudeAdapter(o: ClaudeAdapterOptions = {}): RuntimeAdapter {
   const settingSources = o.settingSources ?? ['project'];
   const allowBypass = o.allowBypass === true;
   let models: ModelOption[] = CLAUDE_FALLBACK_MODELS;
-  let modelsAt = -Infinity;
+  /** When the model list may be probed again (cache expiry, or back-off after a failure). */
+  let modelsStaleAt = -Infinity;
   let modelsInflight: Promise<void> | undefined;
 
   const capabilities = (): RuntimeCapabilities => claudeCapabilities({ models, allowBypass });
@@ -115,13 +118,15 @@ export function claudeAdapter(o: ClaudeAdapterOptions = {}): RuntimeAdapter {
     try {
       q = queryFn({
         prompt: silentInput(),
-        options: defined({ abortController, settingSources, pathToClaudeCodeExecutable: o.executable }),
+        // No setting sources: a probe must not run project hooks or load project settings.
+        options: defined({ abortController, settingSources: [], pathToClaudeCodeExecutable: o.executable }),
       });
       const list = toModelOptions(await timeout(q.supportedModels(), MODELS_TIMEOUT_MS, 'supportedModels() timed out'));
       models = list;
-      modelsAt = Date.now();
+      modelsStaleAt = Date.now() + MODELS_TTL_MS;
     } catch {
-      // Keep the current (fallback) list; the registry asks again later.
+      // Keep the current (fallback) list and back off before probing again.
+      modelsStaleAt = Date.now() + MODELS_RETRY_MS;
     } finally {
       if (q) {
         const probe = q;
@@ -136,7 +141,7 @@ export function claudeAdapter(o: ClaudeAdapterOptions = {}): RuntimeAdapter {
   }
 
   async function refreshCapabilities(): Promise<RuntimeCapabilities> {
-    if (Date.now() - modelsAt >= MODELS_TTL_MS) {
+    if (Date.now() >= modelsStaleAt) {
       modelsInflight ??= loadModels().finally(() => {
         modelsInflight = undefined;
       });

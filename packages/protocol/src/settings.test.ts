@@ -52,6 +52,15 @@ describe('classifyAttachment', () => {
 });
 
 describe('schemas', () => {
+  it('capabilities.attachments.maxImageBytes is optional, a non-negative integer', () => {
+    const withCap = (attachments: unknown) =>
+      SessionSchema.safeParse({ ...session, settings: { permissionMode: 'default' }, capabilities: { ...caps, attachments } }).success;
+    expect(withCap(caps.attachments)).toBe(true);
+    expect(withCap({ ...caps.attachments, maxImageBytes: 5 * 1024 * 1024 })).toBe(true);
+    expect(withCap({ ...caps.attachments, maxImageBytes: -1 })).toBe(false);
+    expect(withCap({ ...caps.attachments, maxImageBytes: 1.5 })).toBe(false);
+  });
+
   it('SessionSchema requires settings', () => {
     expect(SessionSchema.safeParse(session).success).toBe(false);
     expect(

@@ -64,4 +64,9 @@ describe('buildPrompt', () => {
     const [m] = await drain(p);
     expect(m!.message.content).toEqual([{ type: 'text', text: `read\n\nAttached files (read them with your tools):\n- ${a.absPath}\n- ${b.absPath}` }]);
   });
+
+  it('rejects when a listed file is not readable', async () => {
+    const md = att('gone.md', 'file', 'text/markdown', Buffer.from('x'));
+    await expect(buildPrompt('read', [{ ...md, absPath: join(dir, 'missing.md') }])).rejects.toThrow(/ENOENT/);
+  });
 });

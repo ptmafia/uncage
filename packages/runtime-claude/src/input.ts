@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access, readFile } from 'node:fs/promises';
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { ResolvedAttachment } from '@uncage/protocol';
 
@@ -11,12 +12,15 @@ const mediaType = (mime: string): ImageMediaType => mime.split(';')[0]!.trim().t
 /**
  * The SDK prompt for one run. Without attachments it is the plain prompt string; otherwise a single
  * streaming-input user message: the images inline (base64), then the prompt text, with any other
- * files listed by absolute path for Claude to read with its tools.
+ * files listed by absolute path for Claude to read with its tools. Rejects when an attachment
+ * can't be read.
  */
 export async function buildPrompt(prompt: string, atts: ResolvedAttachment[]): Promise<string | AsyncIterable<SDKUserMessage>> {
   if (atts.length === 0) return prompt;
   const images = atts.filter((a) => a.kind === 'image');
   const files = atts.filter((a) => a.kind !== 'image');
+  // Claude reads files itself later; fail now (before spawning) if one is already gone.
+  await Promise.all(files.map((f) => access(f.absPath, constants.R_OK)));
   const content: ContentBlocks = await Promise.all(
     images.map(async (a) => ({
       type: 'image' as const,
