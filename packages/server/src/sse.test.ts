@@ -1,6 +1,6 @@
 import { openPgliteStore } from '@uncage/core';
 import type { UncageEvent } from '@uncage/protocol';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openSse, serverFactory, TOKEN, type TestServer } from './test-utils.js';
 
 const servers = serverFactory();
@@ -116,6 +116,55 @@ describe('SSE', () => {
     expect(signals[0]?.aborted).toBe(false);
     sse.close();
     await expect.poll(() => signals[0]?.aborted).toBe(true);
+  });
+
+  it('client that disconnects during the session lookup is detected', async () => {
+    const heartbeatMs = 7_777;
+    const s = await servers.make([], { port: 0, heartbeatMs });
+    const base = await s.listen();
+    const session = await s.uncage.sessions.create({ runtime: 'fake' });
+    const signals: AbortSignal[] = [];
+    let looked!: () => void;
+    const lookedUp = new Promise<void>((r) => (looked = r));
+    const get = s.uncage.sessions.get.bind(s.uncage.sessions);
+    s.uncage.sessions.get = async (id) => {
+      await new Promise((r) => setTimeout(r, 200));
+      const h = await get(id);
+      looked();
+      return {
+        ...h,
+        events: (opts) => {
+          if (opts?.signal) signals.push(opts.signal);
+          return h.events(opts);
+        },
+      };
+    };
+    const created = new Set<unknown>();
+    const cleared = new Set<unknown>();
+    const realSet = globalThis.setInterval;
+    const setSpy = vi.spyOn(globalThis, 'setInterval').mockImplementation(((fn: () => void, ms?: number) => {
+      const t = realSet(fn, ms);
+      if (ms === heartbeatMs) created.add(t);
+      return t;
+    }) as typeof setInterval);
+    const realClear = globalThis.clearInterval;
+    const clearSpy = vi.spyOn(globalThis, 'clearInterval').mockImplementation(((t?: NodeJS.Timeout) => {
+      cleared.add(t);
+      realClear(t);
+    }) as typeof clearInterval);
+    try {
+      const ac = new AbortController();
+      const req = fetch(`${base}/v1/sessions/${session.id}/events`, { headers: authz, signal: ac.signal });
+      setTimeout(() => ac.abort(), 50);
+      await expect(req).rejects.toThrow();
+      await lookedUp;
+      await new Promise((r) => setTimeout(r, 100));
+      for (const sig of signals) expect(sig.aborted).toBe(true);
+      for (const t of created) expect(cleared.has(t)).toBe(true);
+    } finally {
+      setSpy.mockRestore();
+      clearSpy.mockRestore();
+    }
   });
 
   it('server close ends open streams', async () => {

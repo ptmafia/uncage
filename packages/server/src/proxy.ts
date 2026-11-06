@@ -64,6 +64,11 @@ export function createUncageHandler(o: ProxyOptions = {}): UncageHandler {
 
   const handle = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
+    // The daemon's Origin check cannot see the browser's Origin (it is stripped below), so the
+    // proxy enforces same-origin itself. Origin-less requests (server-side callers) proceed.
+    const origin = req.headers.get('origin');
+    const crossSiteFetch = req.method !== 'GET' && req.headers.get('sec-fetch-site') === 'cross-site';
+    if ((origin !== null && origin !== url.origin) || crossSiteFetch) return errorResponse('forbidden_origin');
     if (!url.pathname.startsWith(`${basePath}/`)) return errorResponse('not_found');
     const endpoint = (o.endpoint ?? process.env.UNCAGE_URL ?? DEFAULT_ENDPOINT).replace(/\/+$/, '');
     const target = new URL(`${endpoint}/v1/${url.pathname.slice(basePath.length + 1)}${url.search}`);

@@ -52,16 +52,21 @@ export async function streamEvents(
   request.raw.on('close', abort);
   res.on('close', abort);
   opts.shutdown.addEventListener('abort', abort, { once: true });
+  // The client may have gone away while the route was awaiting the session lookup, before these
+  // listeners existed; 'close' will not fire again, so detect it now.
+  if (opts.shutdown.aborted || res.destroyed || res.socket?.destroyed || request.raw.socket?.destroyed) abort();
 
   reply.hijack();
-  res.writeHead(200, SSE_HEADERS);
-  res.flushHeaders();
-  const heartbeat = setInterval(() => {
-    if (!ac.signal.aborted) res.write(': ping\n\n');
-  }, opts.heartbeatMs);
-  heartbeat.unref();
-
+  let heartbeat: NodeJS.Timeout | undefined;
   try {
+    if (ac.signal.aborted) return;
+    res.writeHead(200, SSE_HEADERS);
+    res.flushHeaders();
+    heartbeat = setInterval(() => {
+      if (!ac.signal.aborted) res.write(': ping\n\n');
+    }, opts.heartbeatMs);
+    heartbeat.unref();
+
     for await (const e of session.events({ after: opts.after, signal: ac.signal })) {
       if (ac.signal.aborted) break;
       await write(res, formatEvent(e));

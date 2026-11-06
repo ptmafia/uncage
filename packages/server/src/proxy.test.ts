@@ -86,6 +86,41 @@ describe('createUncageHandler', () => {
     expect(req?.headers.host).toBe(new URL(endpoint).host);
   });
 
+  it('cross-origin POST → 403 forbidden_origin, not forwarded', async () => {
+    const h = createUncageHandler({ endpoint, token: 'tok' });
+    const res = await h.POST(
+      new Request('http://app.local:3000/api/uncage/runs/run_1/cancel', {
+        method: 'POST',
+        headers: { origin: 'https://evil.example' },
+      }),
+    );
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('forbidden_origin');
+
+    const crossSite = await h.POST(
+      new Request('http://app.local:3000/api/uncage/runs/run_1/cancel', {
+        method: 'POST',
+        headers: { 'sec-fetch-site': 'cross-site' },
+      }),
+    );
+    expect(crossSite.status).toBe(403);
+    expect(seen).toEqual([]);
+  });
+
+  it('same-origin POST and Origin-less POST are forwarded', async () => {
+    const h = createUncageHandler({ endpoint, token: 'tok' });
+    const same = await h.POST(
+      new Request('http://app.local:3000/api/uncage/runs/run_1/cancel', {
+        method: 'POST',
+        headers: { origin: 'http://app.local:3000', 'sec-fetch-site': 'same-origin' },
+      }),
+    );
+    expect(same.status).toBe(200);
+    const none = await h.POST(new Request('http://app.local:3000/api/uncage/runs/run_1/cancel', { method: 'POST' }));
+    expect(none.status).toBe(200);
+    expect(seen.map((r) => r.url)).toEqual(['/v1/runs/run_1/cancel', '/v1/runs/run_1/cancel']);
+  });
+
   it('forwards Last-Event-ID on GET', async () => {
     const h = createUncageHandler({ endpoint, token: 'tok', basePath: '/custom/' });
     await h.GET(new Request('http://app.local/custom/sessions/ses_1/events', { headers: { 'last-event-id': 'evt_0000000003' } }));
