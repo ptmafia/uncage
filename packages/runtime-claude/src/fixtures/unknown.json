@@ -1,0 +1,60 @@
+[
+  {
+    "type": "system",
+    "subtype": "session_state_changed",
+    "state": "running",
+    "uuid": "00000000-0000-4000-8000-000000000076",
+    "session_id": "5f1c2b9e-8a3d-4c7e-9b1a-2d6f0e4c8a17"
+  },
+  {
+    "type": "system",
+    "subtype": "status",
+    "status": "requesting",
+    "session_id": "5f1c2b9e-8a3d-4c7e-9b1a-2d6f0e4c8a17",
+    "uuid": "00000000-0000-4000-8000-000000000077"
+  },
+  {
+    "type": "rate_limit_event",
+    "rate_limit_info": {
+      "status": "allowed"
+    },
+    "uuid": "00000000-0000-4000-8000-000000000078",
+    "session_id": "5f1c2b9e-8a3d-4c7e-9b1a-2d6f0e4c8a17"
+  },
+  {
+    "type": "tool_progress",
+    "tool_use_id": "toolu_x",
+    "tool_name": "Bash",
+    "parent_tool_use_id": null,
+    "elapsed_time_seconds": 1,
+    "uuid": "00000000-0000-4000-8000-000000000079",
+    "session_id": "5f1c2b9e-8a3d-4c7e-9b1a-2d6f0e4c8a17"
+  },
+  {
+    "type": "system",
+    "subtype": "compact_boundary",
+    "compact_metadata": {
+      "trigger": "auto",
+      "pre_tokens": 1000
+    },
+    "uuid": "00000000-0000-4000-8000-000000000080",
+    "session_id": "5f1c2b9e-8a3d-4c7e-9b1a-2d6f0e4c8a17"
+  },
+  {
+    "type": "some_future_type",
+    "payload": {
+      "x": 1
+    },
+    "uuid": "00000000-0000-4000-8000-000000000081",
+    "session_id": "5f1c2b9e-8a3d-4c7e-9b1a-2d6f0e4c8a17"
+  },
+  {
+    "type": "stream_event",
+    "event": {
+      "type": "ping"
+    },
+    "parent_tool_use_id": null,
+    "uuid": "00000000-0000-4000-8000-000000000082",
+    "session_id": "5f1c2b9e-8a3d-4c7e-9b1a-2d6f0e4c8a17"
+  }
+]
