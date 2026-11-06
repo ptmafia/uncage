@@ -8,7 +8,7 @@ import type {
   RuntimeCapabilities,
   RuntimeEvent,
 } from '@uncage/protocol';
-import { CANCELLED_MESSAGE, DENIED_MESSAGE, EXPIRED_MESSAGE, categorize, createMapper } from './map.js';
+import { CANCELLED_MESSAGE, DENIED_MESSAGE, EXPIRED_MESSAGE, categorize, createMapper, isResumeFailure } from './map.js';
 import { probeClaude, type ExecFile } from './probe.js';
 
 export interface ClaudeAdapterOptions {
@@ -36,7 +36,7 @@ const CAPABILITIES: RuntimeCapabilities = {
 const KILL_GRACE_MS = 3_000;
 /** After a terminal event, Claude Code should exit by itself; kill it if it lingers this long. */
 const LINGER_KILL_MS = 10_000;
-const TERMINAL = new Set<RuntimeEvent['type']>(['run.completed', 'run.failed', 'run.interrupted']);
+const TERMINAL = new Set<RuntimeEvent['type']>(['run.completed', 'run.failed', 'run.interrupted', 'native.session_lost']);
 const ABORTED = Symbol('aborted');
 
 /** Resolves with the promise's value, or ABORTED as soon as the signal fires. */
@@ -89,7 +89,14 @@ export function claudeAdapter(o: ClaudeAdapterOptions = {}): RuntimeAdapter {
 
     const abortController = new AbortController();
     const denials = new Map<string, string>();
-    const map = createMapper(denials);
+    const mapMessage = createMapper(denials);
+    // A failed `resume` (Claude Code no longer has the conversation) is not an ordinary failure:
+    // the session can never continue, so report it as lost.
+    const resuming = input.nativeSessionRef !== undefined;
+    const lost = (message: string): RuntimeEvent | undefined =>
+      resuming && isResumeFailure(message) ? { type: 'native.session_lost', message } : undefined;
+    const map = (m: Parameters<typeof mapMessage>[0]): RuntimeEvent[] =>
+      mapMessage(m).map((e) => (e.type === 'run.failed' ? (lost(e.error.message) ?? e) : e));
 
     const canUseTool: CanUseTool = async (toolName, toolInput, opts) => {
       const request: NativeApprovalInput = defined({
@@ -165,7 +172,8 @@ export function claudeAdapter(o: ClaudeAdapterOptions = {}): RuntimeAdapter {
       // The iterator failed; make sure no CLI process outlives it.
       abortController.abort();
       if (ctx.signal.aborted) return yield interrupted;
-      yield { type: 'run.interrupted', reason: err instanceof Error ? err.message : String(err) };
+      const reason = err instanceof Error ? err.message : String(err);
+      yield lost(reason) ?? { type: 'run.interrupted', reason };
     } finally {
       ctx.signal.removeEventListener('abort', stop);
       // Aborted, or the consumer stopped iterating early: shut Claude Code down.

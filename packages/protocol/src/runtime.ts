@@ -48,6 +48,11 @@ export type ApprovalOutcome = z.infer<typeof ApprovalOutcomeSchema>;
 
 export const RuntimeEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('native.session'), ref: z.string() }),
+  /**
+   * The native session (`nativeSessionRef`) can no longer be resumed (e.g. Claude Code no longer has
+   * the conversation). Terminal: core makes the session read-only and fails the run.
+   */
+  z.object({ type: z.literal('native.session_lost'), message: z.string().optional() }),
   z.object({ type: z.literal('message.started'), messageId: z.string() }),
   z.object({ type: z.literal('message.delta'), messageId: z.string(), text: z.string() }),
   z.object({ type: z.literal('message.completed'), messageId: z.string(), text: z.string() }),

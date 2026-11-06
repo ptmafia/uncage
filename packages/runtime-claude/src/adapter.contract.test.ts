@@ -129,6 +129,32 @@ describe('claudeAdapter', () => {
     expect(s.calls[0]!.options.abortController?.signal.aborted).toBe(true);
   });
 
+  describe('resume of a session Claude Code no longer has', () => {
+    const MISSING = 'No conversation found with session ID: 00000000-0000-0000-0000-000000000000';
+    const resume = (prompt: string, nativeSessionRef?: string) =>
+      collect(
+        claudeAdapter({ query: scriptedQuery().query }).run(
+          { ...run, prompt, ...(nativeSessionRef !== undefined ? { nativeSessionRef } : {}) },
+          ctxWith({ decision: 'allow' }).ctx,
+        ),
+      );
+
+    it('the error result becomes native.session_lost (terminal)', async () => {
+      const events = await resume('resume-missing', '00000000-0000-0000-0000-000000000000');
+      expect(events).toEqual([{ type: 'native.session_lost', message: MISSING }]);
+    });
+
+    it('so does the thrown SDK error when no result message came first', async () => {
+      const events = await resume('resume-missing-throw', '00000000-0000-0000-0000-000000000000');
+      expect(events).toEqual([{ type: 'native.session_lost', message: `Claude Code returned an error result: ${MISSING}` }]);
+    });
+
+    it('without a resume ref the same error stays an ordinary run.failed', async () => {
+      const events = await resume('resume-missing');
+      expect(events).toEqual([{ type: 'run.failed', error: expect.objectContaining({ code: 'internal_error', message: MISSING }) as unknown }]);
+    });
+  });
+
   describe('after a terminal event', () => {
     afterEach(() => {
       vi.useRealTimers();

@@ -352,6 +352,37 @@ describe('createUncage', () => {
     expect((await s2.snapshot()).runs).toEqual([]);
   });
 
+  it('native.session_lost → session read-only (session.updated + warning) and the run fails', async () => {
+    const adapter = inlineAdapter(async function* (input) {
+      if (input.nativeSessionRef === undefined) {
+        yield { type: 'native.session', ref: 'gone-1' };
+        yield { type: 'run.completed' };
+        return;
+      }
+      yield { type: 'native.session_lost', message: 'No conversation found with session ID: gone-1' };
+    });
+    const u = await make([adapter]);
+    const session = await u.sessions.create({ runtime: 'inline' });
+    await session.startRun({ prompt: 'one' });
+    const first = await eventsUntil(session, isTerminal);
+    const run = await session.startRun({ prompt: 'two' });
+    const events = await eventsUntil(session, isTerminal, { after: first.at(-1)!.sequence });
+
+    expect(types(events)).toEqual(['run.started', 'run.updated', 'session.updated', 'system.warning', 'run.failed']);
+    const updated = events.find((e) => e.type === 'session.updated');
+    expect(updated?.type === 'session.updated' && updated.payload.session).toMatchObject({ id: session.id, readOnly: true });
+    expect(updated?.payload).not.toHaveProperty('session.nativeSessionRef');
+    const warning = events.find((e) => e.type === 'system.warning');
+    expect(warning?.payload).toEqual({ code: 'session_resume_failed', message: 'No conversation found with session ID: gone-1' });
+    const failed = await u.runs.get(run.id);
+    expect(failed.state).toBe('failed');
+    expect(failed.error).toMatchObject({ code: 'session_read_only', hint: 'Start a new session', retryable: false });
+    expect(await session.get()).toMatchObject({ readOnly: true, status: 'ready' });
+    await expect(session.startRun({ prompt: 'three' })).rejects.toMatchObject({ code: 'session_read_only' });
+    // The history stays readable.
+    expect((await session.snapshot()).runs).toHaveLength(2);
+  });
+
   it('validates runtime, workspace and ids', async () => {
     const u = await make([fake([])], { workspace: { allowedRoots: [dir], default: dir } });
     await expect(u.sessions.create({ runtime: 'nope' })).rejects.toMatchObject({ code: 'not_found' });

@@ -10,6 +10,11 @@ const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 const NETWORK_TOOLS = new Set(['WebFetch', 'WebSearch']);
 const AUTH_ERRORS = new Set(['authentication_failed', 'oauth_org_not_allowed']);
 
+/** How Claude Code reports a `resume` session id it doesn't have (CLI 2.1 / SDK 0.3). */
+const RESUME_MISSING = /No conversation found with session ID/i;
+
+export const isResumeFailure = (message: string): boolean => RESUME_MISSING.test(message);
+
 export function categorize(toolName: string): ApprovalCategory {
   if (toolName === 'Bash') return 'shell';
   if (FILE_TOOLS.has(toolName)) return 'file';

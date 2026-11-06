@@ -310,6 +310,21 @@ export class RunManager {
         await this.store.updateSession(sessionId, { nativeSessionRef: ev.ref, ...(readOnly ? { readOnly } : {}) });
         return;
       }
+      case 'native.session_lost': {
+        // The runtime can't resume this conversation any more: keep the history readable, but
+        // never start another run on it.
+        const session = await this.store.updateSession(sessionId, { readOnly: true });
+        await this.log.append(sessionId, 'session.updated', { session }, runId);
+        const message = ev.message ?? 'The runtime could not resume this session.';
+        await this.log.append(sessionId, 'system.warning', { code: 'session_resume_failed', message }, runId);
+        this.logger.warn({ runId, sessionId, runtime: entry.adapter.id }, 'native session lost; session is now read-only');
+        const error = new UncageError('session_read_only', {
+          message: 'This session can no longer be continued; its history is still available.',
+          hint: 'Start a new session',
+          details: { reason: message },
+        });
+        return { state: 'failed', error: error.toBody() };
+      }
       case 'message.started':
         await this.log.append(sessionId, 'message.started', { messageId: ev.messageId, role: 'assistant' }, runId);
         return;

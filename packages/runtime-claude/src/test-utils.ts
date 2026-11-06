@@ -1,5 +1,6 @@
 import type { Options, PermissionResult, Query, SDKMessage, query } from '@anthropic-ai/claude-agent-sdk';
 import authError from './fixtures/auth-error.json' with { type: 'json' };
+import resumeMissing from './fixtures/resume-missing.json' with { type: 'json' };
 import text from './fixtures/text.json' with { type: 'json' };
 import toolWrite from './fixtures/tool-write.json' with { type: 'json' };
 
@@ -9,7 +10,13 @@ export const FIXTURES = {
   text: fixture(text),
   toolWrite: fixture(toolWrite),
   authError: fixture(authError),
+  /** Real SDK 0.3.318 output for `resume` pointing at a session Claude Code doesn't have. */
+  resumeMissing: fixture(resumeMissing),
 };
+
+/** What the SDK throws right after the resumeMissing result message. */
+export const RESUME_MISSING_ERROR =
+  'Claude Code returned an error result: No conversation found with session ID: 00000000-0000-0000-0000-000000000000';
 
 interface ToolResultBlock {
   type: 'tool_result';
@@ -61,6 +68,11 @@ export function scriptedQuery(): { query: typeof query; calls: ScriptedCall[] } 
         await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }));
         return;
       }
+      if (call.prompt === 'resume-missing') {
+        for (const m of FIXTURES.resumeMissing) yield m;
+        throw new Error(RESUME_MISSING_ERROR);
+      }
+      if (call.prompt === 'resume-missing-throw') throw new Error(RESUME_MISSING_ERROR);
       if (call.prompt === 'auth') {
         for (const m of FIXTURES.authError) yield m;
         return;
