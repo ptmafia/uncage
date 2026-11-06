@@ -57,6 +57,10 @@ export function runAdapterContract(
           expect(deltas.get(e.messageId)).toBe(e.text);
         }
       }
+      const completed = new Set(
+        events.flatMap((e) => (e.type === 'message.completed' ? [e.messageId] : [])),
+      );
+      for (const id of deltas.keys()) expect(completed.has(id), `message.completed for ${id}`).toBe(true);
       await adapter.dispose?.();
     });
 
@@ -88,7 +92,7 @@ export function runAdapterContract(
       let asked!: () => void;
       const approvalPending = new Promise<void>((r) => (asked = r));
       // Approval never resolves: abort must unblock the adapter anyway.
-      const { ctx } = makeCtx(() => {
+      const { ctx, requests } = makeCtx(() => {
         asked();
         return new Promise<ApprovalOutcome>(() => undefined);
       }, controller.signal);
@@ -104,6 +108,8 @@ export function runAdapterContract(
         }
       })();
       await Promise.race([approvalPending, drain]);
+      // The abort must hit while an approval is pending, not after the run ended on its own.
+      expect(requests).toHaveLength(1);
       // Let events emitted before the approval request flush.
       await new Promise((r) => setTimeout(r, 20));
       aborted = true;
