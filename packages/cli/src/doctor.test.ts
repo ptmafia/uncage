@@ -117,4 +117,13 @@ describe('exportEvents', () => {
       expect(text).toContain(keep);
     }
   });
+
+  it('treats tool input as opaque', async () => {
+    const { home, config } = await setup();
+    const evs = [{ sequence: 1, type: 'tool.started', payload: { toolId: 'tool_1', input: { name: 'SECRET', userId: 'SECRET', type: 'SECRET' }, output: ['SECRET'] }, extensions: { name: 'SECRET' } }];
+    const f = (async (url: string) => new Response(JSON.stringify(url.includes('after=0') ? evs : []))) as unknown as typeof fetch;
+    const text = JSON.stringify(await exportEvents({ sessionId: 's', config, home, fetch: f, includeContent: false }));
+    expect(text).not.toContain('SECRET');
+    expect(text).toContain('tool_1');
+  });
 });
