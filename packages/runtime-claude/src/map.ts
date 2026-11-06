@@ -5,7 +5,6 @@ import { ERROR_CATALOG, type ApprovalCategory, type ErrorCode, type RuntimeEvent
 export const DENIED_MESSAGE = 'The user denied this action.';
 export const EXPIRED_MESSAGE = 'The approval request expired.';
 export const CANCELLED_MESSAGE = 'Run cancelled.';
-const OUR_DENY_MESSAGES = [DENIED_MESSAGE, EXPIRED_MESSAGE, CANCELLED_MESSAGE];
 
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 const NETWORK_TOOLS = new Set(['WebFetch', 'WebSearch']);
@@ -57,10 +56,16 @@ function runFailed(code: ErrorCode, message: string | undefined): RuntimeEvent {
  */
 export function createMapper(denials: ReadonlyMap<string, string> = new Map()): (m: SDKMessage) => RuntimeEvent[] {
   let sessionEmitted = false;
-  let current: { id: string; text: string } | undefined;
+  let current: { id: string; text: string; started: boolean } | undefined;
   const seenMessages = new Set<string>();
   const toolStarts = new Map<string, number>();
   let assistantError: string | undefined;
+
+  const completeCurrent = (): RuntimeEvent[] => {
+    const done = current;
+    current = undefined;
+    return done?.started ? [{ type: 'message.completed', messageId: done.id, text: done.text }] : [];
+  };
 
   return (m) => {
     switch (m.type) {
@@ -75,19 +80,20 @@ export function createMapper(denials: ReadonlyMap<string, string> = new Map()): 
         if (m.parent_tool_use_id !== null) return [];
         const e = m.event;
         if (e.type === 'message_start') {
-          current = { id: e.message.id, text: '' };
+          // A retried request can start a new message before the previous one stopped: flush it.
+          const flushed = completeCurrent();
+          current = { id: e.message.id, text: '', started: false };
           seenMessages.add(e.message.id);
-          return [{ type: 'message.started', messageId: e.message.id }];
+          return flushed;
         }
         if (e.type === 'content_block_delta' && e.delta.type === 'text_delta' && current) {
+          // message.started waits for the first text so tool-only / thinking-only turns emit nothing.
+          const started: RuntimeEvent[] = current.started ? [] : [{ type: 'message.started', messageId: current.id }];
+          current.started = true;
           current.text += e.delta.text;
-          return [{ type: 'message.delta', messageId: current.id, text: e.delta.text }];
+          return [...started, { type: 'message.delta', messageId: current.id, text: e.delta.text }];
         }
-        if (e.type === 'message_stop' && current) {
-          const { id, text } = current;
-          current = undefined;
-          return text === '' ? [] : [{ type: 'message.completed', messageId: id, text }];
-        }
+        if (e.type === 'message_stop') return completeCurrent();
         return [];
       }
 
@@ -127,8 +133,9 @@ export function createMapper(denials: ReadonlyMap<string, string> = new Map()): 
           const started = toolStarts.get(toolId);
           toolStarts.delete(toolId);
           if (b.is_error) {
+            // Only a tool we denied ourselves counts as declined.
             const sent = denials.get(toolId);
-            const declined = (sent !== undefined && output.includes(sent)) || OUR_DENY_MESSAGES.some((d) => output.includes(d));
+            const declined = sent !== undefined && output.includes(sent);
             out.push({ type: 'tool.failed', toolId, error: output, ...(declined ? { declined: true } : {}) });
           } else {
             out.push({

@@ -54,8 +54,11 @@ describe('createMapper', () => {
       toolId: 'toolu_01WriteHello',
       output: 'File created successfully at: /tmp/uncage-fixture/hello.txt',
     });
-    // A tool-only message with no text is never completed; the follow-up text message is.
-    expect(events.filter((e) => e.type === 'message.completed')).toEqual([
+    // The tool-only turn (msg_01Tool) emits no message events; the thinking + text turn does.
+    expect(events.filter((e) => e.type.startsWith('message.'))).toEqual([
+      { type: 'message.started', messageId: 'msg_02Done' },
+      { type: 'message.delta', messageId: 'msg_02Done', text: 'Created ' },
+      { type: 'message.delta', messageId: 'msg_02Done', text: 'hello.txt.' },
       { type: 'message.completed', messageId: 'msg_02Done', text: 'Created hello.txt.' },
     ]);
     expect(events.at(-1)).toEqual({ type: 'run.completed' });
@@ -90,10 +93,64 @@ describe('createMapper', () => {
           : m,
       );
     const failed = (events: RuntimeEvent[]) => events.find((e) => e.type === 'tool.failed');
-    expect(failed(mapAll(denied(DENIED_MESSAGE)))).toMatchObject({ declined: true });
-    const reasons = new Map([['toolu_01WriteHello', 'Not in this repo']]);
-    expect(failed(mapAll(denied('Not in this repo'), reasons))).toMatchObject({ declined: true });
+    const sent = (message: string) => new Map([['toolu_01WriteHello', message]]);
+    expect(failed(mapAll(denied(DENIED_MESSAGE), sent(DENIED_MESSAGE)))).toMatchObject({ declined: true });
+    expect(failed(mapAll(denied('Not in this repo'), sent('Not in this repo')))).toMatchObject({ declined: true });
     expect(failed(mapAll(denied('Permission to use Write has been denied.')))).not.toHaveProperty('declined');
+  });
+
+  it('a failing tool we never denied is not declined, even if its output looks like a deny', () => {
+    const events = mapAll(
+      fixture(toolError).map((m) =>
+        m.type === 'user'
+          ? ({
+              ...m,
+              message: {
+                ...m.message,
+                content: [{ type: 'tool_result', tool_use_id: 'toolu_01BashFail', content: 'Run cancelled.', is_error: true }],
+              },
+            } as SDKMessage)
+          : m,
+      ),
+      new Map([['toolu_other', 'Run cancelled.']]),
+    );
+    expect(events.find((e) => e.type === 'tool.failed')).not.toHaveProperty('declined');
+  });
+
+  it('tool-only and thinking-only turns emit no message events', () => {
+    const all = FIXTURES.toolWrite;
+    const isStream = (m: SDKMessage, type: string) => m.type === 'stream_event' && m.event.type === type;
+    // Turn 1: message_start … tool_use … message_stop.
+    const toolTurn = all.slice(all.findIndex((m) => isStream(m, 'message_start')), all.findIndex((m) => isStream(m, 'message_stop')) + 1);
+    expect(toolTurn.some((m) => m.type === 'assistant')).toBe(true);
+    // Turn 2 without its text block: message_start, thinking block, message_delta, message_stop.
+    const second = all.slice(all.findLastIndex((m) => isStream(m, 'message_start')));
+    const textBlock = (m: SDKMessage) =>
+      (m.type === 'assistant' && m.message.content[0]?.type === 'text') ||
+      (m.type === 'stream_event' && 'index' in m.event && m.event.index === 1);
+    const thinkingTurn = second.filter((m) => !textBlock(m));
+    for (const turn of [toolTurn, thinkingTurn]) {
+      expect(mapAll(turn).filter((e) => e.type.startsWith('message.'))).toEqual([]);
+    }
+  });
+
+  it('a second message_start before message_stop completes the first message', () => {
+    const stream = FIXTURES.text.filter((m) => m.type === 'stream_event');
+    const start = stream.find((m) => m.type === 'stream_event' && m.event.type === 'message_start')!;
+    const retryStart = JSON.parse(JSON.stringify(start).replace('msg_01Text', 'msg_02Retry')) as SDKMessage;
+    const deltas = stream.filter((m) => m.type === 'stream_event' && m.event.type === 'content_block_delta');
+    const stop = stream.filter((m) => m.type === 'stream_event' && m.event.type === 'message_stop');
+    const events = mapAll([start, deltas[0]!, retryStart, ...deltas, ...stop]);
+    expect(events).toEqual([
+      { type: 'message.started', messageId: 'msg_01Text' },
+      { type: 'message.delta', messageId: 'msg_01Text', text: 'Hello' },
+      { type: 'message.completed', messageId: 'msg_01Text', text: 'Hello' },
+      { type: 'message.started', messageId: 'msg_02Retry' },
+      { type: 'message.delta', messageId: 'msg_02Retry', text: 'Hello' },
+      { type: 'message.delta', messageId: 'msg_02Retry', text: ', ' },
+      { type: 'message.delta', messageId: 'msg_02Retry', text: 'world!' },
+      { type: 'message.completed', messageId: 'msg_02Retry', text: 'Hello, world!' },
+    ]);
   });
 
   it('long Bash commands are truncated to 80 chars in the title', () => {

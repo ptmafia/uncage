@@ -55,6 +55,12 @@ export function scriptedQuery(): { query: typeof query; calls: ScriptedCall[] } 
         for (const m of FIXTURES.text.slice(0, 6)) yield m; // init, then the start of a streamed message
         throw new Error('process exited');
       }
+      if (call.prompt === 'linger') {
+        // Delivers the result, then never exits until killed.
+        for (const m of FIXTURES.text) yield m;
+        await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }));
+        return;
+      }
       if (call.prompt === 'auth') {
         for (const m of FIXTURES.authError) yield m;
         return;

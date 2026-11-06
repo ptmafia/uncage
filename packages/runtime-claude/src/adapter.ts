@@ -34,6 +34,8 @@ const CAPABILITIES: RuntimeCapabilities = {
 
 /** After an interrupt, give Claude Code this long to wind down before killing it. */
 const KILL_GRACE_MS = 3_000;
+/** After a terminal event, Claude Code should exit by itself; kill it if it lingers this long. */
+const LINGER_KILL_MS = 10_000;
 const TERMINAL = new Set<RuntimeEvent['type']>(['run.completed', 'run.failed', 'run.interrupted']);
 const ABORTED = Symbol('aborted');
 
@@ -143,10 +145,14 @@ export function claudeAdapter(o: ClaudeAdapterOptions = {}): RuntimeAdapter {
         for (const event of map(next.value)) {
           if (TERMINAL.has(event.type)) {
             ended = true;
-            // Let Claude Code finish writing the session and exit by itself.
+            // Let Claude Code finish writing the session and exit by itself, but never leak the process.
+            const kill = setTimeout(() => abortController.abort(), LINGER_KILL_MS);
+            kill.unref();
             void (async () => {
               while (!(await q.next()).done);
-            })().catch(() => undefined);
+            })()
+              .catch(() => undefined)
+              .finally(() => clearTimeout(kill));
             return yield event;
           }
           yield event;
@@ -156,6 +162,8 @@ export function claudeAdapter(o: ClaudeAdapterOptions = {}): RuntimeAdapter {
       yield { type: 'run.interrupted', reason: 'Claude Code exited before the run finished.' };
     } catch (err) {
       ended = true;
+      // The iterator failed; make sure no CLI process outlives it.
+      abortController.abort();
       if (ctx.signal.aborted) return yield interrupted;
       yield { type: 'run.interrupted', reason: err instanceof Error ? err.message : String(err) };
     } finally {

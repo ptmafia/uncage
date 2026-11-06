@@ -1,6 +1,6 @@
 import { collect, runAdapterContract } from '@uncage/testkit';
 import type { AdapterRunContext, ApprovalOutcome, NativeApprovalInput } from '@uncage/protocol';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { claudeAdapter } from './index.js';
 import { scriptedQuery } from './test-utils.js';
 
@@ -122,10 +122,37 @@ describe('claudeAdapter', () => {
     expect(events.at(-1)).toMatchObject({ type: 'run.failed', error: { code: 'auth_required' } });
   });
 
-  it('a crashed iterator becomes run.interrupted with the cause', async () => {
+  it('a crashed iterator becomes run.interrupted with the cause and kills the process', async () => {
     const s = scriptedQuery();
     const events = await collect(claudeAdapter({ query: s.query }).run({ ...run, prompt: 'crash' }, ctxWith({ decision: 'allow' }).ctx));
     expect(events.at(-1)).toEqual({ type: 'run.interrupted', reason: 'process exited' });
+    expect(s.calls[0]!.options.abortController?.signal.aborted).toBe(true);
+  });
+
+  describe('after a terminal event', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('kills a CLI that lingers 10 s after the result', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const s = scriptedQuery();
+      const events = await collect(claudeAdapter({ query: s.query }).run({ ...run, prompt: 'linger' }, ctxWith({ decision: 'allow' }).ctx));
+      expect(events.at(-1)).toEqual({ type: 'run.completed' });
+      const signal = s.calls[0]!.options.abortController!.signal;
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(signal.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(signal.aborted).toBe(true);
+    });
+
+    it('does not kill a CLI that exits by itself', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const s = scriptedQuery();
+      await collect(claudeAdapter({ query: s.query }).run({ ...run, prompt: 'simple' }, ctxWith({ decision: 'allow' }).ctx));
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(s.calls[0]!.options.abortController!.signal.aborted).toBe(false);
+    });
   });
 });
 
