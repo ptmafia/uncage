@@ -71,6 +71,16 @@ importers:
         specifier: workspace:*
         version: link:../testkit
 
+  packages/runtime-codex:
+    dependencies:
+      '@uncage/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      '@uncage/testkit':
+        specifier: workspace:*
+        version: link:../testkit
+
   packages/server:
     dependencies:
       '@uncage/core':

@@ -1,0 +1,33 @@
+{
+  "name": "@uncage/runtime-codex",
+  "version": "0.0.0",
+  "description": "Uncage runtime adapter for Codex via the Codex App Server (stdio JSON-RPC)",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@uncage/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@uncage/testkit": "workspace:*"
+  }
+}
