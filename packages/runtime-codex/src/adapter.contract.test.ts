@@ -77,7 +77,10 @@ describe('codexAdapter', () => {
   });
 
   it('refreshCapabilities lists visible models from model/list after default', async () => {
-    const caps = await make().refreshCapabilities!();
+    const a = make();
+    expect(a.capabilities().modelsAuthoritative).toBeUndefined();
+    const caps = await a.refreshCapabilities!();
+    expect(caps.modelsAuthoritative).toBe(true);
     expect(caps.models).toEqual([
       { id: 'default', label: 'Default' },
       { id: 'fake-model', label: 'Fake Model', description: 'The fake default' },

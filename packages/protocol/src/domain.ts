@@ -86,6 +86,8 @@ export const RuntimeCapabilitiesSchema = z.object({
   mcp: z.boolean(),
   skills: z.enum(['supported', 'partial', 'unknown']),
   models: z.array(ModelOptionSchema),
+  /** True only when `models` is the runtime's real list (not a fallback); a stored model is reset only against an authoritative list. */
+  modelsAuthoritative: z.boolean().optional(),
   efforts: z.array(EffortLevelSchema),
   permissionModes: z.array(PermissionModeSchema),
   attachments: z.object({

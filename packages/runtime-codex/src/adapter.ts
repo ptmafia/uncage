@@ -143,6 +143,8 @@ export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
   const requestTimeoutMs = o.requestTimeoutMs ?? 30_000;
   const allowBypass = o.allowBypass === true;
   let models: ModelOption[] = DEFAULT_MODELS;
+  /** True once `models` came from a successful `model/list`. */
+  let modelsAuthoritative = false;
   let current: Promise<Connection> | undefined;
 
   /** One app-server per adapter, started lazily and shared by every session; respawned after it exits. */
@@ -338,6 +340,7 @@ export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
     mcp: true,
     skills: 'unknown',
     models,
+    ...(modelsAuthoritative ? { modelsAuthoritative: true } : {}),
     efforts: [...EFFORTS],
     permissionModes: allowBypass ? ['default', 'bypassPermissions'] : ['default'],
     attachments: { images: true, files: true, maxBytes: ATTACHMENT_LIMITS.maxBytes },
@@ -363,7 +366,10 @@ export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
         const listed = data
           .filter((m) => !m.hidden)
           .map((m) => ({ id: m.model, label: m.displayName || m.model, ...(m.description ? { description: m.description } : {}) }));
-        if (listed.length > 0) models = [...DEFAULT_MODELS, ...listed.filter((m) => m.id !== 'default')];
+        if (listed.length > 0) {
+          models = [...DEFAULT_MODELS, ...listed.filter((m) => m.id !== 'default')];
+          modelsAuthoritative = true;
+        }
       } catch {
         // Keep what we had.
       }

@@ -105,11 +105,13 @@ export function claudeAdapter(o: ClaudeAdapterOptions = {}): RuntimeAdapter {
   const settingSources = o.settingSources ?? ['project'];
   const allowBypass = o.allowBypass === true;
   let models: ModelOption[] = CLAUDE_FALLBACK_MODELS;
+  /** True once `models` came from a successful `supportedModels()`. */
+  let modelsAuthoritative = false;
   /** When the model list may be probed again (cache expiry, or back-off after a failure). */
   let modelsStaleAt = -Infinity;
   let modelsInflight: Promise<void> | undefined;
 
-  const capabilities = (): RuntimeCapabilities => claudeCapabilities({ models, allowBypass });
+  const capabilities = (): RuntimeCapabilities => claudeCapabilities({ models, allowBypass, modelsAuthoritative });
 
   /** Reads `supportedModels()` from a short-lived Claude Code process; keeps the current list on any error. */
   async function loadModels(): Promise<void> {
@@ -123,6 +125,7 @@ export function claudeAdapter(o: ClaudeAdapterOptions = {}): RuntimeAdapter {
       });
       const list = toModelOptions(await timeout(q.supportedModels(), MODELS_TIMEOUT_MS, 'supportedModels() timed out'));
       models = list;
+      modelsAuthoritative = true;
       modelsStaleAt = Date.now() + MODELS_TTL_MS;
     } catch {
       // Keep the current (fallback) list and back off before probing again.

@@ -17,7 +17,7 @@ export const CLAUDE_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 const SAFE_PERMISSION_MODES: PermissionMode[] = ['default', 'acceptEdits', 'plan', 'auto'];
 
-export function claudeCapabilities(o: { models: ModelOption[]; allowBypass: boolean }): RuntimeCapabilities {
+export function claudeCapabilities(o: { models: ModelOption[]; allowBypass: boolean; modelsAuthoritative?: boolean }): RuntimeCapabilities {
   return {
     streaming: true,
     approval: { once: true, session: false, types: ['shell', 'file', 'network', 'mcp', 'other'] },
@@ -26,6 +26,7 @@ export function claudeCapabilities(o: { models: ModelOption[]; allowBypass: bool
     mcp: true,
     skills: 'supported',
     models: o.models,
+    ...(o.modelsAuthoritative ? { modelsAuthoritative: true } : {}),
     efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
     permissionModes: o.allowBypass ? [...SAFE_PERMISSION_MODES, 'bypassPermissions'] : [...SAFE_PERMISSION_MODES],
     // The Anthropic API rejects images over 5 MB.

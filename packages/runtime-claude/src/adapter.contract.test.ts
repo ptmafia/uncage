@@ -311,6 +311,7 @@ describe('refreshCapabilities', () => {
       { id: 'default', label: 'Default (recommended)', description: 'Fable 5.1' },
       { id: 'opus', label: 'Opus 5.5', description: 'For complex work' },
     ]);
+    expect(caps.modelsAuthoritative).toBe(true);
     expect(a.capabilities().models).toEqual(caps.models);
     expect(m.calls).toHaveLength(1);
     const call = m.calls[0]!;
@@ -341,6 +342,7 @@ describe('refreshCapabilities', () => {
     const a = claudeAdapter({ query: m.query, allowBypass: true });
     const caps = await a.refreshCapabilities!();
     expect(caps).toEqual(claudeCapabilities({ models: CLAUDE_FALLBACK_MODELS, allowBypass: true }));
+    expect(caps.modelsAuthoritative).toBeUndefined();
     expect(m.calls[0]!.options.abortController!.signal.aborted).toBe(true);
   });
 
