@@ -2,6 +2,7 @@ import { UncageClientError, uploadContentType, type UncageClient } from '@uncage
 import {
   ATTACHMENT_LIMITS,
   classifyAttachment,
+  displayFileName,
   type ActiveRunInfo,
   type CreateSessionBody,
   type RuntimeCapabilities,
@@ -65,7 +66,10 @@ export interface UncageStore {
      * Creates a session from the draft: on the draft runtime (unless `b.runtime` is given), applies
      * the draft settings that differ from the new session's (before any run), starts uploading the
      * queued files to it and closes the draft. Then `selectSession(id)` and `sendPrompt` (which
-     * waits for the uploads). Rejects, keeping the draft, if the session or its settings fail.
+     * waits for the uploads). Rejects, keeping the draft, if the session or its settings fail; a
+     * retry reuses a session already created. If the draft is replaced or left meanwhile
+     * (selectSession/openDraft/closeDraft), the created id is returned but the draft and the
+     * current attachments are left untouched. `createSession` in a draft delegates here.
      */
     commitDraft(b?: Partial<CreateSessionBody>): Promise<string>;
     /**
@@ -109,16 +113,6 @@ const ACTIVE_RUNS_POLL_MS = 3000;
 const SETTING_KEYS = ['model', 'effort', 'permissionMode'] as const;
 const EMPTY_ATTACHMENTS: AttachmentsState = { items: [], rejected: [] };
 
-/** The name core classifies (`displayFileName`): control characters stripped, basename, trimmed. */
-const displayName = (name: string): string =>
-  (
-    name
-      .normalize('NFC')
-      .replace(/\p{Cc}/gu, '')
-      .split(/[/\\]/)
-      .pop() ?? ''
-  ).trim();
-
 /**
  * Client-side mirror of the server's upload checks (core `AttachmentService.add`): extension and
  * canonical Content-Type (`classifyAttachment`), whether the runtime accepts the kind, and the size
@@ -129,7 +123,7 @@ export function checkAttachment(
   file: Blob & { name: string },
   caps?: RuntimeCapabilities['attachments'],
 ): { kind: 'image' | 'file' } | { reason: 'type' | 'size' } {
-  const kind = classifyAttachment(displayName(file.name), uploadContentType(file));
+  const kind = classifyAttachment(displayFileName(file.name), uploadContentType(file));
   if (kind === null) return { reason: 'type' };
   if (caps && (kind === 'image' ? !caps.images : !caps.files)) return { reason: 'type' };
   const generalMax =
@@ -197,6 +191,8 @@ export function createUncageStore(client: UncageClient): UncageStore {
   /** Bumped on every session switch; async work started for an older selection is dropped. */
   let generation = 0;
   let sending = false;
+  /** Bumped whenever the draft is replaced or left (openDraft/closeDraft/selectSession/dispose). */
+  let draftEpoch = 0;
 
   const set = (patch: Partial<StoreState>) => {
     state = { ...state, ...patch };
@@ -267,6 +263,8 @@ export function createUncageStore(client: UncageClient): UncageStore {
   let pollTimer: ReturnType<typeof setInterval> | undefined;
   let refreshing = false;
   let refreshAgain = false;
+  /** Bumped by dispose(): results of refreshes started before it are dropped. */
+  let pollEpoch = 0;
   const visible = () => typeof document === 'undefined' || document.visibilityState === 'visible';
 
   const refreshActiveRuns = async (): Promise<void> => {
@@ -274,15 +272,16 @@ export function createUncageStore(client: UncageClient): UncageStore {
       refreshAgain = true;
       return;
     }
+    const epoch = pollEpoch;
     refreshing = true;
     try {
       const runs = await client.listActiveRuns();
-      if (!sameActiveRuns(runs, state.activeRuns)) set({ activeRuns: runs });
+      if (epoch === pollEpoch && !sameActiveRuns(runs, state.activeRuns)) set({ activeRuns: runs });
     } catch {
       // Polling failures are transient noise; keep the last known list.
     } finally {
-      refreshing = false;
-      if (refreshAgain) {
+      if (epoch === pollEpoch) refreshing = false;
+      if (epoch === pollEpoch && refreshAgain) {
         refreshAgain = false;
         void refreshActiveRuns();
       }
@@ -300,6 +299,9 @@ export function createUncageStore(client: UncageClient): UncageStore {
   };
   const onVisibility = () => syncPolling();
   const stopPolling = () => {
+    pollEpoch++;
+    refreshing = false;
+    refreshAgain = false;
     watchers.clear();
     if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility);
     syncPolling();
@@ -393,6 +395,8 @@ export function createUncageStore(client: UncageClient): UncageStore {
     },
 
     async createSession(b) {
+      // In a draft, creating the session must carry the draft's settings and queued files along.
+      if (isDraft(state)) return actions.commitDraft(b);
       return (await createSession(b)).id;
     },
 
@@ -401,6 +405,7 @@ export function createUncageStore(client: UncageClient): UncageStore {
       unsubscribe?.();
       unsubscribe = undefined;
       sending = false;
+      draftEpoch++;
       if (state.attachments.sessionId !== id) dropAttachments();
       const draftUntouched = !state.draft.open && state.draft.settings === DEFAULT_SETTINGS;
       set({
@@ -578,11 +583,13 @@ export function createUncageStore(client: UncageClient): UncageStore {
         if (rejected.length > 0) attachments = { items: keep, rejected };
       }
       if (prev.open && !runtimeChanged && attachments === state.attachments) return;
+      draftEpoch++;
       set({
         draft: {
           open: true,
           ...(runtimeId !== undefined ? { runtimeId } : {}),
           settings: runtimeChanged ? DEFAULT_SETTINGS : prev.settings,
+          ...(!runtimeChanged && prev.sessionId !== undefined ? { sessionId: prev.sessionId } : {}),
         },
         attachments,
       });
@@ -590,6 +597,7 @@ export function createUncageStore(client: UncageClient): UncageStore {
 
     closeDraft() {
       if (!state.draft.open) return;
+      draftEpoch++;
       if (state.activeSessionId === undefined) {
         set({ draft: { ...state.draft, open: false } });
         return;
@@ -600,16 +608,23 @@ export function createUncageStore(client: UncageClient): UncageStore {
 
     async commitDraft(b = {}) {
       const draft = state.draft;
+      const epoch = draftEpoch;
       const runtime = b.runtime ?? draft.runtimeId;
       if (runtime === undefined) {
         const err = clientError('invalid_request', 'Choose a runtime for the new session.');
         fail(err);
         throw err;
       }
-      const session = await createSession({ ...b, runtime });
+      // A previous attempt created the session but failed to apply the settings: reuse it.
+      const reused =
+        draft.sessionId !== undefined && (draft.runtimeId === undefined || draft.runtimeId === runtime)
+          ? state.sessions.find((x) => x.id === draft.sessionId)
+          : undefined;
+      const session = reused ?? (await createSession({ ...b, runtime }));
+      const current = () => epoch === draftEpoch;
       // Read after the await: the user may still have changed a draft setting meanwhile.
       const settings =
-        draft.runtimeId === undefined || draft.runtimeId === runtime ? state.draft.settings : DEFAULT_SETTINGS;
+        current() && (draft.runtimeId === undefined || draft.runtimeId === runtime) ? state.draft.settings : DEFAULT_SETTINGS;
       const patch: Partial<SessionSettings> = {};
       for (const k of SETTING_KEYS) {
         if (settings[k] !== undefined && settings[k] !== session.settings[k]) Object.assign(patch, { [k]: settings[k] });
@@ -620,15 +635,22 @@ export function createUncageStore(client: UncageClient): UncageStore {
           set({ sessions: rememberSession(updated) });
         } catch (err) {
           fail(err);
+          if (current()) set({ draft: { ...state.draft, sessionId: session.id } });
           throw err;
         }
       }
-      const queued = state.attachments.sessionId === undefined ? state.attachments.items : [];
-      set({
-        draft: { open: false, settings: DEFAULT_SETTINGS },
-        attachments: { ...state.attachments, sessionId: session.id },
-      });
-      for (const item of queued) startUpload(item.localId, session.id);
+      // Only if the draft is still the one this call started from (no selectSession/openDraft/
+      // closeDraft meanwhile) do its queued files move to the new session and the draft reset.
+      if (current()) {
+        const queued = state.attachments.sessionId === undefined ? state.attachments.items : [];
+        set({
+          draft: { open: false, settings: DEFAULT_SETTINGS },
+          ...(state.attachments.sessionId === undefined
+            ? { attachments: { ...state.attachments, sessionId: session.id } }
+            : {}),
+        });
+        for (const item of queued) startUpload(item.localId, session.id);
+      }
       return session.id;
     },
 
@@ -705,6 +727,7 @@ export function createUncageStore(client: UncageClient): UncageStore {
       unsubscribe?.();
       unsubscribe = undefined;
       sending = false;
+      draftEpoch++;
       stopPolling();
       dropAttachments();
       if (Object.keys(state.pendingDecisions).length > 0) set({ pendingDecisions: {} });

@@ -1,4 +1,4 @@
-import type { Attachment, RuntimeCapabilities, SessionSettings, UncageEvent } from '@uncage/protocol';
+import type { ActiveRunInfo, Attachment, RuntimeCapabilities, SessionSettings, UncageEvent } from '@uncage/protocol';
 import { ATTACHMENT_LIMITS } from '@uncage/protocol';
 import { describe, expect, it, vi } from 'vitest';
 import { createUncageStore } from './store.js';
@@ -449,5 +449,95 @@ describe('composer: settings and attachments', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it('commitDraft retry reuses the session it created when applying settings failed', async () => {
+    const { f } = composerClient();
+    const store = createUncageStore(f.client);
+    await store.actions.loadRuntimes();
+    store.actions.openDraft('fake');
+    await store.actions.updateSettings({ permissionMode: 'plan' });
+    f.client.updateSettings.mockRejectedValueOnce(clientError('internal_error', 500));
+    await expect(store.actions.commitDraft()).rejects.toMatchObject({ code: 'internal_error' });
+    expect(store.getState().draft.sessionId).toBe('ses_1');
+    expect(await store.actions.commitDraft()).toBe('ses_1');
+    expect(f.client.createSession).toHaveBeenCalledTimes(1);
+    expect(f.client.updateSettings).toHaveBeenCalledTimes(2);
+    expect(f.client.updateSettings).toHaveBeenLastCalledWith('ses_1', { permissionMode: 'plan' });
+    expect(store.getState().draft).toEqual({ open: false, settings: { permissionMode: 'default' } });
+  });
+
+  it('createSession in a draft delegates to commitDraft (settings and queued files are kept)', async () => {
+    const { f } = composerClient();
+    const store = createUncageStore(f.client);
+    await store.actions.loadRuntimes();
+    store.actions.openDraft('fake');
+    await store.actions.updateSettings({ effort: 'low' });
+    store.actions.addAttachments([fileOf('a.txt', 1)]);
+    expect(await store.actions.createSession({ runtime: 'fake' })).toBe('ses_1');
+    expect(f.client.updateSettings).toHaveBeenCalledWith('ses_1', { effort: 'low' });
+    expect(f.client.uploadAttachment).toHaveBeenCalledWith('ses_1', expect.objectContaining({ name: 'a.txt' }), expect.anything());
+  });
+
+  it('commitDraft racing a session switch does not rebind the other session\'s attachments', async () => {
+    const { f } = composerClient();
+    const store = createUncageStore(f.client);
+    await store.actions.loadRuntimes();
+    store.actions.openDraft('fake');
+    await store.actions.updateSettings({ effort: 'low' });
+    store.actions.addAttachments([fileOf('draft.txt', 1)]);
+    let created!: () => void;
+    f.client.createSession.mockImplementationOnce(async () => {
+      await new Promise<void>((r) => (created = r));
+      return session({ id: 'ses_new', capabilities: richCaps() });
+    });
+    const commit = store.actions.commitDraft();
+    // Meanwhile the user opens another session and attaches a file there.
+    await store.actions.selectSession('ses_other');
+    store.actions.addAttachments([fileOf('other.txt', 1)]);
+    created();
+    expect(await commit).toBe('ses_new');
+    expect(f.client.uploadAttachment.mock.calls.map((c) => [c[0], c[1].name])).toEqual([['ses_other', 'other.txt']]);
+    expect(store.getState().attachments.sessionId).toBe('ses_other');
+    // The draft's settings were not applied to the new session (the draft was abandoned).
+    expect(f.client.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it('commitDraft racing openDraft leaves the new draft alone', async () => {
+    const { f } = composerClient();
+    const store = createUncageStore(f.client);
+    await store.actions.loadRuntimes();
+    store.actions.openDraft('fake');
+    store.actions.addAttachments([fileOf('a.txt', 1)]);
+    let created!: () => void;
+    f.client.createSession.mockImplementationOnce(async () => {
+      await new Promise<void>((r) => (created = r));
+      return session({ id: 'ses_new', capabilities: richCaps() });
+    });
+    const commit = store.actions.commitDraft();
+    store.actions.openDraft('other');
+    created();
+    await commit;
+    expect(store.getState().draft).toMatchObject({ open: true, runtimeId: 'other' });
+    expect(store.getState().attachments.sessionId).toBeUndefined();
+    expect(f.client.uploadAttachment).not.toHaveBeenCalled();
+  });
+
+  it('an active-runs refresh in flight at dispose() does not update state', async () => {
+    const { f } = composerClient();
+    let resolve!: (r: ActiveRunInfo[]) => void;
+    f.client.listActiveRuns.mockImplementationOnce(() => new Promise((r) => (resolve = r)));
+    const store = createUncageStore(f.client);
+    const stop = store.actions.watchActiveRuns();
+    store.dispose();
+    resolve([{ runId: 'run_1', sessionId: 'ses_1', sessionTitle: 'T', state: 'running' }]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(store.getState().activeRuns).toEqual([]);
+    expect(f.client.listActiveRuns).toHaveBeenCalledTimes(1);
+    stop();
+    // A fresh watcher (provider remount) polls again.
+    const again = store.actions.watchActiveRuns();
+    expect(f.client.listActiveRuns).toHaveBeenCalledTimes(2);
+    again();
   });
 });

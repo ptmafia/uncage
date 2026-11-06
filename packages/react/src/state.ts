@@ -99,6 +99,11 @@ export interface DraftState {
   open: boolean;
   runtimeId?: string;
   settings: SessionSettings;
+  /**
+   * A session `commitDraft` already created but could not finish (applying the draft settings
+   * failed); a retry reuses it instead of creating another.
+   */
+  sessionId?: string;
 }
 
 export interface StoreState {

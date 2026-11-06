@@ -1,7 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readdir, realpath, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { ATTACHMENT_LIMITS, classifyAttachment, type Attachment, type RuntimeCapabilities } from '@uncage/protocol';
+import {
+  ATTACHMENT_LIMITS,
+  classifyAttachment,
+  displayFileName,
+  type Attachment,
+  type RuntimeCapabilities,
+} from '@uncage/protocol';
 import { UncageError } from './errors.js';
 import type { Log } from './logger.js';
 import type { WorkspaceConfig } from './sessions.js';
@@ -10,7 +16,6 @@ import { resolveWorkspace } from './workspace.js';
 
 const MAX_DISK_NAME_BYTES = 120;
 const MAX_EXT_BYTES = 16;
-const MAX_DISPLAY_NAME = 200;
 
 const basenameOf = (name: string) => name.split(/[/\\]/).pop() ?? '';
 const utf8Bytes = (s: string) => Buffer.byteLength(s, 'utf8');
@@ -55,19 +60,8 @@ export function sanitizeFileName(name: string): string {
   return capped;
 }
 
-/**
- * Display name for an untrusted file name: NFC basename with control characters (incl. NUL)
- * removed, at most 200 characters (the extension is kept); `file` when nothing is left.
- */
-export function displayFileName(name: string): string {
-  const s = basenameOf(name.normalize('NFC').replace(/\p{Cc}/gu, '')).trim();
-  const capped = capKeepingExt(
-    s,
-    (x) => [...x].length <= MAX_DISPLAY_NAME,
-    (stem, ext) => [...stem].slice(0, MAX_DISPLAY_NAME - [...ext].length).join(''),
-  );
-  return capped === '' || /^\.+$/.test(capped) ? 'file' : capped;
-}
+/** Display name (re-exported from `@uncage/protocol` so clients mirror it exactly). */
+export { displayFileName };
 
 /** Strips storage-only fields (`absPath`, `referencedByRun`) from an attachment record. */
 export const publicAttachment = (a: Attachment): Attachment => ({
