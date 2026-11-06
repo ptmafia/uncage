@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  ATTACHMENT_LIMITS,
   newId,
   type ActiveRunInfo,
   type ApprovalOutcome,
@@ -9,6 +10,7 @@ import {
   type Run,
   type RunState,
   type RuntimeAdapter,
+  type RuntimeCapabilities,
   type RuntimeEvent,
   type SessionSettings,
   type StartRunBody,
@@ -62,6 +64,31 @@ const sleep = (ms: number) =>
   });
 
 const runIdemScope = (sessionId: string) => `run:${sessionId}`;
+/**
+ * Drops stored settings the runtime no longer offers: `model`/`effort` fall back to the runtime
+ * default (undefined), `permissionMode` to `default`. `reset` names the settings that changed.
+ */
+function effectiveSettings(
+  current: SessionSettings,
+  caps: RuntimeCapabilities,
+): { settings: SessionSettings; reset: string[] } {
+  const settings: SessionSettings = { ...current };
+  const reset: string[] = [];
+  if (settings.model !== undefined && caps.models.length > 0 && !caps.models.some((m) => m.id === settings.model)) {
+    delete settings.model;
+    reset.push('model');
+  }
+  if (settings.effort !== undefined && !caps.efforts.includes(settings.effort)) {
+    delete settings.effort;
+    reset.push('effort');
+  }
+  if (!caps.permissionModes.includes(settings.permissionMode) && settings.permissionMode !== 'default') {
+    settings.permissionMode = 'default';
+    reset.push('permission mode');
+  }
+  return { settings, reset };
+}
+
 /** Request fingerprint for idempotency: the prompt, plus the attachment ids when there are any. */
 const hashRequest = (prompt: string, attachmentIds: string[]) =>
   createHash('sha256')
@@ -129,6 +156,11 @@ export class RunManager {
     if (attachmentIds.some((a) => a === '') || new Set(attachmentIds).size !== attachmentIds.length) {
       throw new UncageError('invalid_request', { message: 'attachmentIds must be distinct, non-empty ids.' });
     }
+    if (attachmentIds.length > ATTACHMENT_LIMITS.maxPerMessage) {
+      throw new UncageError('invalid_request', {
+        message: `At most ${ATTACHMENT_LIMITS.maxPerMessage} attachments can be sent with one message.`,
+      });
+    }
     const hash = hashRequest(prompt, attachmentIds);
     if (key !== undefined) {
       const prior = await this.store.getIdempotent(key, runIdemScope(sessionId));
@@ -165,6 +197,7 @@ export class RunManager {
     });
 
     const attachments = await this.resolveAttachments(sessionId, attachmentIds);
+    const { settings, reset } = effectiveSettings(session.settings, await this.registry.capabilities(session.runtimeId));
 
     const run: Run = {
       id: newId('run'),
@@ -180,7 +213,7 @@ export class RunManager {
       sessionId,
       workspace,
       ...(session.nativeSessionRef !== undefined ? { nativeSessionRef: session.nativeSessionRef } : {}),
-      settings: session.settings,
+      settings,
       attachments,
       adapter,
       abort: new AbortController(),
@@ -192,15 +225,39 @@ export class RunManager {
       done: new Promise<void>((r) => (markDone = r)),
       markDone: () => markDone(),
     };
+    // Claim the attachments atomically before the run exists, so a concurrent prune (or anything
+    // else that changed them since they were checked) fails the start instead of the run.
+    if (attachmentIds.length > 0 && (await this.store.markAttachmentsReferenced(attachmentIds, run.id)) !== attachmentIds.length) {
+      throw new UncageError('invalid_request', {
+        message: 'Some attachments are no longer available.',
+        hint: 'Upload the files again and resend.',
+      });
+    }
     this.active.set(run.id, entry);
     this.bySession.set(sessionId, entry);
     try {
       await this.store.createRun(run);
-      if (attachmentIds.length > 0) await this.store.markAttachmentsReferenced(attachmentIds, run.id);
-      await this.store.updateSession(sessionId, { status: 'busy', activeRunId: run.id });
+      const updated = await this.store.updateSession(sessionId, {
+        status: 'busy',
+        activeRunId: run.id,
+        ...(reset.length > 0 ? { settings } : {}),
+      });
       await this.log.append(sessionId, 'run.started', { run }, run.id);
+      if (reset.length > 0) {
+        await this.log.append(sessionId, 'session.updated', { session: updated }, run.id);
+        await this.log.append(
+          sessionId,
+          'system.warning',
+          {
+            code: 'setting_reset',
+            message: `The runtime no longer supports the selected ${reset.join(' and ')}; using the runtime default.`,
+          },
+          run.id,
+        );
+      }
       if (key !== undefined) await this.store.putIdempotent(key, runIdemScope(sessionId), hash, { runId: run.id });
     } catch (e) {
+      if (attachmentIds.length > 0) await this.store.releaseAttachments(run.id).catch(() => undefined);
       this.active.delete(run.id);
       this.bySession.delete(sessionId);
       entry.markDone();

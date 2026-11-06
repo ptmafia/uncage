@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, realpath, rename, rm } from 'node:fs/promises';
-import { join, sep } from 'node:path';
+import { lstat, mkdir, open, readdir, realpath, rename, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { ATTACHMENT_LIMITS, classifyAttachment, type Attachment, type RuntimeCapabilities } from '@uncage/protocol';
 import { UncageError } from './errors.js';
 import type { Log } from './logger.js';
@@ -8,27 +8,65 @@ import type { WorkspaceConfig } from './sessions.js';
 import type { Store } from './store/store.js';
 import { resolveWorkspace } from './workspace.js';
 
-const MAX_NAME = 120;
-const MAX_EXT = 16;
+const MAX_DISK_NAME_BYTES = 120;
+const MAX_EXT_BYTES = 16;
+const MAX_DISPLAY_NAME = 200;
+
+const basenameOf = (name: string) => name.split(/[/\\]/).pop() ?? '';
+const utf8Bytes = (s: string) => Buffer.byteLength(s, 'utf8');
+
+/** Longest prefix of `s` (whole code points) that fits in `maxBytes` UTF-8 bytes. */
+const truncateBytes = (s: string, maxBytes: number): string => {
+  let out = '';
+  let bytes = 0;
+  for (const ch of s) {
+    const n = utf8Bytes(ch);
+    if (bytes + n > maxBytes) break;
+    out += ch;
+    bytes += n;
+  }
+  return out;
+};
+
+/** Returns `s` when it `fits`; otherwise `cut`s the stem to the budget left after a short extension. */
+const capKeepingExt = (s: string, fits: (x: string) => boolean, cut: (x: string, budget: string) => string): string => {
+  if (fits(s)) return s;
+  const dot = s.lastIndexOf('.');
+  const ext = dot > 0 && utf8Bytes(s.slice(dot)) <= MAX_EXT_BYTES ? s.slice(dot) : '';
+  return cut(s.slice(0, s.length - ext.length), ext) + ext;
+};
 
 /**
- * Reduces an untrusted file name to a safe single path segment: basename only (either
- * separator), every char outside `[\w.\- ]` → `_`, runs of `_` collapsed, at most 120 chars
- * (the extension is kept), and never `''`, `.` or `..`.
+ * On-disk name for an untrusted file name: NFC basename only (either separator), every char
+ * outside letters/digits/`_.- ` → `_`, runs of `_` collapsed, at most 120 UTF-8 bytes (the
+ * extension is kept), and never `''`, `.` or `..`.
  */
 export function sanitizeFileName(name: string): string {
-  const base = name.split(/[/\\]/).pop() ?? '';
-  let s = base
-    .replace(/[^\w.\- ]/g, '_')
+  const s = basenameOf(name.normalize('NFC'))
+    .replace(/[^\p{L}\p{N}_.\- ]/gu, '_')
     .replace(/_+/g, '_')
     .trim();
-  if (s.length > MAX_NAME) {
-    const dot = s.lastIndexOf('.');
-    const ext = dot > 0 && s.length - dot <= MAX_EXT ? s.slice(dot) : '';
-    s = s.slice(0, MAX_NAME - ext.length) + ext;
-  }
-  if (s === '' || /^\.+$/.test(s)) return 'file';
-  return s;
+  const capped = capKeepingExt(
+    s,
+    (x) => utf8Bytes(x) <= MAX_DISK_NAME_BYTES,
+    (stem, ext) => truncateBytes(stem, MAX_DISK_NAME_BYTES - utf8Bytes(ext)),
+  );
+  if (capped === '' || /^\.+$/.test(capped)) return 'file';
+  return capped;
+}
+
+/**
+ * Display name for an untrusted file name: NFC basename with control characters (incl. NUL)
+ * removed, at most 200 characters (the extension is kept); `file` when nothing is left.
+ */
+export function displayFileName(name: string): string {
+  const s = basenameOf(name.normalize('NFC').replace(/\p{Cc}/gu, '')).trim();
+  const capped = capKeepingExt(
+    s,
+    (x) => [...x].length <= MAX_DISPLAY_NAME,
+    (stem, ext) => [...stem].slice(0, MAX_DISPLAY_NAME - [...ext].length).join(''),
+  );
+  return capped === '' || /^\.+$/.test(capped) ? 'file' : capped;
 }
 
 /** Strips storage-only fields (`absPath`, `referencedByRun`) from an attachment record. */
@@ -45,7 +83,40 @@ export const publicAttachment = (a: Attachment): Attachment => ({
 
 export type AttachmentBody = AsyncIterable<Uint8Array> | Uint8Array;
 
-const isWithin = (path: string, dir: string) => path.startsWith(dir.endsWith(sep) ? dir : dir + sep);
+const escapes = () =>
+  new UncageError('invalid_request', {
+    message: 'The attachment directory is not a plain directory inside the workspace.',
+    hint: 'Remove any symlink at .uncage or .uncage/attachments in the workspace.',
+  });
+
+/**
+ * Creates `<workspace>/.uncage/attachments/<sessionId>` one level at a time (0700), refusing any
+ * existing symlink or non-directory, and requires the result to resolve to exactly that path.
+ */
+async function ensureAttachmentDir(workspace: string, sessionId: string): Promise<string> {
+  let dir = workspace;
+  for (const segment of ['.uncage', 'attachments', sessionId]) {
+    dir = join(dir, segment);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const st = await lstat(dir);
+        if (st.isSymbolicLink() || !st.isDirectory()) throw escapes();
+        break;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT' || attempt > 0) throw e;
+        try {
+          await mkdir(dir, { mode: 0o700 });
+        } catch (me) {
+          if ((me as NodeJS.ErrnoException).code !== 'EEXIST') throw me;
+        }
+      }
+    }
+  }
+  if ((await realpath(dir)) !== dir) throw escapes();
+  return dir;
+}
+
+const TMP_PREFIX = '.tmp-';
 
 /** Attachment files live at `<workspace>/.uncage/attachments/<sessionId>/<attachmentId>-<safeName>`. */
 export class AttachmentService {
@@ -60,7 +131,8 @@ export class AttachmentService {
   async add(sessionId: string, input: { name: string; mime: string; body: AttachmentBody }): Promise<Attachment> {
     const session = await this.store.getSession(sessionId);
     if (!session) throw new UncageError('not_found', { message: `Session ${sessionId} not found.` });
-    const name = sanitizeFileName(input.name);
+    if (session.readOnly) throw new UncageError('session_read_only', { hint: 'Start a new session' });
+    const name = displayFileName(input.name);
     const kind = classifyAttachment(name, input.mime);
     if (kind === null) throw new UncageError('attachment_type_unsupported', { details: { name, mime: input.mime } });
     const caps = (await this.capabilitiesOf(sessionId)).attachments;
@@ -79,16 +151,11 @@ export class AttachmentService {
         cause: e,
       });
     });
-    const dir = join(workspace, '.uncage', 'attachments', sessionId);
-    await mkdir(dir, { recursive: true, mode: 0o700 });
-    const realDir = await realpath(dir);
-    if (!isWithin(realDir, workspace)) {
-      throw new UncageError('invalid_request', { message: 'The attachment directory escapes the workspace.' });
-    }
+    const dir = await ensureAttachmentDir(workspace, sessionId);
 
     const id = `att_${randomUUID().replaceAll('-', '')}`;
-    const tmp = join(realDir, `.tmp-${id}`);
-    const final = join(realDir, `${id}-${name}`);
+    const tmp = join(dir, `${TMP_PREFIX}${id}`);
+    const final = join(dir, `${id}-${sanitizeFileName(input.name)}`);
     const hash = createHash('sha256');
     let size = 0;
     const fh = await open(tmp, 'wx', 0o600);
@@ -108,10 +175,9 @@ export class AttachmentService {
         await fh.close();
       }
       await rename(tmp, final);
-      const real = await realpath(final);
-      if (!isWithin(real, realDir)) {
+      if ((await realpath(final)) !== final) {
         await rm(final, { force: true });
-        throw new UncageError('invalid_request', { message: 'The attachment path escapes its directory.' });
+        throw escapes();
       }
     } catch (e) {
       await rm(tmp, { force: true });
@@ -144,10 +210,39 @@ export class AttachmentService {
     return { attachment: publicAttachment(row), absPath: row.absPath };
   }
 
-  /** Deletes attachments never used by a run and created before `olderThan` (rows and files). */
+  /**
+   * Deletes attachments never used by a run and created before `olderThan` (rows and files) and
+   * sweeps abandoned `.tmp-*` upload files older than it. Returns the number of attachments deleted.
+   */
   async pruneOrphans(olderThan: Date): Promise<number> {
     const rows = await this.store.deleteOrphanAttachments(olderThan);
-    await Promise.all(rows.map((r) => rm(r.absPath, { force: true })));
+    const results = await Promise.allSettled(rows.map((r) => rm(r.absPath, { force: true })));
+    const failed = results.filter((r) => r.status === 'rejected').length;
+    if (failed > 0) this.logger.warn({ failed }, 'some pruned attachment files could not be deleted');
+    const swept = await this.sweepTempFiles(olderThan);
+    if (swept > 0) this.logger.info({ swept }, 'removed abandoned attachment uploads');
     return rows.length;
+  }
+
+  private async sweepTempFiles(olderThan: Date): Promise<number> {
+    let swept = 0;
+    for (const s of await this.store.listSessions()) {
+      const dir = join(s.workspace, '.uncage', 'attachments', s.id);
+      // Only plain, non-symlinked directories are swept.
+      const real = await realpath(dir).catch(() => null);
+      if (real !== dir) continue;
+      const names = await readdir(dir).catch(() => [] as string[]);
+      for (const n of names) {
+        if (!n.startsWith(TMP_PREFIX)) continue;
+        const path = join(dir, n);
+        const st = await lstat(path).catch(() => null);
+        if (!st?.isFile() || st.mtime >= olderThan) continue;
+        await rm(path, { force: true }).then(
+          () => swept++,
+          () => undefined,
+        );
+      }
+    }
+    return swept;
   }
 }

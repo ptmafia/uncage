@@ -44,8 +44,13 @@ export interface Store {
   getAttachment(id: string): Promise<StoredAttachment | null>;
   /** Returns the existing rows among `ids` (missing ids are simply absent). */
   listAttachments(ids: string[]): Promise<StoredAttachment[]>;
-  /** Sets `referencedByRun` on those of `ids` not yet referenced; returns how many were marked. */
+  /**
+   * All or nothing: sets `referencedByRun` on every one of `ids` when all exist and are
+   * unreferenced, returning `ids.length`; otherwise changes nothing and returns 0.
+   */
   markAttachmentsReferenced(ids: string[], runId: string): Promise<number>;
+  /** Clears `referencedByRun` for attachments marked for `runId` (compensates a failed run start). */
+  releaseAttachments(runId: string): Promise<void>;
   /** Deletes unreferenced attachments created before `olderThan`; returns the deleted rows. */
   deleteOrphanAttachments(olderThan: Date): Promise<StoredAttachment[]>;
   getIdempotent(key: string, scope: string): Promise<{ requestHash: string; response: unknown } | null>;

@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import type {
   ActiveRunInfo,
   ApprovalDecision,
@@ -8,6 +9,7 @@ import type {
   CreateSessionBody,
   Run,
   RuntimeAdapter,
+  RuntimeCapabilities,
   RuntimeInfo,
   Session,
   SessionSettings,
@@ -89,6 +91,10 @@ export async function createUncage(opts: UncageOptions): Promise<Uncage> {
     allowedRoots: opts.workspace?.allowedRoots ?? [cwd],
     default: opts.workspace?.default ?? cwd,
   };
+  registry.onCapabilities = (runtimeId, caps) =>
+    refreshSessionCapabilities(store, log, runtimeId, caps).catch((e: unknown) =>
+      logger.error({ err: e, runtime: runtimeId }, 'failed to refresh session capabilities'),
+    );
   const runs = new RunManager(store, log, bridge, registry, logger, workspace, policy);
   const sessions = new SessionService(store, log, registry, runs, workspace, policy);
   const attachments = new AttachmentService(
@@ -159,6 +165,24 @@ export async function createUncage(opts: UncageOptions): Promise<Uncage> {
  * open approvals become `expired` and unfinished runs `interrupted` (reason `server_restart`).
  * When the policy no longer allows bypass, sessions stop advertising it and leave bypass mode.
  */
+/** Equality as stored (jsonb drops `undefined` and reorders keys). */
+const sameCaps = (a: RuntimeCapabilities, b: RuntimeCapabilities) =>
+  isDeepStrictEqual(JSON.parse(JSON.stringify(a)), JSON.parse(JSON.stringify(b)));
+
+/** Brings every open session of `runtimeId` up to date with freshly probed capabilities. */
+async function refreshSessionCapabilities(
+  store: Store,
+  log: EventLog,
+  runtimeId: string,
+  capabilities: RuntimeCapabilities,
+): Promise<void> {
+  for (const s of await store.listSessions()) {
+    if (s.runtimeId !== runtimeId || s.status === 'closed' || sameCaps(s.capabilities, capabilities)) continue;
+    const session = await store.updateSession(s.id, { capabilities });
+    await log.append(s.id, 'session.updated', { session });
+  }
+}
+
 async function reconcile(
   store: Store,
   log: EventLog,
@@ -189,12 +213,15 @@ async function reconcile(
     if (s.status !== status || s.readOnly !== readOnly || s.activeRunId !== undefined) {
       await store.updateSession(id, { status, readOnly, activeRunId: undefined });
     }
-    const capabilities = applyPolicy(s.capabilities, policy);
-    if (capabilities !== s.capabilities || (s.settings.permissionMode === 'bypassPermissions' && !policy.allowBypass)) {
-      const settings = policy.allowBypass ? s.settings : { ...s.settings, permissionMode: 'default' as const };
+    // Stored capabilities follow the runtime and the current policy (e.g. a restart that turns
+    // allowBypass on or off); a session left in bypass leaves it when the policy forbids it.
+    const capabilities = adapter ? registry.staticCapabilities(s.runtimeId) : applyPolicy(s.capabilities, policy);
+    const leaveBypass = s.settings.permissionMode === 'bypassPermissions' && !policy.allowBypass;
+    if (!sameCaps(capabilities, s.capabilities) || leaveBypass) {
+      const settings = leaveBypass ? { ...s.settings, permissionMode: 'default' as const } : s.settings;
       const session = await store.updateSession(id, { capabilities, settings });
       await log.append(id, 'session.updated', { session });
-      logger.warn({ sessionId: id }, 'bypass permissions removed from session by policy');
+      if (leaveBypass) logger.warn({ sessionId: id }, 'bypass permissions disabled by policy; session reset to default');
     }
   }
   await log.drain();

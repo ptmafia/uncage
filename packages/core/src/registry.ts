@@ -12,6 +12,8 @@ const PROBE_TTL_MS = 30_000;
 export class AdapterRegistry {
   private readonly adapters = new Map<string, RuntimeAdapter>();
   private readonly cache = new Map<string, { at: number; info: Promise<RuntimeInfo> }>();
+  /** Called after each fresh probe that produced capabilities (not on cache hits). */
+  onCapabilities?: (runtimeId: string, caps: RuntimeCapabilities) => Promise<void>;
 
   constructor(
     adapters: RuntimeAdapter[],
@@ -41,15 +43,23 @@ export class AdapterRegistry {
     const adapter = this.require(id);
     const hit = this.cache.get(id);
     if (hit && Date.now() - hit.at < PROBE_TTL_MS) return hit.info;
-    const info = probe(adapter, this.policy);
+    const info = probe(adapter, this.policy).then(async (i) => {
+      if (i.capabilities && this.onCapabilities) await this.onCapabilities(id, i.capabilities).catch(() => undefined);
+      return i;
+    });
     this.cache.set(id, { at: Date.now(), info });
     return info;
+  }
+
+  /** The adapter's static capabilities with the policy applied (no probe). */
+  staticCapabilities(id: string): RuntimeCapabilities {
+    return applyPolicy(this.require(id).capabilities(), this.policy);
   }
 
   /** The runtime's current capabilities: the probed set when available, else its static set. */
   async capabilities(id: string): Promise<RuntimeCapabilities> {
     const info = await this.info(id);
-    return info.capabilities ?? applyPolicy(this.require(id).capabilities(), this.policy);
+    return info.capabilities ?? this.staticCapabilities(id);
   }
 
   async dispose(): Promise<void> {

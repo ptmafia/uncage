@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeAdapter, type FakeStep } from '@uncage/testkit';
 import type { RuntimeAdapter, RuntimeCapabilities } from '@uncage/protocol';
 import { createUncage, type Uncage, type UncageOptions } from './uncage.js';
@@ -169,5 +169,64 @@ describe('session settings', () => {
     await s.startRun({ prompt: 'two' });
     await eventsUntil(s, (e) => isTerminal(e) && e.sequence > (all.at(-1)?.sequence ?? 0));
     expect(adapter.calls[1]?.settings).toEqual({ model: 'opus', effort: 'medium', permissionMode: 'plan' });
+  });
+
+  it('restart with allowBypass on advertises bypass on existing sessions', async () => {
+    const dataDir = join(dir, 'data');
+    const opts = { dataDir, workspace: { allowedRoots: [dir], default: dir } };
+    const u1 = await createUncage({ adapters: [fake()], ...opts });
+    const s = await u1.sessions.create({ runtime: 'fake' });
+    expect((await s.get()).capabilities.permissionModes).not.toContain('bypassPermissions');
+    await u1.close();
+
+    const u2 = await make([fake()], { dataDir, security: { allowBypass: true } });
+    const s2 = await u2.sessions.get(s.id);
+    expect((await s2.get()).capabilities.permissionModes).toContain('bypassPermissions');
+    expect((await u2.sessions.updateSettings(s.id, { permissionMode: 'bypassPermissions' })).settings.permissionMode).toBe(
+      'bypassPermissions',
+    );
+  });
+
+  it('runtimes.list() refresh updates stored session capabilities and emits session.updated', async () => {
+    let models = [{ id: 'm1', label: 'M1' }];
+    const base = fake();
+    const adapter: RuntimeAdapter = {
+      ...base,
+      refreshCapabilities: () => Promise.resolve({ ...base.capabilities(), models }),
+    };
+    const u = await make([adapter]);
+    const s = await u.sessions.create({ runtime: 'fake' });
+    expect((await s.get()).capabilities.models).toEqual([{ id: 'm1', label: 'M1' }]);
+    models = [{ id: 'm2', label: 'M2' }];
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(Date.now() + 31_000); // past the probe cache
+      await u.runtimes.list();
+    } finally {
+      vi.useRealTimers();
+    }
+    expect((await s.get()).capabilities.models).toEqual([{ id: 'm2', label: 'M2' }]);
+    const events = await eventsUntil(s, (e) => e.type === 'session.updated');
+    const last = events.at(-1);
+    expect(last?.type === 'session.updated' && last.payload.session.capabilities.models).toEqual([{ id: 'm2', label: 'M2' }]);
+  });
+
+  it('startRun drops a model/effort the runtime no longer offers and warns setting_reset', async () => {
+    const dataDir = join(dir, 'data');
+    const opts = { dataDir, workspace: { allowedRoots: [dir], default: dir } };
+    const u1 = await createUncage({ adapters: [fake()], ...opts });
+    const s = await u1.sessions.create({ runtime: 'fake' });
+    await u1.sessions.updateSettings(s.id, { model: 'opus', effort: 'high', permissionMode: 'plan' });
+    await u1.close();
+
+    const adapter = fake([{ text: 'ok' }], { ...RICH, models: [{ id: 'sonnet', label: 'Sonnet' }], efforts: ['low'] });
+    const u2 = await make([adapter], { dataDir });
+    const s2 = await u2.sessions.get(s.id);
+    await s2.startRun({ prompt: 'p' });
+    const events = await eventsUntil(s2, isTerminal);
+    expect(adapter.calls[0]?.settings).toEqual({ permissionMode: 'plan' });
+    const warning = events.find((e) => e.type === 'system.warning');
+    expect(warning?.type === 'system.warning' && warning.payload.code).toBe('setting_reset');
+    expect((await s2.get()).settings).toEqual({ permissionMode: 'plan' });
   });
 });

@@ -114,6 +114,9 @@ const buildSet = (patch: object, nullable: readonly string[], skip: readonly str
   return out;
 };
 
+/** Rolls back a partial `markAttachmentsReferenced`. */
+class PartialMark extends Error {}
+
 const notFound = (what: string, id: string) =>
   new UncageError('not_found', { message: `${what} ${id} not found.` });
 
@@ -409,12 +412,24 @@ export async function openPgliteStore(opts: { dataDir: string | 'memory://' }): 
     },
     async markAttachmentsReferenced(ids, runId) {
       if (ids.length === 0) return 0;
-      const rows = await db
-        .update(attachments)
-        .set({ referencedByRun: runId })
-        .where(and(inArray(attachments.id, ids), isNull(attachments.referencedByRun)))
-        .returning({ id: attachments.id });
-      return rows.length;
+      const unique = new Set(ids).size;
+      try {
+        return await db.transaction(async (tx) => {
+          const rows = await tx
+            .update(attachments)
+            .set({ referencedByRun: runId })
+            .where(and(inArray(attachments.id, ids), isNull(attachments.referencedByRun)))
+            .returning({ id: attachments.id });
+          if (rows.length !== unique || unique !== ids.length) throw new PartialMark();
+          return rows.length;
+        });
+      } catch (e) {
+        if (e instanceof PartialMark) return 0;
+        throw e;
+      }
+    },
+    async releaseAttachments(runId) {
+      await db.update(attachments).set({ referencedByRun: null }).where(eq(attachments.referencedByRun, runId));
     },
     async deleteOrphanAttachments(olderThan) {
       const rows = await db

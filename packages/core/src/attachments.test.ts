@@ -1,4 +1,16 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
@@ -6,7 +18,7 @@ import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createFakeAdapter, type FakeStep } from '@uncage/testkit';
 import { ATTACHMENT_LIMITS, type RuntimeAdapter, type RuntimeCapabilities } from '@uncage/protocol';
-import { publicAttachment, sanitizeFileName } from './attachments.js';
+import { displayFileName, publicAttachment, sanitizeFileName } from './attachments.js';
 import { openPgliteStore } from './store/pglite-store.js';
 import type { Store } from './store/store.js';
 import { createUncage, type Uncage, type UncageOptions } from './uncage.js';
@@ -27,15 +39,42 @@ describe('sanitizeFileName', () => {
     ['..', 'file'],
     ['.', 'file'],
     ['', 'file'],
-    ['héllo wörld!!.txt', 'h_llo w_rld_.txt'],
+    ['héllo wörld!!.txt', 'héllo wörld_.txt'],
+    ['设计稿.png', '设计稿.png'],
+    ['e\u0301te\u0301.md', 'été.md'],
+    ['<script>.md', '_script_.md'],
   ])('%j → %j', (input, out) => {
     expect(sanitizeFileName(input)).toBe(out);
   });
 
-  it('caps length at 120 and keeps the extension', () => {
+  it('caps length at 120 UTF-8 bytes and keeps the extension', () => {
     const s = sanitizeFileName(`${'a'.repeat(300)}.md`);
     expect(s.length).toBe(120);
     expect(s.endsWith('.md')).toBe(true);
+    const cjk = sanitizeFileName(`${'设'.repeat(300)}.png`);
+    expect(Buffer.byteLength(cjk, 'utf8')).toBeLessThanOrEqual(120);
+    expect(cjk).toBe(`${'设'.repeat(38)}.png`);
+  });
+});
+
+describe('displayFileName', () => {
+  it.each([
+    ['设计稿.png', '设计稿.png'],
+    ['a\0b.txt', 'ab.txt'],
+    ['x/y.md', 'y.md'],
+    ['../../etc/passwd', 'passwd'],
+    ['bell\u0007.md', 'bell.md'],
+    ['e\u0301.md', 'é.md'],
+    ['..', 'file'],
+    ['', 'file'],
+  ])('%j → %j', (input, out) => {
+    expect(displayFileName(input)).toBe(out);
+  });
+
+  it('caps at 200 characters and keeps the extension', () => {
+    const d = displayFileName(`${'设'.repeat(300)}.png`);
+    expect([...d]).toHaveLength(200);
+    expect(d.endsWith('.png')).toBe(true);
   });
 });
 
@@ -78,7 +117,7 @@ describe('attachments', () => {
       expect(absPath.slice(attDir(s.id).length + 1)).toBe(`${a.id}-${sanitizeFileName(name)}`);
       expect(realpathSync(absPath).startsWith(attDir(s.id) + sep)).toBe(true);
       expect(readFileSync(absPath, 'utf8')).toBe(`content of ${name}`);
-      expect(a.name).toBe(sanitizeFileName(name));
+      expect(a.name).toBe(displayFileName(name));
       expect(a.sha256).toBe(createHash('sha256').update(`content of ${name}`).digest('hex'));
       expect(a.size).toBe(bytes(`content of ${name}`).length);
       expect(a.kind).toBe('file');
@@ -160,6 +199,91 @@ describe('attachments', () => {
     await expect(u.attachments.get('att_nope')).rejects.toMatchObject({ code: 'not_found' });
   });
 
+  it('keeps the original display name; on-disk name is readable', async () => {
+    const u = await make([fake()]);
+    const s = await u.sessions.create({ runtime: 'fake' });
+    const a = await u.attachments.add(s.id, { name: '设计稿.png', mime: 'image/png', body: bytes('png') });
+    expect(a.name).toBe('设计稿.png');
+    expect((await u.attachments.get(a.id)).absPath).toBe(join(attDir(s.id), `${a.id}-设计稿.png`));
+    const long = await u.attachments.add(s.id, { name: `${'设'.repeat(300)}.md`, mime: 'text/plain', body: bytes('x') });
+    const onDisk = (await u.attachments.get(long.id)).absPath.slice(attDir(s.id).length + 1 + long.id.length + 1);
+    expect(Buffer.byteLength(onDisk, 'utf8')).toBeLessThanOrEqual(120);
+    expect([...long.name]).toHaveLength(200);
+  });
+
+  it('refuses a symlinked .uncage and creates nothing outside the workspace', async () => {
+    const outside = mkdtempSync(join(tmpdir(), 'uncage-outside-'));
+    try {
+      symlinkSync(outside, join(ws, '.uncage'));
+      const u = await make([fake()]);
+      const s = await u.sessions.create({ runtime: 'fake' });
+      await expect(u.attachments.add(s.id, { name: 'a.md', mime: 'text/plain', body: bytes('x') })).rejects.toMatchObject({
+        code: 'invalid_request',
+      });
+      expect(readdirSync(outside)).toEqual([]);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a symlinked attachments dir (even one pointing inside the workspace)', async () => {
+    mkdirSync(join(ws, 'src'));
+    mkdirSync(join(ws, '.uncage'));
+    symlinkSync(join(ws, 'src'), join(ws, '.uncage', 'attachments'));
+    const u = await make([fake()]);
+    const s = await u.sessions.create({ runtime: 'fake' });
+    await expect(u.attachments.add(s.id, { name: 'a.md', mime: 'text/plain', body: bytes('x') })).rejects.toMatchObject({
+      code: 'invalid_request',
+    });
+    expect(readdirSync(join(ws, 'src'))).toEqual([]);
+  });
+
+  it('read-only session → session_read_only', async () => {
+    const lost = createFakeAdapter({ script: [], capabilities: ATT_CAPS });
+    lost.run = async function* () {
+      yield { type: 'native.session_lost', message: 'gone' };
+    };
+    const u = await make([lost]);
+    const s = await u.sessions.create({ runtime: 'fake' });
+    await s.startRun({ prompt: 'p' });
+    await eventsUntil(s, isTerminal);
+    await expect(u.attachments.add(s.id, { name: 'a.md', mime: 'text/plain', body: bytes('x') })).rejects.toMatchObject({
+      code: 'session_read_only',
+    });
+  });
+
+  it('startRun with more than maxPerMessage attachments → invalid_request', async () => {
+    const u = await make([fake()]);
+    const s = await u.sessions.create({ runtime: 'fake' });
+    const ids: string[] = [];
+    for (let i = 0; i <= ATTACHMENT_LIMITS.maxPerMessage; i++) {
+      ids.push((await u.attachments.add(s.id, { name: `f${i}.md`, mime: 'text/plain', body: bytes('x') })).id);
+    }
+    await expect(s.startRun({ prompt: 'p', attachmentIds: ids })).rejects.toMatchObject({ code: 'invalid_request' });
+    expect((await s.snapshot()).runs).toEqual([]);
+    expect((await s.startRun({ prompt: 'p', attachmentIds: ids.slice(1) })).attachments).toHaveLength(10);
+  });
+
+  it('attachment pruned between check and claim → invalid_request and no run', async () => {
+    const base = await openPgliteStore({ dataDir: 'memory://' });
+    const store: Store = {
+      ...base,
+      async listAttachments(ids) {
+        const rows = await base.listAttachments(ids);
+        await base.deleteOrphanAttachments(new Date(Date.now() + 60_000)); // the prune wins the race
+        return rows;
+      },
+    };
+    const adapter = fake();
+    const u = await make([adapter], { store });
+    const s = await u.sessions.create({ runtime: 'fake' });
+    const a = await u.attachments.add(s.id, { name: 'a.md', mime: 'text/plain', body: bytes('a') });
+    await expect(s.startRun({ prompt: 'p', attachmentIds: [a.id] })).rejects.toMatchObject({ code: 'invalid_request' });
+    expect((await s.snapshot()).runs).toEqual([]);
+    expect((await s.get()).status).toBe('ready');
+    expect(adapter.calls).toHaveLength(0);
+  });
+
   it('startRun with foreign or unknown attachment id → invalid_request and no run', async () => {
     const adapter = fake();
     const u = await make([adapter]);
@@ -238,6 +362,21 @@ describe('attachments', () => {
     expect((await u.attachments.get(fresh.id)).attachment.id).toBe(fresh.id);
     expect((await u.attachments.get(used.id)).attachment.id).toBe(used.id);
   });
+
+  it('pruneOrphans sweeps abandoned .tmp-* uploads older than the cutoff', async () => {
+    const u = await make([fake()]);
+    const s = await u.sessions.create({ runtime: 'fake' });
+    await u.attachments.add(s.id, { name: 'keep.md', mime: 'text/plain', body: bytes('k') });
+    const old = join(attDir(s.id), '.tmp-att_old');
+    const fresh = join(attDir(s.id), '.tmp-att_fresh');
+    writeFileSync(old, 'x');
+    writeFileSync(fresh, 'x');
+    const twoDaysAgo = new Date(Date.now() - 48 * 3600_000);
+    utimesSync(old, twoDaysAgo, twoDaysAgo);
+    await u.attachments.pruneOrphans(new Date(Date.now() - 24 * 3600_000));
+    expect(existsSync(old)).toBe(false);
+    expect(existsSync(fresh)).toBe(true);
+  });
 });
 
 describe('store attachments', () => {
@@ -253,10 +392,16 @@ describe('store attachments', () => {
     const base = { sessionId: 's1', mime: 'text/plain', size: 1, kind: 'file' as const, sha256: 'x' };
     await store.createAttachment({ ...base, id: 'a1', name: 'a', absPath: '/a', createdAt: '2026-01-01T00:00:00.000Z' });
     await store.createAttachment({ ...base, id: 'a2', name: 'b', absPath: '/b', createdAt: '2026-01-01T00:00:00.000Z' });
+    // All or nothing: one unknown id marks nothing.
+    expect(await store.markAttachmentsReferenced(['a1', 'missing'], 'run_0')).toBe(0);
+    expect((await store.getAttachment('a1'))?.referencedByRun).toBeUndefined();
     expect(await store.markAttachmentsReferenced(['a1'], 'run_1')).toBe(1);
     expect(await store.markAttachmentsReferenced(['a1'], 'run_2')).toBe(0);
     expect((await store.getAttachment('a1'))?.referencedByRun).toBe('run_1');
     expect((await store.listAttachments(['a1', 'a2', 'zz'])).map((a) => a.id).sort()).toEqual(['a1', 'a2']);
+    expect(await store.markAttachmentsReferenced(['a2'], 'run_9')).toBe(1);
+    await store.releaseAttachments('run_9');
+    expect((await store.getAttachment('a2'))?.referencedByRun).toBeUndefined();
     const rows = await store.deleteOrphanAttachments(new Date('2026-06-01T00:00:00.000Z'));
     expect(rows.map((r) => r.absPath)).toEqual(['/b']);
     expect(await store.getAttachment('a2')).toBeNull();
