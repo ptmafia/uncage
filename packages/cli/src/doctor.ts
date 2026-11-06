@@ -200,6 +200,6 @@ export async function exportEvents(o: ExportEventsOptions): Promise<unknown[]> {
     if (page.length < PAGE) break;
     after = page[page.length - 1]?.sequence ?? after;
   }
-  return o.includeContent ? all : all.map((e) => ({ ...e, payload: redact(e.payload) }));
+  return o.includeContent ? all : all.map((e) => redact(e));
 }
 
