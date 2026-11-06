@@ -106,6 +106,7 @@ Settings are stored per session. Before the first prompt they belong to the draf
 - At most 10 MB per file and 10 files per message. Claude Code caps images at 5 MB (the Anthropic API's limit).
 - Claude gets images inline. Other files are passed by path, and Claude reads them with its tools.
 - Uploads are stored in the session's workspace at `<workspace>/.uncage/attachments/<sessionId>/<attachmentId>-<name>`. Uploads that were never sent are deleted after 24 hours.
+- `useAttachmentUrl` / `client.attachmentUrl` return a URL under your same-origin proxy (`createUncageHandler`). A plain `<img src>` sends no `Authorization` header, so it only loads because the proxy adds the daemon token on the server; pointed straight at the daemon, it gets 401.
 - Uncage writes `.uncage/.gitignore` (`*`) when it creates `.uncage/`, so attachments are never committed. Your own `.gitignore` is never touched. `uncage doctor` warns (non-fatal) when a workspace is a git repo and `.uncage/` is still not ignored.
 
 **Voice privacy.** The browser does the speech recognition, not Uncage. In Chrome the audio goes to Google's speech service. Uncage only ever sees the resulting text in the prompt box. The first use shows a note saying so.
