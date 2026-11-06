@@ -35,6 +35,16 @@ describe('classifyAttachment', () => {
   it('classifies by extension and mime', () => {
     expect(classifyAttachment('a.PNG', 'image/png')).toBe('image');
     expect(classifyAttachment('a.png', 'text/plain')).toBeNull();
+    expect(classifyAttachment('a.png', 'image/svg+xml')).toBeNull();
+    expect(classifyAttachment('a.png', 'image/jpeg')).toBeNull();
+    expect(classifyAttachment('a.png', 'image/PNG')).toBe('image');
+    expect(classifyAttachment('a.png', 'Image/Png; charset=binary')).toBe('image');
+    expect(classifyAttachment('a.jpg', 'image/jpeg')).toBe('image');
+    expect(classifyAttachment('a.JPEG', 'image/jpeg')).toBe('image');
+    expect(classifyAttachment('a.jpg', 'image/jpg')).toBeNull();
+    expect(classifyAttachment('a.gif', 'image/gif')).toBe('image');
+    expect(classifyAttachment('a.webp', 'image/webp')).toBe('image');
+    expect(classifyAttachment('a.txt', 'image/png')).toBeNull();
     expect(classifyAttachment('a.ts', 'video/mp2t')).toBe('file');
     expect(classifyAttachment('a.exe', 'application/octet-stream')).toBeNull();
     expect(classifyAttachment('noext', 'text/plain')).toBeNull();

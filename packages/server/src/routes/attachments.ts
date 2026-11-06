@@ -55,14 +55,22 @@ function downloadHeaders(a: Attachment, size: number): Record<string, string> {
 
 /** Upload bytes discarded after a rejection before the connection is dropped instead. */
 const MAX_DISCARD_BYTES = 8 * ATTACHMENT_LIMITS.maxBytes;
+/** How long a rejected upload may keep sending before the connection is dropped. */
+export const DISCARD_TIMEOUT_MS = 30_000;
 
 /**
  * After a rejected upload the client may still be sending. Reading and dropping the rest (rather
  * than closing the socket) lets it receive the error reply instead of a connection reset; a client
- * that keeps going past `MAX_DISCARD_BYTES` is cut off.
+ * that keeps going past `MAX_DISCARD_BYTES` or `timeoutMs` is cut off (destroying the request
+ * destroys its socket).
  */
-function discardRest(raw: Readable): void {
+export function discardRest(raw: Readable, timeoutMs = DISCARD_TIMEOUT_MS): void {
   let discarded = 0;
+  const timer = setTimeout(() => raw.destroy(), timeoutMs);
+  timer.unref();
+  const stop = () => clearTimeout(timer);
+  raw.once('end', stop);
+  raw.once('close', stop);
   raw.on('data', (chunk: Buffer) => {
     discarded += chunk.byteLength;
     if (discarded > MAX_DISCARD_BYTES) raw.destroy();

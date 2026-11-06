@@ -586,13 +586,13 @@ describe('composer endpoints', () => {
     expect(file.headers['x-content-type-options']).toBe('nosniff');
   });
 
-  it('GET attachment serves a non-raster image type as an octet-stream download', async () => {
+  it('upload of an image whose mime differs from its extension (svg on .png) → 415', async () => {
     const s = await make();
     const session = await createSession(s);
-    const a = (await upload(s, session.id, 'x.png', 'image/svg+xml', Buffer.from('<svg/>'))).json<Attachment>();
-    const res = await s.app.inject({ url: `/v1/attachments/${a.id}`, headers: auth });
-    expect(res.headers['content-type']).toBe('application/octet-stream');
-    expect(res.headers['content-disposition']).toMatch(/^attachment;/);
+    const res = await upload(s, session.id, 'x.png', 'image/svg+xml', Buffer.from('<svg/>'));
+    expect(res.statusCode).toBe(415);
+    expect(res.json()).toMatchObject({ error: { code: 'attachment_type_unsupported' } });
+    expect(filesIn(attachmentDir(session.id))).toEqual([]);
   });
 
   it('GET attachment requires the token; unknown or deleted → 404', async () => {
