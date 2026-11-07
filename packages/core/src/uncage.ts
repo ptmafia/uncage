@@ -45,8 +45,8 @@ export interface UncageOptions {
   logger?: Logger;
   /**
    * Sees every committed event of every session (e.g. to replicate them elsewhere), in sequence
-   * order per session, synchronously after commit. Keep it cheap and non-blocking; a throwing
-   * listener is logged and never affects the run.
+   * order per session, synchronously after commit. It is never awaited: keep it cheap and
+   * non-blocking. A throw, or a rejection of a returned promise, is logged and never affects the run.
    */
   onEvent?(e: UncageEvent): void;
 }
@@ -79,7 +79,8 @@ export interface Uncage {
   };
   events: {
     /**
-     * At most `limit` (default 500, max 1000) committed events of the session with sequence > `after`,
+     * At most `limit` (default 500, max 1000) committed events of the session with sequence > `after`
+   * (clamped to an integer >= 0),
      * in sequence order: a page for catch-up / replication. `not_found` for an unknown session;
      * `event_replay_unavailable` when retention already pruned part of the range.
      */

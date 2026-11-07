@@ -79,6 +79,13 @@ describe('tool and skill specs', () => {
   it('manifest parses', () => {
     expect(SessionManifestSchema.parse({ tools: [tool('a')], skills: [] }).tools).toHaveLength(1);
   });
+  it('manifest caps tools and skills at 64 each', () => {
+    const tools = (n: number) => Array.from({ length: n }, (_, i) => tool(`t${i}`));
+    const skills = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `s${i}`, description: 'd', markdown: 'm' }));
+    expect(SessionManifestSchema.safeParse({ tools: tools(64), skills: skills(64) }).success).toBe(true);
+    expect(SessionManifestSchema.safeParse({ tools: tools(65), skills: [] }).success).toBe(false);
+    expect(SessionManifestSchema.safeParse({ tools: [], skills: skills(65) }).success).toBe(false);
+  });
 });
 
 describe('new error codes', () => {

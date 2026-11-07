@@ -77,9 +77,13 @@ export const SkillSpecSchema = z.object({
 });
 export type SkillSpec = z.infer<typeof SkillSpecSchema>;
 
+/** Most tools / skills one session manifest may carry. */
+export const MAX_MANIFEST_TOOLS = 64;
+export const MAX_MANIFEST_SKILLS = 64;
+
 export const SessionManifestSchema = z.object({
-  tools: z.array(ToolSpecSchema),
-  skills: z.array(SkillSpecSchema),
+  tools: z.array(ToolSpecSchema).max(MAX_MANIFEST_TOOLS),
+  skills: z.array(SkillSpecSchema).max(MAX_MANIFEST_SKILLS),
 });
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 

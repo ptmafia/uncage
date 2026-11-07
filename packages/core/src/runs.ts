@@ -33,8 +33,16 @@ import type { SecurityPolicy } from './settings.js';
 import type { Store } from './store/store.js';
 import { resolveWorkspace } from './workspace.js';
 
-/** Routes a site tool call made during a run (connected mode: to the hub, then the site). */
-export type CallTool = (tool: string, args: unknown, ctx: { sessionId: string; runId: string }) => Promise<ToolCallResult>;
+/**
+ * Routes a site tool call made during a run (connected mode: to the hub, then the site). `signal`
+ * aborts when the run is cancelled or shut down; the pending call should then be abandoned (core
+ * has already rejected it to the adapter).
+ */
+export type CallTool = (
+  tool: string,
+  args: unknown,
+  ctx: { sessionId: string; runId: string; signal: AbortSignal },
+) => Promise<ToolCallResult>;
 
 /** Per-run extras beyond the HTTP body. */
 export interface StartRunOptions {
@@ -328,15 +336,43 @@ export class RunManager {
     return run;
   }
 
-  /** Wraps each tool so its calls reach `callTool` with this run's ids; refused once the run has ended. */
+  /**
+   * Wraps each tool so its calls reach `callTool` with this run's ids and abort signal. A call is
+   * refused once the run has ended, and a pending one rejects as soon as the run aborts (cancel or
+   * shutdown), so neither the adapter nor shutdown waits on the site.
+   */
   private bindTools(entry: ActiveRun, tools: SessionManifest['tools'], callTool: CallTool): RunTool[] {
+    const ended = (tool: string) =>
+      new UncageError('tool_failed', {
+        message: 'The run has ended; the tool call was abandoned.',
+        details: { tool, reason: 'run_ended' },
+      });
     return tools.map((spec) => ({
       ...spec,
       call: (args: unknown) => {
-        if (entry.finished || entry.abort.signal.aborted) {
-          return Promise.reject(new UncageError('invalid_request', { message: 'The run has ended; tool calls are no longer accepted.' }));
-        }
-        return callTool(spec.name, args, { sessionId: entry.sessionId, runId: entry.run.id });
+        const { signal } = entry.abort;
+        if (entry.finished || signal.aborted) return Promise.reject(ended(spec.name));
+        return new Promise<ToolCallResult>((resolve, reject) => {
+          const onAbort = (): void => reject(ended(spec.name));
+          signal.addEventListener('abort', onAbort, { once: true });
+          const settle = () => signal.removeEventListener('abort', onAbort);
+          let pending: Promise<ToolCallResult>;
+          try {
+            pending = callTool(spec.name, args, { sessionId: entry.sessionId, runId: entry.run.id, signal });
+          } catch (e) {
+            pending = Promise.reject(e instanceof Error ? e : new Error(String(e)));
+          }
+          pending.then(
+            (r) => {
+              settle();
+              resolve(r);
+            },
+            (e: unknown) => {
+              settle();
+              reject(e instanceof Error ? e : new Error(String(e)));
+            },
+          );
+        });
       },
     }));
   }

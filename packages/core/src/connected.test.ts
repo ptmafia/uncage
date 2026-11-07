@@ -98,7 +98,11 @@ describe('connected-mode core hooks', () => {
     const input = adapter.calls[0]!;
     expect(input.skills).toEqual(manifest.skills);
     expect(input.tools?.map((t) => ({ ...t, call: undefined }))).toEqual(manifest.tools.map((t) => ({ ...t, call: undefined })));
-    expect(callTool).toHaveBeenCalledWith('lookup_order', { id: 42 }, { sessionId: s.id, runId: run.id });
+    expect(callTool).toHaveBeenCalledWith('lookup_order', { id: 42 }, {
+      sessionId: s.id,
+      runId: run.id,
+      signal: expect.any(AbortSignal) as AbortSignal,
+    });
     const text = events.filter((e) => e.type === 'message.completed').map((e) => e.payload.text);
     expect(text).toEqual(['order 42: shipped']);
     expect(events.at(-1)?.type).toBe('run.completed');
@@ -136,5 +140,81 @@ describe('connected-mode core hooks', () => {
     await expect(
       s.startRun({ prompt: 'hi', manifest: bad, callTool: () => Promise.resolve({ content: [] }) }),
     ).rejects.toMatchObject({ code: 'invalid_request' });
+  });
+
+  describe('in-flight tool calls', () => {
+    /** A run that calls `lookup_order` and then reports what came back. */
+    async function pendingCall(u: Uncage) {
+      const s = await u.sessions.create({ runtime: 'fake' });
+      let ctxSeen: Parameters<CallTool>[2] | undefined;
+      let reached!: () => void;
+      const called = new Promise<void>((r) => (reached = r));
+      // Never settles on its own: only the run's abort can release it.
+      const callTool = vi.fn<CallTool>((_t, _a, ctx) => {
+        ctxSeen = ctx;
+        reached();
+        return new Promise<ToolCallResult>(() => undefined);
+      });
+      const run = await s.startRun({ prompt: 'go', manifest, callTool });
+      await called;
+      return { s, run, ctx: () => ctxSeen! };
+    }
+
+    it('a pending call rejects promptly on cancel and its ctx signal aborts', async () => {
+      const u = await make([fake([{ callTool: { name: 'lookup_order', args: {} } }, { text: 'after' }])]);
+      const { s, run, ctx } = await pendingCall(u);
+      expect(ctx().signal.aborted).toBe(false);
+      const t0 = Date.now();
+      expect(await u.runs.cancel(run.id)).toMatchObject({ state: 'cancelled' });
+      expect(Date.now() - t0).toBeLessThan(2000);
+      expect(ctx().signal.aborted).toBe(true);
+      const events = await eventsUntil(s, isTerminal);
+      expect(events.at(-1)?.type).toBe('run.cancelled');
+    });
+
+    it('closeAll does not wait on a pending call', async () => {
+      const u = await createUncage({
+        adapters: [fake([{ callTool: { name: 'lookup_order', args: {} } }])],
+        dataDir: 'memory://',
+      });
+      const { ctx } = await pendingCall(u);
+      const t0 = Date.now();
+      await u.close();
+      expect(Date.now() - t0).toBeLessThan(2000);
+      expect(ctx().signal.aborted).toBe(true);
+    });
+
+    it('a call after the run ended is rejected without reaching callTool', async () => {
+      const adapter = fake([{ text: 'done' }]);
+      const u = await make([adapter]);
+      const s = await u.sessions.create({ runtime: 'fake' });
+      const callTool = vi.fn<CallTool>(() => Promise.resolve({ content: [] }));
+      await s.startRun({ prompt: 'go', manifest, callTool });
+      await eventsUntil(s, isTerminal);
+      await expect(adapter.calls[0]!.tools![0]!.call({})).rejects.toMatchObject({ code: 'tool_failed' });
+      expect(callTool).not.toHaveBeenCalled();
+    });
+  });
+
+  it('a listener returning a rejected promise is logged, not unhandled', async () => {
+    const error = vi.fn();
+    const logger = { error, warn: vi.fn(), info: vi.fn(), debug: vi.fn() } as unknown as UncageOptions['logger'];
+    const onEvent = async (): Promise<void> => Promise.reject(new Error('async boom'));
+    const u = await make([fake([{ text: 'ok' }])], { onEvent, logger });
+    const s = await u.sessions.create({ runtime: 'fake' });
+    await s.startRun({ prompt: 'go' });
+    await eventsUntil(s, isTerminal);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(error).toHaveBeenCalled();
+  });
+
+  it('readAfter clamps after to an integer >= 0', async () => {
+    const u = await make([fake([{ text: 'ok' }])]);
+    const s = await u.sessions.create({ runtime: 'fake' });
+    await s.startRun({ prompt: 'go' });
+    const all = await eventsUntil(s, isTerminal);
+    expect(await u.events.readAfter(s.id, Number.NaN)).toEqual(all);
+    expect(await u.events.readAfter(s.id, -5)).toEqual(all);
+    expect((await u.events.readAfter(s.id, 1.7)).map((e) => e.sequence)[0]).toBe(2);
   });
 });
