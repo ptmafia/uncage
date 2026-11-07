@@ -87,6 +87,37 @@ export interface AttachmentRecord {
   data: Uint8Array;
 }
 
+/** Outcome of a site tool call: `running` until it finishes. */
+export type ToolCallStatus = 'running' | 'ok' | 'error' | 'invalid' | 'timeout' | 'cancelled';
+
+/**
+ * Audit row for one site tool call executed by the hub (what the browser sees live are the
+ * runtime's own `tool.*` events; this is the website-side record).
+ */
+export interface ToolCallRecord {
+  /** Hub-assigned id (`tcl_…`). */
+  id: string;
+  /** The machine's `tool_call` id. */
+  callId: string;
+  sessionId: string;
+  runId: string;
+  /** The session owner the handler ran as. */
+  userId: string;
+  machineId: string;
+  tool: string;
+  /** Arguments as sent by the machine (`null` when too large or not storable). */
+  args: unknown;
+  status: ToolCallStatus;
+  /** `ok` with `isError` results and failures carry an error code / message. */
+  errorCode?: string;
+  errorMessage?: string;
+  startedAt: string;
+  finishedAt?: string;
+  durationMs?: number;
+}
+
+export type ToolCallFinish = Required<Pick<ToolCallRecord, 'status' | 'finishedAt' | 'durationMs'>> & Pick<ToolCallRecord, 'errorCode' | 'errorMessage'>;
+
 /**
  * Hub persistence. `pgliteHubStore` is the single-node default; multi-node deployments need a
  * store shared by every node. Every method is safe to call concurrently.
@@ -138,6 +169,12 @@ export interface HubStore {
 
   putAttachment(r: AttachmentRecord): Promise<void>;
   getAttachment(id: string): Promise<AttachmentRecord | null>;
+
+  /** Tool-call audit: a row per call, inserted as `running`. */
+  insertToolCall(r: ToolCallRecord): Promise<void>;
+  finishToolCall(id: string, r: ToolCallFinish): Promise<void>;
+  /** A session's tool calls in start order, at most `limit` (default 1000). */
+  listToolCalls(sessionId: string, limit?: number): Promise<ToolCallRecord[]>;
 
   close(): Promise<void>;
 }

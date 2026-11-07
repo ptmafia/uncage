@@ -24,7 +24,8 @@ export interface TestHub {
 }
 
 export async function startTestHub(o: Partial<HubOptions> & Record<string, unknown> = {}): Promise<TestHub> {
-  const store = await pgliteHubStore({ dataDir: 'memory://' });
+  // A store passed in is shared (e.g. by several hub nodes) and left open on close().
+  const store = o.store ?? (await pgliteHubStore({ dataDir: 'memory://' }));
   const server: Server = createServer();
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -63,7 +64,7 @@ export async function startTestHub(o: Partial<HubOptions> & Record<string, unkno
       await hub.close();
       server.closeAllConnections();
       await new Promise<void>((r) => server.close(() => r()));
-      await store.close();
+      if (!o.store) await store.close();
     },
   };
 }

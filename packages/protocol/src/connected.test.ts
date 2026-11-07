@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CONNECTED_PROTOCOL, ERROR_CATALOG, MAX_FRAME_BYTES, ProtocolFrameError, SessionManifestSchema,
   SkillSpecSchema, ToolSpecSchema, RelativePathSchema, DeviceCodeResponseSchema, parseAgentFrame, parseHubFrame,
-  HubCommandArgsSchemas, HubCommandOpSchema, DeviceCodeRequestSchema, DeviceTokenResponseSchema, HubCommandResultSchemas, MAX_READ_EVENTS,
+  HubCommandArgsSchemas, HubCommandOpSchema, DeviceCodeRequestSchema, DeviceTokenResponseSchema, HubCommandResultSchemas, MAX_READ_EVENTS, FILE_CHUNK_BYTES, MAX_ATTACHMENT_TRANSFER_BYTES,
 } from './index.js';
 
 const err = { code: 'tool_failed', message: 'x', retryable: true };
@@ -14,6 +14,7 @@ const agentFrames = [
   { t: 'tool_call', id: '1', sessionId: 's', runId: 'r', tool: 'search_x', args: {} },
   { t: 'file_chunk', id: '1', path: 'a/b.txt', seq: 0, data: 'aGk=', last: true },
   { t: 'file_done', id: '1', files: [{ path: 'a', size: 2 }] },
+  { t: 'file_done', id: '1', files: [], skipped: [{ path: 'a/link.bin', reason: 'more than one hard link' }] },
   { t: 'pong', at: 1 },
 ];
 const hubFrames = [
@@ -24,6 +25,10 @@ const hubFrames = [
   { t: 'tool_result', id: '1', ok: true, result: { content: [{ type: 'text', text: 'hi' }, { type: 'json', json: [1] }] } },
   { t: 'tool_result', id: '1', ok: false, error: err },
   { t: 'file_pull', id: '1', sessionId: 's', path: 'a', maxBytes: 10 },
+  { t: 'attachment_begin', id: 'u1', sessionId: 's', name: 'big.pdf', mime: 'application/pdf', size: 8_000_000 },
+  { t: 'attachment_chunk', id: 'u1', seq: 0, data: 'aGk=' },
+  { t: 'attachment_end', id: 'u1' },
+  { t: 'attachment_abort', id: 'u1' },
   { t: 'ping', at: 1 },
 ];
 
@@ -124,6 +129,21 @@ describe('hardening', () => {
     expect(() => parseHubFrame(JSON.stringify({ ...pull, maxBytes: 0 }))).toThrow();
     expect(() => parseHubFrame(JSON.stringify({ ...pull, maxBytes: 50 * 1024 * 1024 + 1 }))).toThrow();
     expect(() => parseAgentFrame(JSON.stringify({ t: 'file_done', id: '1', files: [{ path: 'a', size: 10 * 1024 * 1024 + 1 }] }))).toThrow();
+    expect(() => parseAgentFrame(JSON.stringify({ t: 'file_done', id: '1', files: [], skipped: [{ path: '../x', reason: 'r' }] }))).toThrow();
+  });
+  it('attachment transfer frame limits', () => {
+    expect(FILE_CHUNK_BYTES).toBe(256 * 1024);
+    expect(MAX_ATTACHMENT_TRANSFER_BYTES).toBe(10 * 1024 * 1024);
+    const begin = { t: 'attachment_begin', id: 'u', sessionId: 's', name: 'a.png', mime: 'image/png', size: 1 };
+    expect(() => parseHubFrame(JSON.stringify({ ...begin, size: 10 * 1024 * 1024 + 1 }))).toThrow(ProtocolFrameError);
+    expect(() => parseHubFrame(JSON.stringify({ ...begin, size: -1 }))).toThrow(ProtocolFrameError);
+    expect(() => parseHubFrame(JSON.stringify({ ...begin, name: '' }))).toThrow(ProtocolFrameError);
+    const chunk = { t: 'attachment_chunk', id: 'u', seq: 0, data: 'aGk=' };
+    const bad = (o: object) => expect(() => parseHubFrame(JSON.stringify({ ...chunk, ...o }))).toThrow(ProtocolFrameError);
+    bad({ data: '!!!' }); bad({ data: 'A'.repeat(349_532) }); bad({ seq: 100_001 }); bad({ seq: -1 });
+    // a full 256 KiB chunk fits one frame
+    const full = { ...chunk, data: Buffer.alloc(FILE_CHUNK_BYTES).toString('base64') };
+    expect(parseHubFrame(JSON.stringify(full)).t).toBe('attachment_chunk');
   });
   it('drops forbidden keys at any depth and strips extras', () => {
     const f = parseAgentFrame('{"t":"result","id":"1","ok":true,"data":{"__proto__":{"x":1},"a":{"constructor":1,"prototype":2,"b":3}},"extra":1}');

@@ -61,8 +61,16 @@ export type RelativePath = z.infer<typeof RelativePathSchema>;
 const MAX_TEXT = 256 * 1024;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_PULL_BYTES = 50 * 1024 * 1024;
+/** Raw bytes per `file_chunk` / `attachment_chunk` (256 KiB). */
+export const FILE_CHUNK_BYTES = 256 * 1024;
 /** base64 chars for a 256 KiB chunk. */
 const MAX_CHUNK_B64 = 349_528;
+/** Largest attachment the chunked hub → agent transfer carries (the attachment limit, 10 MiB). */
+export const MAX_ATTACHMENT_TRANSFER_BYTES = MAX_FILE_BYTES;
+const ChunkDataSchema = z
+  .string()
+  .max(MAX_CHUNK_B64)
+  .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/);
 
 export const SkillSpecSchema = z.object({
   name: z.string().regex(/^[a-z][a-z0-9-]{0,47}$/),
@@ -181,7 +189,7 @@ export const AgentFrameSchema = z.discriminatedUnion('t', [
     id: z.string(),
     path: RelativePathSchema,
     seq: z.number().int().min(0).max(100_000),
-    data: z.string().max(MAX_CHUNK_B64).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
+    data: ChunkDataSchema,
     last: z.boolean(),
   }),
   z.object({
@@ -190,6 +198,14 @@ export const AgentFrameSchema = z.discriminatedUnion('t', [
     files: z
       .array(z.object({ path: RelativePathSchema, size: z.number().int().min(0).max(MAX_FILE_BYTES) }))
       .max(10_000),
+    /**
+     * Files a directory pull left out, each with a short reason (e.g. more than one hard link).
+     * Their bytes were never read.
+     */
+    skipped: z
+      .array(z.object({ path: RelativePathSchema, reason: z.string().max(500) }))
+      .max(10_000)
+      .optional(),
   }),
   z.object({ t: z.literal('pong'), at: z.number() }),
 ]);
@@ -216,6 +232,29 @@ export const HubFrameSchema = z.discriminatedUnion('t', [
     path: RelativePathSchema,
     maxBytes: z.number().int().min(1).max(MAX_PULL_BYTES),
   }),
+  /**
+   * Chunked attachment upload (hub → agent) for attachments too large for one `addAttachment`
+   * command: `attachment_begin`, then `attachment_chunk`s (`seq` from 0, 256 KiB raw each), then
+   * `attachment_end`. The agent answers with a `result` frame for `id` (data: the `Attachment`), or
+   * an error `result` at any point (later chunks for that id are ignored). `attachment_abort`
+   * drops a transfer; so does the connection closing.
+   */
+  z.object({
+    t: z.literal('attachment_begin'),
+    id: z.string().min(1).max(128),
+    sessionId: z.string(),
+    name: z.string().min(1).max(1024),
+    mime: z.string().min(1).max(255),
+    size: z.number().int().min(0).max(MAX_ATTACHMENT_TRANSFER_BYTES),
+  }),
+  z.object({
+    t: z.literal('attachment_chunk'),
+    id: z.string().min(1).max(128),
+    seq: z.number().int().min(0).max(100_000),
+    data: ChunkDataSchema,
+  }),
+  z.object({ t: z.literal('attachment_end'), id: z.string().min(1).max(128) }),
+  z.object({ t: z.literal('attachment_abort'), id: z.string().min(1).max(128) }),
   z.object({ t: z.literal('ping'), at: z.number() }),
 ]);
 export type HubFrame = z.infer<typeof HubFrameSchema>;

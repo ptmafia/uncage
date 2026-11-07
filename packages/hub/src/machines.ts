@@ -5,10 +5,12 @@ import { UncageError } from '@uncage/core';
 import {
   CONNECTED_PROTOCOL,
   ErrorBodySchema,
+  FILE_CHUNK_BYTES,
   HubCommandResultSchemas,
   MAX_FRAME_BYTES,
   parseAgentFrame,
   type AgentFrame,
+  type Attachment,
   type ErrorBody,
   type HubCommandArgs,
   type HubCommandOp,
@@ -19,6 +21,7 @@ import {
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import type { ClusterAdapter } from './cluster/cluster.js';
 import { sha256 } from './device.js';
+import { PullAssembler, type PullOutcome } from './files.js';
 import type { HubStore, MachineRecord } from './store/store.js';
 
 export interface HubLogger {
@@ -45,6 +48,8 @@ export const CLOSE = {
 } as const;
 
 const HELLO_TIMEOUT_MS = 10_000;
+/** A pull with no frame from the machine for this long fails. */
+const PULL_IDLE_MS = 30_000;
 /** After sending a close frame to a retired socket, how long before the TCP connection is cut. */
 export const CLOSE_GRACE_MS = 500;
 
@@ -81,7 +86,9 @@ type NodeMsg =
   | { k: 'cmd'; id: string; from: string; machineId: string; op: HubCommandOp; args: unknown }
   | { k: 'res'; id: string; ok: true; data: unknown }
   | { k: 'res'; id: string; ok: false; error: ErrorBody }
-  | { k: 'kick'; machineId: string; reason: 'revoked' | 'replaced'; except?: string };
+  | { k: 'kick'; machineId: string; reason: 'revoked' | 'replaced'; except?: string }
+  /** One frame of a chunked upload, forwarded as-is to the machine (`begin` registers the reply route). */
+  | { k: 'up'; id: string; from: string; machineId: string; frame: HubFrame };
 
 export const nodeChannel = (nodeId: string): string => `uncage:node:${nodeId}`;
 export const sessionChannel = (sessionId: string): string => `uncage:session:${sessionId}`;
@@ -101,6 +108,18 @@ interface Conn {
   dead: boolean;
   /** `welcome` sent; frames before that are ignored. */
   ready: boolean;
+  /** Aborted when the connection is retired (cancels its tool calls and pulls). */
+  abort: AbortController;
+}
+
+interface PullState {
+  conn: Conn;
+  asm: PullAssembler;
+  path: string;
+  resolve(r: PullOutcome): void;
+  reject(e: unknown): void;
+  timer: NodeJS.Timeout;
+  cleanup(): void;
 }
 
 interface Pending {
@@ -123,8 +142,11 @@ export interface MachineHubDeps {
   onConnected(machine: MachineRecord, send: (f: HubFrame) => void): Promise<void>;
   /** An `events` frame from `machine` (each event already checked to carry `sessionId`). */
   onEvents(machine: MachineRecord, sessionId: string, events: UncageEvent[], send: (f: HubFrame) => void): Promise<void>;
-  /** A `tool_call` frame; resolves the `tool_result` frame to send back. */
-  onToolCall(machine: MachineRecord, call: Extract<AgentFrame, { t: 'tool_call' }>): Promise<HubFrame>;
+  /**
+   * A `tool_call` frame; resolves the `tool_result` frame to send back, or `null` to send nothing
+   * (the call was abandoned). `signal` aborts when this connection goes away.
+   */
+  onToolCall(machine: MachineRecord, call: Extract<AgentFrame, { t: 'tool_call' }>, signal: AbortSignal): Promise<HubFrame | null>;
 }
 
 /**
@@ -134,6 +156,7 @@ export interface MachineHubDeps {
 export class MachineHub {
   private readonly conns = new Map<string, Conn>();
   private readonly pending = new Map<string, Pending>();
+  private readonly pulls = new Map<string, PullState>();
   private readonly servers: Array<{ server: Server; listener: (req: IncomingMessage, socket: Duplex, head: Buffer) => void }> = [];
   private readonly wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
   private unsubscribe?: () => void;
@@ -243,6 +266,7 @@ export class MachineHub {
       queue: Promise.resolve(),
       dead: false,
       ready: false,
+      abort: new AbortController(),
     };
   }
 
@@ -334,6 +358,18 @@ export class MachineHub {
       case 'hello':
         return; // duplicate hello: ignore
       case 'result': {
+        const pull = this.pulls.get(frame.id);
+        if (pull && pull.conn === c) {
+          // A pull that failed on the machine (possibly mid-stream): drop what arrived so far.
+          const err = frame.ok
+            ? new UncageError('internal_error', { message: 'The machine answered a file pull with a result.' })
+            : new UncageError(frame.error.code === 'not_found' || frame.error.code === 'invalid_request' ? frame.error.code : 'tool_failed', {
+                message: `Could not pull "${pull.path}": ${frame.error.message}`,
+                ...(frame.error.details !== undefined ? { details: frame.error.details } : {}),
+              });
+          this.endPull(frame.id, err);
+          return;
+        }
         const to = c.inflight.get(frame.id);
         if (!to) return;
         c.inflight.delete(frame.id);
@@ -357,13 +393,26 @@ export class MachineHub {
       case 'tool_call':
         // Not serialized: a slow tool must not hold up events.
         void this.d
-          .onToolCall(c.machine, frame)
-          .then((f) => this.send(c, f))
+          .onToolCall(c.machine, frame, c.abort.signal)
+          .then((f) => {
+            if (f) this.send(c, f);
+          })
           .catch((err) => this.send(c, { t: 'tool_result', id: frame.id, ok: false, error: errorBody(err) }));
         return;
       case 'file_chunk':
-      case 'file_done':
-        return; // file channel: no pulls are issued by this build
+      case 'file_done': {
+        const pull = this.pulls.get(frame.id);
+        if (!pull || pull.conn !== c) return; // unknown, finished or abandoned pull
+        try {
+          if (frame.t === 'file_chunk') {
+            pull.asm.chunk(frame);
+            pull.timer.refresh();
+          } else this.endPull(frame.id, null, pull.asm.done(frame));
+        } catch (err) {
+          this.endPull(frame.id, err);
+        }
+        return;
+      }
     }
   }
 
@@ -381,8 +430,10 @@ export class MachineHub {
     }
     if (c.dead) return;
     c.dead = true;
+    c.abort.abort();
     if (c.timer) clearInterval(c.timer);
     c.timer = undefined;
+    for (const [id, p] of this.pulls) if (p.conn === c) this.endPull(id, new UncageError('machine_offline', { message: 'The machine disconnected during the file pull.' }));
     const offline = new UncageError('machine_offline').toBody();
     for (const [id, to] of c.inflight) void this.publish(to, { k: 'res', id, ok: false, error: offline });
     c.inflight.clear();
@@ -403,6 +454,20 @@ export class MachineHub {
   }
 
   private async onNodeMessage(msg: NodeMsg): Promise<void> {
+    if (msg.k === 'up') {
+      // Synchronous on purpose: upload frames must reach the socket in publish order.
+      const c = this.conns.get(msg.machineId);
+      const live = c && c.ready && !c.dead && c.ws.readyState === WebSocket.OPEN;
+      if (msg.frame.t === 'attachment_begin') {
+        if (!live) {
+          await this.publish(msg.from, { k: 'res', id: msg.id, ok: false, error: new UncageError('machine_offline').toBody() });
+          return;
+        }
+        c.inflight.set(msg.id, msg.from);
+      } else if (!live || !c.inflight.has(msg.id)) return;
+      c.ws.send(JSON.stringify(msg.frame));
+      return;
+    }
     if (msg.k === 'res') {
       const p = this.pending.get(msg.id);
       if (!p) return;
@@ -471,6 +536,100 @@ export class MachineHub {
           reject(err);
         });
     });
+  }
+
+  /**
+   * Uploads an attachment to the machine (wherever it is connected) in 256 KiB `attachment_chunk`
+   * frames — for attachments too large for one `addAttachment` command. Resolves the machine's
+   * `Attachment`.
+   */
+  async upload(machineId: string, args: { sessionId: string; name: string; mime: string }, data: Uint8Array): Promise<Attachment> {
+    if (this.closed) throw new UncageError('machine_offline');
+    const node = await this.d.cluster.getPresence(machineId);
+    if (!node) throw new UncageError('machine_offline');
+    const id = `upl_${randomBytes(12).toString('hex')}`;
+    const send = (frame: HubFrame) =>
+      this.d.cluster.publish(nodeChannel(node), JSON.stringify({ k: 'up', id, from: this.d.nodeId, machineId, frame } satisfies NodeMsg));
+    let timer!: NodeJS.Timeout;
+    const arm = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const p = this.pending.get(id);
+        if (!p) return;
+        this.pending.delete(id);
+        void send({ t: 'attachment_abort', id }).catch(() => undefined);
+        p.reject(new UncageError('machine_offline', { message: 'The machine did not respond in time.' }));
+      }, this.d.commandTimeoutMs);
+      timer.unref();
+    };
+    const result = new Promise<Attachment>((resolve, reject) => {
+      arm();
+      this.pending.set(id, { op: 'addAttachment', resolve: resolve as (v: unknown) => void, reject, timer });
+    });
+    try {
+      await send({ t: 'attachment_begin', id, sessionId: args.sessionId, name: args.name, mime: args.mime, size: data.byteLength });
+      const buf = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+      for (let at = 0, seq = 0; at < buf.length; at += FILE_CHUNK_BYTES, seq++) {
+        if (!this.pending.has(id)) break; // already answered (e.g. refused at begin)
+        await send({ t: 'attachment_chunk', id, seq, data: buf.subarray(at, at + FILE_CHUNK_BYTES).toString('base64') });
+      }
+      if (this.pending.has(id)) {
+        await send({ t: 'attachment_end', id });
+        arm();
+        const p = this.pending.get(id);
+        if (p) p.timer = timer;
+      }
+    } catch (err) {
+      const p = this.pending.get(id);
+      if (p) {
+        this.pending.delete(id);
+        clearTimeout(timer);
+        void send({ t: 'attachment_abort', id }).catch(() => undefined);
+        p.reject(err);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Pulls `path` from the session workspace of a machine connected to this node (site tools run
+   * on the node holding the machine's connection). All-or-nothing; see `PullAssembler`.
+   */
+  pull(machineId: string, sessionId: string, path: string, maxBytes: number, signal?: AbortSignal): Promise<PullOutcome> {
+    const c = this.conns.get(machineId);
+    if (!c || !c.ready || c.dead || c.ws.readyState !== WebSocket.OPEN) return Promise.reject(new UncageError('machine_offline'));
+    if (signal?.aborted) return Promise.reject(new UncageError('tool_failed', { message: 'The tool call was abandoned.' }));
+    const id = `pull_${randomBytes(12).toString('hex')}`;
+    return new Promise<PullOutcome>((resolve, reject) => {
+      const onAbort = () => this.endPull(id, new UncageError('tool_failed', { message: 'The tool call was abandoned.' }));
+      const timer = setTimeout(
+        () => this.endPull(id, new UncageError('tool_failed', { message: `The machine stopped sending "${path}" (no data for ${PULL_IDLE_MS / 1000} s).` })),
+        PULL_IDLE_MS,
+      );
+      timer.unref();
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.pulls.set(id, {
+        conn: c,
+        asm: new PullAssembler(path, maxBytes),
+        path,
+        resolve,
+        reject,
+        timer,
+        cleanup: () => signal?.removeEventListener('abort', onAbort),
+      });
+      this.send(c, { t: 'file_pull', id, sessionId, path, maxBytes });
+    });
+  }
+
+  /** Settles a pull once; later frames for its id are ignored. */
+  private endPull(id: string, err: unknown, outcome?: PullOutcome): void {
+    const p = this.pulls.get(id);
+    if (!p) return;
+    this.pulls.delete(id);
+    clearTimeout(p.timer);
+    p.cleanup();
+    if (err) p.reject(err);
+    else p.resolve(outcome!);
   }
 
   /** Disconnects a machine (revoked, or its token rotated) wherever it is connected. */

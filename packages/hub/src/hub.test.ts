@@ -182,21 +182,6 @@ describe('machine connections', () => {
     await expect(connectFakeAgent({ url: t.wsUrl, token: machineToken })).rejects.toThrow(/401/);
   });
 
-  it('answers tool_call with tool_failed (not implemented in this build)', async () => {
-    const echo = defineTool({ name: 'echo_text', description: 'Echo', input: z.object({ text: z.string() }), handler: async (a) => a.text });
-    const t = await start({ tools: [echo] });
-    const fm = fakeMachine();
-    const { machineToken } = await t.pair('alice');
-    const a = await connect({ url: t.wsUrl, token: machineToken, onCommand: fm.handler });
-    const s = (await (await t.as('alice', '/sessions', post({ runtime: 'fake' }))).json()) as Session;
-    a.send({ t: 'tool_call', id: 'tc_1', sessionId: s.id, runId: 'run_1', tool: 'echo_text', args: { text: 'hi' } });
-    const r = await a.waitFor((f) => f.t === 'tool_result');
-    expect(r).toMatchObject({ t: 'tool_result', id: 'tc_1', ok: false, error: { code: 'tool_failed' } });
-    expect(JSON.stringify(r)).toContain('not implemented in this hub build');
-    // A tool call for a session that is not this machine's is refused.
-    a.send({ t: 'tool_call', id: 'tc_2', sessionId: 'ses_other', runId: 'run_1', tool: 'echo_text', args: {} });
-    expect(await a.waitFor((f) => f.t === 'tool_result' && f.id === 'tc_2')).toMatchObject({ ok: false, error: { code: 'not_found' } });
-  });
 });
 
 describe('browser API → machine', () => {
@@ -403,7 +388,7 @@ describe('browser API → machine', () => {
     const big = await t.as('alice', `/sessions/${s.id}/attachments`, {
       method: 'POST',
       headers: { 'content-type': 'image/png', 'x-filename': 'big.png' },
-      body: new Uint8Array(800_000),
+      body: new Uint8Array(10 * 1024 * 1024 + 1),
     });
     expect(big.status).toBe(413);
     expect((await j(big)).error.code).toBe('attachment_too_large');

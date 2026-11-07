@@ -16,10 +16,18 @@ export interface HubOptions {
   basePath?: string;
   /** Website auth: the signed-in user for a browser request, or `null`. */
   getUser(req: Request): Promise<HubUser | null>;
-  /** Defaults to `pgliteHubStore({ dataDir: './.uncage-hub' })`. */
+  /**
+   * Defaults to `pgliteHubStore({ dataDir: './.uncage-hub' })` (single node). Several nodes share
+   * one `postgresHubStore`.
+   */
   store?: HubStore;
-  /** Defaults to `memoryCluster()` (single node). */
+  /** Defaults to `memoryCluster()` (single node). Several nodes share one `redisCluster`. */
   cluster?: ClusterAdapter;
+  /**
+   * Site tools (`defineTool`) offered to runs as MCP tools. They execute on the hub node holding
+   * the machine's connection, as the session's owner; every call is audited in the store
+   * (`listToolCalls`) and shows in the session's events as the runtime's `tool.*` events.
+   */
   tools?: SiteTool[];
   skills?: SkillSpec[];
   /** Picks the tools and skills (by name) offered to a run. Defaults to all. */
@@ -47,6 +55,8 @@ export interface HubOptions {
   sseHeartbeatMs?: number;
   /** How long a browser request waits for the machine. Defaults to 30 000 ms. */
   commandTimeoutMs?: number;
+  /** A site tool handler still running after this fails with `tool_failed`. Defaults to 120 000 ms. */
+  toolTimeoutMs?: number;
   /**
    * Abuse limits, counted in memory per hub node (with several nodes each counts on its own until
    * limits are shared through the cluster adapter). Exceeding one → 429 `rate_limited`.

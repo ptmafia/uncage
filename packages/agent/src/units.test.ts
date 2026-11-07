@@ -273,22 +273,54 @@ describe('sendPull re-checks at send time', () => {
     expect(JSON.stringify(c.frames)).not.toContain(Buffer.from('SECRET').toString('base64'));
   });
 
-  it('refuses hard-linked files at plan time (a hard link may point outside the workspace)', async () => {
+  it('a directory pull skips hard-linked files (never reads them) and reports each in file_done.skipped', async () => {
     const h = await home();
     const outside = await mkdtemp(join(tmpdir(), 'uncage-outside-'));
     cleanups.push(() => import('node:fs/promises').then((f) => f.rm(outside, { recursive: true, force: true })));
     await writeFile(join(outside, 'secret.txt'), 'SECRET');
     await mkdir(join(h, 'site'));
+    await writeFile(join(h, 'site', 'ok.txt'), 'fine');
     await link(join(outside, 'secret.txt'), join(h, 'site', 'innocent.txt'));
-    await expect(planPull(h, 'site', 1000)).rejects.toMatchObject({ code: 'invalid_request', message: expect.stringContaining('hard link') });
+    const plan = await planPull(h, 'site', 1000);
+    expect(plan.files.map((f) => f.rel)).toEqual(['site/ok.txt']);
+    expect(plan.skipped).toEqual([{ path: 'site/innocent.txt', reason: expect.stringContaining('hard link') }]);
+    const c = collect();
+    await sendPull('p', plan, c.send);
+    expect(c.frames.at(-1)).toEqual({
+      t: 'file_done',
+      id: 'p',
+      files: [{ path: 'site/ok.txt', size: 4 }],
+      skipped: [{ path: 'site/innocent.txt', reason: expect.stringContaining('hard link') }],
+    });
+    expect(JSON.stringify(c.frames)).not.toContain(Buffer.from('SECRET').toString('base64'));
   });
 
-  it('refuses a file hard-linked between plan and send', async () => {
+  it('a single-file pull of a hard-linked file is still refused', async () => {
+    const h = await home();
+    await writeFile(join(h, 'a.txt'), 'abc');
+    await link(join(h, 'a.txt'), join(h, 'b.txt'));
+    await expect(planPull(h, 'a.txt', 1000)).rejects.toMatchObject({ code: 'invalid_request', message: expect.stringContaining('hard link') });
+  });
+
+  it('refuses a single file hard-linked between plan and send', async () => {
     const h = await home();
     await writeFile(join(h, 'a.txt'), 'abc');
     const plan = await planPull(h, 'a.txt', 1000);
     await link(join(h, 'a.txt'), join(h, 'b.txt'));
     await expect(sendPull('p', plan, collect().send)).rejects.toMatchObject({ message: expect.stringContaining('hard link') });
+  });
+
+  it('a directory pull skips a file hard-linked between plan and send', async () => {
+    const h = await home();
+    await mkdir(join(h, 'site'));
+    await writeFile(join(h, 'site', 'a.txt'), 'abc');
+    await writeFile(join(h, 'site', 'b.txt'), 'xyz');
+    const plan = await planPull(h, 'site', 1000);
+    await link(join(h, 'site', 'a.txt'), join(h, 'a-copy.txt'));
+    const c = collect();
+    await sendPull('p', plan, c.send);
+    expect(c.frames.filter((f) => f.t === 'file_chunk').map((f) => (f as { path: string }).path)).toEqual(['site/b.txt']);
+    expect(c.frames.at(-1)).toMatchObject({ t: 'file_done', files: [{ path: 'site/b.txt', size: 3 }], skipped: [{ path: 'site/a.txt' }] });
   });
 
   it('the planned directory moved out of the workspace (same inode, now outside) is refused', async () => {

@@ -1,19 +1,20 @@
 import { randomBytes } from 'node:crypto';
 import { UncageError } from '@uncage/core';
-import { SkillSpecSchema, type HubFrame, type SkillSpec, type ToolSpec, type UncageEvent } from '@uncage/protocol';
+import { MAX_FRAME_BYTES, SkillSpecSchema, type HubFrame, type SkillSpec, type ToolCallResult, type ToolSpec, type UncageEvent } from '@uncage/protocol';
 import { errorResponse } from '@uncage/server/wire';
 import pkg from '../package.json' with { type: 'json' };
 import { browserApi } from './browser-api.js';
 import type { ClusterAdapter } from './cluster/cluster.js';
 import { memoryCluster } from './cluster/memory.js';
 import { deviceFlow, randomSecret, sha256 } from './device.js';
+import { DEFAULT_PULL_MAX_BYTES, DEFAULT_READ_MAX_BYTES, filePull } from './files.js';
 import { assertVersionRange, defaultCliRange, installScript } from './install-script.js';
 import { compareVersions, MachineHub, sessionChannel, type HubLogger } from './machines.js';
 import { applyEvent, emptySnapshot, indexPatch } from './replica.js';
 import { SlidingWindow } from './rate-limit.js';
 import { pgliteHubStore } from './store/pglite.js';
-import type { HubStore, MachineRecord, SessionRecord } from './store/store.js';
-import { notImplementedToolExecutor, toToolSpec, type ToolExecutor } from './tools.js';
+import type { HubStore, MachineRecord, SessionRecord, ToolCallStatus } from './store/store.js';
+import { siteToolExecutor, toToolSpec, type ToolContext, type ToolExecutor } from './tools.js';
 import type { Hub, HubOptions } from './types.js';
 
 export const HUB_VERSION: string = pkg.version;
@@ -25,6 +26,12 @@ const DEFAULT_PING_MS = DEFAULT_HEARTBEAT.pingIntervalMs;
 const DEFAULT_MISSED_PINGS = DEFAULT_HEARTBEAT.missedPings;
 const DEFAULT_SSE_HEARTBEAT_MS = 15_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
+const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
+/** A `tool_result` must fit one frame with room for the envelope. */
+const TOOL_RESULT_BUDGET = MAX_FRAME_BYTES - 16 * 1024;
+/** Tool arguments larger than this are not stored in the audit table. */
+const MAX_AUDIT_ARGS_BYTES = 16 * 1024;
+const RUN_END = new Set(['run.completed', 'run.failed', 'run.cancelled', 'run.interrupted']);
 
 /** Hooks not (yet) part of the public options: the tool executor seam and a logger. */
 export interface HubInternals {
@@ -57,7 +64,10 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   const range = assertVersionRange(o.cliVersionRange ?? defaultCliRange(HUB_VERSION));
   const sessionStorage = o.sessionStorage ?? 'machine';
   const logger = o.logger ?? silent;
-  const executor = o.toolExecutor ?? notImplementedToolExecutor;
+  const executor = o.toolExecutor ?? siteToolExecutor(o.tools ?? []);
+  const toolTimeoutMs = o.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+  /** Site tool calls executing on this node; aborted when their run ends. */
+  const activeCalls = new Set<{ machineId: string; runId: string; abort(): void }>();
   const defaults = siteDefaults(publicUrl);
   const site = { id: o.site?.id ?? defaults.id, name: o.site?.name ?? defaults.name, url: hubUrl };
 
@@ -194,33 +204,131 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
       }
     },
     async onEvents(machine, sessionId, events, send) {
+      // A run that ended abandons its pending tool calls (the machine no longer waits for them).
+      for (const e of events) {
+        if (!RUN_END.has(e.type) || !e.runId) continue;
+        for (const call of activeCalls) if (call.machineId === machine.id && call.runId === e.runId) call.abort();
+      }
       const out = await ingest(machine, sessionId, events, send);
       if (out.length > 0) await cluster.publish(sessionChannel(sessionId), JSON.stringify({ events: out }));
     },
-    async onToolCall(machine, call) {
-      const rec = await store.getSession(call.sessionId);
-      if (!rec || rec.machineId !== machine.id) {
-        return { t: 'tool_result', id: call.id, ok: false, error: new UncageError('not_found', { message: `Session ${call.sessionId} not found.` }).toBody() };
-      }
-      if (!tools.has(call.tool)) {
-        return { t: 'tool_result', id: call.id, ok: false, error: new UncageError('tool_failed', { message: `Unknown site tool "${call.tool}".` }).toBody() };
-      }
-      try {
-        const result = await executor.execute({
-          user: { id: rec.userId },
-          machineId: machine.id,
-          sessionId: rec.id,
-          runId: call.runId,
-          tool: call.tool,
-          args: call.args,
-        });
-        return { t: 'tool_result', id: call.id, ok: true, result };
-      } catch (err) {
-        const uerr = err instanceof UncageError ? err : new UncageError('tool_failed');
-        return { t: 'tool_result', id: call.id, ok: false, error: uerr.toBody() };
-      }
-    },
+    onToolCall: (machine, call, connSignal) => runToolCall(machine, call, connSignal),
   });
+
+  /**
+   * Executes one site tool call on this node (the one holding the machine's connection): ownership
+   * re-check, execution with a timeout, frame-size check, audit row. Resolves `null` (send nothing)
+   * when the call was abandoned because its run ended or the machine went away.
+   */
+  async function runToolCall(
+    machine: MachineRecord,
+    call: { id: string; sessionId: string; runId: string; tool: string; args: unknown },
+    connSignal: AbortSignal,
+  ): Promise<HubFrame | null> {
+    const fail = (e: UncageError): HubFrame => ({ t: 'tool_result', id: call.id, ok: false, error: e.toBody() });
+    const rec = await store.getSession(call.sessionId);
+    // The session must be this machine's, and its owner the machine's user (ctx.user).
+    if (!rec || rec.machineId !== machine.id || rec.userId !== machine.userId) {
+      return fail(new UncageError('not_found', { message: `Session ${call.sessionId} not found.` }));
+    }
+    const run = await store.getResource(call.runId, 'run');
+    if (run && run.sessionId !== rec.id) return fail(new UncageError('not_found', { message: `Run ${call.runId} not found.` }));
+    if (!tools.has(call.tool)) return fail(new UncageError('tool_failed', { message: `Unknown site tool "${call.tool}".` }));
+
+    const ac = new AbortController();
+    let why: 'timeout' | 'cancelled' | undefined;
+    const abort = (reason: 'timeout' | 'cancelled') => {
+      why ??= reason;
+      ac.abort();
+    };
+    const entry = { machineId: machine.id, runId: call.runId, abort: () => abort('cancelled') };
+    const onConnGone = () => abort('cancelled');
+    connSignal.addEventListener('abort', onConnGone, { once: true });
+    if (connSignal.aborted) abort('cancelled');
+    activeCalls.add(entry);
+    const timer = setTimeout(() => abort('timeout'), toolTimeoutMs);
+    timer.unref();
+
+    const auditId = `tcl_${randomBytes(12).toString('hex')}`;
+    const startedAt = Date.now();
+    const argsJson = JSON.stringify(call.args ?? null);
+    await store
+      .insertToolCall({
+        id: auditId,
+        callId: call.id,
+        sessionId: rec.id,
+        runId: call.runId,
+        userId: rec.userId,
+        machineId: machine.id,
+        tool: call.tool,
+        args: Buffer.byteLength(argsJson) <= MAX_AUDIT_ARGS_BYTES ? (call.args ?? null) : null,
+        status: 'running',
+        startedAt: new Date(startedAt).toISOString(),
+      })
+      .catch((err: unknown) => logger.error({ err, tool: call.tool }, 'tool-call audit insert failed'));
+    const finish = (status: ToolCallStatus, err?: { code?: string; message?: string }) =>
+      store
+        .finishToolCall(auditId, {
+          status,
+          ...(err?.code ? { errorCode: err.code } : {}),
+          ...(err?.message ? { errorMessage: err.message.slice(0, 2000) } : {}),
+          finishedAt: new Date().toISOString(),
+          durationMs: Date.now() - startedAt,
+        })
+        .catch((e: unknown) => logger.error({ err: e, tool: call.tool }, 'tool-call audit update failed'));
+
+    const files: ToolContext['files'] = {
+      pull: (path, opts) =>
+        filePull(async () => {
+          const max = opts?.maxBytes ?? DEFAULT_PULL_MAX_BYTES;
+          if (!Number.isInteger(max) || max < 1) throw new UncageError('invalid_request', { message: 'maxBytes must be a positive integer.' });
+          return machines.pull(machine.id, rec.id, path, Math.min(max, DEFAULT_PULL_MAX_BYTES), ac.signal);
+        }),
+      read: async (path) => {
+        const r = await machines.pull(machine.id, rec.id, path, DEFAULT_READ_MAX_BYTES, ac.signal);
+        const f = r.files.length === 1 && r.files[0]!.path === path ? r.files[0]! : undefined;
+        if (!f) throw new UncageError('invalid_request', { message: `"${path}" is a directory, not a file.` });
+        return f.data;
+      },
+    };
+    const abandoned = new Promise<never>((_, reject) =>
+      ac.signal.addEventListener('abort', () => reject(new UncageError('tool_failed')), { once: true }),
+    );
+    abandoned.catch(() => undefined);
+    try {
+      const result: ToolCallResult = await Promise.race([
+        executor.execute({ user: { id: rec.userId }, machineId: machine.id, sessionId: rec.id, runId: call.runId, tool: call.tool, args: call.args, callId: call.id }, { signal: ac.signal, files }),
+        abandoned,
+      ]);
+      const frame: HubFrame = { t: 'tool_result', id: call.id, ok: true, result };
+      const bytes = Buffer.byteLength(JSON.stringify(frame));
+      if (bytes > TOOL_RESULT_BUDGET) {
+        const e = new UncageError('tool_failed', { message: `The result of site tool "${call.tool}" is too large (${bytes} bytes, max ${TOOL_RESULT_BUDGET}).` });
+        await finish('error', e);
+        return fail(e);
+      }
+      await finish(result.isError ? 'error' : 'ok');
+      return frame;
+    } catch (err) {
+      if (why === 'cancelled') {
+        await finish('cancelled');
+        return null;
+      }
+      if (why === 'timeout') {
+        const e = new UncageError('tool_failed', { message: `Site tool "${call.tool}" did not finish within ${Math.round(toolTimeoutMs / 1000)} s.` });
+        await finish('timeout', e);
+        return fail(e);
+      }
+      const e = err instanceof UncageError ? err : new UncageError('tool_failed', { message: err instanceof Error ? err.message : String(err) });
+      await finish(e.code === 'invalid_request' ? 'invalid' : 'error', e);
+      return fail(e);
+    } finally {
+      clearTimeout(timer);
+      activeCalls.delete(entry);
+      connSignal.removeEventListener('abort', onConnGone);
+      ac.abort();
+    }
+  }
   await machines.start();
 
   const setupUrl = basePath === DEFAULT_BASE_PATH ? origin : hubUrl;

@@ -2,10 +2,12 @@
  * Test helpers: a hub on a real HTTP server, and an in-process fake agent (a `ws` client speaking
  * the connected-mode frames).
  */
+import { createHash } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
   CONNECTED_PROTOCOL,
+  FILE_CHUNK_BYTES,
   formatEventId,
   parseHubFrame,
   type AgentFrame,
@@ -132,6 +134,8 @@ export async function connectFakeAgent(o: {
   os?: string;
   runtimes?: RuntimeInfo[];
   onCommand?: CommandHandler;
+  /** Called for every hub frame (after `onCommand` handling). */
+  onFrame?: (f: HubFrame, send: (f: AgentFrame) => void) => void;
   /** Resolve once `welcome` arrives (default true). */
   waitWelcome?: boolean;
 }): Promise<FakeAgent> {
@@ -182,6 +186,7 @@ export async function connectFakeAgent(o: {
       }
     }
     if (f.t === 'ping' && agent.autoPong) send({ t: 'pong', at: f.at });
+    o.onFrame?.(f, send);
     if (f.t === 'command') {
       commands.push(f);
       try {
@@ -324,6 +329,79 @@ export async function* readSse(res: Response): AsyncGenerator<{ id?: string; eve
       yield frame;
     }
   }
+}
+
+/**
+ * Answers `file_pull` frames like a real agent from an in-memory tree (`'dir/a.txt' → bytes`):
+ * every file under the requested path, 256 KiB chunks, then `file_done`. `fail` sends an error
+ * `result` after the first chunk instead of finishing.
+ */
+export function pullServer(tree: Record<string, Uint8Array | string>, o: { fail?: boolean; skipped?: Array<{ path: string; reason: string }> } = {}) {
+  const pulls: Array<Extract<HubFrame, { t: 'file_pull' }>> = [];
+  const onFrame = (f: HubFrame, send: (f: AgentFrame) => void) => {
+    if (f.t !== 'file_pull') return;
+    pulls.push(f);
+    const paths = Object.keys(tree)
+      .filter((p) => p === f.path || p.startsWith(`${f.path}/`))
+      .sort();
+    if (paths.length === 0) {
+      send({ t: 'result', id: f.id, ok: false, error: { code: 'not_found', message: `"${f.path}" does not exist in the session workspace.`, retryable: false } });
+      return;
+    }
+    const files: Array<{ path: string; size: number }> = [];
+    for (const path of paths) {
+      const raw = tree[path]!;
+      const data = Buffer.from(typeof raw === 'string' ? Buffer.from(raw) : raw);
+      let seq = 0;
+      for (let at = 0; ; at += FILE_CHUNK_BYTES) {
+        const part = data.subarray(at, at + FILE_CHUNK_BYTES);
+        const last = at + FILE_CHUNK_BYTES >= data.length;
+        send({ t: 'file_chunk', id: f.id, path, seq: seq++, data: part.toString('base64'), last });
+        if (o.fail) {
+          send({ t: 'result', id: f.id, ok: false, error: { code: 'invalid_request', message: `"${path}" changed while it was being pulled.`, retryable: false } });
+          return;
+        }
+        if (last) break;
+      }
+      files.push({ path, size: data.length });
+    }
+    send({ t: 'file_done', id: f.id, files, ...(o.skipped ? { skipped: o.skipped } : {}) });
+  };
+  return { pulls, onFrame };
+}
+
+/** Assembles chunked `attachment_*` uploads like a real agent and answers with an `Attachment`. */
+export function uploadReceiver() {
+  const received = new Map<string, { begin: Extract<HubFrame, { t: 'attachment_begin' }>; parts: Buffer[]; data?: Buffer; aborted?: boolean }>();
+  const onFrame = (f: HubFrame, send: (f: AgentFrame) => void) => {
+    if (f.t === 'attachment_begin') received.set(f.id, { begin: f, parts: [] });
+    else if (f.t === 'attachment_chunk') received.get(f.id)?.parts.push(Buffer.from(f.data, 'base64'));
+    else if (f.t === 'attachment_abort') {
+      const u = received.get(f.id);
+      if (u) u.aborted = true;
+    } else if (f.t === 'attachment_end') {
+      const u = received.get(f.id);
+      if (!u) return;
+      u.data = Buffer.concat(u.parts);
+      const { begin } = u;
+      send({
+        t: 'result',
+        id: f.id,
+        ok: true,
+        data: {
+          id: `att_${f.id.replace(/[^a-z0-9]/gi, '').slice(-12)}`,
+          sessionId: begin.sessionId,
+          name: begin.name,
+          mime: begin.mime,
+          size: u.data.length,
+          kind: 'file',
+          sha256: createHash('sha256').update(u.data).digest('hex'),
+          createdAt: new Date().toISOString(),
+        },
+      });
+    }
+  };
+  return { received, onFrame };
 }
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

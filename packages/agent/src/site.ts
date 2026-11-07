@@ -45,9 +45,21 @@ export interface AgentTiming {
   idleTimeoutMs: number;
   /** The backoff only resets after a connection stayed up this long. Default 30 000. */
   stableMs: number;
+  /** A chunked attachment upload with no frame for this long is dropped. Default 60 000. */
+  uploadIdleMs: number;
 }
 
-export const DEFAULT_TIMING: AgentTiming = { backoffMinMs: 1000, backoffMaxMs: 30_000, toolTimeoutMs: 120_000, idleTimeoutMs: 35_000, stableMs: 30_000 };
+export const DEFAULT_TIMING: AgentTiming = {
+  backoffMinMs: 1000,
+  backoffMaxMs: 30_000,
+  toolTimeoutMs: 120_000,
+  idleTimeoutMs: 35_000,
+  stableMs: 30_000,
+  uploadIdleMs: 60_000,
+};
+
+/** Most chunked attachment uploads in progress at once (per site). */
+const MAX_UPLOADS = 8;
 
 /** Exponential backoff with jitter: a random delay in [base/2, base], base = min(max, min·2^attempt). */
 export function backoffDelay(attempt: number, t: Pick<AgentTiming, 'backoffMinMs' | 'backoffMaxMs'>, random = Math.random): number {
@@ -88,6 +100,53 @@ interface Rep {
   dirty: boolean;
   /** Bumped by rewinds and reconnects: an in-progress pump iteration starts over. */
   gen: number;
+}
+
+/**
+ * A single-consumer byte stream: chunks pushed by the hub's `attachment_chunk` frames, consumed by
+ * core's `attachments.add` (which writes them to a `.tmp-*` file inside the session's attachment
+ * directory and renames it on success, or removes it when the stream fails).
+ */
+class ChunkStream implements AsyncIterable<Uint8Array> {
+  private readonly backlog: Uint8Array[] = [];
+  private ended = false;
+  private error: unknown;
+  private wake: (() => void) | undefined;
+
+  push(chunk: Uint8Array): void {
+    this.backlog.push(chunk);
+    this.wake?.();
+  }
+  end(): void {
+    this.ended = true;
+    this.wake?.();
+  }
+  fail(err: unknown): void {
+    if (this.error === undefined) this.error = err;
+    this.backlog.length = 0;
+    this.wake?.();
+  }
+  async *[Symbol.asyncIterator](): AsyncIterator<Uint8Array> {
+    for (;;) {
+      if (this.error !== undefined) throw this.error;
+      const next = this.backlog.shift();
+      if (next) {
+        yield next;
+        continue;
+      }
+      if (this.ended) return;
+      await new Promise<void>((r) => (this.wake = r));
+      this.wake = undefined;
+    }
+  }
+}
+
+interface Upload {
+  stream: ChunkStream;
+  size: number;
+  received: number;
+  nextSeq: number;
+  timer: NodeJS.Timeout;
 }
 
 interface PendingTool {
@@ -143,6 +202,7 @@ export class SiteAgent {
   private acksOnConn = false;
   private readonly pendingTools = new Map<string, PendingTool>();
   private readonly pulls = new Set<AbortController>();
+  private readonly uploads = new Map<string, Upload>();
   private upgradeMin: string | undefined;
   /** See `SiteState`. */
   state: SiteState = 'connecting';
@@ -375,6 +435,7 @@ export class SiteAgent {
     for (const p of this.pendingTools.values()) p.reject(lost);
     this.pendingTools.clear();
     for (const ac of this.pulls) ac.abort();
+    for (const u of this.uploads.values()) u.stream.fail(new UncageError('machine_offline', { message: 'The connection to the website was lost during the upload.' }));
   }
 
   private rawSend(ws: WebSocket, f: AgentFrame): Promise<void> {
@@ -419,6 +480,22 @@ export class SiteAgent {
       }
       case 'file_pull':
         void this.onFilePull(f);
+        return;
+      case 'attachment_begin':
+        this.onUploadBegin(f);
+        return;
+      case 'attachment_chunk':
+        this.onUploadChunk(f);
+        return;
+      case 'attachment_end': {
+        const u = this.uploads.get(f.id);
+        if (!u) return;
+        if (u.received !== u.size) u.stream.fail(new UncageError('invalid_request', { message: `The upload ended after ${u.received} of ${u.size} bytes (size mismatch).` }));
+        else u.stream.end();
+        return;
+      }
+      case 'attachment_abort':
+        this.uploads.get(f.id)?.stream.fail(new UncageError('invalid_request', { message: 'The upload was aborted by the website.' }));
         return;
       default:
         return;
@@ -528,8 +605,7 @@ export class SiteAgent {
         return u.sessions.updateSettings(a.sessionId, a.patch);
       }
       case 'addAttachment': {
-        // Single-frame path (≤ ~774 KB from the hub). Chunked hub→agent transfer of larger
-        // attachments plugs in here (assemble the chunks, then the same `attachments.add`).
+        // Single-frame path (small attachments); larger ones arrive as attachment_* frames.
         const a = args as HubCommandArgs['addAttachment'];
         return u.attachments.add(a.sessionId, { name: a.name, mime: a.mime, body: Buffer.from(a.data, 'base64') });
       }
@@ -610,6 +686,69 @@ export class SiteAgent {
     } finally {
       this.pulls.delete(ac);
     }
+  }
+
+  // ---- chunked attachment uploads ---------------------------------------------------------
+
+  private onUploadBegin(f: Extract<HubFrame, { t: 'attachment_begin' }>): void {
+    const fail = (err: UncageError) => void this.send({ t: 'result', id: f.id, ok: false, error: err.toBody() }).catch(() => undefined);
+    if (this.uploads.has(f.id)) return fail(new UncageError('invalid_request', { message: 'Duplicate upload id.' }));
+    if (this.uploads.size >= MAX_UPLOADS) {
+      return fail(new UncageError('rate_limited', { message: `At most ${MAX_UPLOADS} attachment uploads can run at once.` }));
+    }
+    const stream = new ChunkStream();
+    const upload: Upload = { stream, size: f.size, received: 0, nextSeq: 0, timer: undefined as unknown as NodeJS.Timeout };
+    this.uploads.set(f.id, upload);
+    this.armUpload(upload);
+    const detail = { sessionId: f.sessionId, name: f.name, mime: f.mime, size: f.size, chunked: true };
+    void this.uncage.attachments
+      .add(f.sessionId, { name: f.name, mime: f.mime, body: stream })
+      .then(
+        (data): AgentFrame => {
+          void this.activity.append({ kind: 'command', name: 'addAttachment', ok: true, detail });
+          return { t: 'result', id: f.id, ok: true, data };
+        },
+        (err: unknown): AgentFrame => {
+          const body = errorBody(err);
+          void this.activity.append({ kind: 'command', name: 'addAttachment', ok: false, code: body.code, detail });
+          return { t: 'result', id: f.id, ok: false, error: body };
+        },
+      )
+      .then((frame) => {
+        clearTimeout(upload.timer);
+        // Rejected early (unknown session, unsupported type): later chunks for this id are ignored.
+        stream.fail(new UncageError('invalid_request', { message: 'upload finished' }));
+        if (this.uploads.get(f.id) === upload) this.uploads.delete(f.id);
+        return this.send(frame);
+      })
+      .catch(() => undefined);
+  }
+
+  private armUpload(u: Upload): void {
+    clearTimeout(u.timer);
+    u.timer = setTimeout(
+      () => u.stream.fail(new UncageError('invalid_request', { message: `The upload stalled (no data for ${Math.round(this.o.timing.uploadIdleMs / 1000)} s).` })),
+      this.o.timing.uploadIdleMs,
+    );
+    u.timer.unref();
+  }
+
+  private onUploadChunk(f: Extract<HubFrame, { t: 'attachment_chunk' }>): void {
+    const u = this.uploads.get(f.id);
+    if (!u) return;
+    if (f.seq !== u.nextSeq) {
+      u.stream.fail(new UncageError('invalid_request', { message: `Upload chunk out of order (got ${f.seq}, expected ${u.nextSeq}).` }));
+      return;
+    }
+    const bytes = Buffer.from(f.data, 'base64');
+    u.nextSeq++;
+    u.received += bytes.byteLength;
+    if (u.received > u.size) {
+      u.stream.fail(new UncageError('invalid_request', { message: `The upload is larger than its declared size of ${u.size} bytes.` }));
+      return;
+    }
+    this.armUpload(u);
+    u.stream.push(bytes);
   }
 
   // ---- replication ------------------------------------------------------------------------

@@ -3,6 +3,7 @@ import {
   ApprovalDecisionSchema,
   CreateSessionBodySchema,
   DeviceCodeRequestSchema,
+  MAX_ATTACHMENT_TRANSFER_BYTES,
   MAX_FRAME_BYTES,
   MAX_READ_EVENTS,
   parseEventId,
@@ -29,8 +30,16 @@ import { eventStreamResponse, readHistory, type EventSource } from './sse.js';
 import type { HubStore, MachineRecord, ResourceKind, SessionRecord } from './store/store.js';
 import type { HubOptions, HubUser } from './types.js';
 
-/** Largest attachment the hub relays: its base64 must fit one wire frame with room to spare. */
-export const HUB_ATTACHMENT_MAX_BYTES = Math.floor(((MAX_FRAME_BYTES - 16 * 1024) * 3) / 4);
+/**
+ * Largest attachment the hub relays to a machine (the attachment limit, 10 MiB; runtimes may
+ * accept less, e.g. 5 MB images for Claude Code — the machine enforces that).
+ */
+export const HUB_ATTACHMENT_MAX_BYTES = MAX_ATTACHMENT_TRANSFER_BYTES;
+/**
+ * Up to this size an attachment travels as one `addAttachment` command (its base64 fits one wire
+ * frame); larger ones use the chunked `attachment_*` transfer.
+ */
+export const SINGLE_FRAME_ATTACHMENT_BYTES = Math.floor(((MAX_FRAME_BYTES - 16 * 1024) * 3) / 4);
 const MAX_JSON_BODY = 1024 * 1024;
 const MAX_IDEMPOTENCY_KEY = 256;
 const JSON_EVENTS_LIMIT = 1000;
@@ -403,12 +412,10 @@ export function browserApi(ctx: ApiContext) {
     if (Number(req.headers.get('content-length')) > HUB_ATTACHMENT_MAX_BYTES) throw tooLarge();
     const data = await readBody(req, HUB_ATTACHMENT_MAX_BYTES);
     if (data === null) throw tooLarge();
-    const attachment = await machines.command(rec.machineId, 'addAttachment', {
-      sessionId: rec.id,
-      name,
-      mime,
-      data: toBase64(data),
-    });
+    const attachment =
+      data.byteLength <= SINGLE_FRAME_ATTACHMENT_BYTES
+        ? await machines.command(rec.machineId, 'addAttachment', { sessionId: rec.id, name, mime, data: toBase64(data) })
+        : await machines.upload(rec.machineId, { sessionId: rec.id, name, mime }, data);
     if (attachment.sessionId !== rec.id) throw new UncageError('internal_error', { message: 'The machine sent an invalid response.' });
     await store.putResource(attachment.id, 'attachment', rec.id);
     await store.putAttachment({ attachment, userId: user.id, data });

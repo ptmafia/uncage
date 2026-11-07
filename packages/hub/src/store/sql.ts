@@ -10,6 +10,8 @@ import type {
   ResourceKind,
   SessionPatch,
   SessionRecord,
+  ToolCallRecord,
+  ToolCallStatus,
 } from './store.js';
 
 /** The slice of a Postgres client the SQL store needs (PGlite and node-postgres both fit). */
@@ -85,6 +87,28 @@ CREATE TABLE uncage_hub_attachments (
 ALTER TABLE uncage_hub_machines ADD COLUMN machine_key_hash text;
 CREATE INDEX uncage_hub_machines_key_idx ON uncage_hub_machines (user_id, machine_key_hash);
 ALTER TABLE uncage_hub_device_codes ADD COLUMN machine_key_hash text
+`,
+  },
+  {
+    id: 3,
+    sql: `
+CREATE TABLE uncage_hub_tool_calls (
+  id text PRIMARY KEY,
+  call_id text NOT NULL,
+  session_id text NOT NULL,
+  run_id text NOT NULL,
+  user_id text NOT NULL,
+  machine_id text NOT NULL,
+  tool text NOT NULL,
+  args jsonb,
+  status text NOT NULL,
+  error_code text,
+  error_message text,
+  started_at text NOT NULL,
+  finished_at text,
+  duration_ms integer
+);
+CREATE INDEX uncage_hub_tool_calls_session_idx ON uncage_hub_tool_calls (session_id, started_at)
 `,
   },
 ];
@@ -173,6 +197,40 @@ const toSession = (r: SessionRow): SessionRecord => ({
   ...(r.active_run !== null ? { activeRun: r.active_run } : {}),
   lastSequence: r.last_sequence,
   ...(r.snapshot !== null ? { snapshot: r.snapshot } : {}),
+});
+
+interface ToolCallRow {
+  id: string;
+  call_id: string;
+  session_id: string;
+  run_id: string;
+  user_id: string;
+  machine_id: string;
+  tool: string;
+  args: unknown;
+  status: ToolCallStatus;
+  error_code: string | null;
+  error_message: string | null;
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
+}
+
+const toToolCall = (r: ToolCallRow): ToolCallRecord => ({
+  id: r.id,
+  callId: r.call_id,
+  sessionId: r.session_id,
+  runId: r.run_id,
+  userId: r.user_id,
+  machineId: r.machine_id,
+  tool: r.tool,
+  args: r.args ?? null,
+  status: r.status,
+  ...(r.error_code !== null ? { errorCode: r.error_code } : {}),
+  ...(r.error_message !== null ? { errorMessage: r.error_message } : {}),
+  startedAt: r.started_at,
+  ...(r.finished_at !== null ? { finishedAt: r.finished_at } : {}),
+  ...(r.duration_ms !== null ? { durationMs: r.duration_ms } : {}),
 });
 
 const json = (v: unknown): string => JSON.stringify(v);
@@ -357,6 +415,42 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
         [id],
         (r) => ({ attachment: r.meta, userId: r.user_id, data: new Uint8Array(r.data) }),
       ),
+
+    async insertToolCall(r) {
+      await db.query(
+        `INSERT INTO uncage_hub_tool_calls (id, call_id, session_id, run_id, user_id, machine_id, tool, args, status, error_code, error_message, started_at, finished_at, duration_ms)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14)`,
+        [
+          r.id,
+          r.callId,
+          r.sessionId,
+          r.runId,
+          r.userId,
+          r.machineId,
+          r.tool,
+          r.args === null || r.args === undefined ? null : json(r.args),
+          r.status,
+          r.errorCode ?? null,
+          r.errorMessage ?? null,
+          r.startedAt,
+          r.finishedAt ?? null,
+          r.durationMs ?? null,
+        ],
+      );
+    },
+    async finishToolCall(id, r) {
+      await db.query(
+        'UPDATE uncage_hub_tool_calls SET status = $2, error_code = $3, error_message = $4, finished_at = $5, duration_ms = $6 WHERE id = $1',
+        [id, r.status, r.errorCode ?? null, r.errorMessage ?? null, r.finishedAt, Math.round(r.durationMs)],
+      );
+    },
+    async listToolCalls(sessionId, limit = 1000) {
+      const { rows } = await db.query<ToolCallRow>(
+        'SELECT * FROM uncage_hub_tool_calls WHERE session_id = $1 ORDER BY started_at, id LIMIT $2',
+        [sessionId, limit],
+      );
+      return rows.map(toToolCall);
+    },
 
     close,
   };

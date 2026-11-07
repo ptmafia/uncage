@@ -1,8 +1,9 @@
-import { mkdir, symlink, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, readdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
-import { parseAgentFrame, type AgentFrame, type HubFrame, type Session } from '@uncage/protocol';
+import { FILE_CHUNK_BYTES, parseAgentFrame, type AgentFrame, type HubFrame, type Session } from '@uncage/protocol';
 import { createFakeAdapter, type FakeStep } from '@uncage/testkit';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -73,7 +74,7 @@ async function setup(script: FakeStep[] = [{ text: 'ok' }], timing: Record<strin
   const logger = memoryLogger();
   const agent: Agent = await createAgent({
     config: { sites: [site], localPolicy: { allowBypass: false } },
-    adapters: [createFakeAdapter({ script })],
+    adapters: [createFakeAdapter({ script, capabilities: { attachments: { images: true, files: true, maxBytes: 10 * 1024 * 1024 } } })],
     home,
     logger,
     timing: { ...FAST, ...timing },
@@ -263,6 +264,80 @@ describe('agent ↔ fake hub (protocol edges)', () => {
       expect(await resultFor(hub, 'p5')).toMatchObject({ ok: false, error: { code: 'not_found' } });
       hub.send({ t: 'file_pull', id: 'p6', sessionId: 'ses_unknown', path: 'a.txt', maxBytes: 10 });
       expect(await resultFor(hub, 'p6')).toMatchObject({ ok: false, error: { code: 'not_found' } });
+    });
+  });
+
+  describe('chunked attachment upload (hub → agent)', () => {
+    async function uploadSetup() {
+      const s = await setup();
+      const session = ((await s.hub.command('createSession', { runtime: 'fake' })) as { data: Session }).data;
+      return { ...s, session };
+    }
+    const resultFor = (hub: Awaited<ReturnType<typeof fakeHub>>, id: string) => until(() => hub.framesOf('result').find((f) => f.id === id));
+    const attDir = (session: Session) => join(session.workspace, '.uncage', 'attachments', session.id);
+    function sendChunks(hub: Awaited<ReturnType<typeof fakeHub>>, id: string, data: Buffer, o: { skipEnd?: boolean; reorder?: boolean } = {}) {
+      const chunks: Buffer[] = [];
+      for (let at = 0; at < data.length; at += FILE_CHUNK_BYTES) chunks.push(data.subarray(at, at + FILE_CHUNK_BYTES));
+      const order = chunks.map((_, i) => i);
+      if (o.reorder) [order[0], order[1]] = [order[1]!, order[0]!];
+      for (const i of order) hub.send({ t: 'attachment_chunk', id, seq: i, data: chunks[i]!.toString('base64') });
+      if (!o.skipEnd) hub.send({ t: 'attachment_end', id });
+    }
+
+    it('assembles an 8 MB upload from chunks and stores it through core (sha256 matches)', async () => {
+      const { hub, session } = await uploadSetup();
+      const data = Buffer.alloc(8 * 1024 * 1024);
+      for (let i = 0; i < data.length; i += 4096) data[i] = i % 251;
+      hub.send({ t: 'attachment_begin', id: 'u1', sessionId: session.id, name: 'report.pdf', mime: 'application/pdf', size: data.length });
+      sendChunks(hub, 'u1', data);
+      const r = await resultFor(hub, 'u1');
+      expect(r).toMatchObject({ ok: true, data: { sessionId: session.id, name: 'report.pdf', size: data.length, sha256: createHash('sha256').update(data).digest('hex') } });
+      const files = await readdir(attDir(session));
+      const stored = files.find((f) => f.endsWith('-report.pdf'))!;
+      expect((await readFile(join(attDir(session), stored))).equals(data)).toBe(true);
+      expect(files.some((f) => f.startsWith('.tmp-'))).toBe(false);
+    });
+
+    it('fails on an out-of-order chunk, a size mismatch or an abort, leaving no temp file', async () => {
+      const { hub, session } = await uploadSetup();
+      const data = Buffer.alloc(600 * 1024, 7);
+      hub.send({ t: 'attachment_begin', id: 'u2', sessionId: session.id, name: 'a.txt', mime: 'text/plain', size: data.length });
+      sendChunks(hub, 'u2', data, { reorder: true });
+      expect(await resultFor(hub, 'u2')).toMatchObject({ ok: false, error: { code: 'invalid_request', message: expect.stringContaining('order') } });
+
+      hub.send({ t: 'attachment_begin', id: 'u3', sessionId: session.id, name: 'b.txt', mime: 'text/plain', size: data.length + 1 });
+      sendChunks(hub, 'u3', data);
+      expect(await resultFor(hub, 'u3')).toMatchObject({ ok: false, error: { code: 'invalid_request', message: expect.stringContaining('size') } });
+
+      hub.send({ t: 'attachment_begin', id: 'u4', sessionId: session.id, name: 'c.txt', mime: 'text/plain', size: data.length });
+      sendChunks(hub, 'u4', data.subarray(0, FILE_CHUNK_BYTES), { skipEnd: true });
+      await sleep(50);
+      hub.send({ t: 'attachment_abort', id: 'u4' });
+      expect(await resultFor(hub, 'u4')).toMatchObject({ ok: false });
+      await until(async () => {
+        const files = await readdir(attDir(session)).catch(() => []);
+        return files.every((f) => !f.startsWith('.tmp-'));
+      });
+      expect((await readdir(attDir(session)).catch(() => [])).filter((f) => !f.startsWith('.'))).toEqual([]);
+    });
+
+    it('rejects an unsupported type or unknown session at begin; later chunks are ignored', async () => {
+      const { hub, session } = await uploadSetup();
+      hub.send({ t: 'attachment_begin', id: 'u5', sessionId: session.id, name: 'x.exe', mime: 'application/x-msdownload', size: 4 });
+      expect(await resultFor(hub, 'u5')).toMatchObject({ ok: false, error: { code: 'attachment_type_unsupported' } });
+      hub.send({ t: 'attachment_chunk', id: 'u5', seq: 0, data: 'AAAAAA==' });
+      hub.send({ t: 'attachment_end', id: 'u5' });
+      hub.send({ t: 'attachment_begin', id: 'u6', sessionId: 'ses_nope', name: 'a.txt', mime: 'text/plain', size: 4 });
+      expect(await resultFor(hub, 'u6')).toMatchObject({ ok: false, error: { code: 'not_found' } });
+      await sleep(50);
+      expect(hub.framesOf('result').filter((f) => f.id === 'u5')).toHaveLength(1);
+    });
+
+    it('a stalled upload times out', async () => {
+      const s = await setup([{ text: 'ok' }], { uploadIdleMs: 150 });
+      const session = ((await s.hub.command('createSession', { runtime: 'fake' })) as { data: Session }).data;
+      s.hub.send({ t: 'attachment_begin', id: 'u7', sessionId: session.id, name: 'a.txt', mime: 'text/plain', size: 10 });
+      expect(await resultFor(s.hub, 'u7')).toMatchObject({ ok: false, error: { message: expect.stringContaining('stalled') } });
     });
   });
 });

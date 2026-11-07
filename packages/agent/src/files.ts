@@ -11,6 +11,8 @@ export const MAX_PULL_TOTAL_BYTES = 50 * 1024 * 1024;
 export const PULL_CHUNK_BYTES = 256 * 1024;
 /** Most files one pull may return. */
 export const MAX_PULL_FILES = 10_000;
+/** Most skipped files listed in one `file_done`. */
+const MAX_SKIPPED_REPORTED = 1000;
 
 const isWithin = (path: string, root: string): boolean => path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
 
@@ -31,8 +33,14 @@ export interface PullPlan {
   root: string;
   /** Total byte cap for this pull. */
   limit: number;
+  /** The pull names a directory: unsafe files are skipped (listed in `skipped`) instead of failing it. */
+  directory: boolean;
   files: PullFile[];
+  /** Files a directory pull leaves out, reported in `file_done.skipped`. */
+  skipped: Array<{ path: string; reason: string }>;
 }
+
+const HARD_LINK_REASON = 'more than one hard link (it may point outside the workspace); not read';
 
 const tooLarge = (path: string, limit: number) =>
   new UncageError('invalid_request', { message: `"${path}" is larger than the ${limit}-byte limit for one pull.`, details: { maxBytes: limit } });
@@ -73,11 +81,18 @@ export async function planPull(workspace: string, path: string, maxBytes: number
   }
 
   const files: PullFile[] = [];
+  const skipped: PullPlan['skipped'] = [];
   let total = 0;
+  let directory = false;
   const add = async (abs: string, st: { size: number; dev: number; ino: number; nlink: number }) => {
     const rel = toPosix(relative(root, abs));
     if ((await realpath(abs).catch(() => null)) !== abs) throw changed(rel);
-    if (st.nlink > 1) throw hardLinked(rel);
+    if (st.nlink > 1) {
+      // A directory pull (e.g. a build output) skips it with a warning; a single-file pull fails.
+      if (!directory) throw hardLinked(rel);
+      if (RelativePathSchema.safeParse(rel).success && skipped.length < MAX_PULL_FILES) skipped.push({ path: rel, reason: HARD_LINK_REASON });
+      return;
+    }
     if (st.size > MAX_PULL_FILE_BYTES) throw fileTooLarge(rel, st.size);
     total += st.size;
     if (total > limit) throw tooLarge(path, limit);
@@ -107,16 +122,18 @@ export async function planPull(workspace: string, path: string, maxBytes: number
   };
 
   const st = await lstat(target);
-  if (st.isDirectory()) await walk(target, st);
-  else if (st.isFile()) await add(target, st);
+  if (st.isDirectory()) {
+    directory = true;
+    await walk(target, st);
+  } else if (st.isFile()) await add(target, st);
   else throw new UncageError('invalid_request', { message: `"${path}" is not a file or directory.` });
-  return { root, limit, files };
+  return { root, limit, directory, files, skipped };
 }
 
 /**
  * Streams the planned files as `file_chunk` frames (256 KiB raw per chunk, `seq` per file from 0,
- * `last` on each file's final chunk; an empty file is one empty chunk), then `file_done`.
- * Each file is opened with `O_NOFOLLOW`, must still be the planned inode, and its realpath must
+ * `last` on each file's final chunk; an empty file is one empty chunk), then `file_done` (with
+ * `skipped` when a directory pull left files out). Each file is opened with `O_NOFOLLOW`, must still be the planned inode, and its realpath must
  * still be inside the workspace (catches swapped intermediate directories). Reads never go past the
  * size seen at open; the per-file and total caps are enforced on the bytes actually read.
  */
@@ -128,6 +145,7 @@ export async function sendPull(
 ): Promise<void> {
   const { constants } = await import('node:fs');
   const done: Array<{ path: string; size: number }> = [];
+  const skipped = [...plan.skipped];
   let total = 0;
   for (const f of plan.files) {
     if (signal?.aborted) throw new UncageError('machine_offline');
@@ -145,7 +163,11 @@ export async function sendPull(
     try {
       const st = await fh.stat();
       if (!st.isFile() || st.dev !== f.dev || st.ino !== f.ino) throw changed(f.rel);
-      if (st.nlink > 1) throw hardLinked(f.rel);
+      if (st.nlink > 1) {
+        if (!plan.directory) throw hardLinked(f.rel);
+        skipped.push({ path: f.rel, reason: HARD_LINK_REASON });
+        continue; // `finally` closes the handle; nothing was read
+      }
       const real = await realpath(f.abs).catch(() => null);
       if (real !== f.abs || !isWithin(real, plan.root)) throw changed(f.rel);
       if (st.size > MAX_PULL_FILE_BYTES) throw fileTooLarge(f.rel, st.size);
@@ -169,5 +191,6 @@ export async function sendPull(
       await fh.close();
     }
   }
-  await send({ t: 'file_done', id, files: done });
+  // The skipped list is informational: keep `file_done` well inside one frame.
+  await send({ t: 'file_done', id, files: done, ...(skipped.length > 0 ? { skipped: skipped.slice(0, MAX_SKIPPED_REPORTED) } : {}) });
 }

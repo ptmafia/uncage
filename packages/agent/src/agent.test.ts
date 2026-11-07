@@ -119,7 +119,10 @@ describe('agent ↔ real hub', () => {
       return terminal(all) ? all : null;
     });
     expect(evs.some((e) => e.type === 'message.completed' && e.payload.text === 'order A-1 shipped')).toBe(true);
-    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ tool: 'lookup_order', args: { id: 'A-1' }, sessionId: session.id }));
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ tool: 'lookup_order', args: { id: 'A-1' }, sessionId: session.id }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
 
     const activity = await until(async () => {
       const a = await readActivity(h, site.id);
