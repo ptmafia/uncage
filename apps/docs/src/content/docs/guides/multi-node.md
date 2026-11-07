@@ -90,11 +90,15 @@ node-postgres emits `'error'` on a pool when an idle connection dies (a database
 - **WebSockets** on `<basePath>/agent` must be forwarded (HTTP/1.1 `Upgrade`), with idle timeouts above the 10 s heartbeat. No stickiness needed.
 - **SSE** on `<basePath>/sessions/:id/events` must not be buffered, and needs idle timeouts above 15 s (the SSE heartbeat).
 - **Host header** preserved, and **client IP** passed on for rate limits: see [behind a proxy](/uncage/guides/mount-the-hub/#behind-a-reverse-proxy-or-load-balancer).
+
+:::caution[Client IP behind the load balancer]
+`POST <basePath>/device/code` is limited to 20 per minute **per client IP**, per node. Behind a load balancer every request comes from the balancer's address unless you set `app.set('trust proxy', <hops>)` (Express, with `toNodeHandler`), `rateLimits.clientIp(req)`, or `rateLimits.trustForwardedFor: true`. Without one of them all users share one bucket per node and `uncage setup` starts failing with `429 rate_limited` as soon as about 20 people connect in the same minute.
+:::
 - **Draining:** on deploy, stop sending new requests to a node, then `close()` it. Its computers reconnect to another node with exponential backoff (1 s, growing to at most 30 s); their runs keep going locally meanwhile, and events backfill on reconnect.
 
 ## Limits to know
 
-- Rate limits (device codes per IP, failed code guesses per user) are counted **per node**, not shared.
+- Rate limits (device codes per IP, failed code guesses per user) are counted **per node**, not shared. The per-IP limit needs the real client IP (see the caution above).
 - `pgliteHubStore` cannot be shared between processes: it takes a lock on its data folder. Several nodes must use Postgres.
 
 ## Try it locally

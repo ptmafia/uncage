@@ -389,3 +389,4 @@ agent 只对 `localhost` 和 `127.0.0.1` 接受 `http://`。其他网站都必�
 - [Write skills](/uncage/guides/write-skills/) 与[按次选择](/uncage/guides/select-manifest/)。
 - [Auth and device approval](/uncage/guides/auth-and-device-approval/)：接入你真正的登录。
 - [Multi-node](/uncage/guides/multi-node/)：负载均衡后面的 Postgres + Redis。
+- **部署到代理后面之前：** 设置客户端 IP（`trust proxy` 或 `rateLimits.clientIp`），否则所有用户共用一个 `uncage setup` 限流桶（每分钟 20 次）。见 [behind a proxy](/uncage/guides/mount-the-hub/#behind-a-reverse-proxy-or-load-balancer)。

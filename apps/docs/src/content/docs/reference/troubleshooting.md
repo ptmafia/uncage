@@ -9,9 +9,19 @@ description: Fixes for common problems in Connected Mode (computer not connectin
 
 - **“Refusing plain http for …”**: the agent accepts `http://` only for `localhost`, `127.0.0.1` and `[::1]`. Use your site’s `https://` URL.
 - **The link opens but there is no Approve button**: the code is unknown, used or older than 10 minutes. Run `uncage setup <url>` again. Check that your `/device` page passes the `code` query parameter to `hub.lookupDevice`.
-- **“Too many requests” / `rate_limited`**: too many codes from one IP (20 per minute), or too many wrong codes from one user (10 per 10 minutes). Wait, or configure the client IP behind your proxy ([how](/uncage/guides/mount-the-hub/#behind-a-reverse-proxy-or-load-balancer)); without it every client shares one bucket.
+- **“Too many requests” / `rate_limited`**: too many codes from one IP (20 per minute), or too many wrong codes from one user (10 per 10 minutes). If it happens to many users at once, see the next section.
 - **No browser on that computer**: `uncage setup <url> --no-browser` prints the link and the code; open the link on any device where the user is signed in.
 - **`UNCAGE_HOME is for foreground runs`**: with `UNCAGE_HOME` set, use `--no-daemon` and run `uncage agent` yourself.
+
+### `uncage setup` fails with `429 rate_limited` for many users at once
+
+The device-code limit (20 per minute) is **per client IP**. Behind a reverse proxy, load balancer or CDN, the hub sees the proxy's address unless you configure the client IP, so every user lands in the same bucket and the 21st setup in a minute fails for everyone.
+
+- **Express:** `app.set('trust proxy', 1)` (number of proxies in front), and mount the hub with `toNodeHandler(hub)`, which passes `req.ip`.
+- **Fetch-style servers (Hono, Next route handlers, …):** `createHub({ rateLimits: { clientIp: (req) => req.headers.get('cf-connecting-ip') ?? undefined } })` with your platform's client-IP header, or pass `hub.handler(req, { clientIp })`.
+- **`rateLimits.trustForwardedFor: true`** only if your proxy appends the client address to `X-Forwarded-For`.
+
+With several nodes the limit is counted on each node. Details: [behind a proxy](/uncage/guides/mount-the-hub/#behind-a-reverse-proxy-or-load-balancer).
 
 ### The page keeps saying “Waiting for your computer…”
 

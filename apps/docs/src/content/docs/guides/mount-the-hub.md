@@ -208,10 +208,20 @@ The `Hub` you get back has `basePath`, `handler(req, info?)`, `attach(server, { 
 
 ## Behind a reverse proxy or load balancer
 
+:::caution[Set the client IP before you go live]
+`POST <basePath>/device/code` (every `uncage setup`) is limited to **20 per minute per client IP**. Behind a reverse proxy, load balancer or CDN the hub sees the proxy's address, not the user's, unless you tell it otherwise. Then **all your users share one bucket**: from the 21st setup in a minute, site-wide, `uncage setup` fails with `429 rate_limited`.
+
+Fix it with one of:
+
+- Express: `app.set('trust proxy', 1)` (the number of proxies in front of the app). `toNodeHandler` then passes `req.ip`.
+- Any server: `rateLimits: { clientIp: (req) => req.headers.get('cf-connecting-ip') ?? undefined }` (use your platform's client-IP header).
+- `rateLimits: { trustForwardedFor: true }`, only if your proxy appends the client address to `X-Forwarded-For` (the hub uses the rightmost entry).
+:::
+
 - **Forward WebSocket upgrades** on `<basePath>/agent` (nginx: `proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";`), and allow long-lived connections (the hub pings every 10 s).
 - **Keep the original `Host`** (nginx: `proxy_set_header Host $host;`). The hub compares a request’s `Origin` with `publicUrl` and its `Host` to refuse cross-site POSTs.
 - **Do not buffer SSE** on `<basePath>/sessions/*/events` (nginx: `proxy_buffering off;`).
-- **Client IP for rate limits.** Express: `app.set('trust proxy', 1)`, and `toNodeHandler` uses `req.ip`. Fetch-style servers: pass `rateLimits: { clientIp: (req) => req.headers.get('cf-connecting-ip') ?? undefined }` (or your platform’s header), or `trustForwardedFor: true` if your proxy appends the client address to `X-Forwarded-For`. Without any of these, all clients share one bucket.
+- **Client IP for rate limits.** Express: `app.set('trust proxy', 1)`, and `toNodeHandler` uses `req.ip`. Fetch-style servers: pass `rateLimits: { clientIp: (req) => req.headers.get('cf-connecting-ip') ?? undefined }` (or your platform’s header), or `trustForwardedFor: true` if your proxy appends the client address to `X-Forwarded-For`. Without any of these, every client is counted as the proxy's address (or as one `shared` bucket), so the limit applies to all users together.
 - **TLS.** Terminate it wherever you like, but `publicUrl` must be the `https://` URL users open. The agent refuses plain `http://` for anything but `localhost` and `127.0.0.1`.
 
 ## Serverless hosting (Vercel, Netlify)

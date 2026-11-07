@@ -387,3 +387,4 @@ The repository’s [`examples/connected-demo`](https://github.com/ptmafia/uncage
 - [Write skills](/uncage/guides/write-skills/) and [choose them per run](/uncage/guides/select-manifest/).
 - [Auth and device approval](/uncage/guides/auth-and-device-approval/): connect your real sign-in.
 - [Multi-node](/uncage/guides/multi-node/): Postgres + Redis behind a load balancer.
+- **Before you deploy behind a proxy:** set the client IP (`trust proxy` or `rateLimits.clientIp`), or every user shares one `uncage setup` rate-limit bucket. See [behind a proxy](/uncage/guides/mount-the-hub/#behind-a-reverse-proxy-or-load-balancer).
