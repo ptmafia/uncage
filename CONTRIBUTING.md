@@ -11,6 +11,36 @@ pnpm e2e:mock   # Playwright against a mock daemon; uses your system Chrome loca
 In CI, `CI=true` makes Playwright use its bundled Chromium instead of system Chrome.
 `pnpm e2e:live` talks to a real Claude Code and is never run in CI.
 
+## Help site
+
+The help site (https://ptmafia.github.io/uncage/) lives in `apps/docs` (Astro Starlight). It is
+not part of the root `pnpm build`.
+
+```sh
+pnpm build                       # the packages: the API reference and the sample check read them
+pnpm --filter docs dev           # http://localhost:4321/uncage/
+pnpm --filter docs check         # type-check every code sample, then build (link check included)
+```
+
+- Pages are markdown in `apps/docs/src/content/docs/` (English) and `.../zh-cn/` (Chinese:
+  overview, quickstarts, concepts). The reading order is `apps/docs/src/nav.mjs`.
+- Every ` ```ts ` / ` ```tsx ` block is type-checked against the workspace packages by
+  `apps/docs/scripts/check-snippets.ts`. Blocks on one page form one project; a block with
+  `title="lib/tools.ts"` becomes that file. Mark a fragment that is not a whole file with
+  ` ```ts nocheck `.
+- Internal links are absolute and include the base path (`/uncage/guides/define-tools/`); the build
+  fails on broken links (`starlight-links-validator`).
+- The API reference (`/api/…`) is generated at build time from the packages' TSDoc
+  (TypeDoc + `typedoc-plugin-markdown`). Improve it in the source.
+- Coding-agent outputs are generated: `/<page>.md`, `/llms.txt`, `/llms-full.txt`, and
+  `/skills/uncage/SKILL.md` (served from `skills/uncage/SKILL.md` in this repo; keep it in sync
+  with the quickstarts).
+- CI (`.github/workflows/ci.yml`, job "Docs") runs the sample check and the build on every PR.
+  `.github/workflows/docs.yml` deploys to GitHub Pages on every push to `main`.
+
+**One-time setup:** repository Settings → Pages → Build and deployment → Source: **GitHub
+Actions**. Until that is set, the deploy job of `docs.yml` fails (the build job still runs).
+
 ## Releasing
 
 Releases are automatic, driven by [Changesets](https://github.com/changesets/changesets).

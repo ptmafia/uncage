@@ -7,6 +7,8 @@
  *
  *   // Express / Connect / node:http (mount before any body parser)
  *   app.use('/api/uncage', createUncageNodeHandler());
+ *
+ * @module proxy
  */
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';

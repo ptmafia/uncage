@@ -1,0 +1,18 @@
+---
+/**
+ * Starlight's page title plus a "Markdown" link to the plain-markdown version of the page
+ * (`/<page>.md`), for copying into a coding agent.
+ */
+import Default from '@astrojs/starlight/components/PageTitle.astro';
+import { mdPathOf } from '../lib/markdown';
+
+const { entry, lang } = Astro.locals.starlightRoute;
+const slug = entry.id.replace(/(^|\/)index$/, '');
+const href = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/${mdPathOf(slug)}`;
+const label = lang === 'zh-CN' ? '本页 Markdown' : 'View as Markdown';
+---
+
+<div class="uc-title">
+  <Default />
+  <a class="uc-md-link" href={href} title={lang === 'zh-CN' ? '纯 Markdown 版本，适合交给 coding agent' : 'Plain markdown of this page, for coding agents'}>{label}</a>
+</div>

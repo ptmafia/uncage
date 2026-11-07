@@ -1,0 +1,5 @@
+dist/
+.astro/
+.snippets/
+# Generated at build time by starlight-typedoc
+src/content/docs/api/

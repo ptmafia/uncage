@@ -43,3 +43,21 @@ jobs:
           name: e2e-results-node${{ matrix.node }}
           path: e2e/test-results
           if-no-files-found: ignore
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The API reference and the sample check read the built packages.
+      - run: pnpm exec turbo run build --filter='docs^...'
+      - name: Type-check every code sample on the site
+        run: pnpm --filter docs check:snippets
+      - name: Build the site (generates the API reference, validates every internal link)
+        run: pnpm --filter docs build
