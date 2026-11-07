@@ -71,9 +71,16 @@ export async function requestDeviceCode(fetchFn: typeof fetch, hubUrl: string, b
 
 export type DeviceGrant = Extract<DeviceTokenResponse, { status: 'ok' }>;
 
+const MAX_EXPIRES_SEC = 1800;
+const MIN_INTERVAL_SEC = 1;
+const MAX_INTERVAL_SEC = 60;
+/** NaN becomes `lo`. */
+const clamp = (v: number, lo: number, hi: number): number => (Number.isNaN(v) ? lo : Math.min(hi, Math.max(lo, v)));
+
 /**
  * Polls `/device/token` every `intervalSec` (RFC 8628: `slow_down` adds 5 s) until the user
- * approves, denies, or the code expires.
+ * approves, denies, or the code expires. The hub's values are clamped (interval 1–60 s, expiry at
+ * most 30 min) so a misbehaving hub cannot make setup hang or hammer it.
  */
 export async function pollDeviceToken(o: {
   fetch: typeof fetch;
@@ -84,8 +91,8 @@ export async function pollDeviceToken(o: {
 }): Promise<DeviceGrant> {
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const now = o.now ?? Date.now;
-  const deadline = now() + o.code.expiresInSec * 1000;
-  let intervalMs = Math.max(1, o.code.intervalSec) * 1000;
+  const deadline = now() + clamp(o.code.expiresInSec, 0, MAX_EXPIRES_SEC) * 1000;
+  let intervalMs = clamp(o.code.intervalSec, MIN_INTERVAL_SEC, MAX_INTERVAL_SEC) * 1000;
   for (;;) {
     await sleep(intervalMs);
     if (now() > deadline) throw new Error('The code expired before it was approved. Run uncage setup again.');
@@ -97,7 +104,7 @@ export async function pollDeviceToken(o: {
       case 'pending':
         continue;
       case 'slow_down':
-        intervalMs += 5000;
+        intervalMs = Math.min(intervalMs + 5000, MAX_INTERVAL_SEC * 1000);
         continue;
       case 'denied':
         throw new Error('The connection was denied on the website.');

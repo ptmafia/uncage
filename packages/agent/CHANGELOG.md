@@ -6,3 +6,4 @@
 - Bridges site tool calls, serves fenced file pulls, replicates events with backfill on reconnect (no duplicates), and assembles chunked uploads.
 - Local policy in `~/.uncage/agent.yaml`: bypass permissions only if `allowBypass: true`, optional `allowedPermissionModes`; redacted activity log; machine tokens stored 0600 and revocable.
 - Honours the hub-chosen session id on `createSession` and records hub run warnings (e.g. `site_tools_unsupported`) as `system.warning` events.
+- `uncage setup` clamps the hub's device-login timing (poll interval 1 to 60 s, expiry at most 30 min).

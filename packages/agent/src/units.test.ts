@@ -202,6 +202,25 @@ describe('device flow client', () => {
     expect(waits).toEqual([2000, 2000, 7000]);
   });
 
+  it('clamps the hub\'s timing: interval 1..60 s (slow_down included), expiry at most 30 min', async () => {
+    const ok = { status: 'ok', machineId: 'm', machineToken: 't', site: { id: 's', name: 's', url: 'https://x/api/uncage' } };
+    const run = async (c: Partial<DeviceCodeResponse>, statuses: unknown[]) => {
+      const waits: number[] = [];
+      let t = 0;
+      const p = pollDeviceToken({ fetch: scripted(statuses).f, hubUrl: 'https://x', code: { ...code, ...c }, now: () => t, sleep: async (ms) => { waits.push(ms); t += ms; } });
+      return { waits, result: await p.then((g) => g.machineId, (e: Error) => e.message) };
+    };
+    expect((await run({ intervalSec: 0 }, [ok])).waits).toEqual([1000]);
+    expect((await run({ intervalSec: -5 }, [ok])).waits).toEqual([1000]);
+    expect((await run({ intervalSec: Number.NaN }, [ok])).waits).toEqual([1000]);
+    expect((await run({ intervalSec: 3600 }, [ok])).waits).toEqual([60_000]);
+    expect((await run({ intervalSec: 58 }, [{ status: 'slow_down' }, ok])).waits).toEqual([58_000, 60_000]);
+    // A hub claiming a day-long code: polling stops after 30 minutes.
+    const long = await run({ intervalSec: 60, expiresInSec: 86_400 }, Array.from({ length: 100 }, () => ({ status: 'pending' })));
+    expect(long.result).toMatch(/expired/);
+    expect(long.waits.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(1800_000 + 60_000);
+  });
+
   it('denied and expired end with clear errors', async () => {
     await expect(pollDeviceToken({ fetch: scripted([{ status: 'denied' }]).f, hubUrl: 'https://x', code, sleep: async () => undefined })).rejects.toThrow(/denied/);
     await expect(pollDeviceToken({ fetch: scripted([{ status: 'expired' }]).f, hubUrl: 'https://x', code, sleep: async () => undefined })).rejects.toThrow(/expired/);
