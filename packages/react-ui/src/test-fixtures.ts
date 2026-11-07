@@ -6,6 +6,7 @@ import type {
   RuntimeCapabilities,
   ErrorCode,
   EventType,
+  MachineInfo,
   Run,
   RuntimeInfo,
   Session,
@@ -118,6 +119,23 @@ export const snapshot = (over: Partial<SessionSnapshot> = {}): SessionSnapshot =
   ...over,
 });
 
+export const machine = (over: Partial<MachineInfo> = {}): MachineInfo => ({
+  id: 'mac_1',
+  name: 'MacBook Pro',
+  os: 'darwin',
+  agentVersion: '0.2.0',
+  runtimes: [runtime()],
+  online: true,
+  lastSeenAt: T0,
+  ...over,
+});
+
+export const INSTALL = {
+  install: 'curl -fsSL https://site.test/api/uncage/install.sh | bash',
+  setup: 'uncage setup https://site.test/api/uncage',
+  windows: null,
+};
+
 export const clientError = (code: ErrorCode, status: number, message: string = code, hint?: string) =>
   new UncageClientError({ code, message, retryable: false, ...(hint ? { hint } : {}) }, status);
 
@@ -137,9 +155,18 @@ export function eventFactory(start = 1) {
     }) as UncageEvent;
 }
 
-/** An in-memory UncageClient driving the real store. `emit` pushes events to the live subscription. */
+/**
+ * An in-memory UncageClient driving the real store. `emit` pushes events to the live subscription.
+ * A local daemon by default (`machines()` → 404); `machines` makes it a connected-mode hub (a
+ * function is read on every poll).
+ */
 export function fakeClient(
-  opts: { runtimes?: RuntimeInfo[]; sessions?: Session[]; snapshot?: () => SessionSnapshot } = {},
+  opts: {
+    runtimes?: RuntimeInfo[];
+    sessions?: Session[];
+    snapshot?: () => SessionSnapshot;
+    machines?: MachineInfo[] | (() => MachineInfo[]);
+  } = {},
 ) {
   const subs: (SubscribeHandlers & { sessionId: string; closed: boolean })[] = [];
   let runCount = 0;
@@ -167,6 +194,13 @@ export function fakeClient(
     attachmentUrl: vi.fn((id: string) => `/api/uncage/attachments/${id}`),
     listActiveRuns: vi.fn(async (): Promise<ActiveRunInfo[]> => []),
     decide: vi.fn(async (id: string) => approval({ id, state: 'approved', decision: 'allow', version: 2 })),
+    machines: vi.fn(async (): Promise<MachineInfo[]> => {
+      const m = opts.machines;
+      if (m === undefined) throw clientError('not_found', 404, 'No route for GET /v1/machines.');
+      return typeof m === 'function' ? m() : m;
+    }),
+    installInfo: vi.fn(async (): Promise<{ install: string; setup: string; windows: string | null }> => INSTALL),
+    revokeMachine: vi.fn(async (): Promise<void> => undefined),
     subscribe: vi.fn((sessionId: string, h: SubscribeHandlers) => {
       const sub = { ...h, sessionId, closed: false };
       subs.push(sub);

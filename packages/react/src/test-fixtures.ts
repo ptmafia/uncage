@@ -5,6 +5,7 @@ import type {
   ApprovalRequest,
   ErrorCode,
   EventType,
+  MachineInfo,
   Run,
   RuntimeInfo,
   Session,
@@ -93,17 +94,31 @@ export function eventFactory(start = 1) {
     }) as UncageEvent;
 }
 
+export const machine = (over: Partial<MachineInfo> = {}): MachineInfo => ({
+  id: 'mac_1',
+  name: 'MacBook',
+  os: 'darwin',
+  agentVersion: '0.2.0',
+  runtimes: [],
+  online: true,
+  lastSeenAt: T0,
+  ...over,
+});
+
 export const clientError = (code: ErrorCode, status: number) =>
   new UncageClientError({ code, message: code, retryable: false }, status);
 
-/** A controllable in-memory UncageClient. `emit` pushes events to the live subscription. */
-export function fakeClient(snap: () => SessionSnapshot = () => snapshot()) {
+/**
+ * A controllable in-memory UncageClient. `emit` pushes events to the live subscription. By default
+ * it is a local daemon (`machines()` rejects with 404); pass `machines` for a connected-mode hub.
+ */
+export function fakeClient(snap: () => SessionSnapshot = () => snapshot(), opts: { machines?: MachineInfo[] } = {}) {
   const subs: (SubscribeHandlers & { sessionId: string; closed: boolean })[] = [];
   let runCount = 0;
   const client = {
     health: vi.fn(async () => ({ ok: true as const, protocol: '1.0' as const })),
     runtimes: vi.fn(async (): Promise<RuntimeInfo[]> => []),
-    createSession: vi.fn(async () => session()),
+    createSession: vi.fn<UncageClient['createSession']>(async () => session()),
     listSessions: vi.fn(async () => [session()]),
     snapshot: vi.fn(async () => snap()),
     startRun: vi.fn(async (sessionId: string, b: { prompt: string }) =>
@@ -117,6 +132,16 @@ export function fakeClient(snap: () => SessionSnapshot = () => snapshot()) {
     attachmentUrl: vi.fn((id: string) => `/api/uncage/attachments/${id}`),
     listActiveRuns: vi.fn(async (): Promise<ActiveRunInfo[]> => []),
     decide: vi.fn(async (id: string) => approval({ id, state: 'approved', decision: 'allow', version: 2 })),
+    machines: vi.fn<UncageClient['machines']>(async () => {
+      if (opts.machines) return opts.machines;
+      throw clientError('not_found', 404);
+    }),
+    installInfo: vi.fn<UncageClient['installInfo']>(async () => ({
+      install: 'curl -fsSL https://site.test/api/uncage/install.sh | bash',
+      setup: 'uncage setup https://site.test/api/uncage',
+      windows: null,
+    })),
+    revokeMachine: vi.fn<UncageClient['revokeMachine']>(async () => undefined),
     subscribe: vi.fn((sessionId: string, h: SubscribeHandlers) => {
       const sub = { ...h, sessionId, closed: false };
       subs.push(sub);

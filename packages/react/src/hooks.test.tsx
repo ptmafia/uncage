@@ -6,6 +6,7 @@ import {
   useApprovals,
   useAttachments,
   useAttachmentUrl,
+  useMachines,
   useMessages,
   useRun,
   useRunningSessions,
@@ -14,7 +15,7 @@ import {
   useSessionSettings,
 } from './hooks.js';
 import { UncageProvider } from './provider.js';
-import { approval, eventFactory, fakeClient, run, session, snapshot } from './test-fixtures.js';
+import { approval, eventFactory, fakeClient, machine, run, session, snapshot } from './test-fixtures.js';
 
 afterEach(cleanup);
 
@@ -230,5 +231,65 @@ describe('composer hooks', () => {
       expect(f.client.listActiveRuns.mock.calls.length).toBe(before + 2);
       expect(result.current.running.count).toBe(0);
     });
+  });
+});
+
+describe('useMachines', () => {
+  const wrap = (f: ReturnType<typeof fakeClient>) =>
+    function Wrapper({ children }: { children: ReactNode }) {
+      return <UncageProvider client={f.client}>{children}</UncageProvider>;
+    };
+
+  it('detects Local Mode from a daemon 404 (no machines, not connected)', async () => {
+    const f = fakeClient();
+    const { result } = renderHook(() => useMachines(), { wrapper: wrap(f) });
+    await waitFor(() => expect(result.current.mode).toBe('local'));
+    expect(result.current.connected).toBe(false);
+    expect(result.current.machines).toEqual([]);
+    expect(result.current.current).toBeUndefined();
+  });
+
+  it('connected: lists machines, the selected one and select()', async () => {
+    const f = fakeClient(undefined, { machines: [machine({ id: 'a', name: 'A' }), machine({ id: 'b', name: 'B', online: false })] });
+    const { result } = renderHook(() => useMachines(), { wrapper: wrap(f) });
+    await waitFor(() => expect(result.current.connected).toBe(true));
+    expect(result.current.selected?.id).toBe('a');
+    expect(result.current.current?.id).toBe('a');
+    act(() => result.current.select('b'));
+    expect(result.current.selected).toMatchObject({ id: 'b', online: false });
+  });
+
+  it('current is the machine the open session was created on', async () => {
+    const f = fakeClient(() => snapshot({ session: session({ id: 'ses_b' }) }), {
+      machines: [machine({ id: 'a' }), machine({ id: 'b' })],
+    });
+    f.client.createSession.mockResolvedValue(session({ id: 'ses_b' }));
+    const { result } = renderHook(() => ({ m: useMachines(), s: useSessions() }), { wrapper: wrap(f) });
+    await waitFor(() => expect(result.current.m.connected).toBe(true));
+    act(() => result.current.m.select('b'));
+    await act(async () => {
+      await result.current.s.create({ runtime: 'fake' });
+      await result.current.s.select('ses_b');
+    });
+    act(() => result.current.m.select('a'));
+    expect(result.current.m.selected?.id).toBe('a');
+    expect(result.current.m.current?.id).toBe('b');
+  });
+
+  it('watch polls while mounted and stops on unmount', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = fakeClient(undefined, { machines: [machine()] });
+      const { unmount } = renderHook(() => useMachines({ watch: true }), { wrapper: wrap(f) });
+      await act(async () => vi.advanceTimersByTimeAsync(0));
+      const n = f.client.machines.mock.calls.length;
+      await act(async () => vi.advanceTimersByTimeAsync(3000));
+      expect(f.client.machines.mock.calls.length).toBe(n + 1);
+      unmount();
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(f.client.machines.mock.calls.length).toBe(n + 1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

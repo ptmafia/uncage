@@ -16,7 +16,7 @@ It talks to your app's same-origin proxy (`createUncageHandler` / `createUncageN
 | --- | --- | --- |
 | `health()` | `GET /health` | `{ ok, protocol, version }` |
 | `runtimes()` | `GET /runtimes` | `RuntimeInfo[]` (`status`: `available` / `not_installed` / `auth_required` / …, with `hint`) |
-| `createSession({ runtime, workspace?, title? })` | `POST /sessions` | `Session` |
+| `createSession({ runtime, workspace?, title?, machineId? })` | `POST /sessions` | `Session` (`machineId`: the computer to run on, Connected Mode only) |
 | `listSessions()` | `GET /sessions` | `Session[]` (oldest first) |
 | `snapshot(sessionId)` | `GET /sessions/:id` | `{ session, runs, pendingApprovals, lastSequence }` |
 | `startRun(sessionId, { prompt, attachmentIds? })` | `POST /sessions/:id/runs` | `Run` (queued; progress arrives as events) |
@@ -27,6 +27,9 @@ It talks to your app's same-origin proxy (`createUncageHandler` / `createUncageN
 | `attachmentUrl(attachmentId)` | `GET /attachments/:id` | a URL for `<img src>` |
 | `listActiveRuns()` | `GET /runs?active=1` | `ActiveRunInfo[]` across sessions |
 | `subscribe(sessionId, { after, onEvent, onState?, onError? })` | `GET /sessions/:id/events` (SSE) | an unsubscribe function |
+| `machines()` | `GET /machines` | `MachineInfo[]` (Connected Mode hub; a local daemon answers 404) |
+| `installInfo()` | `GET /machines/install` | `{ install, setup, windows }` (the commands that connect a computer) |
+| `revokeMachine(machineId)` | `DELETE /machines/:id` | — (disconnects that computer) |
 
 `startRun` and `decide` send an `Idempotency-Key` header (a fresh UUID; pass your own `key` to `decide` to make retries safe). Calling the HTTP API yourself, these two endpoints **require** `Idempotency-Key`: without it you get 400 `invalid_request`. Repeating a key with the same body returns the first result instead of starting a second run.
 

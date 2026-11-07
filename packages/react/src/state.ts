@@ -1,9 +1,10 @@
-import type { ConnectionState, UncageClientError } from '@uncage/client';
+import type { ConnectionState, InstallInfo, UncageClientError } from '@uncage/client';
 import type {
   ActiveRunInfo,
   ApprovalCategory,
   ApprovalRequest,
   Attachment,
+  MachineInfo,
   Run,
   RuntimeInfo,
   Session,
@@ -114,6 +115,25 @@ export interface DraftState {
   sessionId?: string;
 }
 
+/**
+ * Connected mode: the user's computers on an Uncage hub. The mode is detected from the server:
+ * a hub serves `GET /machines`; a local daemon answers 404 (`'local'`). Until a probe succeeds
+ * (or after a probe failed for another reason) it is `'unknown'`, which UIs treat like local.
+ */
+export interface MachinesState {
+  mode: 'unknown' | 'local' | 'connected';
+  list: MachineInfo[];
+  loading: boolean;
+  /** The computer new sessions run on (kept while listed; else the first online one). */
+  selectedId?: string;
+  /** Install/setup commands (`loadInstallInfo`). */
+  install?: InstallInfo;
+  /** The last failed `loadMachines`/`loadInstallInfo` (cleared by the next success). */
+  error?: UncageClientError;
+  /** Machine each session created from this store runs on (the hub's session list has no machine). */
+  bySession: Record<string, string>;
+}
+
 export interface StoreState {
   runtimes: RuntimeInfo[];
   runtimesLoading: boolean;
@@ -127,6 +147,7 @@ export interface StoreState {
   attachments: AttachmentsState;
   /** Active runs across all sessions on the server (polled while watched). */
   activeRuns: ActiveRunInfo[];
+  machines: MachinesState;
 }
 
 /** Settings of a freshly created session (core's default). */

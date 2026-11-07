@@ -4,6 +4,7 @@ export {
   useApprovals,
   useAttachments,
   useAttachmentUrl,
+  useMachines,
   useConnection,
   useMessages,
   useRun,
@@ -31,6 +32,7 @@ export type {
   ChunkCursor,
   DraftAttachment,
   DraftState,
+  MachinesState,
   MessageView,
   SessionState,
   StoreState,
@@ -39,4 +41,4 @@ export type {
 } from './state.js';
 export { checkAttachment, createUncageStore, newestFirst, UPLOAD_FAILED_REASON } from './store.js';
 export type { UncageStore } from './store.js';
-export type { ConnectionState } from '@uncage/client';
+export type { ConnectionState, InstallInfo } from '@uncage/client';

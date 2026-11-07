@@ -1,6 +1,7 @@
 import { ATTACHMENT_LIMITS, type RuntimeCapabilities } from '@uncage/protocol';
 import {
   useAttachments,
+  useMachines,
   useRun,
   type AttachmentRejection,
   useSession,
@@ -9,7 +10,7 @@ import {
   useStoreSelector,
   useUncageStore,
 } from '@uncage/react';
-import { ArrowUp, Lock, Square, X } from 'lucide-react';
+import { ArrowUp, Lock, Square, WifiOff, X } from 'lucide-react';
 import {
   useEffect,
   useLayoutEffect,
@@ -61,7 +62,9 @@ function readNoticeShown(): boolean {
  * indicator, dictation, Send/Stop) inside it. Enter sends, Shift+Enter inserts a newline, Enter
  * while an IME is composing is ignored. Files attach via the picker, drag-and-drop or paste.
  * Disabled (with a hint) when the runtime is unavailable, while a new session is being created,
- * or with a banner offering a new session when the session is read-only.
+ * or with a banner offering a new session when the session is read-only. In connected mode it is
+ * also disabled while the conversation's computer is offline (with a reconnect hint) or none is
+ * connected.
  */
 export function Composer(): JSX.Element {
   const { t, locale } = useUi();
@@ -73,6 +76,7 @@ export function Composer(): JSX.Element {
   const { capabilities } = useSessionSettings();
   const attachments = useAttachments();
   const warning = useStoreSelector((s) => s.active?.lastWarning);
+  const machines = useMachines();
   const [text, setText] = useState('');
   const ref = useRef<HTMLTextAreaElement>(null);
 
@@ -81,10 +85,16 @@ export function Composer(): JSX.Element {
   // A session is selected but its snapshot has not loaded yet: nothing to send to.
   const loading = !controller.draft && session === undefined;
   const readOnly = !controller.draft && session?.readOnly === true;
+  // Connected mode: the computer that runs the conversation is offline, or none is connected yet.
+  const machineOffline = machines.connected && machines.current !== undefined && !machines.current.online;
+  const noMachine = machines.connected && machines.machines.length === 0;
   const unavailable = info !== undefined && info.status !== 'available';
-  const hint =
-    !readOnly && unavailable ? [info.message ?? t.runtimeUnavailable(name), info.hint].filter(Boolean).join(' ') : undefined;
-  const disabled = loading || readOnly || unavailable || controller.committing === true;
+  const hint = noMachine
+    ? t.noComputer
+    : !readOnly && !machineOffline && unavailable
+      ? [info.message ?? t.runtimeUnavailable(name), info.hint].filter(Boolean).join(' ')
+      : undefined;
+  const disabled = loading || readOnly || unavailable || machineOffline || noMachine || controller.committing === true;
   const canSend = !disabled && !active && !sending && text.trim().length > 0;
   const attachCaps = capabilities?.attachments;
   const canAttach = attachCaps !== undefined && (attachCaps.images || attachCaps.files);
@@ -243,6 +253,17 @@ export function Composer(): JSX.Element {
               {t.newSession}
             </button>
           )}
+        </div>
+      )}
+      {machineOffline && !readOnly && (
+        <div className="uc-banner uc-machine-offline" data-tone="warn" role="status">
+          <WifiOff aria-hidden />
+          <span className="uc-banner-text">
+            {t.computerOffline}{' '}
+            <span className="uc-banner-hint">
+              {t.computerOfflineHint} <code className="uc-inline-code">uncage agent</code>
+            </span>
+          </span>
         </div>
       )}
       {hint && (

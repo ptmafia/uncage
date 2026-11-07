@@ -5,6 +5,7 @@ import type {
   Attachment,
   CreateSessionBody,
   ErrorBody,
+  MachineInfo,
   Run,
   RuntimeInfo,
   Session,
@@ -26,10 +27,23 @@ export interface SubscribeHandlers {
   onError?(e: UncageClientError): void;
 }
 
+/** `GET <base>/machines/install` (hub only): the commands that connect a computer. */
+export interface InstallInfo {
+  /** Installs the Uncage CLI (macOS / Linux). */
+  install: string;
+  /** `uncage setup <url>`: pairs the computer with this website and starts the agent. */
+  setup: string;
+  /** Windows install command; `null` until Windows is supported. */
+  windows: string | null;
+}
+
+/** `createSession` body; `machineId` (connected mode only) picks the computer that runs it. */
+export type CreateSessionRequest = CreateSessionBody & { machineId?: string };
+
 export interface UncageClient {
   health(): Promise<{ ok: true; protocol: '1.0' }>;
   runtimes(): Promise<RuntimeInfo[]>;
-  createSession(b: CreateSessionBody): Promise<Session>;
+  createSession(b: CreateSessionRequest): Promise<Session>;
   listSessions(): Promise<Session[]>;
   snapshot(sessionId: string): Promise<SessionSnapshot>;
   startRun(sessionId: string, b: StartRunBody): Promise<Run>;
@@ -40,6 +54,15 @@ export interface UncageClient {
   listActiveRuns(): Promise<ActiveRunInfo[]>;
   decide(approvalId: string, d: ApprovalDecision, idempotencyKey?: string): Promise<ApprovalRequest>;
   subscribe(sessionId: string, h: SubscribeHandlers): () => void;
+  /**
+   * Connected mode (an Uncage hub): the signed-in user's computers. A local daemon has no
+   * `/machines` and rejects with status 404, which is how UIs tell the two modes apart.
+   */
+  machines(): Promise<MachineInfo[]>;
+  /** Connected mode: the install and setup commands for connecting a computer. */
+  installInfo(): Promise<InstallInfo>;
+  /** Connected mode: disconnects (revokes) one of the user's computers. */
+  revokeMachine(machineId: string): Promise<void>;
 }
 
 export interface UncageClientOptions {
@@ -263,6 +286,11 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
     decide: (id, d, key) =>
       request('POST', `/approvals/${enc(id)}/decision`, d, { 'idempotency-key': key ?? globalThis.crypto.randomUUID() }),
     subscribe,
+    machines: () => request('GET', '/machines'),
+    installInfo: () => request('GET', '/machines/install'),
+    revokeMachine: async (id) => {
+      await request('DELETE', `/machines/${enc(id)}`);
+    },
   };
 }
 

@@ -1,8 +1,8 @@
-import type { ConnectionState, UncageClientError } from '@uncage/client';
+import type { ConnectionState, CreateSessionRequest, InstallInfo, UncageClientError } from '@uncage/client';
 import type {
   ActiveRunInfo,
   ApprovalRequest,
-  CreateSessionBody,
+  MachineInfo,
   Run,
   RuntimeCapabilities,
   RuntimeInfo,
@@ -18,6 +18,7 @@ import {
   latestRun,
   type AttachmentRejection,
   type DraftAttachment,
+  type MachinesState,
   type MessageView,
   type StoreState,
   type TimelineItem,
@@ -63,7 +64,7 @@ export function useSessions(): {
   activeSessionId?: string;
   loading: boolean;
   select(id: string): Promise<void>;
-  create(b: CreateSessionBody): Promise<string>;
+  create(b: CreateSessionRequest): Promise<string>;
   reload(): Promise<void>;
 } {
   const store = useUncageStore();
@@ -231,6 +232,59 @@ export function useRunningSessions(): { runs: ActiveRunInfo[]; count: number } {
   const runs = useStoreSelector((s) => s.activeRuns);
   useEffect(() => store.actions.watchActiveRuns(), [store]);
   return useMemo(() => ({ runs, count: runs.length }), [runs]);
+}
+
+/**
+ * Connected mode: the signed-in user's computers on an Uncage hub. The first use probes the server
+ * (`GET /machines`): a hub answers with the list (`connected`), a local daemon with 404 (`mode:
+ * 'local'`; everything else stays as in Local Mode). `selected` is the computer new sessions run
+ * on; `current` is the one the open session runs on when known (created from this page), else
+ * `selected`. `watch` polls while mounted and the page is visible (`true` = every 3 s, or a number
+ * of ms).
+ */
+export function useMachines(opts: { watch?: boolean | number } = {}): {
+  mode: MachinesState['mode'];
+  connected: boolean;
+  machines: MachineInfo[];
+  selected?: MachineInfo;
+  current?: MachineInfo;
+  loading: boolean;
+  error?: UncageClientError;
+  install?: InstallInfo;
+  select(id: string): void;
+  refresh(): Promise<void>;
+  revoke(id: string): Promise<boolean>;
+  loadInstallInfo(): Promise<boolean>;
+} {
+  const store = useUncageStore();
+  const m = useStoreSelector((s) => s.machines);
+  const draft = useStoreSelector(isDraft);
+  const activeSessionId = useStoreSelector((s) => s.activeSessionId);
+  const watch = opts.watch === true ? 3000 : typeof opts.watch === 'number' ? opts.watch : undefined;
+  useEffect(() => {
+    const s = store.getState().machines;
+    if (s.mode === 'unknown' && !s.loading) void store.actions.loadMachines();
+  }, [store]);
+  useEffect(() => (watch !== undefined ? store.actions.watchMachines(watch) : undefined), [store, watch]);
+  return useMemo(() => {
+    const selected = m.list.find((x) => x.id === m.selectedId);
+    const sessionMachine = !draft && activeSessionId !== undefined ? m.bySession[activeSessionId] : undefined;
+    const current = (sessionMachine !== undefined ? m.list.find((x) => x.id === sessionMachine) : undefined) ?? selected;
+    return {
+      mode: m.mode,
+      connected: m.mode === 'connected',
+      machines: m.list,
+      ...(selected ? { selected } : {}),
+      ...(current ? { current } : {}),
+      loading: m.loading,
+      ...(m.error ? { error: m.error } : {}),
+      ...(m.install ? { install: m.install } : {}),
+      select: store.actions.selectMachine,
+      refresh: store.actions.loadMachines,
+      revoke: store.actions.revokeMachine,
+      loadInstallInfo: store.actions.loadInstallInfo,
+    };
+  }, [store, m, draft, activeSessionId]);
 }
 
 /** The URL of an attachment's content, for `<img src>` or links. */

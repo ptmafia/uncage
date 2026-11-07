@@ -19,6 +19,8 @@ export interface PopoverItem {
   /** Current choice (menuitemradio): shows a check and `aria-checked`. */
   checked?: boolean;
   tone?: 'err';
+  /** An action among choices (e.g. "Connect another computer…"): a plain `menuitem`. */
+  action?: boolean;
 }
 
 export interface PopoverProps {
@@ -41,6 +43,8 @@ export interface PopoverProps {
   triggerRef?: RefObject<HTMLButtonElement | null>;
   /** Which trigger edge the menu lines up with (default `start`; use `end` for right-side triggers). */
   align?: 'start' | 'end';
+  /** Where the menu opens (default `top`: the composer sits at the bottom; `bottom` for headers). */
+  side?: 'top' | 'bottom';
 }
 
 const VIEWPORT_MARGIN = 8;
@@ -64,6 +68,7 @@ export function Popover({
   footnote,
   triggerRef,
   align = 'start',
+  side = 'top',
 }: PopoverProps): JSX.Element {
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -196,7 +201,7 @@ export function Popover({
         {trigger}
       </button>
       {open && (
-        <div ref={panel} className="uc-popover" data-align={align}>
+        <div ref={panel} className="uc-popover" data-align={align} data-side={side}>
           <div
             id={`${id}-menu`}
             role="menu"
@@ -205,39 +210,42 @@ export function Popover({
             className="uc-menu"
             onKeyDown={onMenuKeyDown}
           >
-            {items.map((item, i) => (
-              <button
-                key={item.id}
-                ref={(el) => {
-                  itemRefs.current[i] = el;
-                }}
-                type="button"
-                role={itemRole}
-                tabIndex={-1}
-                className="uc-menu-item"
-                data-tone={item.tone}
-                aria-checked={itemRole === 'menuitemradio' ? item.checked === true : undefined}
-                aria-labelledby={`${id}-${i}-label`}
-                aria-describedby={item.description ? `${id}-${i}-desc` : undefined}
-                onClick={() => choose(item.id)}
-              >
-                <span className="uc-menu-text">
-                  <span id={`${id}-${i}-label`} className="uc-menu-label">
-                    {item.label}
+            {items.map((item, i) => {
+              const role = item.action ? 'menuitem' : itemRole;
+              return (
+                <button
+                  key={item.id}
+                  ref={(el) => {
+                    itemRefs.current[i] = el;
+                  }}
+                  type="button"
+                  role={role}
+                  tabIndex={-1}
+                  className="uc-menu-item"
+                  data-tone={item.tone}
+                  aria-checked={role === 'menuitemradio' ? item.checked === true : undefined}
+                  aria-labelledby={`${id}-${i}-label`}
+                  aria-describedby={item.description ? `${id}-${i}-desc` : undefined}
+                  onClick={() => choose(item.id)}
+                >
+                  <span className="uc-menu-text">
+                    <span id={`${id}-${i}-label`} className="uc-menu-label">
+                      {item.label}
+                    </span>
+                    {item.description && (
+                      <span id={`${id}-${i}-desc`} className="uc-menu-desc">
+                        {item.description}
+                      </span>
+                    )}
                   </span>
-                  {item.description && (
-                    <span id={`${id}-${i}-desc`} className="uc-menu-desc">
-                      {item.description}
+                  {role === 'menuitemradio' && (
+                    <span className="uc-menu-check" aria-hidden>
+                      {item.checked && <Check />}
                     </span>
                   )}
-                </span>
-                {itemRole === 'menuitemradio' && (
-                  <span className="uc-menu-check" aria-hidden>
-                    {item.checked && <Check />}
-                  </span>
-                )}
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
           {footnote && (
             <p id={`${id}-foot`} className="uc-menu-foot">

@@ -1,0 +1,375 @@
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import type { MachineInfo } from '@uncage/protocol';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  AgentChat,
+  ApproveDevice,
+  ConnectMachine,
+  UncageProvider,
+  UncageUIProvider,
+  type AgentChatProps,
+  type ApproveDeviceProps,
+} from './index.js';
+import { clientError, fakeClient, INSTALL, machine, runtime, session } from './test-fixtures.js';
+
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  window.history.replaceState(null, '', '/');
+  window.localStorage.clear();
+});
+
+type Fake = ReturnType<typeof fakeClient>;
+
+const renderChat = (f: Fake, props: AgentChatProps = {}) =>
+  render(
+    <UncageProvider client={f.client}>
+      <AgentChat {...props} />
+    </UncageProvider>,
+  );
+
+const textbox = () => screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement;
+
+/** Fakes only the interval timers (store polling), so RTL's waitFor keeps working. */
+const fakeIntervals = () => vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+const advance = (ms: number) => act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
+
+describe('Local Mode (daemon without /machines)', () => {
+  it('behaves exactly as before: no computer UI, no error, sessions created without machineId, no polling', async () => {
+    fakeIntervals();
+    const f = fakeClient();
+    renderChat(f);
+    await screen.findByRole('heading', { name: 'Start a session with Claude Code' });
+    await waitFor(() => expect(f.client.machines).toHaveBeenCalledTimes(1));
+    // No header in a draft, no machine picker, no connect dialog, no error banner.
+    expect(screen.queryByRole('banner')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Computer:/ })).toBeNull();
+    expect(screen.queryByText('Connect your computer')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(textbox().disabled).toBe(false);
+    await advance(30_000);
+    expect(f.client.machines).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(textbox(), { target: { value: 'hello' } });
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Send' })));
+    await waitFor(() => expect(f.client.startRun).toHaveBeenCalled());
+    expect(f.client.createSession).toHaveBeenCalledWith({ runtime: 'claude' });
+    // The open session's header is the same as before: title and runtime, no computer.
+    const header = await screen.findByRole('banner');
+    expect(within(header).getByRole('heading', { name: 'Fix the build' })).toBeTruthy();
+    expect(within(header).getByText('Claude Code')).toBeTruthy();
+    expect(within(header).queryByRole('button')).toBeNull();
+  });
+});
+
+describe('connected mode: no computer yet', () => {
+  it('the empty state is ConnectMachine with the hub commands; the composer is disabled', async () => {
+    const f = fakeClient({ machines: [] });
+    renderChat(f);
+    const region = await screen.findByRole('region', { name: 'Connect your computer' });
+    expect(within(region).getByText(/Run these two commands on the computer/)).toBeTruthy();
+    await within(region).findByText(INSTALL.install);
+    expect(within(region).getByText(INSTALL.setup)).toBeTruthy();
+    expect(within(region).getByText('Install the Uncage CLI')).toBeTruthy();
+    expect(within(region).getByText('Start the agent')).toBeTruthy();
+    expect(within(region).getByText(/Opens a browser to sign in/)).toBeTruthy();
+    expect(within(region).getByText('Waiting for your computer…')).toBeTruthy();
+    // Inline: no Cancel.
+    expect(within(region).queryByRole('button', { name: 'Cancel' })).toBeNull();
+    expect(textbox().disabled).toBe(true);
+    expect(screen.getByText('Connect your computer to start.')).toBeTruthy();
+  });
+
+  it('switches to "Connected: <name>" when the computer comes online, then to the new-session view', async () => {
+    fakeIntervals();
+    let list: MachineInfo[] = [];
+    const f = fakeClient({ machines: () => list });
+    renderChat(f);
+    const region = await screen.findByRole('region', { name: 'Connect your computer' });
+    await within(region).findByText(INSTALL.setup);
+    list = [machine({ name: 'Studio Mac' })];
+    await advance(3000);
+    expect(within(region).getByText('Connected: Studio Mac')).toBeTruthy();
+    // Shortly after, the regular empty state with the computer's runtime takes over.
+    await screen.findByRole('heading', { name: 'Start a session with Claude Code' }, { timeout: 3000 });
+    expect(screen.queryByRole('region', { name: 'Connect your computer' })).toBeNull();
+    expect(textbox().disabled).toBe(false);
+    expect(screen.getByRole('button', { name: 'Computer: Studio Mac (online)' })).toBeTruthy();
+  });
+
+  it('Windows tab says coming soon; tabs are keyboard operable', async () => {
+    const f = fakeClient({ machines: [] });
+    renderChat(f);
+    const region = await screen.findByRole('region', { name: 'Connect your computer' });
+    await within(region).findByText(INSTALL.install);
+    const unix = within(region).getByRole('tab', { name: 'macOS / Linux' });
+    expect(unix.getAttribute('aria-selected')).toBe('true');
+    fireEvent.keyDown(unix, { key: 'ArrowRight' });
+    const win = within(region).getByRole('tab', { name: 'Windows' });
+    expect(win.getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(win);
+    expect(within(region).getByText('Coming soon')).toBeTruthy();
+    expect(within(region).queryByText(INSTALL.install)).toBeNull();
+  });
+
+  it('copy buttons write the command to the clipboard and say Copied', async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const f = fakeClient({ machines: [] });
+    renderChat(f);
+    const btn = await screen.findByRole('button', { name: `Copy command: ${INSTALL.setup}` });
+    await act(async () => fireEvent.click(btn));
+    expect(writeText).toHaveBeenCalledWith(INSTALL.setup);
+    expect(btn.getAttribute('title')).toBe('Copied');
+  });
+
+  it('"That computer can\'t open a browser?" reveals the --no-browser command', async () => {
+    const f = fakeClient({ machines: [] });
+    renderChat(f);
+    const region = await screen.findByRole('region', { name: 'Connect your computer' });
+    await within(region).findByText(INSTALL.setup);
+    expect(within(region).getByText("That computer can't open a browser?")).toBeTruthy();
+    expect(within(region).getByText(`${INSTALL.setup} --no-browser`)).toBeTruthy();
+    expect(within(region).getByText(/prints a link and a code/)).toBeTruthy();
+  });
+
+  it('a failed install-info request (rate_limited) shows a localized error and Retry', async () => {
+    const f = fakeClient({ machines: [] });
+    f.client.installInfo.mockRejectedValueOnce(clientError('rate_limited', 429, 'Too many requests.'));
+    renderChat(f, { locale: 'zh-CN' });
+    const region = await screen.findByRole('region', { name: '连接你的电脑' });
+    await within(region).findByText('请求太频繁了，稍等一下再试。');
+    await act(async () => fireEvent.click(within(region).getByRole('button', { name: '重试' })));
+    await within(region).findByText(INSTALL.install);
+    expect(f.client.installInfo).toHaveBeenCalledTimes(2);
+  });
+
+  it('zh-CN copy matches the reference dialog', async () => {
+    const f = fakeClient({ machines: [] });
+    renderChat(f, { locale: 'zh-CN' });
+    const region = await screen.findByRole('region', { name: '连接你的电脑' });
+    expect(within(region).getByText('在要连接的电脑上运行这两条命令。守护进程一上线，这里就会自动识别。')).toBeTruthy();
+    expect(within(region).getByText('安装 Uncage CLI')).toBeTruthy();
+    expect(within(region).getByText('启动守护进程')).toBeTruthy();
+    expect(within(region).getByText('会打开浏览器登录，然后在后台保持守护进程运行。')).toBeTruthy();
+    expect(within(region).getByText('等待你的电脑上线…')).toBeTruthy();
+    expect(within(region).getByText('那台电脑打不开浏览器？')).toBeTruthy();
+    fireEvent.click(within(region).getByRole('tab', { name: 'Windows' }));
+    expect(within(region).getByText('即将支持')).toBeTruthy();
+  });
+});
+
+describe('connected mode: machine status and picker', () => {
+  const two = () => [
+    machine({ id: 'mac_1', name: 'MacBook Pro' }),
+    machine({ id: 'mac_2', name: 'Linux Box', os: 'linux', online: false, runtimes: [runtime({ id: 'codex', displayName: 'Codex' })] }),
+  ];
+
+  it('the header shows the computer; the picker lists computers and sessions run on the chosen one', async () => {
+    const f = fakeClient({ machines: two() });
+    renderChat(f);
+    const trigger = await screen.findByRole('button', { name: 'Computer: MacBook Pro (online)' });
+    fireEvent.click(trigger);
+    const menu = screen.getByRole('menu', { name: 'Choose a computer' });
+    const items = within(menu).getAllByRole('menuitemradio');
+    expect(items.map((i) => i.getAttribute('aria-checked'))).toEqual(['true', 'false']);
+    expect(within(menu).getByText(/macOS · Online/)).toBeTruthy();
+    expect(within(menu).getByText(/Linux · Offline · seen/)).toBeTruthy();
+    expect(within(menu).getByRole('menuitem', { name: 'Connect another computer…' })).toBeTruthy();
+    fireEvent.click(items[1]!);
+    expect(screen.getByRole('button', { name: 'Computer: Linux Box (offline)' })).toBeTruthy();
+    // The chosen computer's runtimes drive the empty state.
+    await screen.findByRole('heading', { name: 'Start a session with Codex' });
+  });
+
+  it('sends create the session on the selected computer', async () => {
+    const f = fakeClient({ machines: two() });
+    renderChat(f);
+    await screen.findByRole('button', { name: 'Computer: MacBook Pro (online)' });
+    fireEvent.change(textbox(), { target: { value: 'hello' } });
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Send' })));
+    await waitFor(() => expect(f.client.startRun).toHaveBeenCalled());
+    expect(f.client.createSession).toHaveBeenCalledWith({ runtime: 'claude', machineId: 'mac_1' });
+  });
+
+  it('selected computer offline: composer disabled with the reconnect hint; back online re-enables it', async () => {
+    fakeIntervals();
+    let online = false;
+    const f = fakeClient({ machines: () => [machine({ online })] });
+    renderChat(f);
+    await screen.findByRole('button', { name: 'Computer: MacBook Pro (offline)' });
+    expect(textbox().disabled).toBe(true);
+    const banner = screen.getByText(/Your computer is offline\. Waiting for it to reconnect…/).closest('[role="status"]')!;
+    expect(within(banner as HTMLElement).getByText('uncage agent')).toBeTruthy();
+    online = true;
+    await advance(5000);
+    expect(screen.getByRole('button', { name: 'Computer: MacBook Pro (online)' })).toBeTruthy();
+    expect(textbox().disabled).toBe(false);
+    expect(screen.queryByText(/Your computer is offline/)).toBeNull();
+  });
+
+  it('zh-CN offline copy', async () => {
+    const f = fakeClient({ machines: [machine({ online: false })] });
+    renderChat(f, { locale: 'zh-CN' });
+    await screen.findByText(/你的电脑离线了，等待重新连接…/);
+    expect(screen.getByText('uncage agent')).toBeTruthy();
+  });
+
+  it('"Connect another computer…" opens the dialog; it polls every 3 s while open and Cancel / Esc close it', async () => {
+    fakeIntervals();
+    const f = fakeClient({ machines: [machine()] });
+    renderChat(f);
+    fireEvent.click(await screen.findByRole('button', { name: 'Computer: MacBook Pro (online)' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Connect another computer…' }));
+    const dialog = screen.getByRole('dialog', { name: 'Connect your computer' });
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    await within(dialog).findByText(INSTALL.install);
+    const n = f.client.machines.mock.calls.length;
+    await advance(3000);
+    expect(f.client.machines.mock.calls.length).toBe(n + 1);
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    // Closed: only the 5 s status refresh remains.
+    const m = f.client.machines.mock.calls.length;
+    await advance(3000);
+    expect(f.client.machines.mock.calls.length).toBe(m);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Computer: MacBook Pro (online)' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Connect another computer…' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('the dialog detects a new computer, selects it and offers Done', async () => {
+    fakeIntervals();
+    let list = [machine()];
+    const f = fakeClient({ machines: () => list });
+    const onConnected = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <UncageProvider client={f.client}>
+        <ConnectMachine onConnected={onConnected} onClose={onClose} />
+      </UncageProvider>,
+    );
+    const dialog = screen.getByRole('dialog', { name: 'Connect your computer' });
+    await within(dialog).findByText(INSTALL.install);
+    await advance(0);
+    list = [machine(), machine({ id: 'mac_9', name: 'New Box' })];
+    await advance(3000);
+    expect(within(dialog).getByText('Connected: New Box')).toBeTruthy();
+    expect(onConnected).toHaveBeenCalledWith(expect.objectContaining({ id: 'mac_9' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('a known computer reconnecting counts as connected', async () => {
+    fakeIntervals();
+    let online = true;
+    const f = fakeClient({ machines: () => [machine({ online })] });
+    const onConnected = vi.fn();
+    render(
+      <UncageProvider client={f.client}>
+        <ConnectMachine variant="inline" onConnected={onConnected} />
+      </UncageProvider>,
+    );
+    await advance(0);
+    online = false;
+    await advance(3000);
+    expect(onConnected).not.toHaveBeenCalled();
+    online = true;
+    await advance(3000);
+    expect(onConnected).toHaveBeenCalledTimes(1);
+  });
+
+  it('picking another computer with a session open starts a new session draft', async () => {
+    const f = fakeClient({ machines: two(), sessions: [session()] });
+    renderChat(f);
+    const item = await screen.findByRole('button', { name: /Fix the build/ });
+    await act(async () => fireEvent.click(item));
+    await screen.findByRole('heading', { name: 'Fix the build' });
+    fireEvent.click(screen.getByRole('button', { name: 'Computer: MacBook Pro (online)' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /Linux Box/ }));
+    await screen.findByRole('heading', { name: 'Start a session with Codex' });
+  });
+
+  it('machine_offline from a send is shown localized', async () => {
+    const f = fakeClient({ machines: [machine()] });
+    f.client.createSession.mockRejectedValueOnce(clientError('machine_offline', 409, 'The machine is offline.'));
+    renderChat(f, { locale: 'zh-CN' });
+    await screen.findByRole('button', { name: '电脑：MacBook Pro（在线）' });
+    fireEvent.change(textbox_zh(), { target: { value: 'hi' } });
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: '发送' })));
+    await screen.findByText('你的电脑离线了。请确认那台电脑上 `uncage agent` 正在运行。');
+  });
+});
+
+const textbox_zh = () => screen.getByRole('textbox', { name: '消息' }) as HTMLTextAreaElement;
+
+describe('ApproveDevice', () => {
+  const base = (over: Partial<ApproveDeviceProps> = {}): ApproveDeviceProps => ({
+    code: 'WDJB-MJHT',
+    lookup: { name: 'Nathan’s MacBook', os: 'darwin', repairsMachine: null },
+    onApprove: vi.fn(),
+    onDeny: vi.fn(),
+    ...over,
+  });
+
+  it('shows the computer, OS and code; Approve / Deny call back', () => {
+    const p = base();
+    render(<ApproveDevice {...p} />);
+    expect(screen.getByRole('heading', { name: 'Connect this computer?' })).toBeTruthy();
+    expect(screen.getByText('Nathan’s MacBook (macOS) wants to connect to your account.')).toBeTruthy();
+    expect(screen.getByText('WDJB-MJHT')).toBeTruthy();
+    expect(screen.getByText(/matches the one shown in the terminal/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Deny' }));
+    expect(p.onApprove).toHaveBeenCalledTimes(1);
+    expect(p.onDeny).toHaveBeenCalledTimes(1);
+  });
+
+  it('warns when approving re-pairs an existing computer', () => {
+    render(<ApproveDevice {...base({ lookup: { name: 'Mac', repairsMachine: { id: 'mac_1', name: 'Old Mac' } } })} />);
+    expect(screen.getByText(/This reconnects Old Mac/)).toBeTruthy();
+  });
+
+  it('in flight: both buttons disabled, the pressed one busy', () => {
+    render(<ApproveDevice {...base({ state: 'approving' })} />);
+    const approve = screen.getByRole('button', { name: 'Approve' }) as HTMLButtonElement;
+    const deny = screen.getByRole('button', { name: 'Deny' }) as HTMLButtonElement;
+    expect(approve.disabled && deny.disabled).toBe(true);
+    expect(approve.getAttribute('aria-busy')).toBe('true');
+  });
+
+  it('done states and unusable codes replace the buttons', () => {
+    const { rerender } = render(<ApproveDevice {...base({ state: 'approved' })} />);
+    expect(screen.getByText(/Computer connected/)).toBeTruthy();
+    expect(screen.queryByRole('button')).toBeNull();
+    rerender(<ApproveDevice {...base({ state: 'denied' })} />);
+    expect(screen.getByText('Denied. Nothing was connected.')).toBeTruthy();
+    rerender(<ApproveDevice {...base({ lookup: null })} />);
+    expect(screen.getByRole('alert').textContent).toContain('invalid or has expired');
+    rerender(<ApproveDevice {...base({ state: 'expired' })} />);
+    expect(screen.getByRole('alert').textContent).toContain('This code has expired');
+  });
+
+  it('rate_limited: localized message, buttons stay enabled for a retry', () => {
+    render(<ApproveDevice {...base({ error: { code: 'rate_limited', message: 'Too many requests.' } })} />);
+    expect(screen.getByRole('alert').textContent).toBe('Too many requests. Wait a moment and try again.');
+    expect((screen.getByRole('button', { name: 'Approve' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('zh-CN via the locale prop or a surrounding provider', () => {
+    const { unmount } = render(<ApproveDevice {...base({ locale: 'zh-CN' })} />);
+    expect(screen.getByRole('heading', { name: '连接这台电脑？' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '批准' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '拒绝' })).toBeTruthy();
+    unmount();
+    render(
+      <UncageUIProvider locale="zh-CN">
+        <ApproveDevice {...base({ lookup: { repairsMachine: null } })} />
+      </UncageUIProvider>,
+    );
+    expect(screen.getByText('一台未命名的电脑请求连接到你的账号。')).toBeTruthy();
+  });
+});

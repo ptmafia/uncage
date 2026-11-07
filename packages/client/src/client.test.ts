@@ -335,3 +335,47 @@ describe('structural guards (no zod in the browser path)', () => {
     expect(err).toMatchObject({ code: 'internal_error', status: 409, details: { reason: 'http_status', status: 409 } });
   });
 });
+
+describe('connected mode (hub machines)', () => {
+  const machine = {
+    id: 'mac_1',
+    name: 'MacBook',
+    os: 'darwin',
+    agentVersion: '0.2.0',
+    runtimes: [],
+    online: true,
+    lastSeenAt: '2026-11-07T00:00:00.000Z',
+  };
+
+  it('machines() GETs <base>/machines', async () => {
+    const fetch = vi.fn<F>(async () => json([machine]));
+    expect(await createUncageClient({ fetch, baseUrl: '/hub' }).machines()).toEqual([machine]);
+    expect(fetch.mock.calls[0]![0]).toBe('/hub/machines');
+    expect(fetch.mock.calls[0]![1]!.method).toBe('GET');
+  });
+
+  it('machines() against a daemon (no /machines) rejects with status 404', async () => {
+    const fetch = vi.fn<F>(async () => json({ error: { code: 'not_found', message: 'No route', retryable: false } }, 404));
+    await expect(createUncageClient({ fetch }).machines()).rejects.toMatchObject({ code: 'not_found', status: 404 });
+  });
+
+  it('installInfo() GETs <base>/machines/install', async () => {
+    const info = { install: 'curl -fsSL https://x/install.sh | bash', setup: 'uncage setup https://x', windows: null };
+    const fetch = vi.fn<F>(async () => json(info));
+    expect(await createUncageClient({ fetch }).installInfo()).toEqual(info);
+    expect(fetch.mock.calls[0]![0]).toBe('/api/uncage/machines/install');
+  });
+
+  it('revokeMachine() DELETEs <base>/machines/:id (encoded)', async () => {
+    const fetch = vi.fn<F>(async () => json({ ok: true }));
+    await createUncageClient({ fetch }).revokeMachine('mac 1');
+    expect(fetch.mock.calls[0]![0]).toBe('/api/uncage/machines/mac%201');
+    expect(fetch.mock.calls[0]![1]!.method).toBe('DELETE');
+  });
+
+  it('createSession forwards machineId', async () => {
+    const fetch = vi.fn<F>(async () => json({ id: 'ses_1' }, 201));
+    await createUncageClient({ fetch }).createSession({ runtime: 'claude', machineId: 'mac_1' });
+    expect(JSON.parse(fetch.mock.calls[0]![1]!.body as string)).toEqual({ runtime: 'claude', machineId: 'mac_1' });
+  });
+});

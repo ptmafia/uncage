@@ -1,10 +1,10 @@
-import { UncageClientError, uploadContentType, type UncageClient } from '@uncage/client';
+import { UncageClientError, uploadContentType, type CreateSessionRequest, type UncageClient } from '@uncage/client';
 import {
   ATTACHMENT_LIMITS,
   classifyAttachment,
   displayFileName,
   type ActiveRunInfo,
-  type CreateSessionBody,
+  type MachineInfo,
   type RuntimeCapabilities,
   type Session,
   type SessionSettings,
@@ -39,7 +39,8 @@ export interface UncageStore {
   actions: {
     loadRuntimes(): Promise<void>;
     loadSessions(): Promise<void>;
-    createSession(b: CreateSessionBody): Promise<string>;
+    /** In connected mode the session runs on `b.machineId`, else on the selected machine. */
+    createSession(b: CreateSessionRequest): Promise<string>;
     selectSession(id: string): Promise<void>;
     /**
      * Resolves `true` when a run was started; `false` when nothing was sent (busy, no session, an
@@ -72,7 +73,7 @@ export interface UncageStore {
      * (selectSession/openDraft/closeDraft), the created id is returned but the draft and the
      * current attachments are left untouched. `createSession` in a draft delegates here.
      */
-    commitDraft(b?: Partial<CreateSessionBody>): Promise<string>;
+    commitDraft(b?: Partial<CreateSessionRequest>): Promise<string>;
     /**
      * Validates files client-side (same rules as the server, using the target runtime's
      * capabilities) and uploads accepted ones to the active session, or queues them in a draft.
@@ -88,11 +89,31 @@ export interface UncageStore {
      * every returned stop function has been called.
      */
     watchActiveRuns(): () => void;
+    /**
+     * Connected mode: fetches the user's computers. The first answer decides `machines.mode` (a
+     * 404 means a local daemon: `'local'`). Failures go to `machines.error`, never `lastError`.
+     */
+    loadMachines(): Promise<void>;
+    /**
+     * Polls `loadMachines` while the document is visible, every `intervalMs` (default 3 s; the
+     * shortest of all watchers wins), until every returned stop function has been called. Stops
+     * by itself in Local Mode.
+     */
+    watchMachines(intervalMs?: number): () => void;
+    /** Chooses the computer new sessions run on (ignored unless listed). */
+    selectMachine(id: string): void;
+    /**
+     * Fetches the install/setup commands once into `machines.install`. Resolves `false` on failure
+     * (the error is in `machines.error`).
+     */
+    loadInstallInfo(): Promise<boolean>;
+    /** Disconnects one of the user's computers. Resolves `false` (and records `lastError`) on failure. */
+    revokeMachine(id: string): Promise<boolean>;
   };
   /** URL of an attachment's content (`client.attachmentUrl`). */
   attachmentUrl(attachmentId: string): string;
   /**
-   * Closes the live subscription, stops active-run polling, aborts uploads (dropping attachments
+   * Closes the live subscription, stops active-run and machine polling, aborts uploads (dropping attachments
    * and revoking their previews) and drops in-flight async results. Other state (including
    * `activeSessionId`) is kept, so `selectSession(activeSessionId)` resumes.
    */
@@ -120,6 +141,7 @@ const clientError = (
 export const UPLOAD_FAILED_REASON = 'attachment_upload_failed';
 
 const ACTIVE_RUNS_POLL_MS = 3000;
+const MACHINES_POLL_MS = 3000;
 const SETTING_KEYS = ['model', 'effort', 'permissionMode'] as const;
 const EMPTY_ATTACHMENTS: AttachmentsState = { items: [], rejected: [] };
 
@@ -166,6 +188,26 @@ const isRunLifecycle = (e: UncageEvent) =>
   e.type === 'run.cancelled' ||
   e.type === 'run.interrupted';
 
+/** The kept selection if still listed, else the first online machine, else the first one. */
+const pickMachine = (list: MachineInfo[], current: string | undefined): string | undefined =>
+  (current !== undefined && list.some((m) => m.id === current) ? current : undefined) ??
+  (list.find((m) => m.online) ?? list[0])?.id;
+
+const sameMachines = (a: MachineInfo[], b: MachineInfo[]) =>
+  a.length === b.length &&
+  a.every((m, i) => {
+    const o = b[i]!;
+    return (
+      m.id === o.id &&
+      m.name === o.name &&
+      m.os === o.os &&
+      m.online === o.online &&
+      m.agentVersion === o.agentVersion &&
+      m.lastSeenAt === o.lastSeenAt &&
+      JSON.stringify(m.runtimes) === JSON.stringify(o.runtimes)
+    );
+  });
+
 const sameActiveRuns = (a: ActiveRunInfo[], b: ActiveRunInfo[]) =>
   a.length === b.length &&
   a.every((r, i) => {
@@ -201,6 +243,7 @@ export function createUncageStore(client: UncageClient): UncageStore {
     draft: { open: false, settings: DEFAULT_SETTINGS },
     attachments: EMPTY_ATTACHMENTS,
     activeRuns: [],
+    machines: { mode: 'unknown', list: [], loading: false, bySession: {} },
   };
   const listeners = new Set<() => void>();
   let unsubscribe: (() => void) | undefined;
@@ -326,6 +369,95 @@ export function createUncageStore(client: UncageClient): UncageStore {
     if (watchers.size > 0) void refreshActiveRuns();
   };
 
+  // ---- machines (connected mode) ------------------------------------------------------------
+  /** A function, so a check after an `await` is not narrowed away by one before it. */
+  const connectedMode = () => state.machines.mode === 'connected';
+  const setMachines = (patch: Partial<StoreState['machines']>) => set({ machines: { ...state.machines, ...patch } });
+  /** Watcher token → its poll interval. */
+  const machineWatchers = new Map<object, number>();
+  let machinesTimer: { id: ReturnType<typeof setInterval>; ms: number } | undefined;
+  let machinesLoading: Promise<void> | undefined;
+  let machinesEpoch = 0;
+
+  /**
+   * Stores the connected-mode machine list and selection. Runtimes follow the selected computer
+   * (its hello-time runtime list), so a draft's runtime and capabilities are that computer's.
+   */
+  const setMachineList = (list: MachineInfo[], preferred: string | undefined, extra: Partial<StoreState['machines']> = {}) => {
+    const m = state.machines;
+    const kept = sameMachines(list, m.list) ? m.list : list;
+    const selectedId = pickMachine(kept, preferred);
+    const { selectedId: _s, error: _e, ...rest } = m;
+    void _s;
+    void _e;
+    const runtimes = kept.find((x) => x.id === selectedId)?.runtimes ?? [];
+    const runtimesChanged = JSON.stringify(runtimes) !== JSON.stringify(state.runtimes);
+    const unchanged =
+      m.mode === 'connected' &&
+      kept === m.list &&
+      selectedId === m.selectedId &&
+      m.error === extra.error &&
+      (extra.loading === undefined || extra.loading === m.loading) &&
+      !runtimesChanged &&
+      !state.runtimesLoading;
+    // A poll that changed nothing must not re-render every subscriber.
+    if (unchanged) return;
+    set({
+      machines: { ...rest, mode: 'connected', list: kept, ...(selectedId !== undefined ? { selectedId } : {}), ...extra },
+      ...(runtimesChanged ? { runtimes } : {}),
+      ...(state.runtimesLoading ? { runtimesLoading: false } : {}),
+    });
+  };
+
+  const loadMachines = (): Promise<void> => {
+    if (machinesLoading) return machinesLoading;
+    const epoch = machinesEpoch;
+    // Only the first probe shows as loading; polls refresh silently.
+    if (state.machines.mode === 'unknown' && !state.machines.loading) setMachines({ loading: true });
+    machinesLoading = (async () => {
+      try {
+        const list = await client.machines();
+        if (epoch !== machinesEpoch) return;
+        setMachineList(list, state.machines.selectedId, { loading: false });
+      } catch (err) {
+        if (epoch !== machinesEpoch) return;
+        const e = toClientError(err);
+        // No /machines: a local daemon. Anything else is not an answer about the mode.
+        if (state.machines.mode !== 'connected' && e.status === 404) setMachines({ mode: 'local', loading: false });
+        else setMachines({ loading: false, error: e });
+      } finally {
+        if (epoch === machinesEpoch) machinesLoading = undefined;
+        syncMachinesPolling();
+      }
+    })();
+    return machinesLoading;
+  };
+
+  const syncMachinesPolling = () => {
+    const want = machineWatchers.size > 0 && visible() && state.machines.mode !== 'local';
+    const ms = want ? Math.min(...machineWatchers.values()) : 0;
+    if (machinesTimer && (!want || machinesTimer.ms !== ms)) {
+      clearInterval(machinesTimer.id);
+      machinesTimer = undefined;
+    }
+    if (want && !machinesTimer) {
+      machinesTimer = { id: setInterval(() => void loadMachines(), ms), ms };
+    }
+  };
+  const onMachinesVisibility = () => {
+    const wasPolling = machinesTimer !== undefined;
+    syncMachinesPolling();
+    if (!wasPolling && machinesTimer) void loadMachines();
+  };
+  const stopMachinesPolling = () => {
+    machinesEpoch++;
+    machinesLoading = undefined;
+    machineWatchers.clear();
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onMachinesVisibility);
+    syncMachinesPolling();
+    if (state.machines.loading) setMachines({ loading: false });
+  };
+
   /** Updates the active session state if `gen` is still the current selection. */
   const updateActive = (gen: number, fn: (s: SessionState) => SessionState) => {
     if (gen !== generation || !state.active) return;
@@ -382,10 +514,17 @@ export function createUncageStore(client: UncageClient): UncageStore {
     });
   };
 
-  const createSession = async (b: CreateSessionBody): Promise<Session> => {
+  const createSession = async (b: CreateSessionRequest): Promise<Session> => {
+    const { machineId: requested, ...body } = b;
+    const machineId = requested ?? (state.machines.mode === 'connected' ? state.machines.selectedId : undefined);
     try {
-      const session = await client.createSession(b);
-      set({ sessions: newestFirst([session, ...state.sessions.filter((s) => s.id !== session.id)]) });
+      const session = await client.createSession(machineId !== undefined ? { ...body, machineId } : body);
+      set({
+        sessions: newestFirst([session, ...state.sessions.filter((s) => s.id !== session.id)]),
+        ...(machineId !== undefined
+          ? { machines: { ...state.machines, bySession: { ...state.machines.bySession, [session.id]: machineId } } }
+          : {}),
+      });
       return session;
     } catch (err) {
       fail(err);
@@ -395,10 +534,16 @@ export function createUncageStore(client: UncageClient): UncageStore {
 
   const actions: UncageStore['actions'] = {
     async loadRuntimes() {
+      // Connected mode: the selected computer's runtimes (see setMachineList).
+      if (connectedMode()) return setMachineList(state.machines.list, state.machines.selectedId);
       set({ runtimesLoading: true });
       try {
-        set({ runtimes: await client.runtimes(), runtimesLoading: false });
+        const runtimes = await client.runtimes();
+        // Connected mode was detected meanwhile: the selected computer's runtimes win.
+        if (connectedMode()) return;
+        set({ runtimes, runtimesLoading: false });
       } catch (err) {
+        if (connectedMode()) return;
         set({ runtimesLoading: false, lastError: toClientError(err) });
       }
     },
@@ -720,6 +865,64 @@ export function createUncageStore(client: UncageClient): UncageStore {
 
     refreshActiveRuns,
 
+    loadMachines,
+
+    watchMachines(intervalMs = MACHINES_POLL_MS) {
+      const token = {};
+      machineWatchers.set(token, Math.max(1000, intervalMs));
+      if (machineWatchers.size === 1 && typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', onMachinesVisibility);
+      }
+      const wasPolling = machinesTimer !== undefined;
+      syncMachinesPolling();
+      if (!wasPolling && state.machines.mode !== 'local' && visible()) void loadMachines();
+      return () => {
+        if (!machineWatchers.delete(token)) return;
+        if (machineWatchers.size === 0 && typeof document !== 'undefined') {
+          document.removeEventListener('visibilitychange', onMachinesVisibility);
+        }
+        syncMachinesPolling();
+      };
+    },
+
+    selectMachine(id) {
+      const m = state.machines;
+      if (m.selectedId === id || !m.list.some((x) => x.id === id)) return;
+      setMachineList(m.list, id, m.error ? { error: m.error } : {});
+    },
+
+    async loadInstallInfo() {
+      if (state.machines.install) return true;
+      const epoch = machinesEpoch;
+      try {
+        const install = await client.installInfo();
+        if (epoch !== machinesEpoch) return false;
+        const { error: _e, ...rest } = state.machines;
+        void _e;
+        set({ machines: { ...rest, install } });
+        return true;
+      } catch (err) {
+        if (epoch === machinesEpoch) setMachines({ error: toClientError(err) });
+        return false;
+      }
+    },
+
+    async revokeMachine(id) {
+      try {
+        await client.revokeMachine(id);
+        const m = state.machines;
+        setMachineList(
+          m.list.filter((x) => x.id !== id),
+          m.selectedId === id ? undefined : m.selectedId,
+          m.error ? { error: m.error } : {},
+        );
+        return true;
+      } catch (err) {
+        fail(err);
+        return false;
+      }
+    },
+
     watchActiveRuns() {
       const token = {};
       watchers.add(token);
@@ -745,6 +948,7 @@ export function createUncageStore(client: UncageClient): UncageStore {
       sending = false;
       draftEpoch++;
       stopPolling();
+      stopMachinesPolling();
       dropAttachments();
       if (Object.keys(state.pendingDecisions).length > 0) set({ pendingDecisions: {} });
     },
