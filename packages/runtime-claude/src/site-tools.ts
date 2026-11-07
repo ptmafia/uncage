@@ -169,9 +169,21 @@ async function ensureDirInside(realCwd: string, path: string, label: string): Pr
   return real;
 }
 
+/**
+ * Claude Code runs `` !`cmd` `` and ```` ```! ```` blocks in skill bodies as shell, before the model
+ * sees them and without asking. Hub skills are data, never code: escape the `!` of every inline
+ * form (`\!` renders the same) and turn executable fences into plain `text` fences.
+ */
+export function neutralizeSkillMarkdown(md: string): string {
+  return md.replace(/(`{3,}|~{3,})[ \t]*!/g, '$1text').replace(/!(?=`)/g, '\\!');
+}
+
+const isMarkdownPath = (p: string): boolean => /\.(md|markdown|mdx)$/i.test(p);
+
 function skillMd(s: SkillSpec): string {
   // A JSON string is a valid YAML double-quoted scalar.
-  const body = s.markdown.endsWith('\n') ? s.markdown : `${s.markdown}\n`;
+  const md = neutralizeSkillMarkdown(s.markdown);
+  const body = md.endsWith('\n') ? md : `${md}\n`;
   return `---\nname: ${s.name}\ndescription: ${JSON.stringify(s.description)}\n---\n\n${body}`;
 }
 
@@ -213,7 +225,7 @@ export async function materializeSkills(cwd: string, skills: SkillSpec[]): Promi
       const file = join(realParent, basename(target));
       if (await lstat(file).catch(() => undefined)) throw new Error(`duplicate skill file path: ${f.path}`);
       // 'wx': never write through an existing file or symlink.
-      await writeFile(file, f.content, { flag: 'wx' });
+      await writeFile(file, isMarkdownPath(f.path) ? neutralizeSkillMarkdown(f.content) : f.content, { flag: 'wx' });
     }
   }
 }

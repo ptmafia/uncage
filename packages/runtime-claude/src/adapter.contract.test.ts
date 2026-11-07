@@ -67,6 +67,12 @@ describe('claudeAdapter', () => {
     expect(s.calls[0]!.options.settingSources).toEqual(['user', 'project']);
   });
 
+  it('without skills, no settings override is passed', async () => {
+    const s = scriptedQuery();
+    await collect(claudeAdapter({ query: s.query }).run({ ...run, prompt: 'simple' }, ctxWith({ decision: 'allow' }).ctx));
+    expect(s.calls[0]!.options).not.toHaveProperty('settings');
+  });
+
   it('canUseTool → requestApproval with mapped fields; allow passes the input through', async () => {
     const s = scriptedQuery();
     const { ctx, requests } = ctxWith({ decision: 'allow' });
@@ -374,6 +380,7 @@ describe('site tools and skills', () => {
     await collect(claudeAdapter({ query: s.query, settingSources: ['user'] }).run({ ...run, cwd, prompt: 'simple', skills }, ctxWith({ decision: 'allow' }).ctx));
     expect(readFileSync(join(cwd, '.claude', 'skills', 'kumquat', 'SKILL.md'), 'utf8')).toContain('End with KUMQUAT.');
     expect(s.calls[0]!.options.settingSources).toEqual(['user', 'project']);
+    expect(s.calls[0]!.options.settings).toEqual({ disableSkillShellExecution: true });
   });
 
   it('a skill file path traversal fails the run without starting Claude Code', async () => {

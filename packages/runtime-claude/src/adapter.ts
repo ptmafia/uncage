@@ -228,6 +228,8 @@ export function claudeAdapter(o: ClaudeAdapterOptions = {}): RuntimeAdapter {
         settingSources: sources,
         abortController,
         mcpServers: site?.mcpServers,
+        // Belt and braces with neutralizeSkillMarkdown: hub skills must never run inline shell.
+        settings: skills.length > 0 ? { disableSkillShellExecution: true } : undefined,
         // Registered in every mode: whatever the mode leaves to the user still goes through Uncage.
         canUseTool,
         // 'default' means the CLI's own choice.
