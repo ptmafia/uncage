@@ -24,6 +24,7 @@ export const ErrorCodeSchema = z.enum([
   'upgrade_required',
   'tool_failed',
   'device_code_expired',
+  'rate_limited',
   'internal_error',
 ]);
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
@@ -176,6 +177,12 @@ export const ERROR_CATALOG: Record<ErrorCode, ErrorCatalogEntry> = {
     status: 502,
     message: 'The tool call failed.',
     hint: 'Check the tool output for details and retry.',
+    retryable: true,
+  },
+  rate_limited: {
+    status: 429,
+    message: 'Too many requests.',
+    hint: 'Wait a moment and try again.',
     retryable: true,
   },
   device_code_expired: {

@@ -1,4 +1,4 @@
-export { createHub, HUB_VERSION } from './hub.js';
+export { createHub, DEFAULT_HEARTBEAT, HUB_VERSION } from './hub.js';
 export type { Hub, HubOptions, HubUser } from './types.js';
 export { toNodeHandler, type UncageNodeHandler } from './node.js';
 export { defineTool, toToolSpec, type SiteTool, type ToolContext } from './tools.js';

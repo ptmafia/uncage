@@ -50,8 +50,10 @@ describe('device login over HTTP', () => {
     expect(code.verificationUri).toBe(`${t.origin}/device?code=${code.userCode}`);
     const poll = async () => (await fetch(`${t.api}/device/token`, post({ deviceCode: code.deviceCode }))).json();
     expect(await poll()).toEqual({ status: 'pending' });
-    expect(await t.hub.lookupDevice(code.userCode)).toMatchObject({ name: 'MacBook', os: 'darwin' });
+    expect(await t.hub.lookupDevice(code.userCode, { id: 'alice' })).toMatchObject({ name: 'MacBook', os: 'darwin' });
     expect(await t.hub.approveDevice(code.userCode, { id: 'alice' })).toBe('ok');
+    expect(await poll()).toEqual({ status: 'slow_down' }); // faster than intervalSec
+    await sleep(1600);
     const ok = DeviceTokenResponseSchema.parse(await poll());
     if (ok.status !== 'ok') throw new Error('expected ok');
     expect(ok.machineToken).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 bytes base64url
@@ -60,9 +62,10 @@ describe('device login over HTTP', () => {
     expect(m?.userId).toBe('alice');
     expect(m?.tokenHash).toBe(sha256(ok.machineToken));
     expect(JSON.stringify(m)).not.toContain(ok.machineToken);
+    await sleep(1600);
     expect(await poll()).toEqual({ status: 'expired' });
     expect((await machinesOf(t, 'alice')).map((x) => x.name)).toEqual(['MacBook']);
-  });
+  }, 20_000); // two real-time waits of intervalSec
 
   it('denied', async () => {
     const t = await start();

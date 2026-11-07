@@ -12,6 +12,8 @@ export interface MachineRecord {
   runtimes: RuntimeInfo[];
   createdAt: string;
   lastSeenAt: string;
+  /** Hex SHA-256 of the agent's persistent `machineKey`, when it sent one at pairing. */
+  machineKeyHash?: string;
 }
 
 export type DeviceCodeStatus = 'pending' | 'approved' | 'denied' | 'consumed';
@@ -26,6 +28,8 @@ export interface DeviceCodeRecord {
   /** Machine name / OS the CLI reported, shown on the approve page. */
   name?: string;
   os?: string;
+  /** Hex SHA-256 of the agent's `machineKey`, if sent. */
+  machineKeyHash?: string;
   /** Set on approval. */
   userId?: string;
   createdAt: string;
@@ -91,6 +95,10 @@ export interface HubStore {
   insertMachine(m: MachineRecord): Promise<void>;
   getMachine(id: string): Promise<MachineRecord | null>;
   findMachineByTokenHash(tokenHash: string): Promise<MachineRecord | null>;
+  /** The user's machine paired with this `machineKey` hash, if any. */
+  findMachineByKey(userId: string, machineKeyHash: string): Promise<MachineRecord | null>;
+  /** Replaces the machine's token hash (re-pairing); resolves `false` when there is no such machine. */
+  rotateMachineToken(id: string, tokenHash: string): Promise<boolean>;
   /** Newest `lastSeenAt` first. */
   listMachines(userId: string): Promise<MachineRecord[]>;
   updateMachine(id: string, patch: Partial<Pick<MachineRecord, 'name' | 'os' | 'agentVersion' | 'runtimes' | 'lastSeenAt'>>): Promise<void>;

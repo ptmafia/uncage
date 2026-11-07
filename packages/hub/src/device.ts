@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomInt } from 'node:crypto';
-import type { DeviceCodeResponse, DeviceTokenResponse } from '@uncage/protocol';
+import type { DeviceCodeRequest, DeviceCodeResponse, DeviceTokenResponse } from '@uncage/protocol';
+import type { SlidingWindow } from './rate-limit.js';
 import type { HubStore } from './store/store.js';
 import type { HubUser } from './types.js';
 
@@ -31,34 +32,74 @@ export interface DeviceFlowDeps {
   store: HubStore;
   verificationUri: string;
   site: { id: string; name: string; url: string };
-  /** Creates the machine for an approved code; resolves its id and (one-time) token. */
-  createMachine(o: { userId: string; name?: string; os?: string }): Promise<{ machineId: string; machineToken: string }>;
+  /**
+   * Creates (or, for a known `machineKeyHash`, re-pairs) the machine for an approved code;
+   * resolves its id and (one-time) token.
+   */
+  createMachine(o: { userId: string; name?: string; os?: string; machineKeyHash?: string }): Promise<{ machineId: string; machineToken: string }>;
+  limits: {
+    /** Failed approve/deny/lookup attempts per user (user-code guessing). */
+    userFailures: SlidingWindow;
+    /** `POST /device/code` per client. */
+    codesPerClient: SlidingWindow;
+  };
   now?: () => number;
 }
 
+/** Polls this much earlier than `intervalSec` are still accepted (timer jitter). */
+const POLL_TOLERANCE_MS = 500;
+
 export type DeviceDecision = 'ok' | 'not_found' | 'expired';
 
-const clipLabel = (v: unknown): string | undefined =>
+const clipLabel = (v: string | undefined): string | undefined =>
   typeof v === 'string' && v.trim() !== '' ? v.trim().slice(0, 100) : undefined;
 
 /** OAuth-device-authorization-style pairing: the CLI polls, the signed-in user approves on the website. */
 export function deviceFlow(d: DeviceFlowDeps) {
   const now = d.now ?? Date.now;
   const expired = (r: { expiresAt: string }) => Date.parse(r.expiresAt) <= now();
+  /** Last poll time per device-code hash (for `slow_down`). */
+  const lastPoll = new Map<string, number>();
+
+  /** Rate-limited per user: unknown codes count as failed guesses. Throws `rate_limited`. */
+  async function guarded<T>(user: HubUser, fn: () => Promise<T>, failed: (r: T) => boolean): Promise<T> {
+    d.limits.userFailures.assertAllowed(user.id);
+    const r = await fn();
+    if (failed(r)) d.limits.userFailures.record(user.id);
+    return r;
+  }
 
   async function decide(userCode: string, user: HubUser, to: 'approved' | 'denied'): Promise<DeviceDecision> {
-    const code = normalizeUserCode(userCode);
-    if (!code) return 'not_found';
-    const rec = await d.store.findDeviceCodeByUserCode(sha256(code));
-    if (!rec) return 'not_found';
-    if (expired(rec)) return 'expired';
-    if (rec.status !== 'pending') return 'not_found';
-    const updated = await d.store.transitionDeviceCode(rec.deviceCodeHash, 'pending', to, { userId: user.id });
-    return updated ? 'ok' : 'not_found';
+    return guarded(
+      user,
+      async (): Promise<DeviceDecision> => {
+        const code = normalizeUserCode(userCode);
+        if (!code) return 'not_found';
+        const rec = await d.store.findDeviceCodeByUserCode(sha256(code));
+        if (!rec) return 'not_found';
+        if (expired(rec)) return 'expired';
+        if (rec.status !== 'pending') return 'not_found';
+        const updated = await d.store.transitionDeviceCode(rec.deviceCodeHash, 'pending', to, { userId: user.id });
+        return updated ? 'ok' : 'not_found';
+      },
+      (r) => r === 'not_found',
+    );
+  }
+
+  function tooFast(hash: string): boolean {
+    const t = now();
+    if (lastPoll.size > 10_000) {
+      for (const [k, at] of lastPoll) if (t - at > DEVICE_EXPIRES_IN_SEC * 1000) lastPoll.delete(k);
+    }
+    const prev = lastPoll.get(hash);
+    lastPoll.set(hash, t);
+    return prev !== undefined && t - prev < DEVICE_INTERVAL_SEC * 1000 - POLL_TOLERANCE_MS;
   }
 
   return {
-    async createCode(body: { name?: unknown; os?: unknown }): Promise<DeviceCodeResponse> {
+    /** `clientKey` identifies the caller for rate limiting (normally its IP). Throws `rate_limited`. */
+    async createCode(body: DeviceCodeRequest, clientKey: string): Promise<DeviceCodeResponse> {
+      d.limits.codesPerClient.take(clientKey);
       const deviceCode = randomSecret();
       // Retry on the (astronomically unlikely) user-code collision with a live code.
       for (let attempt = 0; ; attempt++) {
@@ -73,6 +114,7 @@ export function deviceFlow(d: DeviceFlowDeps) {
             status: 'pending',
             ...(name ? { name } : {}),
             ...(os ? { os } : {}),
+            ...(body.machineKey ? { machineKeyHash: sha256(body.machineKey) } : {}),
             createdAt,
             expiresAt: new Date(now() + DEVICE_EXPIRES_IN_SEC * 1000).toISOString(),
           });
@@ -98,24 +140,37 @@ export function deviceFlow(d: DeviceFlowDeps) {
       const rec = await d.store.getDeviceCode(hash);
       if (!rec) return null;
       if (rec.status === 'consumed') return { status: 'expired' };
+      if (tooFast(hash)) return { status: 'slow_down' };
       if (rec.status === 'denied') return { status: 'denied' };
       if (expired(rec)) return { status: 'expired' };
       if (rec.status === 'pending') return { status: 'pending' };
       const won = await d.store.transitionDeviceCode(hash, 'approved', 'consumed');
       if (!won?.userId) return { status: 'expired' };
-      const m = await d.createMachine({ userId: won.userId, ...(won.name ? { name: won.name } : {}), ...(won.os ? { os: won.os } : {}) });
+      lastPoll.delete(hash);
+      const m = await d.createMachine({
+        userId: won.userId,
+        ...(won.name ? { name: won.name } : {}),
+        ...(won.os ? { os: won.os } : {}),
+        ...(won.machineKeyHash ? { machineKeyHash: won.machineKeyHash } : {}),
+      });
       return { status: 'ok', machineId: m.machineId, machineToken: m.machineToken, site: d.site };
     },
 
     approve: (userCode: string, user: HubUser) => decide(userCode, user, 'approved'),
     deny: (userCode: string, user: HubUser) => decide(userCode, user, 'denied'),
 
-    async lookup(userCode: string): Promise<{ name?: string; os?: string; expiresAt: string } | null> {
-      const code = normalizeUserCode(userCode);
-      if (!code) return null;
-      const rec = await d.store.findDeviceCodeByUserCode(sha256(code));
-      if (!rec || rec.status !== 'pending' || expired(rec)) return null;
-      return { ...(rec.name ? { name: rec.name } : {}), ...(rec.os ? { os: rec.os } : {}), expiresAt: rec.expiresAt };
+    lookup(userCode: string, user: HubUser): Promise<{ name?: string; os?: string; expiresAt: string } | null> {
+      return guarded(
+        user,
+        async () => {
+          const code = normalizeUserCode(userCode);
+          if (!code) return null;
+          const rec = await d.store.findDeviceCodeByUserCode(sha256(code));
+          if (!rec || rec.status !== 'pending' || expired(rec)) return null;
+          return { ...(rec.name ? { name: rec.name } : {}), ...(rec.os ? { os: rec.os } : {}), expiresAt: rec.expiresAt };
+        },
+        (r) => r === null,
+      );
     },
   };
 }

@@ -2,6 +2,7 @@ import { UncageError } from '@uncage/core';
 import {
   ApprovalDecisionSchema,
   CreateSessionBodySchema,
+  DeviceCodeRequestSchema,
   MAX_FRAME_BYTES,
   MAX_READ_EVENTS,
   parseEventId,
@@ -67,6 +68,8 @@ interface Call {
   params: Params;
   user: HubUser;
   requestId: string;
+  /** Rate-limit key for the caller (IP). */
+  clientKey: string;
 }
 
 const json = (data: unknown, status = 200): Response => Response.json(data, { status });
@@ -252,10 +255,9 @@ export function browserApi(ctx: ApiContext) {
     }),
   { public: true });
 
-  add('POST', '/device/code', async ({ req }) => {
-    const body = (await readJson(req)) ?? {};
-    const b = typeof body === 'object' && body !== null ? (body as { name?: unknown; os?: unknown }) : {};
-    return json(await ctx.device.createCode(b));
+  add('POST', '/device/code', async ({ req, clientKey }) => {
+    const body = parse(DeviceCodeRequestSchema, (await readJson(req)) ?? {});
+    return json(await ctx.device.createCode(body, clientKey));
   }, { public: true });
 
   add('POST', '/device/token', async ({ req }) => {
@@ -470,7 +472,7 @@ export function browserApi(ctx: ApiContext) {
   }
 
   /** Routes a request whose path (below `basePath`) is `path`. */
-  async function handle(req: Request, url: URL, path: string, requestId: string): Promise<Response> {
+  async function handle(req: Request, url: URL, path: string, requestId: string, clientKey: string): Promise<Response> {
     let matchedPath = false;
     for (const r of routes) {
       const m = r.pattern.exec(path);
@@ -497,7 +499,7 @@ export function browserApi(ctx: ApiContext) {
         if (crossSite(req)) throw new UncageError('forbidden_origin', { message: 'Cross-site request refused.' });
         user = u;
       }
-      return r.run({ req, url, params, user, requestId });
+      return r.run({ req, url, params, user, requestId, clientKey });
     }
     throw new UncageError(matchedPath ? 'invalid_request' : 'not_found', {
       message: matchedPath ? `Method ${req.method} is not allowed for ${path}.` : `No route for ${req.method} ${path}.`,

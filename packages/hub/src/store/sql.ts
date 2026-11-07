@@ -79,6 +79,14 @@ CREATE TABLE uncage_hub_attachments (
 );
 `,
   },
+  {
+    id: 2,
+    sql: `
+ALTER TABLE uncage_hub_machines ADD COLUMN machine_key_hash text;
+CREATE INDEX uncage_hub_machines_key_idx ON uncage_hub_machines (user_id, machine_key_hash);
+ALTER TABLE uncage_hub_device_codes ADD COLUMN machine_key_hash text
+`,
+  },
 ];
 
 /** Applies pending migrations. Callers serialize concurrent first starts (e.g. an advisory lock). */
@@ -107,6 +115,7 @@ interface MachineRow {
   runtimes: RuntimeInfo[];
   created_at: string;
   last_seen_at: string;
+  machine_key_hash: string | null;
 }
 interface DeviceRow {
   device_code_hash: string;
@@ -115,6 +124,7 @@ interface DeviceRow {
   name: string | null;
   os: string | null;
   user_id: string | null;
+  machine_key_hash: string | null;
   created_at: string;
   expires_at: string;
 }
@@ -139,6 +149,7 @@ const toMachine = (r: MachineRow): MachineRecord => ({
   runtimes: r.runtimes,
   createdAt: r.created_at,
   lastSeenAt: r.last_seen_at,
+  ...(r.machine_key_hash !== null ? { machineKeyHash: r.machine_key_hash } : {}),
 });
 
 const toDevice = (r: DeviceRow): DeviceCodeRecord => ({
@@ -148,6 +159,7 @@ const toDevice = (r: DeviceRow): DeviceCodeRecord => ({
   ...(r.name !== null ? { name: r.name } : {}),
   ...(r.os !== null ? { os: r.os } : {}),
   ...(r.user_id !== null ? { userId: r.user_id } : {}),
+  ...(r.machine_key_hash !== null ? { machineKeyHash: r.machine_key_hash } : {}),
   createdAt: r.created_at,
   expiresAt: r.expires_at,
 });
@@ -191,13 +203,23 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
   return {
     async insertMachine(m) {
       await db.query(
-        `INSERT INTO uncage_hub_machines (id, user_id, token_hash, name, os, agent_version, runtimes, created_at, last_seen_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)`,
-        [m.id, m.userId, m.tokenHash, m.name, m.os, m.agentVersion, json(m.runtimes), m.createdAt, m.lastSeenAt],
+        `INSERT INTO uncage_hub_machines (id, user_id, token_hash, name, os, agent_version, runtimes, created_at, last_seen_at, machine_key_hash)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)`,
+        [m.id, m.userId, m.tokenHash, m.name, m.os, m.agentVersion, json(m.runtimes), m.createdAt, m.lastSeenAt, m.machineKeyHash ?? null],
       );
     },
     getMachine: (id) => one('SELECT * FROM uncage_hub_machines WHERE id = $1', [id], toMachine),
     findMachineByTokenHash: (hash) => one('SELECT * FROM uncage_hub_machines WHERE token_hash = $1', [hash], toMachine),
+    findMachineByKey: (userId, keyHash) =>
+      one(
+        'SELECT * FROM uncage_hub_machines WHERE user_id = $1 AND machine_key_hash = $2 ORDER BY created_at LIMIT 1',
+        [userId, keyHash],
+        toMachine,
+      ),
+    async rotateMachineToken(id, tokenHash) {
+      const { rows } = await db.query('UPDATE uncage_hub_machines SET token_hash = $2 WHERE id = $1 RETURNING id', [id, tokenHash]);
+      return rows.length > 0;
+    },
     async listMachines(userId) {
       const { rows } = await db.query<MachineRow>(
         'SELECT * FROM uncage_hub_machines WHERE user_id = $1 ORDER BY last_seen_at DESC, id',
@@ -230,9 +252,9 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
         new Date(Date.parse(r.createdAt) - 3_600_000).toISOString(),
       ]);
       await db.query(
-        `INSERT INTO uncage_hub_device_codes (device_code_hash, user_code_hash, status, name, os, user_id, created_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [r.deviceCodeHash, r.userCodeHash, r.status, r.name ?? null, r.os ?? null, r.userId ?? null, r.createdAt, r.expiresAt],
+        `INSERT INTO uncage_hub_device_codes (device_code_hash, user_code_hash, status, name, os, user_id, created_at, expires_at, machine_key_hash)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [r.deviceCodeHash, r.userCodeHash, r.status, r.name ?? null, r.os ?? null, r.userId ?? null, r.createdAt, r.expiresAt, r.machineKeyHash ?? null],
       );
     },
     getDeviceCode: (hash) => one('SELECT * FROM uncage_hub_device_codes WHERE device_code_hash = $1', [hash], toDevice),

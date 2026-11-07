@@ -41,7 +41,7 @@ export interface TestHub {
   /** fetch against the browser API as `user` (path relative to the API base). */
   as(user: string, path: string, init?: RequestInit): Promise<Response>;
   /** Device flow end to end; resolves the machine credentials. */
-  pair(user: string, machine?: { name?: string; os?: string }): Promise<{ machineId: string; machineToken: string }>;
+  pair(user: string, machine?: { name?: string; os?: string; machineKey?: string }): Promise<{ machineId: string; machineToken: string }>;
   close(): Promise<void>;
 }
 
@@ -96,7 +96,9 @@ export async function startTestHub(o: Partial<HubOptions> & HubInternals = {}): 
 export const FAKE_RUNTIME: RuntimeInfo = { id: 'fake', displayName: 'Fake', status: 'available' };
 
 type CommandFrame = Extract<HubFrame, { t: 'command' }>;
-/** Returns the command's `data`, or throws `{ code, message }` to fail it. */
+/** Return this from a command handler to never answer the command. */
+export const NO_REPLY = Symbol('no reply');
+/** Returns the command's `data` (or `NO_REPLY`), or throws `{ code, message }` to fail it. */
 export type CommandHandler = (cmd: CommandFrame) => unknown;
 
 export interface FakeAgent {
@@ -108,6 +110,8 @@ export interface FakeAgent {
   waitFor<T extends HubFrame>(pred: (f: HubFrame) => f is T, timeoutMs?: number): Promise<T>;
   waitFor(pred: (f: HubFrame) => boolean, timeoutMs?: number): Promise<HubFrame>;
   send(f: AgentFrame): void;
+  /** Make the client ignore the hub's close frame (never completes the closing handshake). */
+  ignoreClose(): void;
   sendEvents(sessionId: string, events: UncageEvent[]): void;
   /** Stop answering pings (simulates a sleeping laptop whose TCP connection stays up). */
   autoPong: boolean;
@@ -156,11 +160,14 @@ export async function connectFakeAgent(o: {
       });
     },
     send,
+    ignoreClose: () => {
+      (ws as unknown as { close: () => void }).close = () => undefined;
+    },
     sendEvents: (sessionId, events) => send({ t: 'events', sessionId, events }),
     closed: new Promise((resolve) => ws.on('close', (code, reason) => resolve({ code, reason: reason.toString() }))),
     async close() {
       if (ws.readyState === WebSocket.CLOSED) return;
-      ws.close();
+      WebSocket.prototype.close.call(ws);
       await agent.closed;
     },
   } as FakeAgent;
@@ -179,7 +186,7 @@ export async function connectFakeAgent(o: {
       commands.push(f);
       try {
         const data = (o.onCommand ?? defaultCommand)(f);
-        send({ t: 'result', id: f.id, ok: true, data });
+        if (data !== NO_REPLY) send({ t: 'result', id: f.id, ok: true, data });
       } catch (e) {
         const err = e as { code?: string; message?: string };
         send({

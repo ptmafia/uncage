@@ -45,6 +45,8 @@ export const CLOSE = {
 } as const;
 
 const HELLO_TIMEOUT_MS = 10_000;
+/** After sending a close frame to a retired socket, how long before the TCP connection is cut. */
+export const CLOSE_GRACE_MS = 500;
 
 /** Compares `x.y.z[-pre]` versions; unparseable versions sort lowest. */
 export function compareVersions(a: string, b: string): number {
@@ -95,6 +97,10 @@ interface Conn {
   missed: number;
   timer?: NodeJS.Timeout;
   queue: Promise<void>;
+  /** Revoked, replaced, offline or closed: its frames are ignored from now on. */
+  dead: boolean;
+  /** `welcome` sent; frames before that are ignored. */
+  ready: boolean;
 }
 
 interface Pending {
@@ -191,6 +197,7 @@ export class MachineHub {
     let conn: Conn | undefined;
     ws.on('error', () => undefined);
     ws.on('message', (data: RawData, isBinary: boolean) => {
+      if (conn?.dead || ws.readyState !== WebSocket.OPEN) return;
       let frame: AgentFrame;
       try {
         if (isBinary) throw new Error('binary frame');
@@ -220,7 +227,7 @@ export class MachineHub {
     });
     ws.on('close', () => {
       clearTimeout(helloTimer);
-      if (conn) void this.onClose(conn);
+      if (conn) void this.retire(conn);
     });
   }
 
@@ -233,6 +240,8 @@ export class MachineHub {
       awaitingPong: false,
       missed: 0,
       queue: Promise.resolve(),
+      dead: false,
+      ready: false,
     };
   }
 
@@ -242,18 +251,18 @@ export class MachineHub {
 
   private async onHello(c: Conn, hello: Extract<AgentFrame, { t: 'hello' }>): Promise<void> {
     if (hello.protocol > CONNECTED_PROTOCOL) {
-      c.ws.close(CLOSE.hubTooOld, 'protocol not supported by this hub');
+      await this.retire(c, { close: [CLOSE.hubTooOld, 'protocol not supported by this hub'] });
       return;
     }
     if (hello.protocol < CONNECTED_PROTOCOL || compareVersions(hello.agentVersion, this.d.minAgentVersion) < 0) {
       this.send(c, { t: 'upgrade_required', minAgentVersion: this.d.minAgentVersion });
-      c.ws.close(CLOSE.upgrade, 'upgrade required');
+      await this.retire(c, { close: [CLOSE.upgrade, 'upgrade required'] });
       return;
     }
     // Revoked between upgrade and hello?
     const current = await this.d.store.getMachine(c.machine.id);
     if (!current || current.tokenHash !== c.machine.tokenHash) {
-      c.ws.close(CLOSE.revoked, 'revoked');
+      await this.retire(c, { close: [CLOSE.revoked, 'revoked'] });
       return;
     }
     const lastSeenAt = new Date().toISOString();
@@ -267,20 +276,28 @@ export class MachineHub {
     await this.d.store.updateMachine(c.machine.id, patch);
     c.machine = { ...current, ...patch };
 
+    if (c.dead || c.ws.readyState !== WebSocket.OPEN) return; // went away during the awaits
     const previous = this.conns.get(c.machine.id);
-    if (previous && previous !== c) previous.ws.close(CLOSE.replaced, 'replaced by a newer connection');
     this.conns.set(c.machine.id, c);
+    if (previous && previous !== c) {
+      void this.retire(previous, { close: [CLOSE.replaced, 'replaced by a newer connection'], keepPresence: true });
+    }
     const elsewhere = await this.d.cluster.getPresence(c.machine.id);
     if (elsewhere && elsewhere !== this.d.nodeId) {
       await this.publish(elsewhere, { k: 'kick', machineId: c.machine.id, reason: 'replaced' });
     }
     await this.d.cluster.setPresence(c.machine.id, this.d.nodeId, this.presenceTtlSec);
-    if (c.ws.readyState !== WebSocket.OPEN) {
-      // Closed while we were registering: its 'close' handler ran before it was registered.
-      await this.onClose(c);
+    if (c.dead || c.ws.readyState !== WebSocket.OPEN) {
+      // Closed while we were registering (its 'close' handler may have run before it was registered).
+      if (this.conns.get(c.machine.id) === c) {
+        this.conns.delete(c.machine.id);
+        await this.d.cluster.clearPresence(c.machine.id, this.d.nodeId);
+      }
+      c.dead = true;
       return;
     }
 
+    c.ready = true;
     this.send(c, { t: 'welcome', machineId: c.machine.id, protocol: CONNECTED_PROTOCOL, minAgentVersion: this.d.minAgentVersion });
     c.timer = setInterval(() => this.heartbeat(c), this.d.pingIntervalMs);
     c.timer.unref();
@@ -292,8 +309,7 @@ export class MachineHub {
     if (c.awaitingPong) c.missed++;
     if (c.missed >= this.d.missedPings) {
       this.d.logger.warn({ machineId: c.machine.id }, 'machine missed heartbeats; marking offline');
-      c.ws.terminate();
-      void this.onClose(c);
+      void this.retire(c, { terminate: true });
       return;
     }
     c.awaitingPong = true;
@@ -301,6 +317,7 @@ export class MachineHub {
   }
 
   private onFrame(c: Conn, frame: AgentFrame): void {
+    if (c.dead || !c.ready) return;
     // Any frame proves the machine is alive.
     c.awaitingPong = false;
     c.missed = 0;
@@ -350,16 +367,29 @@ export class MachineHub {
     }
   }
 
-  private async onClose(c: Conn): Promise<void> {
+  /**
+   * Takes a connection out of service at once: later frames are ignored, its in-flight commands
+   * fail with `machine_offline`, and (unless replaced) presence is cleared. With `close`, a close
+   * frame is sent and the socket is cut after `CLOSE_GRACE_MS` whether or not the client answers;
+   * `terminate` cuts it immediately.
+   */
+  private async retire(c: Conn, o: { close?: [number, string]; terminate?: boolean; keepPresence?: boolean } = {}): Promise<void> {
+    if (o.terminate) c.ws.terminate();
+    else if (o.close && c.ws.readyState === WebSocket.OPEN) {
+      c.ws.close(o.close[0], o.close[1]);
+      setTimeout(() => c.ws.terminate(), CLOSE_GRACE_MS).unref();
+    }
+    if (c.dead) return;
+    c.dead = true;
     if (c.timer) clearInterval(c.timer);
     c.timer = undefined;
-    if (this.conns.get(c.machine.id) !== c) return;
-    this.conns.delete(c.machine.id);
     const offline = new UncageError('machine_offline').toBody();
     for (const [id, to] of c.inflight) void this.publish(to, { k: 'res', id, ok: false, error: offline });
     c.inflight.clear();
+    if (this.conns.get(c.machine.id) !== c) return;
+    this.conns.delete(c.machine.id);
     await Promise.all([
-      this.d.cluster.clearPresence(c.machine.id, this.d.nodeId),
+      o.keepPresence ? undefined : this.d.cluster.clearPresence(c.machine.id, this.d.nodeId),
       this.d.store.updateMachine(c.machine.id, { lastSeenAt: new Date().toISOString() }),
     ]).catch((err) => this.d.logger.error({ err }, 'machine close bookkeeping failed'));
   }
@@ -393,7 +423,9 @@ export class MachineHub {
     }
     if (msg.k === 'kick') {
       const c = this.conns.get(msg.machineId);
-      if (c && c.connId !== msg.except) c.ws.close(msg.reason === 'revoked' ? CLOSE.revoked : CLOSE.replaced, msg.reason);
+      if (c && c.connId !== msg.except) {
+        await this.retire(c, { close: msg.reason === 'revoked' ? [CLOSE.revoked, 'revoked'] : [CLOSE.replaced, 'replaced'] });
+      }
       return;
     }
     // k === 'cmd': forward to the machine if its socket is here.
@@ -441,12 +473,12 @@ export class MachineHub {
     });
   }
 
-  /** Disconnects a (revoked) machine wherever it is connected. */
-  async kick(machineId: string): Promise<void> {
+  /** Disconnects a machine (revoked, or its token rotated) wherever it is connected. */
+  async kick(machineId: string, reason: 'revoked' | 'replaced' = 'revoked'): Promise<void> {
     const node = await this.d.cluster.getPresence(machineId);
     const local = this.conns.get(machineId);
-    if (local) local.ws.close(CLOSE.revoked, 'revoked');
-    if (node && node !== this.d.nodeId) await this.publish(node, { k: 'kick', machineId, reason: 'revoked' });
+    if (local) await this.retire(local, { close: reason === 'revoked' ? [CLOSE.revoked, 'revoked'] : [CLOSE.replaced, 'replaced'] });
+    if (node && node !== this.d.nodeId) await this.publish(node, { k: 'kick', machineId, reason });
     if (node) await this.d.cluster.clearPresence(machineId, node);
   }
 
@@ -461,8 +493,7 @@ export class MachineHub {
     }
     this.pending.clear();
     const conns = [...this.conns.values()];
-    for (const c of conns) c.ws.close(CLOSE.shutdown, 'hub shutting down');
-    await Promise.all(conns.map((c) => this.onClose(c)));
+    await Promise.all(conns.map((c) => this.retire(c, { close: [CLOSE.shutdown, 'hub shutting down'] })));
     this.wss.close();
   }
 }

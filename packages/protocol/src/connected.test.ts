@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CONNECTED_PROTOCOL, ERROR_CATALOG, MAX_FRAME_BYTES, ProtocolFrameError, SessionManifestSchema,
   SkillSpecSchema, ToolSpecSchema, RelativePathSchema, DeviceCodeResponseSchema, parseAgentFrame, parseHubFrame,
-  HubCommandArgsSchemas, HubCommandOpSchema, HubCommandResultSchemas, MAX_READ_EVENTS,
+  HubCommandArgsSchemas, HubCommandOpSchema, DeviceCodeRequestSchema, DeviceTokenResponseSchema, HubCommandResultSchemas, MAX_READ_EVENTS,
 } from './index.js';
 
 const err = { code: 'tool_failed', message: 'x', retryable: true };
@@ -96,6 +96,7 @@ describe('new error codes', () => {
     expect(ERROR_CATALOG.upgrade_required.status).toBe(426);
     expect(ERROR_CATALOG.tool_failed.status).toBe(502);
     expect(ERROR_CATALOG.device_code_expired.status).toBe(410);
+    expect(ERROR_CATALOG.rate_limited.status).toBe(429);
   });
 });
 
@@ -163,5 +164,17 @@ describe('hub command args / results', () => {
     expect(HubCommandArgsSchemas.readEvents.safeParse({ sessionId: 's', after: 0, limit: MAX_READ_EVENTS + 1 }).success).toBe(false);
     expect(HubCommandArgsSchemas.addAttachment.safeParse({ sessionId: 's', name: 'a', mime: 'text/plain', data: 'not base64!' }).success).toBe(false);
     expect(HubCommandArgsSchemas.updateSettings.safeParse({ sessionId: 's', patch: {} }).success).toBe(false);
+  });
+});
+
+describe('device login bodies', () => {
+  it('device code request: optional machineKey of 32 bytes base64url', () => {
+    expect(DeviceCodeRequestSchema.safeParse({}).success).toBe(true);
+    expect(DeviceCodeRequestSchema.safeParse({ name: 'mac', os: 'darwin', machineKey: 'a'.repeat(43) }).success).toBe(true);
+    expect(DeviceCodeRequestSchema.safeParse({ machineKey: 'short' }).success).toBe(false);
+    expect(DeviceCodeRequestSchema.safeParse({ machineKey: '+'.repeat(43) }).success).toBe(false);
+  });
+  it('token response has slow_down', () => {
+    expect(DeviceTokenResponseSchema.parse({ status: 'slow_down' })).toEqual({ status: 'slow_down' });
   });
 });

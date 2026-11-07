@@ -220,6 +220,18 @@ export const HubFrameSchema = z.discriminatedUnion('t', [
 ]);
 export type HubFrame = z.infer<typeof HubFrameSchema>;
 
+/**
+ * Body of `POST <hub>/device/code`. `machineKey` is a random 32-byte id (base64url) the agent
+ * keeps locally: re-pairing the same machine for the same user reuses its machine id (sessions stay
+ * visible) and rotates its token instead of creating a new machine.
+ */
+export const DeviceCodeRequestSchema = z.object({
+  name: z.string().max(200).optional(),
+  os: z.string().max(200).optional(),
+  machineKey: z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional(),
+});
+export type DeviceCodeRequest = z.infer<typeof DeviceCodeRequestSchema>;
+
 export const DeviceCodeResponseSchema = z.object({
   deviceCode: z.string(),
   userCode: z.string().regex(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/),
@@ -231,6 +243,8 @@ export type DeviceCodeResponse = z.infer<typeof DeviceCodeResponseSchema>;
 
 export const DeviceTokenResponseSchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('pending') }),
+  /** Polled faster than `intervalSec`: wait longer between polls (RFC 8628 `slow_down`). */
+  z.object({ status: z.literal('slow_down') }),
   z.object({ status: z.literal('denied') }),
   z.object({ status: z.literal('expired') }),
   z.object({

@@ -10,6 +10,7 @@ import { deviceFlow, randomSecret, sha256 } from './device.js';
 import { assertVersionRange, defaultCliRange, installScript } from './install-script.js';
 import { compareVersions, MachineHub, sessionChannel, type HubLogger } from './machines.js';
 import { applyEvent, emptySnapshot, indexPatch } from './replica.js';
+import { SlidingWindow } from './rate-limit.js';
 import { pgliteHubStore } from './store/pglite.js';
 import type { HubStore, MachineRecord, SessionRecord } from './store/store.js';
 import { notImplementedToolExecutor, toToolSpec, type ToolExecutor } from './tools.js';
@@ -18,8 +19,10 @@ import type { Hub, HubOptions } from './types.js';
 export const HUB_VERSION: string = pkg.version;
 
 const DEFAULT_BASE_PATH = '/api/uncage';
-const DEFAULT_PING_MS = 25_000;
-const DEFAULT_MISSED_PINGS = 2;
+/** Machine heartbeat defaults: a silent machine is offline within (missedPings + 1) × interval = 30 s. */
+export const DEFAULT_HEARTBEAT = { pingIntervalMs: 10_000, missedPings: 2 } as const;
+const DEFAULT_PING_MS = DEFAULT_HEARTBEAT.pingIntervalMs;
+const DEFAULT_MISSED_PINGS = DEFAULT_HEARTBEAT.missedPings;
 const DEFAULT_SSE_HEARTBEAT_MS = 15_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 
@@ -83,9 +86,16 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     store,
     verificationUri: `${origin}/${trimSlashes(o.verificationPath ?? '/device')}`,
     site,
-    async createMachine({ userId, name, os }) {
+    async createMachine({ userId, name, os, machineKeyHash }) {
       const machineToken = randomSecret();
       const now = new Date().toISOString();
+      // Same machine re-paired by the same user: keep its id (and sessions), rotate its token.
+      const known = machineKeyHash ? await store.findMachineByKey(userId, machineKeyHash) : null;
+      if (known && (await store.rotateMachineToken(known.id, sha256(machineToken)))) {
+        // A connection still using the old token must not outlive it.
+        await machines.kick(known.id, 'replaced');
+        return { machineId: known.id, machineToken };
+      }
       const machineId = `mch_${randomBytes(16).toString('hex')}`;
       await store.insertMachine({
         id: machineId,
@@ -97,10 +107,20 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
         runtimes: [],
         createdAt: now,
         lastSeenAt: now,
+        ...(machineKeyHash ? { machineKeyHash } : {}),
       });
       return { machineId, machineToken };
     },
+    limits: {
+      userFailures: new SlidingWindow(o.rateLimits?.userCodeFailures ?? 10, o.rateLimits?.userCodeWindowMs ?? 600_000),
+      codesPerClient: new SlidingWindow(o.rateLimits?.deviceCodesPerMinute ?? 20, 60_000),
+    },
   });
+  const clientKey = (req: Request, info?: { clientIp?: string }): string =>
+    info?.clientIp ??
+    o.rateLimits?.clientIp?.(req) ??
+    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
+    'unknown';
 
   /** Index (and in site mode replicate) events from `machine`; returns the events to fan out. */
   async function ingest(machine: MachineRecord, sessionId: string, events: UncageEvent[], send: (f: HubFrame) => void): Promise<UncageEvent[]> {
@@ -223,14 +243,15 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
 
   let closing: Promise<void> | undefined;
   return {
-    async handler(req) {
+    basePath,
+    async handler(req, info) {
       const requestId = `req_${randomBytes(12).toString('hex')}`;
       try {
         const url = new URL(req.url);
         if (url.pathname !== basePath && !url.pathname.startsWith(`${basePath}/`)) {
           throw new UncageError('not_found', { message: `No route for ${req.method} ${url.pathname}.` });
         }
-        return await api.handle(req, url, url.pathname.slice(basePath.length) || '/', requestId);
+        return await api.handle(req, url, url.pathname.slice(basePath.length) || '/', requestId, clientKey(req, info));
       } catch (err) {
         const uerr = err instanceof UncageError ? err : new UncageError('internal_error');
         if (!(err instanceof UncageError)) logger.error({ err, requestId }, 'hub request failed');
@@ -247,7 +268,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     },
     approveDevice: (code, user) => device.approve(code, user),
     denyDevice: (code, user) => device.deny(code, user),
-    lookupDevice: (code) => device.lookup(code),
+    lookupDevice: (code, user) => device.lookup(code, user),
     revokeMachine: (id, user) => api.revokeMachine(id, user),
     close: () =>
       (closing ??= (async () => {
