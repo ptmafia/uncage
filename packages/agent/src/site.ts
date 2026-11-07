@@ -96,6 +96,8 @@ interface PendingTool {
 }
 
 export type SiteStop = 'revoked' | 'replaced' | 'upgrade' | 'closed';
+/** Live state of a site's connection. */
+export type SiteState = 'connecting' | 'connected' | 'upgrade_failed' | 'revoked' | 'replaced' | 'closed';
 
 export interface SiteAgentOptions {
   site: AgentSite;
@@ -142,6 +144,8 @@ export class SiteAgent {
   private readonly pendingTools = new Map<string, PendingTool>();
   private readonly pulls = new Set<AbortController>();
   private upgradeMin: string | undefined;
+  /** See `SiteState`. */
+  state: SiteState = 'connecting';
 
   constructor(private readonly o: SiteAgentOptions) {
     this.site = o.site;
@@ -181,6 +185,7 @@ export class SiteAgent {
 
   async close(): Promise<void> {
     this.stopped = true;
+    if (this.state === 'connecting' || this.state === 'connected') this.state = 'closed';
     this.wake?.();
     const ws = this.ws;
     if (ws) {
@@ -205,13 +210,16 @@ export class SiteAgent {
         const retryInMs = await this.o.onUpgradeRequired(this.upgradeMin);
         if (this.stopped) return;
         this.upgradeMin = undefined;
+        this.state = 'upgrade_failed';
         this.log.warn({ site: this.site.id, retryInMs }, 'staying disconnected until the upgrade can be retried');
         await this.sleep(retryInMs);
+        if (!this.stopped) this.state = 'connecting';
         attempt = 0;
         continue;
       }
       if (r.stop) {
         this.stopped = true;
+        this.state = r.stop;
         this.o.onStop(r.stop);
         return;
       }
@@ -342,6 +350,7 @@ export class SiteAgent {
   private onWelcome(ws: WebSocket): void {
     if (this.ws !== ws) return;
     this.connected = true;
+    this.state = 'connected';
     this.acksOnConn = false;
     this.log.info({ site: this.site.id }, 'connected');
     void this.activity.append({ kind: 'connected' });
@@ -356,6 +365,7 @@ export class SiteAgent {
   private onDisconnect(): void {
     if (!this.connected) return;
     this.connected = false;
+    if (this.state === 'connected') this.state = this.stopped ? 'closed' : 'connecting';
     for (const rep of this.reps.values()) {
       rep.delivered = this.acksOnConn && rep.outstanding.length > 0 ? rep.outstanding[0]![0] - 1 : rep.sentHigh;
       rep.outstanding = [];
@@ -620,22 +630,45 @@ export class SiteAgent {
     }
     if (!this.connected) return;
     if (!rep.pumping && e.sequence === rep.sentHigh + 1) {
-      const sent = this.sendBatch(e.sessionId, rep, [this.fit(e)]);
-      if (sent) return;
+      const sessionId = e.sessionId;
+      void this.sendBatch(sessionId, rep, [this.fit(e)]).then((ok) => {
+        if (!ok && this.connected) void this.pump(sessionId);
+      });
+      return;
     }
     void this.pump(e.sessionId);
   }
 
-  /** Sends one `events` frame and advances the cursor; false if not sendable now. */
-  private sendBatch(sessionId: string, rep: Rep, events: UncageEvent[]): Promise<void> | false {
-    if (!this.connected || events.length === 0) return false;
+  /**
+   * Sends one `events` frame and advances the cursor. Resolves false — cursor untouched — when it
+   * cannot be sent (not connected, frame too large); if the socket write itself fails, the cursor is
+   * rewound so those events are sent again.
+   */
+  private sendBatch(sessionId: string, rep: Rep, events: UncageEvent[]): Promise<boolean> {
+    if (!this.connected || !this.ws || events.length === 0) return Promise.resolve(false);
+    const frame: AgentFrame = { t: 'events', sessionId, events };
+    if (byteLength(JSON.stringify(frame)) > MAX_FRAME_BYTES) {
+      this.log.error({ site: this.site.id, sessionId, first: events[0]!.sequence }, 'events frame too large; not sent');
+      return Promise.resolve(false);
+    }
     const first = events[0]!.sequence;
     const last = events.at(-1)!.sequence;
-    const p = this.send({ t: 'events', sessionId, events });
+    const gen = rep.gen;
     rep.sentHigh = last;
     rep.outstanding.push([first, last]);
     if (!this.acksOnConn && rep.outstanding.length > MAX_OUTSTANDING) rep.outstanding = [];
-    return p.catch((err: unknown) => this.log.warn({ site: this.site.id, err: (err as Error).message }, 'could not send events'));
+    return this.send(frame).then(
+      () => true,
+      (err: unknown) => {
+        this.log.warn({ site: this.site.id, err: (err as Error).message }, 'could not send events');
+        if (rep.gen === gen && rep.sentHigh >= first) {
+          rep.sentHigh = first - 1;
+          rep.outstanding = rep.outstanding.filter(([f]) => f < first);
+          rep.gen++;
+        }
+        return false;
+      },
+    );
   }
 
   private onAck(sessionId: string, seq: number): void {
@@ -697,15 +730,20 @@ export class SiteAgent {
           throw err;
         }
         if (rep.gen !== gen) continue;
+        let failed = false;
         if (page.length === 0) {
           if (rep.dirty) continue;
           break;
         }
         for (const batch of this.pack(page)) {
           if (rep.gen !== gen || !this.connected) break;
-          const sent = this.sendBatch(sessionId, rep, batch);
-          if (sent) await sent;
+          if (!(await this.sendBatch(sessionId, rep, batch))) {
+            failed = true;
+            break;
+          }
         }
+        // Not sendable right now: retried on the next event, ack or reconnect (no hot loop).
+        if (failed) break;
       }
     } catch (err) {
       this.log.error({ err, site: this.site.id, sessionId }, 'replication failed');

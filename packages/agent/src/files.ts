@@ -41,6 +41,11 @@ const fileTooLarge = (rel: string, size: number) =>
     message: `"${rel}" is ${size} bytes; files larger than ${MAX_PULL_FILE_BYTES} bytes cannot be pulled.`,
     details: { path: rel, size, maxFileBytes: MAX_PULL_FILE_BYTES },
   });
+const hardLinked = (rel: string) =>
+  new UncageError('invalid_request', {
+    message: `"${rel}" has more than one hard link and cannot be pulled (a hard link may point outside the workspace).`,
+    details: { path: rel },
+  });
 const changed = (rel: string) => new UncageError('invalid_request', { message: `"${rel}" changed while it was being pulled.` });
 
 /**
@@ -69,8 +74,10 @@ export async function planPull(workspace: string, path: string, maxBytes: number
 
   const files: PullFile[] = [];
   let total = 0;
-  const add = (abs: string, st: { size: number; dev: number; ino: number }) => {
+  const add = async (abs: string, st: { size: number; dev: number; ino: number; nlink: number }) => {
     const rel = toPosix(relative(root, abs));
+    if ((await realpath(abs).catch(() => null)) !== abs) throw changed(rel);
+    if (st.nlink > 1) throw hardLinked(rel);
     if (st.size > MAX_PULL_FILE_BYTES) throw fileTooLarge(rel, st.size);
     total += st.size;
     if (total > limit) throw tooLarge(path, limit);
@@ -88,19 +95,20 @@ export async function planPull(workspace: string, path: string, maxBytes: number
       throw changed(toPosix(relative(root, dir)) || '.');
     }
     const entries = await readdir(dir, { withFileTypes: true });
+    if ((await realpath(dir).catch(() => null)) !== dir) throw changed(toPosix(relative(root, dir)) || '.');
     entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     for (const ent of entries) {
       const abs = join(dir, ent.name);
       if (!ent.isDirectory() && !ent.isFile()) continue; // symlinks, sockets, devices: skipped
       const st = await lstat(abs);
       if (st.isDirectory()) await walk(abs, st);
-      else if (st.isFile()) add(abs, st);
+      else if (st.isFile()) await add(abs, st);
     }
   };
 
   const st = await lstat(target);
   if (st.isDirectory()) await walk(target, st);
-  else if (st.isFile()) add(target, st);
+  else if (st.isFile()) await add(target, st);
   else throw new UncageError('invalid_request', { message: `"${path}" is not a file or directory.` });
   return { root, limit, files };
 }
@@ -123,6 +131,11 @@ export async function sendPull(
   let total = 0;
   for (const f of plan.files) {
     if (signal?.aborted) throw new UncageError('machine_offline');
+    // Residual race: Node has no openat(2)/O_BENEATH, so an intermediate directory can still be
+    // swapped between these checks and open(). The inode + realpath checks before and after open
+    // make that window tiny and refuse any file that is not the one planned; it cannot be closed
+    // completely from userland Node.
+    if ((await realpath(f.abs).catch(() => null)) !== f.abs) throw changed(f.rel);
     let fh;
     try {
       fh = await open(f.abs, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -132,6 +145,7 @@ export async function sendPull(
     try {
       const st = await fh.stat();
       if (!st.isFile() || st.dev !== f.dev || st.ino !== f.ino) throw changed(f.rel);
+      if (st.nlink > 1) throw hardLinked(f.rel);
       const real = await realpath(f.abs).catch(() => null);
       if (real !== f.abs || !isWithin(real, plan.root)) throw changed(f.rel);
       if (st.size > MAX_PULL_FILE_BYTES) throw fileTooLarge(f.rel, st.size);

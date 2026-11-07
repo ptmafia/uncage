@@ -7,7 +7,7 @@ import pkg from '../package.json' with { type: 'json' };
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { agentDir, ensureAgentDir, updateAgentSites, type AgentConfig } from './config.js';
-import { DEFAULT_TIMING, SiteAgent, type AgentLogger, type AgentTiming } from './site.js';
+import { DEFAULT_TIMING, SiteAgent, type AgentLogger, type AgentTiming, type SiteState } from './site.js';
 
 export const AGENT_VERSION: string = pkg.version;
 
@@ -51,7 +51,7 @@ export interface CreateAgentOptions {
 
 export interface Agent {
   close(): Promise<void>;
-  /** Per configured site: running, failed (could not start), revoked, replaced, upgrade_failed. */
+  /** Per configured site: connecting, connected, upgrade_failed, failed (could not start), revoked, replaced, closed. */
   status(): Record<string, SiteStatus>;
 }
 
@@ -121,7 +121,6 @@ export async function createAgent(o: CreateAgentOptions): Promise<Agent> {
     }));
     return run.then((wait) => {
       if (!closed) {
-        status.set(site.site.id, 'upgrade_failed');
         void site.recordActivity({ kind: 'upgrade', ok: false, code: 'upgrade_failed', detail: { minAgentVersion: minAgentVersion ?? 'unknown', retryInMs: wait } });
       }
       return wait;
@@ -145,7 +144,6 @@ export async function createAgent(o: CreateAgentOptions): Promise<Agent> {
       agentVersion: version,
       onStop: (reason) => {
         if (closed) return;
-        status.set(site.id, reason);
         if (reason === 'revoked') {
           void updateAgentSites(home, (all) =>
             all.map((x) => (x.id === site.id && x.token === site.token ? { ...x, revokedAt: new Date().toISOString() } : x)),
@@ -157,7 +155,6 @@ export async function createAgent(o: CreateAgentOptions): Promise<Agent> {
     try {
       await s.start();
       sites.push(s);
-      status.set(site.id, 'running');
     } catch (err) {
       // One broken site (corrupt data dir, lock held, …) must not take the others down.
       logger.error({ err, site: site.id }, 'could not start site; continuing with the others');
@@ -169,10 +166,14 @@ export async function createAgent(o: CreateAgentOptions): Promise<Agent> {
     throw new Error(`No website could be started (${attempted} configured); see the log above.`);
   }
   if (attempted === 0) logger.warn({}, 'no connected websites; run: uncage setup <url>');
-  return { close, status: () => Object.fromEntries(status) };
+  return {
+    close,
+    status: () => ({ ...Object.fromEntries(status), ...Object.fromEntries(sites.map((x) => [x.site.id, x.state])) }),
+  };
 }
 
-export type SiteStatus = 'running' | 'failed' | 'revoked' | 'replaced' | 'upgrade_failed';
+/** `failed`: could not start; `revoked` here also covers sites skipped because agent.yaml marks them. */
+export type SiteStatus = SiteState | 'failed';
 
 /** Wait before retrying the same failed self-upgrade. */
 export const UPGRADE_RETRY_MS = 60 * 60 * 1000;

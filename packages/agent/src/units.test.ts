@@ -1,11 +1,12 @@
-import { appendFile, chmod, mkdir, mkdtemp, readFile, rename, stat, symlink, truncate, writeFile } from 'node:fs/promises';
+import { appendFile, link, chmod, mkdir, mkdtemp, readFile, rename, stat, symlink, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import type { AgentFrame } from '@uncage/protocol';
 import { join } from 'node:path';
 import type { DeviceCodeResponse } from '@uncage/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
-import { agentConfigLockPath, agentConfigPath, agentDir, ensureAgentDir, loadAgentConfig, newMachineKey, updateAgentSites } from './config.js';
-import { fitEvent } from './fit.js';
+import { agentConfigLockPath, agentConfigPath, agentDir, ensureAgentDir, loadAgentConfig, newMachineKey, updateAgentSites, withAgentConfigLock } from './config.js';
+import { fitEvent, TRUNCATED_EXTENSION } from './fit.js';
+import { EventEnvelopeSchemas, UncageEventSchema, type UncageEvent } from '@uncage/protocol';
 import { utimes } from 'node:fs/promises';
 import { agentWsUrl, normalizeHubUrl, pollDeviceToken, requestDeviceCode } from './device.js';
 import { MAX_PULL_FILE_BYTES, planPull, sendPull } from './files.js';
@@ -145,6 +146,16 @@ describe('agent config', () => {
     expect((await loadAgentConfig(h)).sites).toEqual([]);
   });
 
+  it('writes a unique token into the lock and only removes a lock that still holds it', async () => {
+    const h = await home();
+    await withAgentConfigLock(h, async () => {
+      expect(await readFile(agentConfigLockPath(h), 'utf8')).toMatch(/^\d+ [0-9a-f]{24} /);
+      // Our lock was broken as stale and another process took it.
+      await writeFile(agentConfigLockPath(h), 'someone else');
+    });
+    expect(await readFile(agentConfigLockPath(h), 'utf8')).toBe('someone else');
+  });
+
   it('machine keys are 32 random bytes, base64url', () => {
     const k = newMachineKey();
     expect(k).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -262,6 +273,24 @@ describe('sendPull re-checks at send time', () => {
     expect(JSON.stringify(c.frames)).not.toContain(Buffer.from('SECRET').toString('base64'));
   });
 
+  it('refuses hard-linked files at plan time (a hard link may point outside the workspace)', async () => {
+    const h = await home();
+    const outside = await mkdtemp(join(tmpdir(), 'uncage-outside-'));
+    cleanups.push(() => import('node:fs/promises').then((f) => f.rm(outside, { recursive: true, force: true })));
+    await writeFile(join(outside, 'secret.txt'), 'SECRET');
+    await mkdir(join(h, 'site'));
+    await link(join(outside, 'secret.txt'), join(h, 'site', 'innocent.txt'));
+    await expect(planPull(h, 'site', 1000)).rejects.toMatchObject({ code: 'invalid_request', message: expect.stringContaining('hard link') });
+  });
+
+  it('refuses a file hard-linked between plan and send', async () => {
+    const h = await home();
+    await writeFile(join(h, 'a.txt'), 'abc');
+    const plan = await planPull(h, 'a.txt', 1000);
+    await link(join(h, 'a.txt'), join(h, 'b.txt'));
+    await expect(sendPull('p', plan, collect().send)).rejects.toMatchObject({ message: expect.stringContaining('hard link') });
+  });
+
   it('the planned directory moved out of the workspace (same inode, now outside) is refused', async () => {
     const h = await home();
     const outside = await mkdtemp(join(tmpdir(), 'uncage-outside-'));
@@ -291,5 +320,57 @@ describe('fitEvent', () => {
     expect(fitted.payload.text).toMatch(/…\[truncated \d+ bytes\]$/);
     expect(fitted.payload.text.startsWith('éé')).toBe(true);
     expect((e as { payload: { text: string } }).payload.text).toHaveLength(300_000); // original untouched
+  });
+});
+
+describe('fitEvent fallbacks', () => {
+  const env = (type: string, payload: unknown) =>
+    ({ eventId: 'evt_0000000007', sequence: 7, sessionId: 'ses_1', runId: 'run_1', type, occurredAt: '2026-11-07T00:00:00Z', schemaVersion: '1.0', payload }) as unknown as UncageEvent;
+  const BUDGET = 100_000;
+  const size = (v: unknown) => Buffer.byteLength(JSON.stringify(v));
+  const valid = (e: UncageEvent) => expect(UncageEventSchema.safeParse(e).success).toBe(true);
+
+  it('never makes an event bigger: many short strings fall back to a stub that fits', () => {
+    const input = { words: Array.from({ length: 80_000 }, (_, i) => `w${i % 10}`) };
+    const e = env('tool.started', { toolId: 'tool_1', name: 'Bash', title: 'run', category: 'shell', input });
+    const before = size(e);
+    const f = fitEvent(e, BUDGET);
+    expect(size(f)).toBeLessThanOrEqual(BUDGET);
+    expect(size(f)).toBeLessThan(before);
+    expect(f).toMatchObject({ sequence: 7, type: 'tool.started', payload: { toolId: 'tool_1', category: 'shell' } });
+    expect((f as { extensions?: Record<string, unknown> }).extensions?.[TRUNCATED_EXTENSION]).toEqual({ originalBytes: before });
+    valid(f);
+  });
+
+  it('a numbers-heavy payload falls back to a schema-valid stub keeping the ids', () => {
+    const big = Array.from({ length: 200_000 }, (_, i) => i * 1.5);
+    for (const [type, payload, ids] of [
+      ['tool.completed', { toolId: 'tool_9', output: JSON.stringify(big).slice(0, 10), durationMs: 5, extra: big }, { toolId: 'tool_9' }],
+      ['run.failed', { runId: 'run_1', error: { code: 'internal_error', message: 'x', retryable: false, details: { big } } }, { runId: 'run_1' }],
+    ] as const) {
+      const f = fitEvent(env(type, payload), BUDGET);
+      expect(size(f)).toBeLessThanOrEqual(BUDGET);
+      expect(f.payload).toMatchObject(ids);
+      expect(EventEnvelopeSchemas[type].safeParse(f).success).toBe(true);
+    }
+  });
+
+  it('a session event with huge arrays keeps the session (ids, state) with arrays shortened', () => {
+    const models = Array.from({ length: 50_000 }, (_, i) => ({ id: `m${i}`, label: `Model ${i}` }));
+    const session = {
+      id: 'ses_1', runtimeId: 'fake', workspace: '/w', title: 't', status: 'ready', readOnly: false, createdAt: '2026-11-07T00:00:00Z',
+      capabilities: { streaming: true, approval: { once: true, session: false, types: [] }, nativeResume: false, diffEvents: false, mcp: false, skills: 'unknown', siteTools: true, models, efforts: [], permissionModes: ['default'], attachments: { images: false, files: false, maxBytes: 1 } },
+      settings: { permissionMode: 'default' },
+    };
+    const f = fitEvent(env('session.updated', { session }), BUDGET);
+    expect(size(f)).toBeLessThanOrEqual(BUDGET);
+    expect(f.payload).toMatchObject({ session: { id: 'ses_1', status: 'ready' } });
+    valid(f);
+  });
+
+  it('a top-level string payload is truncated too', () => {
+    const f = fitEvent(env('message.completed', 'q'.repeat(300_000)) as UncageEvent, BUDGET) as unknown as { payload: string };
+    expect(size(f)).toBeLessThanOrEqual(BUDGET);
+    expect(f.payload).toMatch(/…\[truncated \d+ bytes\]$/);
   });
 });

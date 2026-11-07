@@ -276,6 +276,25 @@ describe('agent ↔ real hub', () => {
     expect(terminal(evs)?.type).toBe('run.completed');
   });
 
+  it('status() follows the connection: connecting → connected → connecting → connected', async () => {
+    const t = await hubFor();
+    const proxy = await startProxy(Number(new URL(t.origin).port));
+    cleanups.push(() => proxy.close());
+    const h = await home();
+    const site = await t.pair('alice', { url: proxy.url });
+    proxy.cut();
+    const agent = await agentFor(h, [site], [{ text: 'x' }]);
+    expect(agent.status()[site.id]).toBe('connecting');
+    proxy.restore();
+    await until(() => agent.status()[site.id] === 'connected');
+    proxy.cut();
+    await until(() => agent.status()[site.id] === 'connecting');
+    proxy.restore();
+    await until(() => agent.status()[site.id] === 'connected');
+    await t.hub.revokeMachine(site.machineId, { id: 'alice' });
+    await until(() => agent.status()[site.id] === 'revoked');
+  });
+
   it('reconnect backfills events produced while offline to a machine-storage hub (run no longer active)', async () => {
     const t = await hubFor();
     const proxy = await startProxy(Number(new URL(t.origin).port));
@@ -372,7 +391,9 @@ describe('agent ↔ real hub', () => {
     await until(async () => (await readActivity(h, s1.id)).find((e) => e.kind === 'upgrade' && e.ok === false));
     expect(exec).toHaveBeenCalledTimes(1);
     expect(exit).not.toHaveBeenCalled();
-    expect(agent.status()).toMatchObject({ [s1.id]: 'upgrade_failed', [s2.id]: 'running' });
+    await online(ok);
+    await until(() => agent.status()[s2.id] === 'connected');
+    await until(() => agent.status()[s1.id] === 'upgrade_failed');
     expect(await readUpgradeState(h)).toMatchObject({ fromVersion: '0.1.1', minAgentVersion: '99.0.0', failedAt: expect.any(String) });
     // The healthy site keeps working.
     await online(ok);
@@ -410,9 +431,10 @@ describe('agent ↔ real hub', () => {
     await updateAgentSites(h, () => [broken, revoked, good]);
     const agent = await createAgent({ config: { sites: [broken, revoked, good], localPolicy: { allowBypass: false } }, adapters: () => [fake([])], home: h, logger, timing: FAST });
     cleanups.push(() => agent.close());
-    expect(agent.status()).toEqual({ 'broken.example': 'failed', 'revoked.example': 'revoked', [good.id]: 'running' });
+    expect(agent.status()).toMatchObject({ 'broken.example': 'failed', 'revoked.example': 'revoked' });
     expect(logger.lines.some((l) => l.level === 'error' && (l.obj as { site?: string }).site === 'broken.example')).toBe(true);
     await online(t);
+    await until(() => agent.status()[good.id] === 'connected');
   });
 
   it('throws only when every site fails to start', async () => {
@@ -462,6 +484,34 @@ describe('agent ↔ real hub', () => {
     // Machine-side reads (readEvents) are truncated the same way.
     const seen = await history(t, session.id);
     expect(seen.map((e) => e.sequence)).toEqual(evs.map((e) => e.sequence));
+  });
+
+  it('an event that string truncation cannot shrink is replicated as a stub; the replica does not stall', async () => {
+    const t = await hubFor({ sessionStorage: 'site' });
+    const h = await home();
+    const site = await t.pair('alice');
+    const adapter = fake([]);
+    adapter.run = async function* () {
+      yield { type: 'tool.started', toolId: 'tool_big', name: 'Bash', title: 'many numbers', category: 'shell', input: { n: Array.from({ length: 300_000 }, (_, i) => i) } };
+      yield { type: 'tool.completed', toolId: 'tool_big', output: 'ok' };
+      yield { type: 'message.started', messageId: 'msg_after' };
+      yield { type: 'message.completed', messageId: 'msg_after', text: 'after the stub' };
+      yield { type: 'run.completed' };
+    } as typeof adapter.run;
+    await updateAgentSites(h, () => [site]);
+    const agent = await createAgent({ config: { sites: [site], localPolicy: { allowBypass: false } }, adapters: [adapter], home: h, logger: memoryLogger(), timing: FAST });
+    cleanups.push(() => agent.close());
+    await online(t);
+    const session = await createSession(t);
+    expect((await startRun(t, session.id)).status).toBe(202);
+    const evs = await until(async () => {
+      const all = await t.store.readEvents(session.id, 0, 1000);
+      return terminal(all) ? all : null;
+    }, 10_000, 'replicated run');
+    expect(evs.map((e) => e.sequence)).toEqual(evs.map((_, i) => i + 1));
+    const stub = evs.find((e) => e.type === 'tool.started')!;
+    expect(stub).toMatchObject({ payload: { toolId: 'tool_big' }, extensions: { uncageTruncated: { originalBytes: expect.any(Number) } } });
+    expect(evs.some((e) => e.type === 'message.completed' && e.payload.text === 'after the stub')).toBe(true);
   });
 
   it('agent.yaml is written 0600', async () => {

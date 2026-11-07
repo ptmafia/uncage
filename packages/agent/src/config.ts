@@ -117,28 +117,45 @@ const CONFIG_LOCK_WAIT_MS = 15_000;
 export async function withAgentConfigLock<T>(home: string, fn: () => Promise<T>): Promise<T> {
   await ensureAgentDir(home);
   const lock = agentConfigLockPath(home);
+  const token = `${process.pid} ${randomBytes(12).toString('hex')} ${new Date().toISOString()}\n`;
   const start = Date.now();
   for (;;) {
+    let created = false;
     try {
       const fh = await open(lock, 'wx', 0o600);
-      await fh.writeFile(`${process.pid} ${new Date().toISOString()}\n`);
-      await fh.close();
+      created = true;
+      try {
+        await fh.writeFile(token);
+      } finally {
+        await fh.close();
+      }
       break;
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
-      const age = await stat(lock).then((st) => Date.now() - st.mtimeMs, () => 0);
-      if (age > CONFIG_LOCK_STALE_MS) {
+      if (created) {
+        // Could not write our token: never leave an anonymous lock behind.
         await unlink(lock).catch(() => undefined);
+        throw e;
+      }
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      const first = await stat(lock).catch(() => null);
+      if (first && Date.now() - first.mtimeMs > CONFIG_LOCK_STALE_MS) {
+        // Re-stat right before breaking it: only remove the very lock we judged stale, not one a
+        // live process just created in its place.
+        const again = await stat(lock).catch(() => null);
+        if (again && again.ino === first.ino && again.mtimeMs === first.mtimeMs) await unlink(lock).catch(() => undefined);
         continue;
       }
-      if (Date.now() - start > CONFIG_LOCK_WAIT_MS) throw new Error(`${agentConfigPath(home)} is locked by another uncage process (${lock}).`, { cause: e });
+      if (Date.now() - start > CONFIG_LOCK_WAIT_MS) {
+        throw new Error(`${agentConfigPath(home)} is locked by another uncage process (${lock}).`, { cause: e });
+      }
       await new Promise((r) => setTimeout(r, 25 + Math.random() * 25));
     }
   }
   try {
     return await fn();
   } finally {
-    await unlink(lock).catch(() => undefined);
+    // Only release the lock if it is still ours (it may have been broken as stale and re-taken).
+    if ((await readFile(lock, 'utf8').catch(() => null)) === token) await unlink(lock).catch(() => undefined);
   }
 }
 
