@@ -37,6 +37,14 @@ export class SlidingWindow {
     this.hits.set(key, list);
   }
 
+  /** Undoes the most recent `record(key)` (a reserved attempt that turned out not to count). */
+  release(key: string): void {
+    const list = this.hits.get(key);
+    if (!list) return;
+    list.pop();
+    if (list.length === 0) this.hits.delete(key);
+  }
+
   /** Records a hit unless over the limit; throws `rate_limited` when over it. */
   take(key: string): void {
     this.assertAllowed(key);

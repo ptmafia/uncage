@@ -7,6 +7,8 @@ import { CLOSE_GRACE_MS, CLOSE } from './machines.js';
 import { createHub, DEFAULT_HEARTBEAT } from './hub.js';
 import { toNodeHandler } from './node.js';
 import { pgliteHubStore } from './store/pglite.js';
+import { memoryCluster } from './cluster/memory.js';
+import type { ClusterAdapter } from './cluster/cluster.js';
 import { connectFakeAgent, fakeMachine, makeEvent, fakeSession, NO_REPLY, sleep, startTestHub, until, USER_HEADER, type FakeAgent, type TestHub } from './test-utils.js';
 import type { Hub } from './types.js';
 
@@ -153,18 +155,71 @@ describe('rate limits', () => {
     expect(body.details.retryAfterSec).toBeGreaterThan(0);
   });
 
-  it('handler() without a client IP falls back to X-Forwarded-For (or a custom clientIp)', async () => {
+  async function directHub(rateLimits: NonNullable<Parameters<typeof createHub>[0]['rateLimits']>): Promise<Hub> {
     const store = await pgliteHubStore({ dataDir: 'memory://' });
-    const hub = await createHub({ publicUrl: 'https://app.example', store, getUser: async () => null, rateLimits: { deviceCodesPerMinute: 1 } });
+    const hub = await createHub({ publicUrl: 'https://app.example', store, getUser: async () => null, rateLimits });
     cleanups.push(async () => {
       await hub.close();
       await store.close();
     });
-    const req = (ip: string) => new Request('https://app.example/api/uncage/device/code', { method: 'POST', headers: { 'x-forwarded-for': `${ip}, 10.0.0.1` } });
-    expect((await hub.handler(req('1.1.1.1'))).status).toBe(200);
-    expect((await hub.handler(req('1.1.1.1'))).status).toBe(429);
-    expect((await hub.handler(req('2.2.2.2'))).status).toBe(200);
-    expect((await hub.handler(req('2.2.2.2'), { clientIp: '9.9.9.9' })).status).toBe(200);
+    return hub;
+  }
+  const codeReq = (headers: Record<string, string> = {}) =>
+    new Request('https://app.example/api/uncage/device/code', { method: 'POST', headers });
+
+  it('handler() without a client IP ignores X-Forwarded-For by default (one shared bucket)', async () => {
+    const hub = await directHub({ deviceCodesPerMinute: 1 });
+    expect((await hub.handler(codeReq({ 'x-forwarded-for': '1.1.1.1' }))).status).toBe(200);
+    // A spoofed X-Forwarded-For does not buy a fresh bucket.
+    expect((await hub.handler(codeReq({ 'x-forwarded-for': '2.2.2.2' }))).status).toBe(429);
+    expect((await hub.handler(codeReq())).status).toBe(429);
+    // An explicit client IP does.
+    expect((await hub.handler(codeReq(), { clientIp: '9.9.9.9' })).status).toBe(200);
+  });
+
+  it('trustForwardedFor uses the rightmost entry, so a spoofed leading entry cannot bypass the limit', async () => {
+    const hub = await directHub({ deviceCodesPerMinute: 1, trustForwardedFor: true });
+    // The proxy appends the real client (5.5.5.5); the client forged the leading entries.
+    expect((await hub.handler(codeReq({ 'x-forwarded-for': '1.1.1.1, 5.5.5.5' }))).status).toBe(200);
+    expect((await hub.handler(codeReq({ 'x-forwarded-for': '2.2.2.2, 5.5.5.5' }))).status).toBe(429);
+    expect((await hub.handler(codeReq({ 'x-forwarded-for': '6.6.6.6' }))).status).toBe(200);
+  });
+
+  it('a custom clientIp wins over the socket address passed by toNodeHandler', async () => {
+    const t = await start({ rateLimits: { deviceCodesPerMinute: 1, clientIp: (req) => req.headers.get('x-real-client') ?? undefined } });
+    const code = (who: string) => fetch(`${t.api}/device/code`, post({}, { 'x-real-client': who }));
+    expect((await code('a')).status).toBe(200);
+    expect((await code('b')).status).toBe(200); // same socket address, different custom key
+    expect((await code('a')).status).toBe(429);
+  });
+
+  it('toNodeHandler uses Express req.ip (trust proxy) when present', async () => {
+    const store = await pgliteHubStore({ dataDir: 'memory://' });
+    const app = express();
+    app.set('trust proxy', 1);
+    const server: Server = createServer(app);
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const hub = await createHub({ publicUrl: url, store, getUser: async () => null, rateLimits: { deviceCodesPerMinute: 1 } });
+    app.use(toNodeHandler(hub));
+    cleanups.push(async () => {
+      await hub.close();
+      server.closeAllConnections();
+      await new Promise<void>((r) => server.close(() => r()));
+      await store.close();
+    });
+    const code = (xff: string) => fetch(`${url}/api/uncage/device/code`, post({}, { 'x-forwarded-for': xff }));
+    // One trusted proxy: req.ip is the rightmost entry.
+    expect((await code('9.9.9.9, 1.1.1.1')).status).toBe(200);
+    expect((await code('8.8.8.8, 1.1.1.1')).status).toBe(429);
+    expect((await code('2.2.2.2')).status).toBe(200);
+  });
+
+  it('parallel guesses cannot exceed the per-user failure limit', async () => {
+    const t = await start({ rateLimits: { userCodeFailures: 3 } });
+    const results = await Promise.allSettled(Array.from({ length: 20 }, () => t.hub.approveDevice('ZZZZ-ZZZZ', { id: 'mallory' })));
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(3);
+    expect(results.filter((r) => r.status === 'rejected').every((r) => (r as PromiseRejectedResult).reason.code === 'rate_limited')).toBe(true);
   });
 
   it('approve/deny/lookup throw rate_limited after too many unknown codes from one user', async () => {
@@ -210,9 +265,27 @@ describe('stable machine identity (machineKey)', () => {
   it('another user with the same key, or no key, gets a new machine; bad keys are refused', async () => {
     const t = await start();
     const machineKey = 'B'.repeat(43);
+    const fm = fakeMachine();
     const alice = await t.pair('alice', { machineKey });
+    const a = await connect({ url: t.wsUrl, token: alice.machineToken, onCommand: fm.handler });
+    const s = (await j(t.as('alice', '/sessions', post({ runtime: 'fake' })))) as Session;
+    // Bob's approve page does not claim it re-pairs anything of his.
+    const code = (await j(fetch(`${t.api}/device/code`, post({ machineKey })))) as DeviceCodeResponse;
+    expect(await t.hub.lookupDevice(code.userCode, { id: 'bob' })).toMatchObject({ repairsMachine: null });
+    expect(await t.hub.lookupDevice(code.userCode, { id: 'alice' })).toMatchObject({ repairsMachine: { id: alice.machineId, name: 'Test Mac' } });
     const bob = await t.pair('bob', { machineKey });
     expect(bob.machineId).not.toBe(alice.machineId);
+    // Alice is untouched: still connected, token still valid, sessions hers only.
+    await sleep(CLOSE_GRACE_MS + 100);
+    expect(a.ws.readyState).toBe(a.ws.OPEN);
+    expect((await j(t.as('alice', '/machines')))[0]).toMatchObject({ id: alice.machineId, online: true });
+    expect((await t.as('alice', `/sessions/${s.id}`)).status).toBe(200);
+    const extra = await connectFakeAgent({ url: t.wsUrl, token: alice.machineToken });
+    await extra.close(); // (token accepted; this replaced alice's socket, so reconnect her)
+    await connect({ url: t.wsUrl, token: alice.machineToken, onCommand: fm.handler });
+    expect(await j(t.as('bob', '/sessions'))).toEqual([]);
+    expect((await t.as('bob', `/sessions/${s.id}`)).status).toBe(404);
+    expect((await j(t.as('bob', '/machines'))).map((m: { id: string }) => m.id)).toEqual([bob.machineId]);
     const again = await t.pair('alice', {});
     expect(again.machineId).not.toBe(alice.machineId);
     // A revoked machine is not revived.
@@ -220,5 +293,35 @@ describe('stable machine identity (machineKey)', () => {
     const after = await t.pair('alice', { machineKey });
     expect(after.machineId).not.toBe(alice.machineId);
     expect((await fetch(`${t.api}/device/code`, post({ machineKey: 'short' }))).status).toBe(400);
+  });
+});
+
+describe('presence race', () => {
+  it('a socket that closes while presence is being set does not leave the machine online', async () => {
+    const inner = memoryCluster();
+    let gate: (() => void) | undefined;
+    let entered: (() => void) | undefined;
+    const enteredP = new Promise<void>((r) => (entered = r));
+    const cluster: ClusterAdapter = {
+      ...inner,
+      async setPresence(...args) {
+        if (!gate) {
+          entered?.();
+          await new Promise<void>((r) => (gate = r));
+        }
+        return inner.setPresence(...args);
+      },
+    };
+    const t = await start({ cluster });
+    cleanups.push(() => inner.close());
+    const { machineId, machineToken } = await t.pair('alice');
+    const a = await connect({ url: t.wsUrl, token: machineToken, waitWelcome: false });
+    await enteredP;
+    a.ws.terminate();
+    await sleep(100); // the hub sees the close while setPresence is still pending
+    gate!();
+    await sleep(100);
+    expect(await inner.getPresence(machineId)).toBeNull();
+    expect((await j(t.as('alice', '/machines')))[0].online).toBe(false);
   });
 });

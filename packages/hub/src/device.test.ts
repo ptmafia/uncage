@@ -156,6 +156,16 @@ describe('deviceFlow', () => {
     await f.createCode({}, 'ip1');
   });
 
+  it('parallel guesses reserve their attempt before awaiting', async () => {
+    const f = flow({ failures: 3, codes: 1000 });
+    const rs = await Promise.allSettled(Array.from({ length: 10 }, () => f.lookup('ZZZZ-ZZZZ', { id: 'mallory' })));
+    expect(rs.filter((r) => r.status === 'fulfilled')).toHaveLength(3);
+    // Successes give their reservation back.
+    const g = flow({ failures: 2, codes: 1000 });
+    const c = await g.createCode({}, 'ip');
+    for (let i = 0; i < 5; i++) expect(await g.lookup(c.userCode, { id: 'alice' })).not.toBeNull();
+  });
+
   it('passes the machineKey hash to createMachine', async () => {
     const f = flow();
     const key = 'k'.repeat(43);

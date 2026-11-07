@@ -22,8 +22,9 @@ function requestPath(req: IncomingMessage & { originalUrl?: string }): string {
  *
  * Only requests under `hub.basePath` are handled; anything else goes to `next()` untouched (with no
  * `next`, e.g. plain `node:http`, it gets a 404). Paths are read from `req.originalUrl` (Express) or
- * `req.url`, so mounting under the prefix works too. Mount before body parsers. The socket's
- * remote address is used as the client IP for rate limits.
+ * `req.url`, so mounting under the prefix works too. Mount before body parsers. The client IP
+ * for rate limits is Express's `req.ip` (set `app.set('trust proxy', …)` behind a proxy), else the
+ * socket address.
  */
 export function toNodeHandler(h: Hub): UncageNodeHandler {
   const handle = (req: Request) => {
@@ -41,7 +42,9 @@ export function toNodeHandler(h: Hub): UncageNodeHandler {
     }
     // Hand the socket address to `handler` through a header the client cannot pre-set.
     delete req.headers[CLIENT_IP_HEADER];
-    const ip = req.socket.remoteAddress;
+    // Express's `req.ip` honours `trust proxy`; otherwise the socket address.
+    const expressIp = (req as { ip?: unknown }).ip;
+    const ip = typeof expressIp === 'string' && expressIp !== '' ? expressIp : req.socket.remoteAddress;
     if (ip) req.headers[CLIENT_IP_HEADER] = ip;
     inner(req, res, next);
   };

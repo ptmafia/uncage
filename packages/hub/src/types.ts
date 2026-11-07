@@ -59,11 +59,19 @@ export interface HubOptions {
     /** Window for `userCodeFailures`. Default 600 000 ms (10 min). */
     userCodeWindowMs?: number;
     /**
-     * Client key for per-IP limits when `handler` is called without `info.clientIp` (e.g. from a
-     * Next route handler). Default: the first `X-Forwarded-For` entry, else one shared bucket. Only
-     * trust `X-Forwarded-For` behind a proxy that sets it.
+     * Client IP for per-IP limits. When set it wins over everything else. Otherwise: `info.clientIp`
+     * passed to `handler` (`toNodeHandler` passes Express's `req.ip`, which honours `trust proxy`,
+     * else the socket address); else, only with `trustForwardedFor`, the rightmost
+     * `X-Forwarded-For` entry; else one bucket shared by all callers.
+     *
+     * Behind a reverse proxy / load balancer: with Express set `app.set('trust proxy', 1)` (number
+     * of proxies in front); with a Fetch-style host (e.g. Next route handlers) set
+     * `trustForwardedFor: true` only if your proxy appends the client address to X-Forwarded-For,
+     * or supply `clientIp` (e.g. from your platform's client-IP header).
      */
     clientIp?(req: Request): string | undefined;
+    /** Use the rightmost `X-Forwarded-For` entry when no client IP is known. Default false. */
+    trustForwardedFor?: boolean;
   };
 }
 
@@ -84,8 +92,15 @@ export interface Hub {
    */
   approveDevice(userCode: string, user: HubUser): Promise<'ok' | 'not_found' | 'expired'>;
   denyDevice(userCode: string, user: HubUser): Promise<'ok' | 'not_found' | 'expired'>;
-  /** What the approve page shows about a pending code, or `null` if unknown / no longer pending. */
-  lookupDevice(userCode: string, user: HubUser): Promise<{ name?: string; os?: string; expiresAt: string } | null>;
+  /**
+   * What the approve page shows about a pending code, or `null` if unknown / no longer pending.
+   * `repairsMachine` is set when approving would re-pair one of `user`'s existing machines (warn
+   * "re-pairing <name>"): it keeps its id and sessions and its old token stops working.
+   */
+  lookupDevice(
+    userCode: string,
+    user: HubUser,
+  ): Promise<{ name?: string; os?: string; expiresAt: string; repairsMachine: { id: string; name: string } | null } | null>;
   /** Deletes the machine (its token stops working) and disconnects it. Throws `machine_not_found`. */
   revokeMachine(machineId: string, user: HubUser): Promise<void>;
   close(): Promise<void>;

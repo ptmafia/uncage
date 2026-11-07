@@ -193,7 +193,7 @@ export class MachineHub {
   }
 
   private onSocket(ws: WebSocket, machine: MachineRecord): void {
-    const helloTimer = setTimeout(() => ws.close(CLOSE.helloTimeout, 'hello timeout'), HELLO_TIMEOUT_MS);
+    const helloTimer = setTimeout(() => closeSoon(ws, CLOSE.helloTimeout, 'hello timeout'), HELLO_TIMEOUT_MS);
     let conn: Conn | undefined;
     ws.on('error', () => undefined);
     ws.on('message', (data: RawData, isBinary: boolean) => {
@@ -204,12 +204,13 @@ export class MachineHub {
         frame = parseAgentFrame(rawToString(data));
       } catch (err) {
         this.d.logger.warn({ machineId: machine.id, err: (err as Error).message }, 'malformed agent frame');
-        ws.close(CLOSE.policy, 'malformed frame');
+        if (conn) void this.retire(conn, { close: [CLOSE.policy, 'malformed frame'] });
+        else closeSoon(ws, CLOSE.policy, 'malformed frame');
         return;
       }
       if (!conn) {
         if (frame.t !== 'hello') {
-          ws.close(CLOSE.policy, 'expected hello');
+          closeSoon(ws, CLOSE.policy, 'expected hello');
           return;
         }
         clearTimeout(helloTimer);
@@ -219,7 +220,7 @@ export class MachineHub {
           .then(() => this.onHello(c, frame as Extract<AgentFrame, { t: 'hello' }>))
           .catch((err) => {
             this.d.logger.error({ err, machineId: machine.id }, 'machine hello failed');
-            ws.close(1011, 'hub error');
+            void this.retire(c, { close: [1011, 'hub error'] });
           });
         return;
       }
@@ -288,12 +289,11 @@ export class MachineHub {
     }
     await this.d.cluster.setPresence(c.machine.id, this.d.nodeId, this.presenceTtlSec);
     if (c.dead || c.ws.readyState !== WebSocket.OPEN) {
-      // Closed while we were registering (its 'close' handler may have run before it was registered).
-      if (this.conns.get(c.machine.id) === c) {
-        this.conns.delete(c.machine.id);
-        await this.d.cluster.clearPresence(c.machine.id, this.d.nodeId);
-      }
+      // Closed while we were registering: its retire() may have cleared presence before the
+      // setPresence above re-added it. Clear it again unless a newer live connection holds it.
       c.dead = true;
+      if (this.conns.get(c.machine.id) === c) this.conns.delete(c.machine.id);
+      if (!this.conns.has(c.machine.id)) await this.d.cluster.clearPresence(c.machine.id, this.d.nodeId);
       return;
     }
 
@@ -496,6 +496,12 @@ export class MachineHub {
     await Promise.all(conns.map((c) => this.retire(c, { close: [CLOSE.shutdown, 'hub shutting down'] })));
     this.wss.close();
   }
+}
+
+/** Close a socket that has no registered connection yet, cutting it if the client does not answer. */
+function closeSoon(ws: WebSocket, code: number, reason: string): void {
+  if (ws.readyState === WebSocket.OPEN) ws.close(code, reason);
+  setTimeout(() => ws.terminate(), CLOSE_GRACE_MS).unref();
 }
 
 function rawToString(data: RawData): string {

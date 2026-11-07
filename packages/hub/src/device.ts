@@ -51,6 +51,14 @@ const POLL_TOLERANCE_MS = 500;
 
 export type DeviceDecision = 'ok' | 'not_found' | 'expired';
 
+export interface DeviceLookup {
+  name?: string;
+  os?: string;
+  expiresAt: string;
+  /** Set when approving would re-pair this existing machine (same `machineKey`) instead of adding one. */
+  repairsMachine: { id: string; name: string } | null;
+}
+
 const clipLabel = (v: string | undefined): string | undefined =>
   typeof v === 'string' && v.trim() !== '' ? v.trim().slice(0, 100) : undefined;
 
@@ -63,9 +71,18 @@ export function deviceFlow(d: DeviceFlowDeps) {
 
   /** Rate-limited per user: unknown codes count as failed guesses. Throws `rate_limited`. */
   async function guarded<T>(user: HubUser, fn: () => Promise<T>, failed: (r: T) => boolean): Promise<T> {
-    d.limits.userFailures.assertAllowed(user.id);
-    const r = await fn();
-    if (failed(r)) d.limits.userFailures.record(user.id);
+    const limit = d.limits.userFailures;
+    // Reserve the attempt synchronously (check + record) so parallel guesses cannot overshoot the
+    // limit; give it back if it turns out not to be a failure.
+    limit.take(user.id);
+    let r: T;
+    try {
+      r = await fn();
+    } catch (e) {
+      limit.release(user.id);
+      throw e;
+    }
+    if (!failed(r)) limit.release(user.id);
     return r;
   }
 
@@ -159,7 +176,8 @@ export function deviceFlow(d: DeviceFlowDeps) {
     approve: (userCode: string, user: HubUser) => decide(userCode, user, 'approved'),
     deny: (userCode: string, user: HubUser) => decide(userCode, user, 'denied'),
 
-    lookup(userCode: string, user: HubUser): Promise<{ name?: string; os?: string; expiresAt: string } | null> {
+    /** `repairsMachine`: approving would re-pair (rotate the token of) this existing machine of `user`. */
+    lookup(userCode: string, user: HubUser): Promise<DeviceLookup | null> {
       return guarded(
         user,
         async () => {
@@ -167,7 +185,13 @@ export function deviceFlow(d: DeviceFlowDeps) {
           if (!code) return null;
           const rec = await d.store.findDeviceCodeByUserCode(sha256(code));
           if (!rec || rec.status !== 'pending' || expired(rec)) return null;
-          return { ...(rec.name ? { name: rec.name } : {}), ...(rec.os ? { os: rec.os } : {}), expiresAt: rec.expiresAt };
+          const known = rec.machineKeyHash ? await d.store.findMachineByKey(user.id, rec.machineKeyHash) : null;
+          return {
+            ...(rec.name ? { name: rec.name } : {}),
+            ...(rec.os ? { os: rec.os } : {}),
+            expiresAt: rec.expiresAt,
+            repairsMachine: known ? { id: known.id, name: known.name } : null,
+          };
         },
         (r) => r === null,
       );

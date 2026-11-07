@@ -116,11 +116,12 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
       codesPerClient: new SlidingWindow(o.rateLimits?.deviceCodesPerMinute ?? 20, 60_000),
     },
   });
+  /** Rate-limit key: custom `clientIp` > `info.clientIp` > (opt-in) rightmost X-Forwarded-For > shared. */
   const clientKey = (req: Request, info?: { clientIp?: string }): string =>
-    info?.clientIp ??
-    o.rateLimits?.clientIp?.(req) ??
-    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
-    'unknown';
+    o.rateLimits?.clientIp?.(req) ||
+    info?.clientIp ||
+    (o.rateLimits?.trustForwardedFor ? req.headers.get('x-forwarded-for')?.split(',').at(-1)?.trim() : undefined) ||
+    'shared';
 
   /** Index (and in site mode replicate) events from `machine`; returns the events to fan out. */
   async function ingest(machine: MachineRecord, sessionId: string, events: UncageEvent[], send: (f: HubFrame) => void): Promise<UncageEvent[]> {
