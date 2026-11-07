@@ -274,3 +274,16 @@ export function postgresHubStore(o: { connectionString: string } | { pool: impor
 | §6 安全底线, §7.1 信任模型 | 2, 5, 6, 7 |
 | §10 rulings (storage truth, hub runtime, multi-node, files, extensions, multi-site, skills per session, versioning) | 5, 6, 7 |
 | Demo-verification frictions F1–F6 | 1 |
+
+---
+
+### Task 12: CI + automatic npm release on merge (inserted at the user's request)
+
+**Files:** `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `.changeset/config.json`, `.changeset/README.md`, root `package.json` (scripts `changeset`, `version-packages`, `release`), `CONTRIBUTING.md` (release section), README badge.
+
+- CI (`pull_request` + `push` to `main`/`feat/**`): pnpm 10 + Node 24 (and Node 22 matrix), `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm typecheck`, `pnpm lint`, `pnpm test`; `pnpm e2e:mock` with Playwright's bundled Chromium installed in CI via `pnpm exec playwright install --with-deps chromium` (CI only; local runs keep system Chrome — make the Playwright config pick `channel: 'chrome'` locally and bundled Chromium when `CI=true`). Never run `e2e:live` in CI.
+- Release (`push` to `main`): Changesets action. With pending changesets → opens/updates a "Version Packages" PR. When that PR is merged → `pnpm build` then `changeset publish` to npm using **npm trusted publishing (OIDC)**: `permissions: { id-token: write, contents: write, pull-requests: write }`, npm ≥ 11.5 (`npm i -g npm@latest` in the job), `--provenance`, no `NPM_TOKEN` secret. Workflow file name must stay `release.yml` (it is what the user registers on npm).
+- Changesets config: `access: public`, `baseBranch: main`, fixed/linked group so all `@uncage/*` publishable packages move together; `@uncage/testkit` ignored (private); examples/e2e/apps ignored.
+- Add an initial changeset describing 0.2.0 (minor for all public packages) so the first merge of feat/connected into main produces the Version PR.
+- Document the one-time user steps in CONTRIBUTING.md: for each public package on npmjs.com → Settings → Trusted publishing → GitHub Actions, org/user `ptmafia`, repo `uncage`, workflow `release.yml` (new packages @uncage/hub and @uncage/agent must be published once manually before trusted publishing can be configured, or created via the first release with a granular token — document both); repository → Settings → Actions → "Allow GitHub Actions to create and approve pull requests".
+- [ ] Validate workflows with `actionlint` if available locally (skip and log otherwise); dry-run `pnpm changeset status`; commit `ci: GitHub Actions CI and Changesets release with npm trusted publishing`, push.
