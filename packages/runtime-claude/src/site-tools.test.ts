@@ -8,6 +8,7 @@ import {
   siteApprovalRequest,
   siteMcpOptions,
   siteToolHandler,
+  schemaWithinBudget,
   siteToolSchema,
   toMcpResult,
 } from './site-tools.js';
@@ -39,6 +40,35 @@ describe('siteToolSchema', () => {
   );
 });
 
+describe('schema complexity guard', () => {
+  /** n chained $defs, each referencing the next twice: exponential if expanded. */
+  const fanOut = (n: number): Record<string, unknown> => {
+    const defs: Record<string, unknown> = {};
+    for (let i = 0; i < n; i++) {
+      defs[`d${i}`] = i === n - 1 ? { type: 'string' } : { type: 'object', properties: { a: { $ref: `#/$defs/d${i + 1}` }, b: { $ref: `#/$defs/d${i + 1}` } } };
+    }
+    return { type: 'object', properties: { x: { $ref: '#/$defs/d0' } }, $defs: defs };
+  };
+
+  it('a fan-out $defs chain (n=30) goes permissive quickly, without zod', () => {
+    // The guard runs first in siteToolSchema; failing it means zod is never called.
+    expect(schemaWithinBudget(fanOut(30))).toBe(false);
+    const t0 = performance.now();
+    const { mode } = siteToolSchema(fanOut(30));
+    expect(performance.now() - t0).toBeLessThan(100);
+    expect(mode).toBe('permissive');
+  });
+
+  it('refuses references and oversized schemas, accepts ordinary ones', () => {
+    expect(schemaWithinBudget({ type: 'object', properties: { a: { $ref: '#/x' } } })).toBe(false);
+    expect(schemaWithinBudget({ definitions: {} })).toBe(false);
+    const big = { type: 'object', properties: Object.fromEntries(Array.from({ length: 2100 }, (_, i) => [`p${i}`, { type: 'string' }])) };
+    expect(schemaWithinBudget(big)).toBe(false);
+    expect(siteToolSchema(big).mode).toBe('permissive');
+    expect(schemaWithinBudget(echo().inputSchema)).toBe(true);
+  });
+});
+
 describe('toMcpResult', () => {
   it('maps text and json parts and keeps isError', () => {
     expect(toMcpResult({ content: [{ type: 'text', text: 'a' }, { type: 'json', json: { b: 1 } }] })).toEqual({
@@ -68,13 +98,24 @@ describe('siteToolHandler', () => {
 });
 
 describe('siteMcpOptions', () => {
-  it('builds the site server; only non-confirmation tools are pre-allowed', () => {
+  it('builds the site server; confirmation tools are always_ask and destructive', () => {
     const o = siteMcpOptions([echo(), echo({ name: 'delete_page', requiresConfirmation: true })]);
     expect(Object.keys(o.mcpServers)).toEqual(['site']);
     expect(o.mcpServers.site).toMatchObject({ type: 'sdk', name: 'site' });
     expect(o.mcpServers.site!.tools).toEqual([{ name: 'delete_page', permission_policy: 'always_ask' }]);
-    expect(o.allowedTools).toEqual(['mcp__site__echo_text']);
+    expect(o).not.toHaveProperty('allowedTools');
     expect([...o.byFullName.keys()]).toEqual(['mcp__site__echo_text', 'mcp__site__delete_page']);
+    expect(o.definitions.find((d) => d.name === 'delete_page')!.annotations).toEqual({ destructiveHint: true });
+    expect(o.definitions.find((d) => d.name === 'echo_text')!.annotations).toBeUndefined();
+  });
+
+  it('the listed input schema keeps required (guards the ZodObject cast)', async () => {
+    const o = siteMcpOptions([echo()]);
+    // Internal MCP server API: the handler Claude Code's tools/list request reaches.
+    const server = (o.mcpServers.site!.instance as unknown as { server: { _requestHandlers: Map<string, (r: unknown, x: unknown) => Promise<{ tools: Array<{ name: string; inputSchema: Record<string, unknown> }> }>> } }).server;
+    const list = await server._requestHandlers.get('tools/list')!({ method: 'tools/list', params: {} }, {});
+    const listed = list.tools.find((t) => t.name === 'echo_text')!.inputSchema;
+    expect(listed).toMatchObject({ type: 'object', properties: { text: { type: 'string' } }, required: ['text'] });
   });
 
   it.each(['Bash', 'Read', 'mcp__x__y', 'a__b', 'bad-name', '', 'x'.repeat(49)])('rejects tool name %j', (name) => {
@@ -159,6 +200,22 @@ describe('materializeSkills', () => {
     symlinkSync(outside, join(cwd, '.claude', 'skills'));
     await expect(materializeSkills(cwd, [skill()])).rejects.toThrow(/outside the workspace/);
     expect(readdirSync(outside)).toEqual([]);
+  });
+
+  it('refuses a symlinked .claude pointing outside, with no side effects', async () => {
+    const cwd = ws();
+    const outside = ws();
+    symlinkSync(outside, join(cwd, '.claude'));
+    await expect(materializeSkills(cwd, [skill()])).rejects.toThrow(/\.claude resolves outside the workspace/);
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  it('accepts a .claude symlink that stays inside the workspace', async () => {
+    const cwd = ws();
+    mkdirSync(join(cwd, 'real-claude'));
+    symlinkSync(join(cwd, 'real-claude'), join(cwd, '.claude'));
+    await materializeSkills(cwd, [skill()]);
+    expect(existsSync(join(cwd, 'real-claude', 'skills', 'seo-audit', 'SKILL.md'))).toBe(true);
   });
 
   it('never follows a symlinked directory inside the skill folder', async () => {

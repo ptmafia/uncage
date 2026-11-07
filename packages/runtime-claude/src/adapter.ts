@@ -197,6 +197,8 @@ export function claudeAdapter(o: ClaudeAdapterOptions = {}): RuntimeAdapter {
 
     const canUseTool: CanUseTool = async (toolName, toolInput, opts) => {
       const siteTool = site?.byFullName.get(toolName);
+      // Site tools without confirmation run without a card (kept out of allowedTools so this callback is never shadowed).
+      if (siteTool && !siteTool.requiresConfirmation) return { behavior: 'allow', updatedInput: toolInput };
       const request: NativeApprovalInput = siteTool ? siteApprovalRequest(siteTool, toolInput, opts.toolUseID, input.cwd) : defined({
         toolId: opts.toolUseID,
         category: categorize(toolName),
@@ -226,7 +228,6 @@ export function claudeAdapter(o: ClaudeAdapterOptions = {}): RuntimeAdapter {
         settingSources: sources,
         abortController,
         mcpServers: site?.mcpServers,
-        allowedTools: site?.allowedTools.length ? site.allowedTools : undefined,
         // Registered in every mode: whatever the mode leaves to the user still goes through Uncage.
         canUseTool,
         // 'default' means the CLI's own choice.

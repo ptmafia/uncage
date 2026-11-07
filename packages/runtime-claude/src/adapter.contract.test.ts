@@ -314,12 +314,25 @@ describe('site tools and skills', () => {
     expect(claudeAdapter({ query: scriptedQuery().query }).capabilities().siteTools).toBe(true);
   });
 
-  it('passes mcpServers.site and pre-allows only non-confirmation tools', async () => {
+  it('passes mcpServers.site without allowedTools (no SHADOWED warning)', async () => {
     const s = scriptedQuery();
     await collect(claudeAdapter({ query: s.query }).run({ ...run, prompt: 'simple', tools: tools() }, ctxWith({ decision: 'allow' }).ctx));
     const o = s.calls[0]!.options;
     expect(o.mcpServers?.site).toMatchObject({ type: 'sdk', name: 'site' });
-    expect(o.allowedTools).toEqual(['mcp__site__echo_text']);
+    expect(o).not.toHaveProperty('allowedTools');
+  });
+
+  it('canUseTool allows a non-confirmation site tool without an approval', async () => {
+    const s = scriptedQuery();
+    const { ctx, requests } = ctxWith({ decision: 'deny' });
+    await collect(claudeAdapter({ query: s.query }).run({ ...run, prompt: 'simple', tools: tools() }, ctx));
+    const permission = await s.calls[0]!.options.canUseTool!('mcp__site__echo_text', { text: 'hi' }, {
+      signal: new AbortController().signal,
+      toolUseID: 'toolu_echo',
+      requestId: 'req_3',
+    });
+    expect(permission).toEqual({ behavior: 'allow', updatedInput: { text: 'hi' } });
+    expect(requests).toEqual([]);
   });
 
   it('without tools, no mcpServers / allowedTools are passed', async () => {

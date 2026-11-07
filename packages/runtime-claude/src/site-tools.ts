@@ -30,13 +30,42 @@ const ARGS_MAX = 200;
 
 const truncate = (s: string, max: number): string => (s.length <= max ? s : `${s.slice(0, max - 1)}…`);
 
+/** Most JSON Schema nodes (objects + arrays) a site tool schema may have before it goes permissive. */
+export const SCHEMA_NODE_BUDGET = 2000;
+const REF_KEYS = new Set(['$ref', '$defs', 'definitions', '$dynamicRef', '$recursiveRef']);
+
+/**
+ * Cheap pre-check, run before zod ever sees the schema: references can fan out exponentially in
+ * zod's (synchronous) conversion, so any `$ref`/`$defs` is refused, and so is a schema with more
+ * than SCHEMA_NODE_BUDGET nodes.
+ */
+export function schemaWithinBudget(schema: unknown): boolean {
+  const stack: unknown[] = [schema];
+  let nodes = 0;
+  while (stack.length > 0) {
+    const v = stack.pop();
+    if (v === null || typeof v !== 'object') continue;
+    if (++nodes > SCHEMA_NODE_BUDGET) return false;
+    if (Array.isArray(v)) {
+      for (const x of v) stack.push(x);
+      continue;
+    }
+    for (const [k, x] of Object.entries(v)) {
+      if (REF_KEYS.has(k)) return false;
+      stack.push(x);
+    }
+  }
+  return true;
+}
+
 /**
  * JSON Schema → zod for the SDK's `tool()`. Uses zod 4 `z.fromJSONSchema` (the SDK accepts zod 4
  * object schemas, which the MCP server validates arguments against). Anything that is not an
- * object schema, or that zod cannot convert both ways, becomes a permissive object; the hub
- * validates those arguments itself.
+ * object schema, uses references, is too large, or that zod cannot convert both ways, becomes a
+ * permissive object; the hub validates those arguments itself.
  */
 export function siteToolSchema(jsonSchema: Record<string, unknown>): { schema: ObjectSchema; mode: 'converted' | 'permissive' } {
+  if (!schemaWithinBudget(jsonSchema)) return { schema: z.looseObject({}), mode: 'permissive' };
   try {
     const s = z.fromJSONSchema(jsonSchema);
     if (s instanceof z.ZodObject) {
@@ -70,8 +99,8 @@ export function siteToolHandler(t: RunTool): (args: unknown) => Promise<CallTool
 
 export interface SiteMcpOptions {
   mcpServers: Record<string, McpSdkServerConfigWithInstance>;
-  /** Full names of tools that run without an approval card. */
-  allowedTools: string[];
+  /** Tool definitions handed to the server (exposed for tests). */
+  definitions: SdkMcpToolDefinition[];
   byFullName: Map<string, RunTool>;
 }
 
@@ -88,18 +117,25 @@ export function siteMcpOptions(tools: RunTool[]): SiteMcpOptions {
     if (byFullName.has(full)) throw new Error(`duplicate site tool: ${t.name}`);
     byFullName.set(full, t);
   }
-  const defs = tools.map((t) =>
-    tool(t.name, t.description, siteToolSchema(t.inputSchema).schema as unknown as AnyZodRawShape, siteToolHandler(t)),
+  // The full ZodObject is passed where the type says raw shape: the MCP server's registerTool
+  // accepts zod 4 object schemas (and keeps required/additionalProperties). Pinned by a test.
+  const definitions: SdkMcpToolDefinition[] = tools.map((t) =>
+    tool(
+      t.name,
+      t.description,
+      siteToolSchema(t.inputSchema).schema as unknown as AnyZodRawShape,
+      siteToolHandler(t),
+      // In `auto` mode the classifier may approve an always_ask tool unless it is destructive.
+      t.requiresConfirmation ? { annotations: { destructiveHint: true } } : undefined,
+    ),
   );
-  const server = createSdkMcpServer({ name: SITE_MCP_SERVER, tools: defs, alwaysLoad: true });
+  const server = createSdkMcpServer({ name: SITE_MCP_SERVER, tools: definitions, alwaysLoad: true });
   const confirm = tools.filter((t) => t.requiresConfirmation);
   // always_ask: the CLI asks canUseTool before each call even in modes that would otherwise allow it.
+  // Tools without confirmation are allowed by the adapter's canUseTool (no allowedTools entry,
+  // which would shadow canUseTool and make the SDK warn).
   if (confirm.length > 0) server.tools = confirm.map((t) => ({ name: t.name, permission_policy: 'always_ask' }));
-  return {
-    mcpServers: { [SITE_MCP_SERVER]: server },
-    allowedTools: tools.filter((t) => !t.requiresConfirmation).map((t) => siteToolFullName(t.name)),
-    byFullName,
-  };
+  return { mcpServers: { [SITE_MCP_SERVER]: server }, definitions, byFullName };
 }
 
 function compactArgs(args: unknown): string {
@@ -126,6 +162,13 @@ const inside = (root: string, p: string): boolean => {
   return r !== '' && !r.startsWith('..') && !isAbsolute(r);
 };
 
+async function ensureDirInside(realCwd: string, path: string, label: string): Promise<string> {
+  if (!(await lstat(path).catch(() => undefined))) await mkdir(path);
+  const real = await realpath(path);
+  if (!inside(realCwd, real)) throw new Error(`${label} resolves outside the workspace`);
+  return real;
+}
+
 function skillMd(s: SkillSpec): string {
   // A JSON string is a valid YAML double-quoted scalar.
   const body = s.markdown.endsWith('\n') ? s.markdown : `${s.markdown}\n`;
@@ -139,12 +182,6 @@ function skillMd(s: SkillSpec): string {
  */
 export async function materializeSkills(cwd: string, skills: SkillSpec[]): Promise<void> {
   if (skills.length === 0) return;
-  const realCwd = await realpath(cwd);
-  const root = join(realCwd, '.claude', 'skills');
-  await mkdir(root, { recursive: true });
-  const realRoot = await realpath(root);
-  if (!inside(realCwd, realRoot)) throw new Error('.claude/skills resolves outside the workspace');
-
   for (const s of skills) {
     if (!SkillSpecSchema.shape.name.safeParse(s.name).success) throw new Error(`invalid skill name: ${JSON.stringify(s.name)}`);
     for (const f of s.files ?? []) {
@@ -152,6 +189,11 @@ export async function materializeSkills(cwd: string, skills: SkillSpec[]): Promi
       if (f.path.toLowerCase() === 'skill.md') throw new Error('skill file path collides with SKILL.md');
     }
   }
+  const realCwd = await realpath(cwd);
+  // Check each level before creating anything below it: an existing `.claude` or `.claude/skills`
+  // (symlink or not) must resolve inside the workspace, otherwise nothing is written anywhere.
+  const realClaude = await ensureDirInside(realCwd, join(realCwd, '.claude'), '.claude');
+  const realRoot = await ensureDirInside(realCwd, join(realClaude, 'skills'), '.claude/skills');
 
   for (const s of skills) {
     const dir = join(realRoot, s.name);
