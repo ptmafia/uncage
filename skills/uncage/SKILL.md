@@ -41,8 +41,8 @@ cannot run in serverless functions (Vercel functions); use a custom server or a 
    `tsconfig.json`: `"allowImportingTsExtensions": true` (server-side imports use `.ts` extensions).
 8. Chat page (client component): `<UncageProvider><AgentChat /></UncageProvider>` and `import '@uncage/react-ui/styles.css'`, inside a full-height container.
 9. `/device` approval page: server component calls `getHub().lookupDevice(code, user)`; a Server Action calls
-   `approveDevice` / `denyDevice`; catch errors from `lookupDevice` (e.g. `rate_limited`) and pass a message
-   to the `error` prop; a client component renders `<ApproveDevice code lookup state error onApprove onDeny />`.
+   `approveDevice` / `denyDevice`; catch errors from `lookupDevice` (e.g. `rate_limited`) and pass them
+   to the `error` prop (shown localized, instead of "code not found" when `lookup` is null); a client component renders `<ApproveDevice code lookup state error onApprove onDeny />`.
 10. `next.config.ts` headers for `/device` (or all pages): `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`.
 11. `.gitignore`: `.uncage-hub/` (the default PGlite store).
 

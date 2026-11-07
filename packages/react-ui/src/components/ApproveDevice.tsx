@@ -31,8 +31,9 @@ export interface ApproveDeviceProps {
   /** Default `'idle'`. */
   state?: ApproveDeviceState;
   /**
-   * The last failed attempt (e.g. `rate_limited`, thrown by the hub); shown above the buttons,
-   * which stay enabled so the user can retry.
+   * The last failed attempt (e.g. `rate_limited`, thrown by the hub), shown localized. With a
+   * lookup it appears above the buttons, which stay enabled for a retry; with `lookup: null` (the
+   * lookup itself failed) it replaces the "code not found" message.
    */
   error?: { code: ErrorCode; message: string; hint?: string; details?: Record<string, unknown> };
   /** UI language (default: the surrounding `UncageUIProvider`, else `'en'`). */
@@ -90,6 +91,13 @@ function ApproveDeviceView({
       <p className="uc-approve-result" role="status" data-tone={state === 'approved' ? 'ok' : 'neutral'}>
         {state === 'approved' ? <CheckCircle2 aria-hidden /> : <XCircle aria-hidden />}
         <span>{state === 'approved' ? t.approvedDone : t.deniedDone}</span>
+      </p>
+    );
+  } else if (gone && shownError) {
+    // The lookup itself failed (e.g. `rate_limited`): say why, not "code not found".
+    content = (
+      <p className="uc-banner" data-tone="err" role="alert">
+        <span className="uc-banner-text">{shownError.message}</span>
       </p>
     );
   } else if (gone) {

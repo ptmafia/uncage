@@ -421,6 +421,25 @@ describe('ApproveDevice', () => {
     expect((screen.getByRole('button', { name: 'Approve' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it('lookup failed (rate_limited, no lookup): the error banner, not "code not found"', () => {
+    render(<ApproveDevice {...base({ lookup: null, error: { code: 'rate_limited', message: 'Too many requests.' } })} />);
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toBe('Too many requests. Wait a moment and try again.');
+    expect(alert.textContent).not.toContain('invalid or has expired');
+    expect(screen.queryByText(/invalid or has expired/)).toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('lookup failed in zh-CN: localized error banner', () => {
+    render(<ApproveDevice {...base({ lookup: null, locale: 'zh-CN', error: { code: 'rate_limited', message: 'x' } })} />);
+    expect(screen.getByRole('alert').textContent).toBe('请求太频繁了，稍等一下再试。');
+  });
+
+  it('no lookup and no error: "code not found"', () => {
+    render(<ApproveDevice {...base({ lookup: null })} />);
+    expect(screen.getByRole('alert').textContent).toContain('invalid or has expired');
+  });
+
   it('zh-CN via the locale prop or a surrounding provider', () => {
     const { unmount } = render(<ApproveDevice {...base({ locale: 'zh-CN' })} />);
     expect(screen.getByRole('heading', { name: '连接这台电脑？' })).toBeTruthy();

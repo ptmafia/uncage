@@ -245,12 +245,9 @@ export default async function DevicePage({ searchParams }: { searchParams: Promi
     lookup = code ? await getHub().lookupDevice(code, user) : null;
   } catch (e) {
     // Unknown codes count as failed guesses; after 10 in 10 minutes lookupDevice throws `rate_limited`.
-    // Show a message instead of crashing the page.
+    // <ApproveDevice> shows the error, localized, in place of "code not found".
     const err = e as { code?: string; message?: string };
-    error =
-      err.code === 'rate_limited'
-        ? { code: 'rate_limited', message: 'Too many attempts with unknown codes. Wait a few minutes, then open the link again.' }
-        : { code: 'internal_error', message: 'Could not check this code. Try again in a moment.' };
+    error = { code: err.code === 'rate_limited' ? 'rate_limited' : 'internal_error', message: err.message ?? 'Could not check this code.' };
   }
   return <ApprovePage code={code} lookup={lookup} initialError={error} />;
 }

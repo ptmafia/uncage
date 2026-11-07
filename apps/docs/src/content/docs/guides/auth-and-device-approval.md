@@ -69,7 +69,7 @@ The hub gives you three calls, each taking the code and the signed-in user:
 
 Codes are 8 characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, shown as `ABCD-EFGH`, and valid for 10 minutes. Case, spaces and the dash are ignored. Unknown codes count as failed guesses: after 10 in 10 minutes (`rateLimits.userCodeFailures`, `userCodeWindowMs`) these calls throw an error with `code: 'rate_limited'` (`details.retryAfterSec`).
 
-`<ApproveDevice>` from `@uncage/react-ui` renders the page: the code, the computer, a re-pair warning, Approve and Deny, and the result. It is presentational; you make the decision on the server.
+`<ApproveDevice>` from `@uncage/react-ui` renders the page: the code, the computer, a re-pair warning, Approve and Deny, and the result. It is presentational; you make the decision on the server. Pass a failed call’s error to its `error` prop: it is shown localized (for `rate_limited`: “Too many requests. Wait a moment and try again.”), above the buttons when there is a lookup, or instead of “This code is invalid or has expired” when `lookupDevice` itself failed and `lookup` is `null`.
 
 ### Next.js
 
@@ -163,7 +163,7 @@ hub.attach(server);
 server.listen(3000);
 ```
 
-On the page, call `GET /device/lookup?code=…`, render `<ApproveDevice code lookup state error onApprove onDeny />`, and `POST /device/decision` with `{ code, approve }` (the browser sends `Origin` on `fetch` POSTs). Map the answers to `ApproveDevice`’s `state`: `'ok'` → `'approved'` or `'denied'`; `'not_found'` and `'expired'` as they are; errors go to its `error` prop, and the buttons stay enabled for a retry.
+On the page, call `GET /device/lookup?code=…`, render `<ApproveDevice code lookup state error onApprove onDeny />`, and `POST /device/decision` with `{ code, approve }` (the browser sends `Origin` on `fetch` POSTs). Map the answers to `ApproveDevice`’s `state`: `'ok'` → `'approved'` or `'denied'`; `'not_found'` and `'expired'` as they are; errors go to its `error` prop (the buttons stay enabled for a retry; with `lookup: null` the error replaces the “code not found” message).
 
 ## Revoking computers
 
