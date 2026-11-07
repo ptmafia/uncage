@@ -18,24 +18,43 @@ export function isErrorBody(v: unknown): v is ErrorBody {
   );
 }
 
+const isStr = (v: unknown): v is string => typeof v === 'string';
+const hasId = (v: unknown): boolean => isObject(v) && isStr(v.id);
+
 /**
- * An event envelope: ids, a non-negative integer `sequence`, a dotted `type` and an object payload.
- * Payloads are not checked field by field, and types this client does not know yet (a newer
- * daemon) pass through; consumers switch on `type` and ignore the rest.
+ * The payload fields consumers (the React store) key on, per known event type. Payloads are not
+ * otherwise checked field by field. `undefined` for types this client does not know.
+ */
+function payloadOk(type: string, p: Record<string, unknown>): boolean | undefined {
+  if (type === 'session.created' || type === 'session.updated') return hasId(p.session);
+  if (type === 'run.started') return hasId(p.run);
+  if (type.startsWith('run.')) return isStr(p.runId);
+  if (type.startsWith('approval.')) return hasId(p.approval);
+  if (type.startsWith('message.')) return isStr(p.messageId);
+  if (type.startsWith('tool.')) return isStr(p.toolId);
+  if (type === 'system.warning') return isStr(p.code) && isStr(p.message);
+  return undefined;
+}
+
+/**
+ * An event envelope: ids, a non-negative integer `sequence`, a dotted `type` and an object payload
+ * carrying the id its type is keyed on (`session.id`, `run.id`/`runId`, `approval.id`,
+ * `messageId`, `toolId`). Types this client does not know yet (a newer daemon) pass through with
+ * only the envelope checked; consumers switch on `type` and ignore the rest.
  */
 export function isUncageEvent(v: unknown): v is UncageEvent {
   if (!isObject(v)) return false;
-  return (
-    typeof v.eventId === 'string' &&
-    typeof v.sessionId === 'string' &&
+  const envelope =
+    isStr(v.eventId) &&
+    isStr(v.sessionId) &&
     typeof v.sequence === 'number' &&
     Number.isInteger(v.sequence) &&
     v.sequence >= 0 &&
-    typeof v.type === 'string' &&
+    isStr(v.type) &&
     v.type.includes('.') &&
-    typeof v.occurredAt === 'string' &&
-    typeof v.schemaVersion === 'string' &&
-    (v.runId === undefined || typeof v.runId === 'string') &&
-    isObject(v.payload)
-  );
+    isStr(v.occurredAt) &&
+    isStr(v.schemaVersion) &&
+    (v.runId === undefined || isStr(v.runId)) &&
+    isObject(v.payload);
+  return envelope && payloadOk(v.type as string, v.payload as Record<string, unknown>) !== false;
 }

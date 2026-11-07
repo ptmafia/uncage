@@ -910,6 +910,16 @@ describe('persistSession', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
+  it('any other restore error also falls back to a draft (param cleared), keeping the error visible', async () => {
+    window.history.replaceState(null, '', '/?session=ses_1');
+    const f = fakeClient();
+    f.client.snapshot.mockRejectedValue(clientError('internal_error', 500, 'Boom.'));
+    renderChat(f);
+    await waitFor(() => expect(sessionParam()).toBeNull());
+    expect(await screen.findByText('Start a session with Claude Code')).toBeTruthy();
+    expect(await screen.findByRole('alert')).toBeTruthy();
+  });
+
   it("'localStorage' restores from storage and leaves the URL alone", async () => {
     const first = await openSession(fakeClient(), { persistSession: 'localStorage' });
     await waitFor(() => expect(window.localStorage.getItem('uncage:session')).toBe('ses_1'));

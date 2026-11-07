@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { RuntimeAdapter, RuntimeProbe } from '@uncage/protocol';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from './config.js';
-import { DOCTOR_HELP, doctorExitCode, exportEvents, formatChecks, parseDoctorArgs, runDoctor } from './doctor.js';
+import { DOCTOR_HELP, doctorExitCode, exportEvents, formatChecks, nonLoopbackWarning, parseDoctorArgs, runDoctor } from './doctor.js';
 import { ensureToken, ensureTokenAt } from './token.js';
 
 const adapter = (id: string, probe: RuntimeProbe): RuntimeAdapter =>
@@ -173,6 +173,23 @@ describe('doctor flags: --port, --url, UNCAGE_URL, --workspace, --help (F5)', ()
     expect(down.find((c) => c.id === 'server')?.fix).toBe('uncage serve --port 4800');
     const atDefault = await runDoctor({ config, home, fetch: downFetch, adapters: [] });
     expect(atDefault.find((c) => c.id === 'server')?.detail).toContain('--port');
+  });
+
+  it('warns before sending the token to a non-loopback --url / UNCAGE_URL', async () => {
+    expect(nonLoopbackWarning('http://127.0.0.1:4800')).toBeUndefined();
+    expect(nonLoopbackWarning('http://localhost:4800')).toBeUndefined();
+    expect(nonLoopbackWarning('http://[::1]:4800')).toBeUndefined();
+    const w = nonLoopbackWarning('http://192.168.1.20:4783');
+    expect(w).toContain('192.168.1.20');
+    expect(w).toMatch(/token/i);
+    const { home, config } = await setup();
+    const checks = await runDoctor({ config, home, fetch: okFetch, adapters: [], serverUrl: 'http://box.lan:4783' });
+    const i = checks.findIndex((c) => c.id === 'serverUrl');
+    expect(checks[i]).toMatchObject({ ok: false, warn: true });
+    expect(i).toBeLessThan(checks.findIndex((c) => c.id === 'server'));
+    expect(doctorExitCode(checks)).toBe(0);
+    const local = await runDoctor({ config, home, fetch: okFetch, adapters: [] });
+    expect(local.some((c) => c.id === 'serverUrl')).toBe(false);
   });
 
   it('checks git-ignore in the workspace the daemon reports, not the current directory', async () => {

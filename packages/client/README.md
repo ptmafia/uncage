@@ -50,7 +50,7 @@ Every event has `{ eventId, sequence, sessionId, runId?, type, occurredAt, paylo
 | `approval.requested` / `approval.updated` / `approval.resolved` | `{ approval }` (`approval.state`: `pending` → `approved` / `denied` / `expired` / `cancelled`) |
 | `system.warning` | `{ code, message }` |
 
-Events are checked structurally in the browser (envelope fields, object payload); event types newer than this client pass through, so switch on `type` and ignore the rest. All of these types (`UncageEvent`, `UncageEventMap`, `ApprovalRequest`, `RuntimeInfo`, `Session`, `Run`, …) are exported from `@uncage/client`, so you don't need `@uncage/protocol`.
+Events are checked structurally in the browser: the envelope, plus the id each known type is keyed on (`session.id`, `run.id` / `runId`, `approval.id`, `messageId`, `toolId`). Malformed frames are dropped with one console warning. Event types newer than this client pass through, so switch on `type` and ignore the rest. All of these types (`UncageEvent`, `UncageEventMap`, `ApprovalRequest`, `RuntimeInfo`, `Session`, `Run`, …) are exported from `@uncage/client`, so you don't need `@uncage/protocol`.
 
 ## A vanilla chat
 

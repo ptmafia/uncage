@@ -277,5 +277,9 @@ function reduce(s: SessionState, e: UncageEvent): SessionState {
       const id = e.runId ?? latestRun(s.runs)?.id;
       return { ...s, lastWarning: { code, message, ...(id !== undefined ? { runId: id } : {}) } };
     }
+
+    default:
+      // An event type from a newer daemon: ignored (applyEvent still advances lastSequence).
+      return s;
   }
 }

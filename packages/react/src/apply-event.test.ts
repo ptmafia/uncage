@@ -118,6 +118,15 @@ describe('applyEvent', () => {
     expect(s2.runs.run_1!.state).toBe('interrupted');
   });
 
+  it('an unknown (newer) event type leaves the state intact and only advances lastSequence', () => {
+    const ev = eventFactory();
+    const before = reduce([ev('run.started', { run: run({ state: 'running' }) })]);
+    const unknown = { ...ev('run.cancelled', { runId: 'run_1' }), type: 'future.thing', payload: { x: 1 } } as unknown as UncageEvent;
+    const after = applyEvent(before, unknown);
+    expect(after).toEqual({ ...before, lastSequence: unknown.sequence });
+    expect(after.session).toBe(before.session);
+  });
+
   it('initialSessionState seeds runs, user prompts and pending approvals from the snapshot', () => {
     const s = initialSessionState(
       snapshot({

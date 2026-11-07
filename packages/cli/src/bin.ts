@@ -3,7 +3,15 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { loadConfig } from './config.js';
-import { DOCTOR_HELP, doctorExitCode, exportEvents, formatChecks, parseDoctorArgs, runDoctor } from './doctor.js';
+import {
+  DOCTOR_HELP,
+  doctorExitCode,
+  exportEvents,
+  formatChecks,
+  nonLoopbackWarning,
+  parseDoctorArgs,
+  runDoctor,
+} from './doctor.js';
 import { applyWorkspaceFlag, buildAdapters, serve } from './serve.js';
 
 const HELP = `uncage - run AI coding agents behind a local, approval-gated API
@@ -69,6 +77,9 @@ async function main(argv: string[]): Promise<number> {
       console.log(DOCTOR_HELP);
       return 0;
     }
+    // Before the token goes anywhere.
+    const remote = nonLoopbackWarning(args.serverUrl);
+    if (remote) console.error(`! ${remote}`);
     const tokenFile = args.tokenFile ? { tokenFile: args.tokenFile } : {};
     const home = homedir();
     if (args.exportEvents) {

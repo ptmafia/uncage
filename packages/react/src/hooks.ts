@@ -280,8 +280,8 @@ function writePersisted(mode: PersistSessionMode, id: string | undefined): void 
  * Remembers the open session so a reload lands on the same conversation: on mount it reopens the
  * remembered session (`?session=<id>` with `'url'`, a `localStorage` entry with `'localStorage'`),
  * then mirrors the open session there (`history.replaceState`, no new history entries) and clears
- * it when a new draft is opened. A remembered session that no longer exists falls back to a new
- * draft. `<AgentChat>` calls this (default `'url'`); headless UIs call it once near the root.
+ * it when a new draft is opened. A remembered session that cannot be opened falls back to a new
+ * draft (the error is shown unless the session simply no longer exists). `<AgentChat>` calls this (default `'url'`); headless UIs call it once near the root.
  */
 export function usePersistSession(mode: PersistSessionMode = 'url'): void {
   const store = useUncageStore();
@@ -293,9 +293,11 @@ export function usePersistSession(mode: PersistSessionMode = 'url'): void {
     if (id === undefined || store.getState().activeSessionId !== undefined) return;
     void store.actions.selectSession(id).then(() => {
       const s = store.getState();
-      if (s.activeSessionId !== id || s.active !== undefined || s.lastError?.code !== 'not_found') return;
-      // Deleted or from another server: forget it and start fresh instead of showing an error.
-      store.actions.dismissError();
+      // Still this selection and it did not open: the restore failed (selectSession records why).
+      if (s.activeSessionId !== id || s.active !== undefined || s.lastError === undefined) return;
+      // Forget it and start fresh. A deleted session (or one from another server) is not worth an
+      // error; anything else (daemon down, …) stays visible in lastError.
+      if (s.lastError.code === 'not_found') store.actions.dismissError();
       writePersisted(mode, undefined);
       store.actions.openDraft();
     });

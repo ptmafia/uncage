@@ -298,6 +298,36 @@ describe('structural guards (no zod in the browser path)', () => {
     expect(isUncageEvent({ nope: 1 })).toBe(false);
   });
 
+  it('isUncageEvent checks the ids React relies on for known types', async () => {
+    const { isUncageEvent } = await import('./index.js');
+    const e = (type: string, payload: unknown) => ({ ...evt(1), type, payload });
+    expect(isUncageEvent(e('session.updated', { session: { id: 'ses_1' } }))).toBe(true);
+    expect(isUncageEvent(e('session.created', { session: {} }))).toBe(false);
+    expect(isUncageEvent(e('run.started', { run: { id: 'run_1' } }))).toBe(true);
+    expect(isUncageEvent(e('run.started', { runId: 'run_1' }))).toBe(false);
+    expect(isUncageEvent(e('run.completed', { runId: 'run_1', durationMs: 1 }))).toBe(true);
+    expect(isUncageEvent(e('run.failed', {}))).toBe(false);
+    expect(isUncageEvent(e('approval.requested', { approval: { id: 'apr_1' } }))).toBe(true);
+    expect(isUncageEvent(e('approval.resolved', { approval: 'x' }))).toBe(false);
+    expect(isUncageEvent(e('message.delta', { messageId: 'm1', chunkIndex: 0, text: 'x' }))).toBe(true);
+    expect(isUncageEvent(e('message.delta', { chunkIndex: 0, text: 'x' }))).toBe(false);
+    expect(isUncageEvent(e('tool.started', { toolId: 't1' }))).toBe(true);
+    expect(isUncageEvent(e('tool.completed', {}))).toBe(false);
+  });
+
+  it('drops a malformed known-type frame with one warning and keeps streaming', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const bad = (seq: number) => `data: ${JSON.stringify({ ...evt(seq), type: 'run.completed', payload: {} })}\n\n`;
+    const fetch = vi.fn(async () => sseResponse([bad(1), bad(2), frame(3)]));
+    const events: number[] = [];
+    const unsub = createUncageClient({ fetch }).subscribe('ses_1', { after: 0, onEvent: (ev) => events.push(ev.sequence) });
+    await vi.advanceTimersByTimeAsync(0);
+    unsub();
+    expect(events).toEqual([3]);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
   it('a non-conforming error body becomes a generic http_status error', async () => {
     const fetch = vi.fn<F>(async () => json({ error: { code: 'session_busy' } }, 409));
     const err = await createUncageClient({ fetch }).listSessions().catch((e: unknown) => e);

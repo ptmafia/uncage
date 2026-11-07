@@ -109,11 +109,28 @@ export function parseDoctorArgs(args: string[], env: NodeJS.ProcessEnv, config: 
   };
 }
 
+const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]']);
+
+/**
+ * A warning when `serverUrl` is not a loopback address: doctor sends the daemon token there, and
+ * the daemon itself only ever listens on loopback.
+ */
+export function nonLoopbackWarning(serverUrl: string): string | undefined {
+  let host: string;
+  try {
+    host = new URL(serverUrl).hostname;
+  } catch {
+    return undefined;
+  }
+  if (LOOPBACK.has(host)) return undefined;
+  return `${serverUrl} is not a loopback address; doctor will send the Uncage daemon token to ${host}. The daemon only listens on 127.0.0.1, so make sure this is a tunnel or proxy you trust.`;
+}
+
 /** `uncage serve` with the port of `serverUrl` when it is a non-default loopback port. */
 function serveFix(serverUrl: string): string {
   try {
     const u = new URL(serverUrl);
-    const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname);
+    const loopback = LOOPBACK.has(u.hostname);
     if (loopback && u.port && Number(u.port) !== DEFAULT_PORT) return `uncage serve --port ${u.port}`;
     if (!loopback) return `start the Uncage daemon reachable at ${serverUrl}`;
   } catch {
@@ -233,6 +250,10 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
   const url = `${serverUrl}/v1/health`;
   const serve = serveFix(serverUrl);
   let daemonWorkspaces: string[] | undefined;
+  const remote = nonLoopbackWarning(serverUrl);
+  if (remote) {
+    checks.push({ id: 'serverUrl', label: 'Server URL is loopback', ok: false, warn: true, detail: remote });
+  }
   try {
     const token = await readToken(tp);
     const res = await deps.fetch(url, { headers: token ? { authorization: `Bearer ${token}` } : {} });

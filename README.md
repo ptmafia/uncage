@@ -190,7 +190,7 @@ runtimes:
 | CLI | |
 | --- | --- |
 | `uncage serve [--port n] [--workspace dir] [--data-dir dir] [--token-file file]` | Start the daemon. Env: `UNCAGE_PORT`, `UNCAGE_LOG_LEVEL`, `UNCAGE_ALLOW_BYPASS=1` |
-| `uncage doctor [--port n \| --url url] [--workspace dir] [--data-dir dir] [--token-file file]` | Check Node, data dir, token, server and runtimes, with a fix for each failure. Finds the daemon via `--url`, `--port`, `UNCAGE_URL`, then `UNCAGE_PORT`. Warns (`!`, non-fatal) when the daemon's workspace (as it reports it, or `--workspace`) is a git repo that does not ignore `.uncage/`. `uncage <command> --help` lists the flags |
+| `uncage doctor [--port n \| --url url] [--workspace dir] [--data-dir dir] [--token-file file]` | Check Node, data dir, token, server and runtimes, with a fix for each failure. Finds the daemon via `--url`, `--port`, `UNCAGE_URL`, then `UNCAGE_PORT` (warns before sending the token to a non-loopback URL). Warns (`!`, non-fatal) when the daemon's workspace (as it reports it, or `--workspace`) is a git repo that does not ignore `.uncage/`. `uncage <command> --help` lists the flags |
 | `uncage doctor --export-events <sessionId> [--out file] [--include-content]` | Export a session's events for a bug report (content redacted unless `--include-content`) |
 
 Proxy env (host app): `UNCAGE_URL` (default `http://127.0.0.1:4783`), `UNCAGE_TOKEN` (default: read `~/.uncage/token`), `UNCAGE_ALLOWED_HOSTS`. If you start the daemon with `--token-file`, pass that token to the app as `UNCAGE_TOKEN`.

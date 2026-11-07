@@ -259,6 +259,17 @@ export function createUncageHandler(o: ProxyOptions = {}): UncageHandler {
     upstream.headers.forEach((value, name) => {
       if (!DROP_RESPONSE_HEADERS.has(name)) responseHeaders.set(name, value);
     });
+    // The daemon's workspace paths in /health are for `uncage doctor` (which calls the daemon
+    // directly); the browser has no use for them.
+    if (target.pathname === '/v1/health' && upstream.ok) {
+      const health = (await upstream.json().catch(() => undefined)) as Record<string, unknown> | undefined;
+      if (health && typeof health === 'object') {
+        delete health.workspace;
+        responseHeaders.set('content-type', 'application/json; charset=utf-8');
+        return new Response(JSON.stringify(health), { status: upstream.status, headers: responseHeaders });
+      }
+      return errorResponse('internal_error', { message: 'The Uncage daemon sent an invalid health response.' });
+    }
     const sse = upstream.headers.get('content-type')?.startsWith('text/event-stream') === true;
     const body = sse && upstream.body ? endOnUpstreamDrop(upstream.body) : upstream.body;
     return new Response(body, { status: upstream.status, statusText: upstream.statusText, headers: responseHeaders });

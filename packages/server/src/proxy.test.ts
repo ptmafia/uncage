@@ -92,6 +92,23 @@ describe('createUncageHandler', () => {
     expect(req?.headers.host).toBe(new URL(endpoint).host);
   });
 
+  it('strips the daemon workspace from proxied /health responses (doctor reads it directly)', async () => {
+    respond = (res) => {
+      res.setHeader('content-type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify({ ok: true, protocol: '1.0', version: '9', workspace: { default: '/secret', allowedRoots: ['/secret'] } }));
+    };
+    const h = createUncageHandler({ endpoint, token: 'tok' });
+    const res = await h.GET(new Request('http://localhost:3000/api/uncage/health'));
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({ ok: true, protocol: '1.0', version: '9' });
+    expect(text).not.toContain('/secret');
+    expect(res.headers.get('content-type')).toContain('application/json');
+    // Other routes pass through byte for byte.
+    const other = await h.GET(new Request('http://localhost:3000/api/uncage/sessions'));
+    expect(JSON.parse(await other.text())).toHaveProperty('workspace');
+  });
+
   it('cross-origin POST → 403 forbidden_origin, not forwarded', async () => {
     const h = createUncageHandler({ endpoint, token: 'tok' });
     const res = await h.POST(
