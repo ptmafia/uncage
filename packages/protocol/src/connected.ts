@@ -22,31 +22,58 @@ export type MachineInfo = z.infer<typeof MachineInfoSchema>;
 export const ToolSpecSchema = z.object({
   // No `__`: reserved for runtime-namespaced names such as `mcp__server__tool`.
   name: z.string().regex(/^[a-z][a-z0-9_]{0,47}$/).refine((n) => !n.includes('__'), { message: 'tool name must not contain "__"' }),
-  description: z.string(),
-  inputSchema: z.record(z.string(), z.unknown()),
+  description: z.string().max(1000),
+  inputSchema: z
+    .record(z.string(), z.unknown())
+    .refine((o) => JSON.stringify(o).length <= 64 * 1024, { message: 'inputSchema too large' }),
   requiresConfirmation: z.boolean(),
 });
 export type ToolSpec = z.infer<typeof ToolSpecSchema>;
 
-/** Relative, forward-slash, no `..`, no absolute/drive paths, no backslashes. */
-const SkillFilePathSchema = z
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
+/**
+ * Relative, forward-slash path. Nothing is ever decoded: `%2e%2e` is a literal
+ * (harmless) file name, not `..`. Consumers must still realpath-fence on disk.
+ */
+export const RelativePathSchema = z
   .string()
   .min(1)
+  .max(512)
   .refine(
     (p) =>
-      !p.includes('\\') &&
-      !p.includes('\0') &&
+      // eslint-disable-next-line no-control-regex
+      !/[\u0000-\u001f\u007f\\:]/.test(p) &&
       !p.startsWith('/') &&
-      !/^[A-Za-z]:/.test(p) &&
-      p.split('/').every((seg) => seg !== '' && seg !== '..' && seg !== '.'),
-    { message: 'skill file path must be relative and must not contain "..", backslashes or empty segments' },
+      p.split('/').every(
+        (seg) =>
+          seg.trim() !== '' &&
+          seg !== '.' &&
+          seg !== '..' &&
+          !/[. ]$/.test(seg) &&
+          !WINDOWS_RESERVED.test(seg.split('.')[0] ?? ''),
+      ),
+    { message: 'invalid relative path' },
   );
+export type RelativePath = z.infer<typeof RelativePathSchema>;
+
+const MAX_TEXT = 256 * 1024;
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_PULL_BYTES = 50 * 1024 * 1024;
+/** base64 chars for a 256 KiB chunk. */
+const MAX_CHUNK_B64 = 349_528;
 
 export const SkillSpecSchema = z.object({
   name: z.string().regex(/^[a-z][a-z0-9-]{0,47}$/),
-  description: z.string(),
-  markdown: z.string(),
-  files: z.array(z.object({ path: SkillFilePathSchema, content: z.string() })).optional(),
+  description: z.string().max(1000),
+  markdown: z.string().max(MAX_TEXT),
+  files: z
+    .array(z.object({ path: RelativePathSchema, content: z.string().max(MAX_TEXT) }))
+    .max(200)
+    .refine((fs) => new Set(fs.map((f) => f.path.toLowerCase())).size === fs.length, {
+      message: 'duplicate skill file path',
+    })
+    .optional(),
 });
 export type SkillSpec = z.infer<typeof SkillSpecSchema>;
 
@@ -80,15 +107,17 @@ export const ToolCallResultSchema = z.object({
 });
 export type ToolCallResult = z.infer<typeof ToolCallResultSchema>;
 
-export const AgentFrameSchema = z.union([
+export const AgentFrameSchema = z.discriminatedUnion('t', [
   z.object({
     t: z.literal('hello'),
-    protocol: z.number().int(),
+    protocol: z.number().int().positive(),
     agentVersion: z.string(),
     machine: z.object({ name: z.string(), os: z.string(), runtimes: z.array(RuntimeInfoSchema) }),
   }),
-  z.object({ t: z.literal('result'), id: z.string(), ok: z.literal(true), data: z.unknown() }),
-  z.object({ t: z.literal('result'), id: z.string(), ok: z.literal(false), error: ErrorBodySchema }),
+  z.discriminatedUnion('ok', [
+    z.object({ t: z.literal('result'), id: z.string(), ok: z.literal(true), data: z.unknown() }),
+    z.object({ t: z.literal('result'), id: z.string(), ok: z.literal(false), error: ErrorBodySchema }),
+  ]),
   z.object({ t: z.literal('events'), sessionId: z.string(), events: z.array(UncageEventSchema) }),
   z.object({
     t: z.literal('tool_call'),
@@ -101,21 +130,23 @@ export const AgentFrameSchema = z.union([
   z.object({
     t: z.literal('file_chunk'),
     id: z.string(),
-    path: z.string(),
-    seq: z.number().int().nonnegative(),
-    data: z.string(),
+    path: RelativePathSchema,
+    seq: z.number().int().min(0).max(100_000),
+    data: z.string().max(MAX_CHUNK_B64).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
     last: z.boolean(),
   }),
   z.object({
     t: z.literal('file_done'),
     id: z.string(),
-    files: z.array(z.object({ path: z.string(), size: z.number().int().nonnegative() })),
+    files: z
+      .array(z.object({ path: RelativePathSchema, size: z.number().int().min(0).max(MAX_FILE_BYTES) }))
+      .max(10_000),
   }),
   z.object({ t: z.literal('pong'), at: z.number() }),
 ]);
 export type AgentFrame = z.infer<typeof AgentFrameSchema>;
 
-export const HubFrameSchema = z.union([
+export const HubFrameSchema = z.discriminatedUnion('t', [
   z.object({
     t: z.literal('welcome'),
     machineId: z.string(),
@@ -125,14 +156,16 @@ export const HubFrameSchema = z.union([
   z.object({ t: z.literal('upgrade_required'), minAgentVersion: z.string() }),
   z.object({ t: z.literal('command'), id: z.string(), op: HubCommandOpSchema, args: z.unknown() }),
   z.object({ t: z.literal('ack'), sessionId: z.string(), sequence: z.number().int() }),
-  z.object({ t: z.literal('tool_result'), id: z.string(), ok: z.literal(true), result: ToolCallResultSchema }),
-  z.object({ t: z.literal('tool_result'), id: z.string(), ok: z.literal(false), error: ErrorBodySchema }),
+  z.discriminatedUnion('ok', [
+    z.object({ t: z.literal('tool_result'), id: z.string(), ok: z.literal(true), result: ToolCallResultSchema }),
+    z.object({ t: z.literal('tool_result'), id: z.string(), ok: z.literal(false), error: ErrorBodySchema }),
+  ]),
   z.object({
     t: z.literal('file_pull'),
     id: z.string(),
     sessionId: z.string(),
-    path: z.string(),
-    maxBytes: z.number().int().nonnegative(),
+    path: RelativePathSchema,
+    maxBytes: z.number().int().min(1).max(MAX_PULL_BYTES),
   }),
   z.object({ t: z.literal('ping'), at: z.number() }),
 ]);
@@ -140,8 +173,8 @@ export type HubFrame = z.infer<typeof HubFrameSchema>;
 
 export const DeviceCodeResponseSchema = z.object({
   deviceCode: z.string(),
-  userCode: z.string(),
-  verificationUri: z.string(),
+  userCode: z.string().regex(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/),
+  verificationUri: z.string().refine((u) => { try { return /^https?:$/.test(new URL(u).protocol); } catch { return false; } }, { message: 'must be http(s) URL' }),
   intervalSec: z.number(),
   expiresInSec: z.number(),
 });
@@ -172,22 +205,45 @@ export class ProtocolFrameError extends Error {
   }
 }
 
+const MAX_DEPTH = 64;
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/** Bracket-depth scan (string-aware) so deep nesting is rejected before JSON.parse recurses. */
+function exceedsDepth(raw: string): boolean {
+  let depth = 0;
+  let inStr = false;
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (inStr) {
+      if (c === '\\') i++;
+      else if (c === '"') inStr = false;
+    } else if (c === '"') inStr = true;
+    else if (c === '{' || c === '[') {
+      if (++depth > MAX_DEPTH) return true;
+    } else if (c === '}' || c === ']') depth--;
+  }
+  return false;
+}
+
+const clip = (v: string): string => (v.length > 64 ? `${v.slice(0, 64)}...` : v);
+
 function parseFrame<T>(raw: string, schema: z.ZodType<T>, kind: string): T {
   if (typeof raw !== 'string') throw new ProtocolFrameError(`${kind} frame must be a string`);
   // Cheap bound first (a UTF-8 char is at most 3 bytes per UTF-16 unit), exact count only if needed.
   if (raw.length * 3 > MAX_FRAME_BYTES && new TextEncoder().encode(raw).byteLength > MAX_FRAME_BYTES) {
     throw new ProtocolFrameError(`${kind} frame too large (max ${MAX_FRAME_BYTES} bytes)`);
   }
+  if (exceedsDepth(raw)) throw new ProtocolFrameError(`${kind} frame nested too deeply (max ${MAX_DEPTH})`);
   let json: unknown;
   try {
-    json = JSON.parse(raw);
+    json = JSON.parse(raw, (k, v: unknown) => (FORBIDDEN_KEYS.has(k) ? undefined : v));
   } catch {
     throw new ProtocolFrameError(`${kind} frame is not valid JSON`);
   }
   const res = schema.safeParse(json);
   if (!res.success) {
     const t = typeof json === 'object' && json !== null ? (json as { t?: unknown }).t : undefined;
-    throw new ProtocolFrameError(`invalid ${kind} frame${typeof t === 'string' ? ` "${t}"` : ''}: ${res.error.issues[0]?.message ?? 'bad shape'}`);
+    throw new ProtocolFrameError(`invalid ${kind} frame${typeof t === 'string' ? ` "${clip(t)}"` : ''}: ${clip(res.error.issues[0]?.message ?? 'bad shape')}`);
   }
   return res.data;
 }

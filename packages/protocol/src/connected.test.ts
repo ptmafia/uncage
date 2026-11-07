@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CONNECTED_PROTOCOL, ERROR_CATALOG, MAX_FRAME_BYTES, ProtocolFrameError, SessionManifestSchema,
-  SkillSpecSchema, ToolSpecSchema, parseAgentFrame, parseHubFrame,
+  SkillSpecSchema, ToolSpecSchema, RelativePathSchema, DeviceCodeResponseSchema, parseAgentFrame, parseHubFrame,
 } from './index.js';
 
 const err = { code: 'tool_failed', message: 'x', retryable: true };
@@ -61,7 +61,7 @@ describe('tool and skill specs', () => {
   const tool = (name: string) => ({ name, description: 'd', inputSchema: {}, requiresConfirmation: false });
   it('accepts valid tool names, rejects invalid', () => {
     expect(ToolSpecSchema.safeParse(tool('search_orders')).success).toBe(true);
-    for (const n of ['Bash', 'mcp__x', 'a b', '1a', '', 'a'.repeat(49)]) {
+    for (const n of ['Bash', 'mcp__x', 'foo__bar', 'a b', '1a', '', 'a'.repeat(49)]) {
       expect(ToolSpecSchema.safeParse(tool(n)).success, n).toBe(false);
     }
   });
@@ -88,5 +88,53 @@ describe('new error codes', () => {
     expect(ERROR_CATALOG.upgrade_required.status).toBe(426);
     expect(ERROR_CATALOG.tool_failed.status).toBe(502);
     expect(ERROR_CATALOG.device_code_expired.status).toBe(410);
+  });
+});
+
+describe('hardening', () => {
+  const rp = (p: string) => RelativePathSchema.safeParse(p).success;
+  it('RelativePathSchema', () => {
+    expect(rp('a/b.txt')).toBe(true);
+    expect(rp('%2e%2e/x')).toBe(true); // literal name; nothing decodes
+    for (const p of ['a\0b', 'a:b', 'a\x07', 'a\\b', '/a', 'C:/a', 'a//b', 'a/ /b', 'a/./b', 'a/..', 'a./b', 'a /b',
+      'CON', 'a/nul.txt', 'Com1.x', 'lpt9', 'a/'.repeat(300)]) expect(rp(p), JSON.stringify(p)).toBe(false);
+  });
+  it('skill limits', () => {
+    const sk = (files: Array<{ path: string; content: string }>) =>
+      SkillSpecSchema.safeParse({ name: 'a', description: 'd', markdown: 'm', files }).success;
+    expect(sk([{ path: 'A.md', content: '' }, { path: 'a.md', content: '' }])).toBe(false);
+    expect(sk([{ path: 'a.md', content: 'x'.repeat(256 * 1024 + 1) }])).toBe(false);
+    expect(SkillSpecSchema.safeParse({ name: 'a', description: 'd'.repeat(1001), markdown: 'm' }).success).toBe(false);
+  });
+  it('file frame limits', () => {
+    const ok = { t: 'file_chunk', id: '1', path: 'a', seq: 0, data: 'aGk=', last: true };
+    const bad = (o: object) => expect(() => parseAgentFrame(JSON.stringify({ ...ok, ...o }))).toThrow(ProtocolFrameError);
+    bad({ data: '!!!' }); bad({ data: 'A'.repeat(349_532) }); bad({ seq: 100_001 }); bad({ seq: -1 }); bad({ path: '../x' });
+    const pull = { t: 'file_pull', id: '1', sessionId: 's', path: 'a', maxBytes: 1 };
+    expect(parseHubFrame(JSON.stringify(pull))).toEqual(pull);
+    expect(() => parseHubFrame(JSON.stringify({ ...pull, maxBytes: 0 }))).toThrow();
+    expect(() => parseHubFrame(JSON.stringify({ ...pull, maxBytes: 50 * 1024 * 1024 + 1 }))).toThrow();
+    expect(() => parseAgentFrame(JSON.stringify({ t: 'file_done', id: '1', files: [{ path: 'a', size: 10 * 1024 * 1024 + 1 }] }))).toThrow();
+  });
+  it('drops forbidden keys at any depth and strips extras', () => {
+    const f = parseAgentFrame('{"t":"result","id":"1","ok":true,"data":{"__proto__":{"x":1},"a":{"constructor":1,"prototype":2,"b":3}},"extra":1}');
+    expect(f).toEqual({ t: 'result', id: '1', ok: true, data: { a: { b: 3 } } });
+    expect(({} as Record<string, unknown>).x).toBeUndefined();
+  });
+  it('rejects deep nesting, accepts 64', () => {
+    const nest = (n: number) => '['.repeat(n) + ']'.repeat(n);
+    expect(() => parseAgentFrame(`{"t":"result","id":"1","ok":true,"data":${nest(70)}}`)).toThrow(/deeply/);
+    expect(parseAgentFrame(`{"t":"result","id":"1","ok":true,"data":${nest(60)}}`).t).toBe('result');
+  });
+  it('truncates echoed input', () => {
+    try { parseAgentFrame(JSON.stringify({ t: 'x'.repeat(500) })); } catch (e) { expect((e as Error).message.length).toBeLessThan(250); }
+  });
+  it('device code and misc', () => {
+    const dc = { deviceCode: 'd', userCode: 'ABCD-EFGH', verificationUri: 'https://x.io/c', intervalSec: 5, expiresInSec: 600 };
+    expect(DeviceCodeResponseSchema.safeParse(dc).success).toBe(true);
+    expect(DeviceCodeResponseSchema.safeParse({ ...dc, verificationUri: 'javascript:alert(1)' }).success).toBe(false);
+    expect(DeviceCodeResponseSchema.safeParse({ ...dc, userCode: 'abcd-efgh' }).success).toBe(false);
+    expect(() => parseAgentFrame(JSON.stringify({ ...agentFrames[0], protocol: 0 }))).toThrow();
+    expect(ToolSpecSchema.safeParse({ name: 'a', description: 'd', inputSchema: { x: 'y'.repeat(70_000) }, requiresConfirmation: false }).success).toBe(false);
   });
 });
