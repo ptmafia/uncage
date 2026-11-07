@@ -1,10 +1,11 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ToolContext } from '@uncage/hub';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { assetCsp } from './asset-csp.ts';
 import { createAsset, getAsset, listAssets, publishAsset, readAssetFile } from './assets.ts';
-import { normalizeUsername, readCookie, signUser, verifyUser } from './auth.ts';
+import { normalizeUsername, readCookie, secret, signUser, verifyUser } from './auth.ts';
 import { isSameOrigin } from './csrf.ts';
 import { forwardedClient } from './hub.ts';
 import { safeNext } from './session-utils.ts';
@@ -35,6 +36,18 @@ describe('demo cookie sign-in', () => {
     expect(normalizeUsername('a/b')).toBeNull();
     expect(normalizeUsername('')).toBeNull();
   });
+  it('uses DEMO_SECRET only when it has at least 32 bytes', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const strong = 's'.repeat(32);
+    expect(secret({ ...process.env, DEMO_SECRET: strong, DEMO_DATA_DIR: dir }).toString()).toBe(strong);
+    expect(warn).not.toHaveBeenCalled();
+    const weak = secret({ ...process.env, DEMO_SECRET: 'short', DEMO_DATA_DIR: dir });
+    expect(weak.toString()).not.toBe('short');
+    expect(weak.length).toBe(32); // the generated one
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/DEMO_SECRET/));
+    warn.mockRestore();
+  });
+
   it('reads a cookie from a header', () => {
     expect(readCookie('a=1; demo_user=x.y; b=2')).toBe('x.y');
     expect(readCookie(null)).toBeUndefined();
@@ -74,6 +87,19 @@ describe('asset store', () => {
     expect(await readAssetFile(a.id, '../meta.json')).toBeNull();
     expect(await readAssetFile(a.id, 'missing.html')).toBeNull();
     expect(await getAsset('../../etc')).toBeNull();
+  });
+
+  it('removes the staging dir when a publish fails part-way', async () => {
+    const a = await createAsset({ owner: 'alice', title: 'x', kind: 'landing-page', sessionId: 's' });
+    // "index.html" as a file and as a directory: the second write fails after staging was created.
+    await expect(
+      publishAsset(a.id, [
+        { path: 'index.html', data: enc('x') },
+        { path: 'index.html/x.css', data: enc('x') },
+      ]),
+    ).rejects.toThrow();
+    expect((await readdir(join(dir, 'assets', a.id))).sort()).toEqual(['meta.json']);
+    expect((await getAsset(a.id))?.status).toBe('draft');
   });
 
   it('refuses a publish without index.html or with unsafe paths', async () => {
@@ -136,9 +162,36 @@ describe('site tools', () => {
     expect(createAssetTool.input.safeParse({ title: 't', kind: 'blog' }).success).toBe(false);
   });
 
-  it('maps pulled paths to page-relative ones', () => {
+  it('maps pulled paths to page-relative ones; never falls back to basenames', () => {
     expect(pageRelative('landing', 'landing/index.html')).toBe('index.html');
     expect(pageRelative('./landing/', 'landing/a/b.css')).toBe('a/b.css');
-    expect(pageRelative('landing/index.html', 'landing/index.html')).toBe('index.html');
+    expect(pageRelative('landing//', 'landing/index.html')).toBe('index.html');
+    for (const root of ['.', './', '', '/']) expect(pageRelative(root, 'css/app.css')).toBe('css/app.css');
+    expect(() => pageRelative('landing/index.html', 'landing/index.html')).toThrow(/folder/);
+    expect(() => pageRelative('landing', 'other/index.html')).toThrow(/folder/);
+    expect(() => pageRelative('land', 'landing/index.html')).toThrow(/folder/);
+  });
+
+  it('publish_asset refuses a file instead of a folder and publishes nothing', async () => {
+    const c = ctx('alice', { 'landing/index.html': '<h1>Hi</h1>' });
+    const a = await createAsset({ owner: 'alice', title: 'x', kind: 'landing-page', sessionId: 's' });
+    await expect(publishAssetTool.handler({ assetId: a.id, dir: 'landing/index.html' }, c)).rejects.toThrow(/folder/);
+    expect((await getAsset(a.id))?.status).toBe('draft');
+  });
+});
+
+describe('asset CSP', () => {
+  it('allows inline code and same-asset sub-resources only; no network, sandboxed', () => {
+    const csp = assetCsp('http://localhost:3200', 'a_abcdefghijkl');
+    const dirs = Object.fromEntries(csp.split('; ').map((d) => [d.split(' ')[0], d.split(' ').slice(1)]));
+    const own = 'http://localhost:3200/asset-files/a_abcdefghijkl/';
+    expect(dirs['default-src']).toEqual(["'none'"]);
+    expect(dirs['connect-src']).toEqual(["'none'"]);
+    for (const d of ['style-src', 'script-src', 'img-src', 'font-src', 'media-src']) expect(dirs[d]).toContain(own);
+    expect(dirs['style-src']).toContain("'unsafe-inline'");
+    expect(dirs['script-src']).toContain("'unsafe-inline'");
+    expect(dirs.sandbox).toEqual(['allow-scripts']);
+    expect(dirs['frame-ancestors']).toEqual(["'self'"]);
+    expect(csp).not.toContain('/asset-files/ ');
   });
 });

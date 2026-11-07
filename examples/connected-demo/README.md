@@ -16,7 +16,7 @@ One Node `http` server (`server.ts`) carries everything:
 | `/` | `<AgentChat>` in Connected Mode. With no computer yet, its empty state is `<ConnectMachine>` (install, then `uncage setup <this site>`). |
 | `/assets` | The user's assets (gallery) |
 | `/assets/[id]` | One asset, previewed in `<iframe sandbox="allow-scripts">` |
-| `/asset-files/[id]/…` | The published files, sent with a strict CSP: `sandbox allow-scripts`, `default-src 'none'`, only inline styles and scripts, no network. Published means public: anyone with the link can open it. |
+| `/asset-files/[id]/…` | The published files, sent with a strict CSP (`lib/asset-csp.ts`): `sandbox allow-scripts`, `default-src 'none'`, `connect-src 'none'`; inline styles/scripts plus the asset's own files (`<origin>/asset-files/<id>/`, e.g. `css/app.css`), nothing else. Published means public: anyone with the link can open it. |
 | `/device` | `<ApproveDevice>`, where `uncage setup` sends the user. It sends `frame-ancestors 'none'` and `X-Frame-Options: DENY`, and the decision is a Server Action (a POST that Next.js only accepts from this site's Origin). |
 | `/login` | **Demo-only sign-in**: a username in an HMAC-signed cookie, with no password. Replace it with your real authentication; the hub only needs `getUser(req)`. |
 
@@ -56,7 +56,7 @@ pnpm start                          # production: http://localhost:3200
 
 To keep your real `~/.uncage` and `~/Uncage` untouched while trying it, prefix both commands with `UNCAGE_HOME=/tmp/uncage-demo`. `HOME` is not changed, so Claude Code keeps its login.
 
-Environment: `PORT` (3200), `HOST` (127.0.0.1), `PUBLIC_URL` (`http://localhost:$PORT`, the URL users open and give to `uncage setup`), `DEMO_DATA_DIR` (`./.data`: the hub's PGlite store, the assets and the cookie secret), `DEMO_SECRET` (cookie key; otherwise generated into the data dir).
+Environment: `PORT` (3200), `HOST` (127.0.0.1), `PUBLIC_URL` (`http://localhost:$PORT`, the URL users open and give to `uncage setup`), `DEMO_DATA_DIR` (`./.data`: the hub's PGlite store, the assets and the cookie secret), `DEMO_SECRET` (cookie key, at least 32 bytes; shorter values are ignored with a warning; otherwise generated into the data dir).
 
 ## Run it (multi-node)
 
@@ -87,7 +87,7 @@ Then follow the same steps as above against http://localhost:3200. The nodes' lo
 - `pnpm --filter connected-demo test`: cookie signing, CSRF/redirect guards, the asset store, both tools (with a fake `ctx`) and the proxy.
 - E2E (in `e2e/connected/`, from `e2e/`):
   - `pnpm exec playwright test --project=connected-mock`: real hub + real `uncage setup` (approved on `/device` by Playwright) + the real `@uncage/agent` with the testkit fake runtime.
-  - `UNCAGE_DOCKER_TESTS=1 … --project=connected-multinode`: the same on two nodes with throwaway Redis and Postgres containers.
+  - `UNCAGE_DOCKER_TESTS=1 … --project=connected-multinode`: the same on two nodes with throwaway Redis and Postgres containers. It asserts both nodes answered (the proxy's `x-upstream-node` header). Without the variable it is reported as skipped, with the reason.
   - `UNCAGE_LIVE=1 … --project=connected-live`: real Claude Code, using your Claude login.
 
   Results are recorded in `docs/compatibility.md`.

@@ -91,14 +91,19 @@ export async function publishAsset(id: string, files: Array<{ path: string; data
 
   const dir = join(root(), id);
   const staging = join(dir, `files.${randomBytes(4).toString('hex')}.tmp`);
-  for (const f of files) {
-    const target = join(staging, ...f.path.split('/'));
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, f.data);
-  }
   const live = join(dir, 'files');
-  await rm(live, { recursive: true, force: true });
-  await rename(staging, live);
+  try {
+    for (const f of files) {
+      const target = join(staging, ...f.path.split('/'));
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, f.data);
+    }
+    await rm(live, { recursive: true, force: true });
+    await rename(staging, live);
+  } catch (e) {
+    await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+    throw e;
+  }
   const published: Asset = {
     ...asset,
     status: 'published',

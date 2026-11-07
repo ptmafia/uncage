@@ -27,10 +27,18 @@ export const createAssetTool = defineTool({
   },
 });
 
-/** Strips the requested folder from pulled paths (`site/index.html` → `index.html`). */
+/**
+ * A pulled path relative to the requested folder (`site/index.html` → `index.html`). `.`, `./`
+ * and trailing slashes mean the workspace root. A path outside `dir/` (e.g. `dir` named a file)
+ * is refused: the published layout must mirror the folder exactly.
+ */
 export function pageRelative(dir: string, path: string): string {
-  const prefix = `${dir.replace(/^\.\/+/, '').replace(/\/+$/, '')}/`;
-  return path.startsWith(prefix) ? path.slice(prefix.length) : (path.split('/').pop() ?? path);
+  const root = dir.replace(/^(?:\.\/+)+/, '').replace(/\/+$/, '');
+  const prefix = root === '' || root === '.' ? '' : `${root}/`;
+  if (!path.startsWith(prefix) || path.length === prefix.length) {
+    throw new Error(`"${dir}" must be a folder of the workspace containing index.html (got the file ${path}).`);
+  }
+  return path.slice(prefix.length);
 }
 
 export const publishAssetTool = defineTool({

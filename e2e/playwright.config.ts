@@ -10,7 +10,6 @@ export const LIVE_PORTS = { daemon: 4795, control: 4796, app: 3102, headlessApp:
 export const CONNECTED_PORTS = { mock: 3210, multinode: 3220, live: 3230 } as const;
 
 const live = process.env.UNCAGE_LIVE === '1';
-const docker = process.env.UNCAGE_DOCKER_TESTS === '1';
 const exampleEnv = (daemonPort: number) => ({ UNCAGE_URL: `http://127.0.0.1:${daemonPort}`, UNCAGE_TOKEN: 'test-token' });
 // Next builds route-handler `req.url` with host `localhost`; loopback.spec.ts covers browsing
 // via 127.0.0.1 (the proxy treats loopback names on the same port as one origin).
@@ -64,12 +63,11 @@ export default defineConfig<ExampleOptions>({
       testMatch: 'mock.spec.ts',
     },
     {
-      // Two hub nodes on real Redis + Postgres (docker) behind the demo's round-robin proxy.
-      // Skipped unless UNCAGE_DOCKER_TESTS=1 (needs a running Docker with redis:7-alpine + postgres:16-alpine).
+      // Two hub nodes on real Redis + Postgres (docker) behind the demo's round-robin proxy. The
+      // spec skips itself (with the reason) unless UNCAGE_DOCKER_TESTS=1.
       name: 'connected-multinode',
       testDir: './connected',
       testMatch: 'multinode.spec.ts',
-      ...(docker ? {} : { testIgnore: '**' }),
     },
     {
       // Connected Mode with REAL Claude Code (`uncage setup` + `uncage agent`). UNCAGE_LIVE=1 only.

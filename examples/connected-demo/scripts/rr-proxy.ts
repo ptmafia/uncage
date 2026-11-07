@@ -2,7 +2,8 @@
  * A tiny round-robin HTTP + WebSocket proxy for multi-node dev mode: each new request or upgrade
  * goes to the next node, like a load balancer without sticky sessions. So a machine's WebSocket
  * and the browser's requests usually land on different hub nodes. Dev only: no TLS, no health
- * checks beyond skipping a node whose connection fails.
+ * checks (a down node answers 502). HTTP responses carry `x-upstream-node: <n>` (which node
+ * answered).
  */
 import { createServer, request, type IncomingMessage, type Server } from 'node:http';
 import { connect } from 'node:net';
@@ -22,13 +23,15 @@ function forwardedFor(req: IncomingMessage): string {
 export function startProxy(port: number, targets: Target[], host = '127.0.0.1'): Promise<Server> {
   let next = 0;
   const pick = (): Target => targets[next++ % targets.length]!;
+  /** 1-based node number, sent back as `x-upstream-node` (dev visibility; tests assert on it). */
+  const nodeNumber = (t: Target): string => String(targets.indexOf(t) + 1);
 
   const server = createServer((req, res) => {
     const t = pick();
     const upstream = request(
       { host: t.host, port: t.port, method: req.method, path: req.url, headers: { ...req.headers, 'x-forwarded-for': forwardedFor(req) } },
       (up) => {
-        res.writeHead(up.statusCode ?? 502, up.rawHeaders);
+        res.writeHead(up.statusCode ?? 502, [...up.rawHeaders, 'x-upstream-node', nodeNumber(t)]);
         up.pipe(res);
       },
     );

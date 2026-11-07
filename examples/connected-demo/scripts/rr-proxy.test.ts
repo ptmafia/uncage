@@ -34,7 +34,14 @@ describe('round-robin dev proxy', () => {
     servers.push(proxy);
     const url = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
     const bodies = [];
-    for (let i = 0; i < 4; i++) bodies.push(await (await fetch(`${url}/p?i=${i}`, { headers: { 'x-forwarded-for': '9.9.9.9' } })).text());
+    const nodes = [];
+    for (let i = 0; i < 4; i++) {
+      const res = await fetch(`${url}/p?i=${i}`, { headers: { 'x-forwarded-for': '9.9.9.9' } });
+      nodes.push(res.headers.get('x-upstream-node'));
+      bodies.push(await res.text());
+    }
+    // Which node answered, so tests can prove every node served traffic.
+    expect(nodes).toEqual(['1', '2', '1', '2']);
     expect(bodies).toEqual([
       'a GET /p?i=0 xff=9.9.9.9, 127.0.0.1',
       'b GET /p?i=1 xff=9.9.9.9, 127.0.0.1',

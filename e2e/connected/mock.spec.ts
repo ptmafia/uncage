@@ -18,7 +18,15 @@ test.afterAll(() => stack.cleanup());
 test('website commands the machine; tools run on the website; history survives the agent stopping', async ({ page }) => {
   test.setTimeout(180_000);
   const demo = await stack.demo(CONNECTED_PORTS.mock);
-  await connectedGoldenPath({ page, stack, url: demo.url, agent: (home) => stack.fakeAgent(home), runTimeoutMs: 30_000 });
+  const { assetId } = await connectedGoldenPath({ page, stack, url: demo.url, agent: (home) => stack.fakeAgent(home), runTimeoutMs: 30_000 });
+  // The page's own css/app.css (a same-asset sub-resource) loads under the asset CSP...
+  await page.goto(`${demo.url}/assets/${assetId}`);
+  const h1 = page.frameLocator('iframe.demo-preview').locator('h1');
+  await expect(h1).toHaveCSS('color', 'rgb(1, 2, 3)');
+  // ...while nothing outside the asset's own folder is allowed.
+  const csp = (await page.request.get(`${demo.url}/asset-files/${assetId}/css/app.css`)).headers()['content-security-policy'];
+  expect(csp).toContain(`${demo.url}/asset-files/${assetId}/`);
+  expect(csp).toContain("connect-src 'none'");
 });
 
 test('the device page refuses a bad code and cross-site sign-in posts', async ({ page, request }) => {

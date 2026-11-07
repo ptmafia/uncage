@@ -18,17 +18,28 @@ export function normalizeUsername(raw: unknown): string | null {
   return USERNAME.test(name) ? name : null;
 }
 
-let cached: Buffer | undefined;
+const cached = new Map<string, Buffer>();
+/** HMAC-SHA256 keys shorter than this are guessable. */
+export const MIN_SECRET_BYTES = 32;
+let warned = false;
 
 /**
- * `DEMO_SECRET`, else a random secret kept in `<data dir>/secret` so every node and restart agrees.
+ * `DEMO_SECRET` (at least 32 bytes), else a random secret kept in `<data dir>/secret` so every node
+ * and restart agrees.
  */
 export function secret(env: NodeJS.ProcessEnv = process.env): Buffer {
-  if (env.DEMO_SECRET) return Buffer.from(env.DEMO_SECRET);
-  if (cached) return cached;
+  if (env.DEMO_SECRET) {
+    const key = Buffer.from(env.DEMO_SECRET);
+    if (key.length >= MIN_SECRET_BYTES) return key;
+    if (!warned) console.warn(`DEMO_SECRET is shorter than ${MIN_SECRET_BYTES} bytes: ignored, using the generated secret in the data dir.`);
+    warned = true;
+  }
   const file = join(dataDir(env), 'secret');
+  const hit = cached.get(file);
+  if (hit) return hit;
+  let key: Buffer;
   try {
-    cached = Buffer.from(readFileSync(file, 'utf8').trim(), 'base64url');
+    key = Buffer.from(readFileSync(file, 'utf8').trim(), 'base64url');
   } catch {
     mkdirSync(dataDir(env), { recursive: true });
     try {
@@ -36,9 +47,10 @@ export function secret(env: NodeJS.ProcessEnv = process.env): Buffer {
     } catch {
       // Another node created it first.
     }
-    cached = Buffer.from(readFileSync(file, 'utf8').trim(), 'base64url');
+    key = Buffer.from(readFileSync(file, 'utf8').trim(), 'base64url');
   }
-  return cached;
+  cached.set(file, key);
+  return key;
 }
 
 const mac = (value: string, key: Buffer): string => createHmac('sha256', key).update(value).digest('base64url');

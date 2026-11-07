@@ -87,6 +87,8 @@ export async function connectedGoldenPath(o: {
   const assetId = (await card.getAttribute('data-asset-id'))!;
   await card.getByRole('link').click();
   await expect(page).toHaveURL(new RegExp(`/assets/${assetId}$`));
+  // The asset belongs to this run's session (create_asset recorded ctx.sessionId).
+  await expect(page.getByRole('link', { name: '查看生成过程' })).toHaveAttribute('href', `/?session=${encodeURIComponent(sessionId)}`);
   const frame: Locator = page.locator('iframe.demo-preview');
   await expect(frame).toHaveAttribute('sandbox', 'allow-scripts');
   await expect(page.frameLocator('iframe.demo-preview').locator('h1').first()).toBeVisible();

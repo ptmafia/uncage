@@ -12,7 +12,7 @@
  * UNCAGE_HOME is a tmp dir (agent.yaml, workspaces), HOME stays real so Claude Code keeps its login.
  * Run with `UNCAGE_LIVE=1 pnpm e2e:live` (or `--project=connected-live`). Uses real model turns.
  */
-import { expect, test } from '@playwright/test';
+import { test } from '@playwright/test';
 import { CONNECTED_PORTS } from '../playwright.config.ts';
 import { connectedGoldenPath } from './golden-path.ts';
 import { Stack } from './stack.ts';
@@ -35,7 +35,4 @@ test('real Claude Code builds and publishes a landing page through the websiteâ€
     },
   });
   stack.log(`live result: ${JSON.stringify(result)}`);
-  // The site tool calls ran on the website: create_asset made the asset, publish_asset filled it.
-  const meta = (await (await page.request.get(`${demo.url}/assets/${result.assetId}`)).text());
-  expect(meta).toContain('index.html');
 });

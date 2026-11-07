@@ -20,13 +20,18 @@ if (!home) throw new Error('UNCAGE_HOME is required');
 export const LANDING_HTML = `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>Uncage</title>
 <style>body{font-family:system-ui;margin:0;padding:48px;background:linear-gradient(135deg,#eef2ff,#fff)}h1{font-size:44px}</style>
+<link rel="stylesheet" href="css/app.css">
 </head><body><h1>Uncage：把 Claude Code 带进你的网站</h1><p>网站下指令，代码在用户自己的电脑上跑。</p>
 <script>document.body.dataset.ready = '1';</script></body></html>`;
+/** A same-asset sub-resource: the asset CSP must let the page load its own files. */
+export const LANDING_CSS = 'h1 { color: rgb(1, 2, 3); }';
 
 function script(input: AdapterRunInput): FakeStep[] {
   if (!input.prompt.includes('落地页')) return [{ text: `fake: ${input.prompt}` }];
   mkdirSync(join(input.cwd, 'landing'), { recursive: true });
   writeFileSync(join(input.cwd, 'landing', 'index.html'), LANDING_HTML);
+  mkdirSync(join(input.cwd, 'landing', 'css'), { recursive: true });
+  writeFileSync(join(input.cwd, 'landing', 'css', 'app.css'), LANDING_CSS);
   return [
     { text: '好的，我先在网站上创建素材。' },
     { callTool: { name: 'create_asset', args: { title: 'Uncage 落地页', kind: 'landing-page' } } },
