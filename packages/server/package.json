@@ -44,6 +44,11 @@
     "@uncage/testkit": "workspace:*"
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ptmafia/uncage.git",
+    "directory": "packages/server"
+  },
   "keywords": [
     "uncage",
     "agent",

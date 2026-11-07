@@ -1,5 +1,7 @@
 # Uncage
 
+[![CI](https://github.com/ptmafia/uncage/actions/workflows/ci.yml/badge.svg)](https://github.com/ptmafia/uncage/actions/workflows/ci.yml)
+
 **Bring your agent to any app.** Use the harness you trust. Ship the experience you own.
 
 Uncage runs Claude Code (and Codex) as a local, approval-gated agent runtime and gives your web app a typed REST + SSE API, headless React hooks, and a ready-made chat UI. Your app gets streaming answers, tool steps, Allow/Deny approval cards, Stop, reload-safe history, and a composer with model, effort and permission-mode pickers, file and image attachments, and voice input, while the agent keeps running on your own machine under your own login.

@@ -14,9 +14,13 @@
     "lint": "turbo run lint",
     "uncage": "node packages/cli/dist/bin.js",
     "e2e:mock": "turbo run e2e:mock",
-    "e2e:live": "turbo run e2e:live"
+    "e2e:live": "turbo run e2e:live",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
+    "@changesets/cli": "^3.0.3",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.6.6",
     "eslint": "^10.14.0",

@@ -31,7 +31,8 @@ export default defineConfig<ExampleOptions>({
   ...(live ? { outputDir: 'live/results/artifacts' } : {}),
   timeout: 30_000,
   expect: { timeout: 10_000 },
-  use: { channel: 'chrome', headless: true, trace: live ? 'on' : 'retain-on-failure' },
+  // Local runs use the system Chrome; CI installs Playwright's bundled Chromium.
+  use: { ...(process.env.CI ? {} : { channel: 'chrome' as const }), headless: true, trace: live ? 'on' : 'retain-on-failure' },
   projects: [
     {
       name: 'mock-default',

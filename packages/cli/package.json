@@ -31,6 +31,11 @@
     "zod": "^4.6.7"
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ptmafia/uncage.git",
+    "directory": "packages/cli"
+  },
   "keywords": [
     "uncage",
     "agent",

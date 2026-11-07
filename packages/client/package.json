@@ -34,6 +34,11 @@
     "vitest": "^5.1.0"
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ptmafia/uncage.git",
+    "directory": "packages/client"
+  },
   "keywords": [
     "uncage",
     "agent",
