@@ -23,6 +23,7 @@ import { ActivityLog } from './activity.js';
 import { siteDir, type AgentConfig, type AgentSite } from './config.js';
 import { agentWsUrl } from './device.js';
 import { planPull, sendPull } from './files.js';
+import { fitEvent } from './fit.js';
 
 /** Close codes the hub uses (see @uncage/hub machines.ts). */
 export const HUB_CLOSE = { revoked: 4401, replaced: 4409, upgrade: 4426, hubTooOld: 4505 } as const;
@@ -42,9 +43,11 @@ export interface AgentTiming {
   toolTimeoutMs: number;
   /** No frame from the hub for this long → the connection is presumed dead. Default 35 000 (hub pings every 10 s). */
   idleTimeoutMs: number;
+  /** The backoff only resets after a connection stayed up this long. Default 30 000. */
+  stableMs: number;
 }
 
-export const DEFAULT_TIMING: AgentTiming = { backoffMinMs: 1000, backoffMaxMs: 30_000, toolTimeoutMs: 120_000, idleTimeoutMs: 35_000 };
+export const DEFAULT_TIMING: AgentTiming = { backoffMinMs: 1000, backoffMaxMs: 30_000, toolTimeoutMs: 120_000, idleTimeoutMs: 35_000, stableMs: 30_000 };
 
 /** Exponential backoff with jitter: a random delay in [base/2, base], base = min(max, min·2^attempt). */
 export function backoffDelay(attempt: number, t: Pick<AgentTiming, 'backoffMinMs' | 'backoffMaxMs'>, random = Math.random): number {
@@ -54,6 +57,8 @@ export function backoffDelay(attempt: number, t: Pick<AgentTiming, 'backoffMinMs
 
 /** Keep frames comfortably below the hub's 1 MiB limit. */
 const FRAME_BUDGET = MAX_FRAME_BYTES - 16 * 1024;
+/** Largest single event in a frame (room for the frame envelope). */
+const EVENT_BUDGET = FRAME_BUDGET - 1024;
 const READ_PAGE = 500;
 /** Unacked batches tracked per session before concluding the hub does not ack (machine storage). */
 const MAX_OUTSTANDING = 256;
@@ -66,7 +71,9 @@ const errorBody = (e: unknown): ErrorBody =>
 /** `host[-port]` of a hub URL: the per-site workspace root `~/Uncage/<siteHost>/`. */
 export const siteHost = (url: string): string => {
   const u = new URL(url);
-  return `${u.hostname}${u.port ? `-${u.port}` : ''}`.toLowerCase().replace(/[^a-z0-9.-]/g, '-');
+  const host = `${u.hostname}${u.port ? `-${u.port}` : ''}`.toLowerCase().replace(/[^a-z0-9.-]/g, '-');
+  if (/^[.-]*$/.test(host) || host.includes('..')) throw new Error(`Cannot derive a workspace folder from "${url}".`);
+  return host;
 };
 
 /** Replication cursor of one session (see `SiteAgent` doc). */
@@ -81,8 +88,6 @@ interface Rep {
   dirty: boolean;
   /** Bumped by rewinds and reconnects: an in-progress pump iteration starts over. */
   gen: number;
-  /** Events too large for a frame (skipped): never rewind to them again. */
-  skipped: Set<number>;
 }
 
 interface PendingTool {
@@ -101,8 +106,13 @@ export interface SiteAgentOptions {
   timing: AgentTiming;
   machine: { name: string; os: string };
   agentVersion: string;
-  /** The site stopped for good (revoked, replaced, or must upgrade). */
-  onStop(reason: Exclude<SiteStop, 'closed'>, detail: { minAgentVersion?: string }): void;
+  /** The site stopped for good (revoked or replaced). */
+  onStop(reason: 'revoked' | 'replaced'): void;
+  /**
+   * The hub requires a newer agent. On success the process exits; otherwise resolves how long this
+   * site stays disconnected before trying again.
+   */
+  onUpgradeRequired(minAgentVersion: string | undefined): Promise<number>;
 }
 
 /**
@@ -154,12 +164,17 @@ export class SiteAgent {
       security: { allowBypass: this.o.localPolicy.allowBypass },
       onEvent: (e) => this.onEvent(e),
     });
-    // Sessions from earlier runs: assume delivered up to their last sequence (a replicating hub's
-    // acks correct this on connect). Events already seen (startup reconciliation) keep their cursor.
-    for (const s of await this.uncage.sessions.list()) {
-      if (this.reps.has(s.id)) continue;
-      const { lastSequence } = await (await this.uncage.sessions.get(s.id)).snapshot();
-      this.reps.set(s.id, this.newRep(lastSequence));
+    try {
+      // Sessions from earlier runs: assume delivered up to their last sequence (a replicating hub's
+      // acks correct this on connect). Events already seen (startup reconciliation) keep their cursor.
+      for (const s of await this.uncage.sessions.list()) {
+        if (this.reps.has(s.id)) continue;
+        const { lastSequence } = await (await this.uncage.sessions.get(s.id)).snapshot();
+        this.reps.set(s.id, this.newRep(lastSequence));
+      }
+    } catch (err) {
+      await this.uncage.close().catch(() => undefined);
+      throw err;
     }
     this.loopDone = this.loop();
   }
@@ -184,28 +199,53 @@ export class SiteAgent {
     while (!this.stopped) {
       const r = await this.connectOnce();
       if (this.stopped) return;
+      if (r.stop === 'upgrade') {
+        // Resolves only if the upgrade did not happen (on success the process exits): this site
+        // stays offline until the retry time, the other sites keep running.
+        const retryInMs = await this.o.onUpgradeRequired(this.upgradeMin);
+        if (this.stopped) return;
+        this.upgradeMin = undefined;
+        this.log.warn({ site: this.site.id, retryInMs }, 'staying disconnected until the upgrade can be retried');
+        await this.sleep(retryInMs);
+        attempt = 0;
+        continue;
+      }
       if (r.stop) {
         this.stopped = true;
-        this.o.onStop(r.stop, this.upgradeMin ? { minAgentVersion: this.upgradeMin } : {});
+        this.o.onStop(r.stop);
         return;
       }
-      if (r.welcomed) attempt = 0;
+      // Only a connection that stayed up resets the backoff (a hub that accepts then drops at once
+      // must not be hammered every second).
+      if (r.upMs >= this.o.timing.stableMs) attempt = 0;
       const delay = backoffDelay(attempt++, this.o.timing);
       this.log.info({ site: this.site.id, delayMs: delay }, 'reconnecting');
-      await new Promise<void>((resolve) => {
-        const t = setTimeout(resolve, delay);
-        this.wake = () => {
-          clearTimeout(t);
-          resolve();
-        };
-      });
-      this.wake = undefined;
+      await this.sleep(delay);
     }
   }
 
-  private connectOnce(): Promise<{ welcomed: boolean; stop?: Exclude<SiteStop, 'closed'> }> {
+  private async sleep(ms: number): Promise<void> {
+    await new Promise<void>((resolve) => {
+      const t = setTimeout(resolve, ms);
+      this.wake = () => {
+        clearTimeout(t);
+        resolve();
+      };
+    });
+    this.wake = undefined;
+  }
+
+  /** Records an entry in this site's activity log. */
+  recordActivity(e: Parameters<ActivityLog['append']>[0]): Promise<void> {
+    return this.activity.append(e);
+  }
+
+  private connectOnce(): Promise<{ welcomed: boolean; upMs: number; stop?: Exclude<SiteStop, 'closed'> }> {
     return new Promise((resolve) => {
       let welcomed = false;
+      let welcomedAt = 0;
+      const done = (r: { welcomed: boolean; stop?: Exclude<SiteStop, 'closed'> }) =>
+        resolve({ ...r, upMs: welcomedAt ? Date.now() - welcomedAt : 0 });
       let httpStatus: number | undefined;
       let idle: NodeJS.Timeout | undefined;
       let ws: WebSocket;
@@ -217,7 +257,7 @@ export class SiteAgent {
         });
       } catch (err) {
         this.log.error({ err, site: this.site.id }, 'cannot connect');
-        resolve({ welcomed: false });
+        done({ welcomed: false });
         return;
       }
       this.ws = ws;
@@ -254,6 +294,7 @@ export class SiteAgent {
         }
         if (frame.t === 'welcome') {
           welcomed = true;
+          welcomedAt = Date.now();
           this.onWelcome(ws);
         } else this.onFrame(ws, frame);
       });
@@ -268,21 +309,21 @@ export class SiteAgent {
         if (httpStatus === 401 || code === HUB_CLOSE.revoked) {
           this.log.warn({ site: this.site.id }, 'machine token revoked by the website; not reconnecting');
           void this.activity.append({ kind: 'revoked' });
-          return resolve({ welcomed, stop: 'revoked' });
+          return done({ welcomed, stop: 'revoked' });
         }
         if (code === HUB_CLOSE.replaced) {
           this.log.warn({ site: this.site.id }, 'replaced by a newer connection for this machine; stopping this one');
           void this.activity.append({ kind: 'replaced' });
-          return resolve({ welcomed, stop: 'replaced' });
+          return done({ welcomed, stop: 'replaced' });
         }
         if (code === HUB_CLOSE.upgrade || this.upgradeMin) {
           void this.activity.append({ kind: 'upgrade', detail: { minAgentVersion: this.upgradeMin ?? 'unknown' } });
-          return resolve({ welcomed, stop: 'upgrade' });
+          return done({ welcomed, stop: 'upgrade' });
         }
         if (code === HUB_CLOSE.hubTooOld) this.log.warn({ site: this.site.id }, 'this website runs an older hub than the agent supports');
         else if (httpStatus !== undefined) this.log.warn({ site: this.site.id, status: httpStatus }, 'hub refused the connection');
         else this.log.info({ site: this.site.id, code, reason: reason.toString().slice(0, 200) }, 'disconnected');
-        resolve({ welcomed });
+        done({ welcomed });
       });
     });
   }
@@ -488,7 +529,7 @@ export class SiteAgent {
         return u.sessions.list();
       case 'readEvents': {
         const a = args as HubCommandArgs['readEvents'];
-        return u.events.readAfter(a.sessionId, a.after, a.limit);
+        return (await u.events.readAfter(a.sessionId, a.after, a.limit)).map((e) => this.fit(e));
       }
     }
     throw new UncageError('invalid_request', { message: `Unknown command "${String(op)}".` });
@@ -504,7 +545,8 @@ export class SiteAgent {
         return reject(new UncageError('tool_failed', { message: 'The website is not connected.' }));
       }
       const id = `tc_${randomUUID().replaceAll('-', '')}`;
-      const detail = { sessionId: ctx.sessionId, runId: ctx.runId, args };
+      // `input` is opaque to the activity-log redaction: tool arguments never show, not even key names.
+      const detail = { sessionId: ctx.sessionId, runId: ctx.runId, input: args };
       const finish = () => {
         clearTimeout(timer);
         ctx.signal.removeEventListener('abort', onAbort);
@@ -546,9 +588,9 @@ export class SiteAgent {
     const detail = { sessionId: f.sessionId, path: f.path, maxBytes: f.maxBytes };
     try {
       const session = await (await this.uncage.sessions.get(f.sessionId)).get();
-      const files = await planPull(session.workspace, f.path, f.maxBytes);
-      await sendPull(f.id, files, (frame) => this.send(frame), ac.signal);
-      void this.activity.append({ kind: 'file_pull', ok: true, detail: { ...detail, files: files.length } });
+      const plan = await planPull(session.workspace, f.path, f.maxBytes);
+      await sendPull(f.id, plan, (frame) => this.send(frame), ac.signal);
+      void this.activity.append({ kind: 'file_pull', ok: true, detail: { ...detail, files: plan.files.length } });
     } catch (err) {
       const body = errorBody(err);
       void this.activity.append({ kind: 'file_pull', ok: false, code: body.code, detail });
@@ -563,7 +605,7 @@ export class SiteAgent {
   // ---- replication ------------------------------------------------------------------------
 
   private newRep(delivered: number): Rep {
-    return { delivered, sentHigh: delivered, outstanding: [], pumping: false, dirty: false, gen: 0, skipped: new Set() };
+    return { delivered, sentHigh: delivered, outstanding: [], pumping: false, dirty: false, gen: 0 };
   }
 
   private onEvent(e: UncageEvent): void {
@@ -578,7 +620,7 @@ export class SiteAgent {
     }
     if (!this.connected) return;
     if (!rep.pumping && e.sequence === rep.sentHigh + 1) {
-      const sent = this.sendBatch(e.sessionId, rep, [e]);
+      const sent = this.sendBatch(e.sessionId, rep, [this.fit(e)]);
       if (sent) return;
     }
     void this.pump(e.sessionId);
@@ -606,7 +648,6 @@ export class SiteAgent {
       rep.gen++;
     } else if (
       seq < rep.sentHigh &&
-      !rep.skipped.has(seq + 1) &&
       (rep.outstanding.length === 0 || rep.outstanding[0]![0] > seq + 1)
     ) {
       // The hub is missing events that nothing in flight will fill: resend from its sequence.
@@ -660,13 +701,11 @@ export class SiteAgent {
           if (rep.dirty) continue;
           break;
         }
-        for (const batch of this.pack(page, rep)) {
+        for (const batch of this.pack(page)) {
           if (rep.gen !== gen || !this.connected) break;
           const sent = this.sendBatch(sessionId, rep, batch);
           if (sent) await sent;
         }
-        // Past any skipped (oversized) event at the end of the page.
-        if (rep.gen === gen && this.connected) rep.sentHigh = Math.max(rep.sentHigh, page.at(-1)!.sequence);
       }
     } catch (err) {
       this.log.error({ err, site: this.site.id, sessionId }, 'replication failed');
@@ -675,20 +714,17 @@ export class SiteAgent {
     }
   }
 
-  /** Splits events into frames under the size budget (an event too large on its own is skipped). */
-  private pack(events: UncageEvent[], rep: Rep): UncageEvent[][] {
+  /**
+   * Splits events into frames under the size budget. An event too large for a frame on its own is
+   * never skipped (that would leave a gap in the replica): its big string fields are truncated.
+   */
+  private pack(events: UncageEvent[]): UncageEvent[][] {
     const out: UncageEvent[][] = [];
     let cur: UncageEvent[] = [];
     let size = 200;
-    for (const e of events) {
+    for (const raw of events) {
+      const e = this.fit(raw);
       const n = byteLength(JSON.stringify(e)) + 1;
-      if (n + 200 > FRAME_BUDGET) {
-        if (!rep.skipped.has(e.sequence)) {
-          this.log.error({ site: this.site.id, sessionId: e.sessionId, sequence: e.sequence }, 'event too large to replicate; skipped');
-        }
-        rep.skipped.add(e.sequence);
-        continue;
-      }
       if (size + n > FRAME_BUDGET && cur.length > 0) {
         out.push(cur);
         cur = [];
@@ -699,5 +735,11 @@ export class SiteAgent {
     }
     if (cur.length > 0) out.push(cur);
     return out;
+  }
+
+  private fit(e: UncageEvent): UncageEvent {
+    const fitted = fitEvent(e, EVENT_BUDGET);
+    if (fitted !== e) this.log.warn({ site: this.site.id, sessionId: e.sessionId, sequence: e.sequence }, 'event too large for one frame; replicated truncated');
+    return fitted;
   }
 }

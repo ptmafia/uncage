@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
-import { chmod, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { PermissionModeSchema, type PermissionMode } from '@uncage/protocol';
 import { parseDocument } from 'yaml';
 import { z } from 'zod';
@@ -97,28 +97,74 @@ export async function loadAgentConfig(home: string = homedir()): Promise<AgentCo
   };
 }
 
+/** Creates `~/.uncage` (0700), tightening an existing, group/world-accessible one. */
+export async function ensureAgentDir(home: string): Promise<string> {
+  const dir = agentDir(home);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  if (((await stat(dir)).mode & 0o077) !== 0) await chmod(dir, 0o700);
+  return dir;
+}
+
+export const agentConfigLockPath = (home: string = homedir()): string => `${agentConfigPath(home)}.lock`;
+/** A lock older than this is presumed left by a crashed process and broken. */
+export const CONFIG_LOCK_STALE_MS = 10_000;
+const CONFIG_LOCK_WAIT_MS = 15_000;
+
 /**
- * Re-reads the file, applies `fn` to its `sites`, and writes it back atomically with mode 0600.
- * Comments and `localPolicy` (hand-edited by the user) are preserved.
+ * Serializes read-modify-write of agent.yaml across processes (the CLI and the running agent):
+ * an exclusive `agent.yaml.lock` file, broken when older than 10 s.
  */
-export async function updateAgentSites(home: string, fn: (sites: AgentSite[]) => AgentSite[]): Promise<AgentSite[]> {
-  const path = agentConfigPath(home);
-  const current = await loadAgentConfig(home);
-  const next = fn(current.sites.map((s) => ({ ...s }))).map((s) => AgentSiteSchema.parse(s));
-  const raw = await readRaw(path);
-  const doc = parseDocument(raw ?? '');
-  if (raw === null || doc.contents === null) {
-    doc.contents = doc.createNode({ sites: [], localPolicy: { allowBypass: false } }) as never;
-    doc.commentBefore =
-      ' Uncage agent config. Holds machine tokens: keep it private (0600).\n' +
-      ' localPolicy.allowBypass: true lets websites use bypassPermissions (only you can turn it on).\n' +
-      ' localPolicy.allowedPermissionModes: optional list capping the modes websites may use.';
+export async function withAgentConfigLock<T>(home: string, fn: () => Promise<T>): Promise<T> {
+  await ensureAgentDir(home);
+  const lock = agentConfigLockPath(home);
+  const start = Date.now();
+  for (;;) {
+    try {
+      const fh = await open(lock, 'wx', 0o600);
+      await fh.writeFile(`${process.pid} ${new Date().toISOString()}\n`);
+      await fh.close();
+      break;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      const age = await stat(lock).then((st) => Date.now() - st.mtimeMs, () => 0);
+      if (age > CONFIG_LOCK_STALE_MS) {
+        await unlink(lock).catch(() => undefined);
+        continue;
+      }
+      if (Date.now() - start > CONFIG_LOCK_WAIT_MS) throw new Error(`${agentConfigPath(home)} is locked by another uncage process (${lock}).`, { cause: e });
+      await new Promise((r) => setTimeout(r, 25 + Math.random() * 25));
+    }
   }
-  doc.set('sites', doc.createNode(next));
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
-  await writeFile(tmp, doc.toString(), { mode: 0o600 });
-  await chmod(tmp, 0o600);
-  await rename(tmp, path);
-  return next;
+  try {
+    return await fn();
+  } finally {
+    await unlink(lock).catch(() => undefined);
+  }
+}
+
+/**
+ * Re-reads the file, applies `fn` to its `sites`, and writes it back atomically with mode 0600,
+ * under the agent.yaml lock. Comments and `localPolicy` (hand-edited by the user) are preserved.
+ */
+export function updateAgentSites(home: string, fn: (sites: AgentSite[]) => AgentSite[]): Promise<AgentSite[]> {
+  return withAgentConfigLock(home, async () => {
+    const path = agentConfigPath(home);
+    const current = await loadAgentConfig(home);
+    const next = fn(current.sites.map((s) => ({ ...s }))).map((s) => AgentSiteSchema.parse(s));
+    const raw = await readRaw(path);
+    const doc = parseDocument(raw ?? '');
+    if (raw === null || doc.contents === null) {
+      doc.contents = doc.createNode({ sites: [], localPolicy: { allowBypass: false } }) as never;
+      doc.commentBefore =
+        ' Uncage agent config. Holds machine tokens: keep it private (0600).\n' +
+        ' localPolicy.allowBypass: true lets websites use bypassPermissions (only you can turn it on).\n' +
+        ' localPolicy.allowedPermissionModes: optional list capping the modes websites may use.';
+    }
+    doc.set('sites', doc.createNode(next));
+    const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+    await writeFile(tmp, doc.toString(), { mode: 0o600 });
+    await chmod(tmp, 0o600);
+    await rename(tmp, path);
+    return next;
+  });
 }

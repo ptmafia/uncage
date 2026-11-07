@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { defineTool } from '@uncage/hub';
 import type { MachineInfo, Run, Session, UncageEvent } from '@uncage/protocol';
@@ -6,7 +6,7 @@ import { createFakeAdapter, type FakeStep } from '@uncage/testkit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { readActivity } from './activity.js';
-import { createAgent, SELF_UPGRADE, UPGRADE_EXIT_CODE, type Agent } from './agent.js';
+import { createAgent, readUpgradeState, SELF_UPGRADE, UPGRADE_EXIT_CODE, type Agent } from './agent.js';
 import { agentConfigPath, loadAgentConfig, updateAgentSites, type AgentConfig, type AgentSite } from './config.js';
 import { siteHost } from './site.js';
 import { FAST, memoryLogger, sleep, startProxy, startTestHub, tmpHome, until, type TestHub } from './test-helpers.js';
@@ -125,7 +125,8 @@ describe('agent ↔ real hub', () => {
       const a = await readActivity(h, site.id);
       return a.some((e) => e.kind === 'tool_call') ? a : null;
     });
-    expect(activity.find((e) => e.kind === 'tool_call')).toMatchObject({ name: 'lookup_order', ok: true });
+    expect(activity.find((e) => e.kind === 'tool_call')).toMatchObject({ name: 'lookup_order', ok: true, detail: { sessionId: session.id, input: '[redacted object]' } });
+    expect(JSON.stringify(activity)).not.toContain('A-1');
   });
 
   it('local policy: the hub cannot enable bypass, and modes outside allowedPermissionModes are denied', async () => {
@@ -355,6 +356,112 @@ describe('agent ↔ real hub', () => {
     // Sessions are separate per site.
     expect(((await (await t1.as('alice', '/sessions')).json()) as Session[]).map((s) => s.id)).toEqual([a.id]);
     expect(((await (await t2.as('alice', '/sessions')).json()) as Session[]).map((s) => s.id)).toEqual([b.id]);
+  });
+
+  it('a failed self-upgrade does not exit: only that site stays offline, it is logged and not retried within the hour', async () => {
+    const old = await hubFor({ minAgentVersion: '99.0.0', site: { id: 'needs.upgrade' } });
+    const ok = await hubFor({ site: { id: 'healthy.example' } });
+    const h = await home();
+    const s1 = await old.pair('alice');
+    const s2 = await ok.pair('alice');
+    const exec = vi.fn(async () => {
+      throw Object.assign(new Error('EACCES'), { stderr: 'permission denied' });
+    });
+    const exit = vi.fn();
+    const agent = await agentFor(h, [s1, s2], [{ text: 'x' }], { extra: { exec, exit, agentVersion: '0.1.1' } });
+    await until(async () => (await readActivity(h, s1.id)).find((e) => e.kind === 'upgrade' && e.ok === false));
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(exit).not.toHaveBeenCalled();
+    expect(agent.status()).toMatchObject({ [s1.id]: 'upgrade_failed', [s2.id]: 'running' });
+    expect(await readUpgradeState(h)).toMatchObject({ fromVersion: '0.1.1', minAgentVersion: '99.0.0', failedAt: expect.any(String) });
+    // The healthy site keeps working.
+    await online(ok);
+    expect((await (await ok.as('alice', '/sessions', { method: 'POST', body: JSON.stringify({ runtime: 'fake' }) })).status)).toBe(201);
+    await agent.close();
+
+    // A restart within the hour does not run npm again for the same upgrade.
+    const exec2 = vi.fn(async () => ({ stdout: '', stderr: '' }));
+    const again = await createAgent({
+      config: { sites: [s1], localPolicy: { allowBypass: false } },
+      adapters: [fake([])],
+      home: h,
+      logger: memoryLogger(),
+      timing: FAST,
+      exec: exec2,
+      exit,
+      agentVersion: '0.1.1',
+    });
+    cleanups.push(() => again.close());
+    await until(() => again.status()[s1.id] === 'upgrade_failed');
+    expect(exec2).not.toHaveBeenCalled();
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it('a site that fails to start is skipped; the others run; revoked sites are skipped', async () => {
+    const t = await hubFor();
+    const h = await home();
+    const good = await t.pair('alice');
+    const broken = { ...good, id: 'broken.example', machineId: 'mch_x', token: 'x' };
+    const revoked = { ...good, id: 'revoked.example', machineId: 'mch_y', token: 'y', revokedAt: '2026-11-01T00:00:00Z' };
+    // A file where the site's data directory should be: its core cannot open.
+    await mkdir(join(h, '.uncage', 'sites'), { recursive: true });
+    await writeFile(join(h, '.uncage', 'sites', 'broken.example'), 'not a directory');
+    const logger = memoryLogger();
+    await updateAgentSites(h, () => [broken, revoked, good]);
+    const agent = await createAgent({ config: { sites: [broken, revoked, good], localPolicy: { allowBypass: false } }, adapters: () => [fake([])], home: h, logger, timing: FAST });
+    cleanups.push(() => agent.close());
+    expect(agent.status()).toEqual({ 'broken.example': 'failed', 'revoked.example': 'revoked', [good.id]: 'running' });
+    expect(logger.lines.some((l) => l.level === 'error' && (l.obj as { site?: string }).site === 'broken.example')).toBe(true);
+    await online(t);
+  });
+
+  it('throws only when every site fails to start', async () => {
+    const h = await home();
+    await mkdir(join(h, '.uncage', 'sites'), { recursive: true });
+    await writeFile(join(h, '.uncage', 'sites', 'a.example'), 'x');
+    const site = { id: 'a.example', name: 'a', url: 'http://127.0.0.1:1/api/uncage', machineId: 'm', token: 't' };
+    await expect(createAgent({ config: { sites: [site], localPolicy: { allowBypass: false } }, adapters: [fake([])], home: h, logger: memoryLogger(), timing: FAST })).rejects.toThrow(/No website could be started/);
+  });
+
+  it('startRun is denied when the session mode is outside allowedPermissionModes', async () => {
+    const t = await hubFor();
+    const h = await home();
+    const site = await t.pair('alice');
+    await agentFor(h, [site], [{ text: 'ran' }], { policy: { allowBypass: false, allowedPermissionModes: ['acceptEdits'] } });
+    await online(t);
+    const session = await createSession(t); // starts in 'default'
+    const denied = await startRun(t, session.id);
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({ error: { code: 'policy_denied' } });
+    const patched = await t.as('alice', `/sessions/${session.id}/settings`, { method: 'PATCH', body: JSON.stringify({ permissionMode: 'acceptEdits' }) });
+    expect(patched.status).toBe(200);
+    expect((await startRun(t, session.id)).status).toBe(202);
+    const activity = await until(async () => {
+      const a = await readActivity(h, site.id);
+      return a.filter((e) => e.name === 'startRun').length >= 2 ? a : null;
+    });
+    expect(activity.filter((e) => e.name === 'startRun').map((e) => e.code ?? 'ok')).toEqual(['policy_denied', 'ok']);
+  });
+
+  it('an event larger than one frame is replicated truncated, never skipped (site replica stays gap-free)', async () => {
+    const t = await hubFor({ sessionStorage: 'site' });
+    const h = await home();
+    const site = await t.pair('alice');
+    await agentFor(h, [site], [{ text: 'z'.repeat(1_500_000) }, { text: 'after' }]);
+    await online(t);
+    const session = await createSession(t);
+    expect((await startRun(t, session.id)).status).toBe(202);
+    const evs = await until(async () => {
+      const all = await t.store.readEvents(session.id, 0, 1000);
+      return terminal(all) ? all : null;
+    }, 10_000, 'replicated run');
+    expect(evs.map((e) => e.sequence)).toEqual(evs.map((_, i) => i + 1));
+    const big = evs.find((e) => e.type === 'message.completed' && e.payload.text.startsWith('zzz'));
+    expect(big?.type === 'message.completed' && big.payload.text).toMatch(/…\[truncated \d+ bytes\]$/);
+    expect(evs.some((e) => e.type === 'message.completed' && e.payload.text === 'after')).toBe(true);
+    // Machine-side reads (readEvents) are truncated the same way.
+    const seen = await history(t, session.id);
+    expect(seen.map((e) => e.sequence)).toEqual(evs.map((e) => e.sequence));
   });
 
   it('agent.yaml is written 0600', async () => {

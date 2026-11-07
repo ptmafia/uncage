@@ -165,6 +165,30 @@ describe('agent ↔ fake hub (protocol edges)', () => {
     await until(() => hub.conns.length === 2 && hub.framesOf('hello').length === 2);
   });
 
+  it('a hub that welcomes then drops at once does not reset the backoff (only a 30 s connection does)', async () => {
+    const hub = await fakeHub();
+    cleanups.push(hub.close);
+    hub.setOnHello((ws) => {
+      ws.send(JSON.stringify({ t: 'welcome', machineId: 'm', protocol: 1, minAgentVersion: '0.0.0' } satisfies HubFrame));
+      setTimeout(() => ws.close(1011, 'flaky'), 5);
+    });
+    const { home, cleanup } = await tmpHome();
+    cleanups.push(cleanup);
+    const logger = memoryLogger();
+    const agent = await createAgent({
+      config: { sites: [{ id: 's', name: 's', url: hub.url, machineId: 'm', token: 't' }], localPolicy: { allowBypass: false } },
+      adapters: [createFakeAdapter({ script: [] })],
+      home,
+      logger,
+      timing: { backoffMinMs: 20, backoffMaxMs: 400, idleTimeoutMs: 3000, stableMs: 30_000 },
+    });
+    cleanups.push(() => agent.close());
+    const delays = () => logger.lines.filter((l) => l.msg === 'reconnecting').map((l) => (l.obj as { delayMs: number }).delayMs);
+    await until(() => delays().length >= 5, 10_000);
+    // attempt 4 → base 320 → at least 160 ms; a reset backoff would stay ≤ 20 ms.
+    expect(delays()[4]).toBeGreaterThanOrEqual(160);
+  });
+
   it('presumes the connection dead when the hub goes silent', async () => {
     const { hub } = await setup([], { idleTimeoutMs: 200 });
     await until(() => hub.conns.length >= 2, 5000);

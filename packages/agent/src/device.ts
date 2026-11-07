@@ -34,6 +34,7 @@ export function normalizeHubUrl(input: string): string {
 /** `ws(s)://…/agent` for a hub base URL; refuses ws:// to anything but loopback. */
 export function agentWsUrl(hubUrl: string): string {
   const url = new URL(hubUrl);
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error(`Refusing a non-http(s) hub URL (${url.protocol}).`);
   if (url.protocol === 'http:' && !isLoopback(url.hostname)) throw new Error(`Refusing an insecure connection to ${url.hostname}.`);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   url.pathname = `${url.pathname.replace(/\/+$/, '')}/agent`;

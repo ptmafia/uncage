@@ -9,11 +9,18 @@ export {
   type Agent,
   type CreateAgentOptions,
   type ExecFn,
+  type SiteStatus,
+  readUpgradeState,
+  UPGRADE_RETRY_MS,
+  upgradeStatePath,
 } from './agent.js';
 export {
   activityLogPath,
   agentConfigPath,
+  agentConfigLockPath,
   agentDir,
+  ensureAgentDir,
+  withAgentConfigLock,
   loadAgentConfig,
   newMachineKey,
   siteDir,

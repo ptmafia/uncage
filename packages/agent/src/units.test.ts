@@ -1,10 +1,14 @@
-import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdir, mkdtemp, readFile, rename, stat, symlink, truncate, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import type { AgentFrame } from '@uncage/protocol';
 import { join } from 'node:path';
 import type { DeviceCodeResponse } from '@uncage/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
-import { agentConfigPath, loadAgentConfig, newMachineKey, updateAgentSites } from './config.js';
+import { agentConfigLockPath, agentConfigPath, agentDir, ensureAgentDir, loadAgentConfig, newMachineKey, updateAgentSites } from './config.js';
+import { fitEvent } from './fit.js';
+import { utimes } from 'node:fs/promises';
 import { agentWsUrl, normalizeHubUrl, pollDeviceToken, requestDeviceCode } from './device.js';
-import { planPull } from './files.js';
+import { MAX_PULL_FILE_BYTES, planPull, sendPull } from './files.js';
 import { backoffDelay, siteHost } from './site.js';
 import { startTestHub, tmpHome } from './test-helpers.js';
 
@@ -35,10 +39,15 @@ describe('normalizeHubUrl / agentWsUrl', () => {
     expect(agentWsUrl('https://app.example.com/api/uncage')).toBe('wss://app.example.com/api/uncage/agent');
     expect(agentWsUrl('http://127.0.0.1:8080/api/uncage')).toBe('ws://127.0.0.1:8080/api/uncage/agent');
     expect(() => agentWsUrl('http://evil.example.com/api/uncage')).toThrow(/insecure/);
+    expect(() => agentWsUrl('ftp://app.example.com/api/uncage')).toThrow(/non-http/);
+    expect(() => agentWsUrl('ws://evil.example.com/api/uncage')).toThrow(/non-http/);
+    expect(() => agentWsUrl('file:///etc/passwd')).toThrow(/non-http/);
   });
   it('siteHost is filesystem-safe', () => {
     expect(siteHost('https://App.Example.com/api/uncage')).toBe('app.example.com');
     expect(siteHost('http://127.0.0.1:8080/x')).toBe('127.0.0.1-8080');
+    expect(() => siteHost('https://./x')).toThrow(/workspace folder/);
+    expect(() => siteHost('https://.../x')).toThrow(/workspace folder/);
   });
 });
 
@@ -92,6 +101,48 @@ describe('agent config', () => {
     await expect(loadAgentConfig(h)).rejects.toThrow(/Invalid/);
     await writeFile(agentConfigPath(h), 'localPolicy:\n  allowedPermissionModes: [yolo]\n');
     await expect(loadAgentConfig(h)).rejects.toThrow(/allowedPermissionModes/);
+  });
+
+  it('tightens an existing ~/.uncage to 0700', async () => {
+    const h = await home();
+    await mkdir(agentDir(h), { mode: 0o755 });
+    await chmod(agentDir(h), 0o755);
+    await ensureAgentDir(h);
+    expect(((await stat(agentDir(h))).mode & 0o777).toString(8)).toBe('700');
+    await chmod(agentDir(h), 0o755);
+    await updateAgentSites(h, () => []);
+    expect(((await stat(agentDir(h))).mode & 0o777).toString(8)).toBe('700');
+  });
+
+  it('serializes concurrent read-modify-writes with agent.yaml.lock (no lost updates)', async () => {
+    const h = await home();
+    await Promise.all(
+      Array.from({ length: 12 }, (_, i) =>
+        updateAgentSites(h, (sites) => [...sites, { ...site, id: `s${i}.example`, url: `https://s${i}.example/api/uncage` }]),
+      ),
+    );
+    expect((await loadAgentConfig(h)).sites.map((s) => s.id).sort()).toHaveLength(12);
+    await expect(stat(agentConfigLockPath(h))).rejects.toThrow();
+  });
+
+  it('waits for a fresh lock and breaks a stale one (> 10 s)', async () => {
+    const h = await home();
+    await ensureAgentDir(h);
+    await writeFile(agentConfigLockPath(h), 'other');
+    let done = false;
+    const p = updateAgentSites(h, () => [site]).then(() => (done = true));
+    await new Promise((r) => setTimeout(r, 150));
+    expect(done).toBe(false);
+    const { unlink } = await import('node:fs/promises');
+    await unlink(agentConfigLockPath(h));
+    await p;
+    expect(done).toBe(true);
+
+    await writeFile(agentConfigLockPath(h), 'crashed');
+    const old = new Date(Date.now() - 11_000);
+    await utimes(agentConfigLockPath(h), old, old);
+    await updateAgentSites(h, () => []);
+    expect((await loadAgentConfig(h)).sites).toEqual([]);
   });
 
   it('machine keys are 32 random bytes, base64url', () => {
@@ -156,6 +207,89 @@ describe('planPull fence', () => {
   it('caps the total at 50 MiB even when maxBytes asks for more', async () => {
     const h = await home();
     await writeFile(join(h, 'f.txt'), 'abc');
-    expect((await planPull(h, 'f.txt', 10 ** 12)).map((f) => f.rel)).toEqual(['f.txt']);
+    const plan = await planPull(h, 'f.txt', 10 ** 12);
+    expect(plan.files.map((f) => f.rel)).toEqual(['f.txt']);
+    expect(plan.limit).toBe(50 * 1024 * 1024);
+  });
+});
+
+describe('sendPull re-checks at send time', () => {
+  const collect = () => {
+    const frames: AgentFrame[] = [];
+    return { frames, send: async (f: AgentFrame) => void frames.push(f) };
+  };
+
+  it('a file that grows past the total cap between plan and send is refused', async () => {
+    const h = await home();
+    await writeFile(join(h, 'a.bin'), Buffer.alloc(600));
+    const plan = await planPull(h, 'a.bin', 1000);
+    await appendFile(join(h, 'a.bin'), Buffer.alloc(900));
+    const c = collect();
+    await expect(sendPull('p', plan, c.send)).rejects.toMatchObject({ code: 'invalid_request', details: { maxBytes: 1000 } });
+    expect(c.frames.filter((f) => f.t === 'file_chunk')).toEqual([]);
+  });
+
+  it('a file that grows past 10 MiB between plan and send is refused', async () => {
+    const h = await home();
+    await writeFile(join(h, 'a.bin'), 'x');
+    const plan = await planPull(h, 'a.bin', 50 * 1024 * 1024);
+    await truncate(join(h, 'a.bin'), MAX_PULL_FILE_BYTES + 1);
+    await expect(sendPull('p', plan, collect().send)).rejects.toMatchObject({ details: { maxFileBytes: MAX_PULL_FILE_BYTES } });
+  });
+
+  it('a file that grows within the caps is sent up to its size at open, never more', async () => {
+    const h = await home();
+    await writeFile(join(h, 'a.txt'), 'abc');
+    const plan = await planPull(h, 'a.txt', 1000);
+    await appendFile(join(h, 'a.txt'), 'def');
+    const c = collect();
+    await sendPull('p', plan, c.send);
+    expect(c.frames.at(-1)).toEqual({ t: 'file_done', id: 'p', files: [{ path: 'a.txt', size: 6 }] });
+  });
+
+  it('an intermediate directory swapped for a symlink to an outside directory is refused', async () => {
+    const h = await home();
+    const outside = await mkdtemp(join(tmpdir(), 'uncage-outside-'));
+    cleanups.push(() => import('node:fs/promises').then((f) => f.rm(outside, { recursive: true, force: true })));
+    await mkdir(join(h, 'site'));
+    await writeFile(join(h, 'site', 'a.txt'), 'inside');
+    await writeFile(join(outside, 'a.txt'), 'SECRET');
+    const plan = await planPull(h, 'site', 1000);
+    await rename(join(h, 'site'), join(h, 'site.old'));
+    await symlink(outside, join(h, 'site'));
+    const c = collect();
+    await expect(sendPull('p', plan, c.send)).rejects.toMatchObject({ message: expect.stringContaining('changed') });
+    expect(JSON.stringify(c.frames)).not.toContain(Buffer.from('SECRET').toString('base64'));
+  });
+
+  it('the planned directory moved out of the workspace (same inode, now outside) is refused', async () => {
+    const h = await home();
+    const outside = await mkdtemp(join(tmpdir(), 'uncage-outside-'));
+    cleanups.push(() => import('node:fs/promises').then((f) => f.rm(outside, { recursive: true, force: true })));
+    await mkdir(join(h, 'site'));
+    await writeFile(join(h, 'site', 'a.txt'), 'inside');
+    const plan = await planPull(h, 'site', 1000);
+    await rename(join(h, 'site'), join(outside, 'site'));
+    await symlink(join(outside, 'site'), join(h, 'site'));
+    await expect(sendPull('p', plan, collect().send)).rejects.toMatchObject({ message: expect.stringContaining('changed') });
+  });
+});
+
+describe('fitEvent', () => {
+  const ev = (text: string) =>
+    ({ eventId: 'evt_0000000001', sequence: 1, sessionId: 'ses_1', runId: 'run_1', type: 'message.completed', occurredAt: 'x', schemaVersion: '1.0', payload: { messageId: 'msg_1', text } }) as never;
+  it('returns small events unchanged', () => {
+    const e = ev('hi');
+    expect(fitEvent(e, 10_000)).toBe(e);
+  });
+  it('truncates the largest string fields with a marker until the event fits', () => {
+    const e = ev('é'.repeat(300_000)); // 600 000 bytes
+    const fitted = fitEvent(e, 100_000) as { sequence: number; payload: { text: string; messageId: string } };
+    expect(Buffer.byteLength(JSON.stringify(fitted))).toBeLessThanOrEqual(100_000);
+    expect(fitted.sequence).toBe(1);
+    expect(fitted.payload.messageId).toBe('msg_1');
+    expect(fitted.payload.text).toMatch(/…\[truncated \d+ bytes\]$/);
+    expect(fitted.payload.text.startsWith('éé')).toBe(true);
+    expect((e as { payload: { text: string } }).payload.text).toHaveLength(300_000); // original untouched
   });
 });
