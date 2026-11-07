@@ -1,9 +1,47 @@
 # @uncage/react-ui
 
-The default chat UI: `<AgentChat>` (session sidebar, runtime selector, streaming markdown, tool steps, approval cards, Stop, run status) inside `<UncageProvider>`.
+The default Uncage chat UI for React 19: `<AgentChat>` gives you a session sidebar, runtime picker, streaming markdown, tool steps, Allow/Deny approval cards, Stop, reload-safe history, and a Claude Code–style composer (model, effort and permission-mode menus, image/file attachments by button, drag and drop or paste, browser voice input, a "N running" chip).
 
-The composer is styled after Claude Code's prompt box. Its toolbar has a model menu, an effort menu and a permission-mode menu (accessible `role="menu"` / `menuitemradio`, keyboard operable). They list only what the runtime offers, and bypass only when the server sets `security.allowBypass`. Choosing bypass asks for confirmation and then shows a red banner. You can attach files with the + button, by drag and drop, or by pasting an image. Pending files show as chips (thumbnails for images), and sent ones appear in the user bubble. The mic button dictates via the Web Speech API: it is hidden where the API is unavailable, and its first use shows a privacy note. The "N running" chip lists active runs in every session and opens one. Settings apply from the next run. See [The composer](../../README.md#the-composer) for limits and the bypass warning.
+## Quick start (Next.js)
 
-Import `@uncage/react-ui/styles.css` once. Theme it with the `--uncage-*` CSS variables; every class uses the `uc-` prefix. `locale` is `'en'` (default) or `'zh-CN'`. Model output is rendered as inert markdown (no raw HTML).
+```sh
+npm i @uncage/server @uncage/react-ui @uncage/cli
+npx uncage serve --workspace /path/to/project   # keep running; needs Claude Code installed and logged in
+```
 
-API: [`src/index.ts`](./src/index.ts) (every export is documented with JSDoc) · Project overview: [README](../../README.md)
+```ts
+// app/api/uncage/[...path]/route.ts
+import { createUncageHandler } from '@uncage/server/proxy';
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const { GET, POST, PATCH } = createUncageHandler();
+```
+
+```tsx
+// app/page.tsx
+'use client';
+import { AgentChat, UncageProvider } from '@uncage/react-ui';
+import '@uncage/react-ui/styles.css';
+
+export default function Page() {
+  return (
+    <div style={{ height: '100vh' }}>
+      <UncageProvider><AgentChat locale="zh-CN" /></UncageProvider>
+    </div>
+  );
+}
+```
+
+Then `npm run dev` and open http://localhost:3000. `npx uncage doctor` checks your setup and prints a fix for every problem.
+
+## Customizing
+
+- `locale`: `'en'` (default) or `'zh-CN'`. `theme`: `'auto'` (default), `'light'`, `'dark'`.
+- Restyle with the `--uncage-*` CSS variables; every class uses the `uc-` prefix.
+- Replace parts via the `components` prop, or build your own UI with the hooks in [`@uncage/react`](https://www.npmjs.com/package/@uncage/react).
+- `bypassPermissions` (no approvals) is only offered when the daemon is started with `UNCAGE_ALLOW_BYPASS=1`; choosing it asks for confirmation.
+- Attachments: images png/jpg/gif/webp (≤5 MB for Claude), text/code files and PDF (≤10 MB), 10 per message.
+
+---
+
+Part of **Uncage** — bring Claude Code (and Codex) into your own app with approvals, streaming and a ready-made UI. Start with [`@uncage/react-ui`](https://www.npmjs.com/package/@uncage/react-ui) for the 5-minute setup. MIT licensed.

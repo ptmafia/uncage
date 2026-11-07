@@ -1,5 +1,14 @@
 # @uncage/runtime-claude
 
-Runtime adapter for Claude Code, built on the Claude Agent SDK. `claudeAdapter()` runs each turn with the session's model, effort and permission mode (`default`, `acceptEdits`, `plan`, `auto`; `bypassPermissions` only with `allowBypass`). It turns every tool permission request Claude Code still asks for into an Uncage approval. Images are sent inline and other attached files are listed by path. The model list comes from `supportedModels()` and is cached for 10 minutes. It maps SDK messages to Uncage events and resumes the native session for multi-turn context. A Stop interrupts Claude Code and kills its child processes. Verified versions are listed in [docs/compatibility.md](../../docs/compatibility.md).
+Runs Claude Code through the official Claude Agent SDK as an Uncage runtime: streaming text and tool events, approvals via `canUseTool`, session resume, model / effort / permission mode per session, and image/file attachments. Uses the Claude Code login on the machine.
 
-API: [`src/index.ts`](./src/index.ts) (every export is documented with JSDoc) · Project overview: [README](../../README.md)
+```ts
+import { claudeAdapter } from '@uncage/runtime-claude';
+claudeAdapter({ allowBypass: false });
+```
+
+Prerequisite: `npm i -g @anthropic-ai/claude-code`, then `claude` → `/login`. Verified with Claude Code 2.1.318 / Agent SDK 0.3.318. `npx uncage serve` from `@uncage/cli` wires this up for you.
+
+---
+
+Part of **Uncage** — bring Claude Code (and Codex) into your own app with approvals, streaming and a ready-made UI. Start with [`@uncage/react-ui`](https://www.npmjs.com/package/@uncage/react-ui) for the 5-minute setup. MIT licensed.

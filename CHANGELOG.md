@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1 — 2026-11-07
+
+- Docs only: npm-first quick start in the README; every package README is now self-contained (install, minimal usage, options) instead of linking to repo paths that npm can't show.
+
 ## 0.1.0 — 2026-11-07
 
 First public release.

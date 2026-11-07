@@ -1,5 +1,7 @@
 # @uncage/client
 
-Framework-free browser transport: `createUncageClient({ baseUrl })` wraps the REST API (sessions, runs, approvals, runtimes) and subscribes to a session's event stream with resumable SSE. It reconnects with `Last-Event-ID`, decodes UTF-8 safely across chunks, and reports connection state. It talks to your app's same-origin proxy (`/api/uncage` by default).
+Browser transport for Uncage without React: `createUncageClient({ baseUrl = '/api/uncage' })` gives typed REST calls (sessions, runs, approvals, settings, attachments) and `subscribe(sessionId, { after, onEvent, onState, onError })` — an SSE stream that reconnects with `Last-Event-ID` and decodes UTF-8 safely. Errors are `UncageClientError` with `code`, `hint` and `status`. Most apps use it through [`@uncage/react`](https://www.npmjs.com/package/@uncage/react).
 
-API: [`src/index.ts`](./src/index.ts) (every export is documented with JSDoc) · Project overview: [README](../../README.md)
+---
+
+Part of **Uncage** — bring Claude Code (and Codex) into your own app with approvals, streaming and a ready-made UI. Start with [`@uncage/react-ui`](https://www.npmjs.com/package/@uncage/react-ui) for the 5-minute setup. MIT licensed.

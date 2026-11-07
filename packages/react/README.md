@@ -1,5 +1,27 @@
 # @uncage/react
 
-Headless React bindings: `<UncageProvider>` plus hooks (`useRuntimes`, `useSessions`, `useSession`, `useRun`, `useMessages`, `useApprovals`, `useApprovalActions`, `useConnection`, `useUncageError`, …) over a normalized store fed by the event stream. Use them to build your own chat UI. See `examples/react-headless-chat` and the hooks table in the root README.
+Headless React 19 hooks and a framework-agnostic store for Uncage. Use them to build your own agent UI; [`@uncage/react-ui`](https://www.npmjs.com/package/@uncage/react-ui) is built entirely on top of them.
 
-API: [`src/index.ts`](./src/index.ts) (every export is documented with JSDoc) · Project overview: [README](../../README.md)
+```tsx
+import { UncageProvider, useRun, useMessages, useApprovals, useApprovalActions } from '@uncage/react';
+
+function Chat() {
+  const { send, cancel, isActive } = useRun();
+  const { timeline, messages } = useMessages();
+  const { pending } = useApprovals();
+  const { decide } = useApprovalActions();
+  // render timeline; call send(text), cancel(), decide(id, 'allow' | 'deny')
+}
+
+export default () => <UncageProvider><Chat /></UncageProvider>;
+```
+
+Hooks: `useRuntimes`, `useSessions`, `useSession`, `useRun`, `useMessages`, `useApprovals`, `useApprovalActions`, `useRuntimeCapabilities`, `useSessionSettings`, `useAttachments`, `useAttachmentUrl`, `useRunningSessions`, `useSpeechInput`, `useConnection`, `useUncageError`, `useUncageStore`. Every export has JSDoc and full TypeScript types.
+
+Before the first prompt there is no session: call `useUncageStore().actions.openDraft(runtimeId)`, then on send `commitDraft()` → `selectSession(id)` → `sendPrompt(text)`.
+
+Needs the same server setup as `@uncage/react-ui` (a running `uncage serve` and the `/api/uncage/*` proxy route from `@uncage/server/proxy`).
+
+---
+
+Part of **Uncage** — bring Claude Code (and Codex) into your own app with approvals, streaming and a ready-made UI. Start with [`@uncage/react-ui`](https://www.npmjs.com/package/@uncage/react-ui) for the 5-minute setup. MIT licensed.

@@ -4,55 +4,25 @@
 
 Uncage runs Claude Code (and Codex) as a local, approval-gated agent runtime and gives your web app a typed REST + SSE API, headless React hooks, and a ready-made chat UI. Your app gets streaming answers, tool steps, Allow/Deny approval cards, Stop, reload-safe history, and a composer with model, effort and permission-mode pickers, file and image attachments, and voice input, while the agent keeps running on your own machine under your own login.
 
-> Status: v0, macOS only. Claude Code is verified live (see [docs/compatibility.md](docs/compatibility.md)). Codex is implemented but not yet verified against a real binary (see [Codex status](#codex-status)).
+> Status: 0.1 (`npm i @uncage/react-ui`), macOS only. Claude Code is verified live (see [docs/compatibility.md](docs/compatibility.md)). Codex is implemented but not yet verified against a real binary (see [Codex status](#codex-status)).
 
 ## Quickstart (about 5 minutes)
 
 **1. Prerequisites**
 
-- macOS, Node.js **22 or newer** (`node -v`), pnpm 10 (`corepack enable`)
+- macOS, Node.js **22 or newer** (`node -v`)
 - Claude Code installed and logged in: `npm i -g @anthropic-ai/claude-code`, then run `claude` once and type `/login`
+- A Next.js (App Router) app. Starting fresh: `npx create-next-app@latest my-app` (TypeScript, App Router)
 
-**2. Install and build**
-
-```sh
-git clone <this repo> uncage && cd uncage
-pnpm install && pnpm build
-```
-
-**3. Check your setup**
+**2. Install**
 
 ```sh
-pnpm uncage doctor
+npm i @uncage/server @uncage/react-ui @uncage/cli
 ```
 
-Each line is ✓ or ✗, and every ✗ prints the exact `fix:` command. Until you start the server in step 4, "Server reachable" and "Token file" show ✗ with `fix: uncage serve`. That is expected. Codex showing "not installed" is also fine: it is optional.
+**3. Add two files**
 
-**4. Start the daemon** (leave it running)
-
-```sh
-pnpm uncage serve --workspace /absolute/path/to/your/project
-```
-
-`--workspace` is the folder the agent works in. Without it, the agent works in the directory you started the server from, which is this repo. On first start it creates `~/.uncage/token` (mode 600) and `~/.uncage/data`, then prints:
-
-```
-Uncage listening on http://127.0.0.1:4783 · workspace /…/your/project · runtimes: claude ✓, codex ✗ (not installed)
-```
-
-**5. Open the example chat** (second terminal)
-
-```sh
-pnpm --filter nextjs-default-chat dev
-```
-
-Open http://localhost:3000 (if port 3000 is busy, Next picks the next free port; open the `Local:` URL it prints), pick **Claude Code**, and ask something like "扫描这个仓库的结构，然后运行 npm test". Commands and file edits show an approval card. Click **允许执行** (Allow) or **拒绝** (Deny). **停止** (Stop) cancels the run and kills its processes.
-
-The example UI is in Chinese (`locale="zh-CN"`). Pass `locale="en"` to `<AgentChat>` for English.
-
-## Add it to your own Next.js app
-
-Two files. The route handler is a same-origin proxy. It reads the daemon token on the server, so the token never reaches the browser.
+The route handler is a same-origin proxy. It reads the daemon token on the server, so the token never reaches the browser.
 
 ```ts
 // app/api/uncage/[...path]/route.ts
@@ -71,14 +41,44 @@ import '@uncage/react-ui/styles.css';
 
 export default function Page() {
   return (
-    <UncageProvider>
-      <AgentChat />
-    </UncageProvider>
+    <div style={{ height: '100vh' }}>
+      <UncageProvider>
+        <AgentChat locale="zh-CN" />  {/* or "en" (default) */}
+      </UncageProvider>
+    </div>
   );
 }
 ```
 
-See [`examples/nextjs-default-chat`](examples/nextjs-default-chat). Restyle it with the `--uncage-*` CSS variables. All classes use the `uc-` prefix.
+**4. Start the Uncage daemon** (leave it running, in its own terminal)
+
+```sh
+npx uncage serve --workspace /absolute/path/to/the/project/the/agent/works/in
+```
+
+`--workspace` is the folder the agent reads and edits. On first start it creates `~/.uncage/token` (mode 600) and `~/.uncage/data`, then prints:
+
+```
+Uncage listening on http://127.0.0.1:4783 · workspace /…/project · runtimes: claude ✓, codex ✗ (not installed)
+```
+
+Check everything with `npx uncage doctor`: each line is ✓ or ✗, and every ✗ prints the exact `fix:` command. Codex showing "not installed" is fine, it is optional.
+
+**5. Run your app**
+
+```sh
+npm run dev
+```
+
+Open http://localhost:3000, pick **Claude Code**, and ask something like "Scan this repo and run the tests". Commands and file edits show an approval card: **Allow once** / **Deny**. **Stop** cancels the run and kills its processes. Refresh any time: history and pending approvals come back.
+
+> **How it fits together.** The browser talks only to your app (`/api/uncage/*`). Your app's server forwards to the daemon on `127.0.0.1:4783` with the token. The daemon runs Claude Code on the same machine, under that machine's Claude login. So the daemon must run on the machine where the agent should work (a developer laptop, a desktop app, an internal box). It is not a multi-tenant cloud service: don't expose it to the internet or share one Claude login among many users.
+
+**Other frameworks.** `createUncageHandler()` returns standard `(Request) => Promise<Response>` handlers, so it also works in any Fetch-style server route (Remix/React Router, SvelteKit, Hono, Bun). Mount it under `/api/uncage/*` (or pass `basePath`). The UI packages are plain React 19 components.
+
+**Try it from source instead.** Clone this repo, `pnpm install && pnpm build`, `pnpm uncage serve --workspace …`, then `pnpm --filter nextjs-default-chat dev` for the bundled example (Chinese UI) or `pnpm --filter react-headless-chat dev` for the headless one.
+
+Restyle the UI with the `--uncage-*` CSS variables. All classes use the `uc-` prefix. See [`examples/nextjs-default-chat`](examples/nextjs-default-chat).
 
 ## The composer
 
@@ -215,8 +215,8 @@ The E2E suites and smoke scripts run TypeScript files directly with `node`, so t
 
 ## Troubleshooting
 
-- **"The Uncage daemon is not reachable" / "token was not found"**: start `pnpm uncage serve` first. If the daemon was started with `--token-file`, give the app `UNCAGE_TOKEN`.
+- **"The Uncage daemon is not reachable" / "token was not found"**: start `npx uncage serve` first. If the daemon was started with `--token-file`, give the app `UNCAGE_TOKEN`.
 - **403 `forbidden_origin` in the app**: the `Host` your browser sends isn't an allowed hostname, for example you opened the `Network:` URL that `next dev` prints, a dev domain, or a tunnel. Add that hostname (without the port) to `allowedHosts` / `UNCAGE_ALLOWED_HOSTS` (see [Security model](#security-model)). The error message names the rejected host. Behind a reverse proxy, check that it passes the original `Host` header through.
 - **Port 4783 in use**: another `uncage serve` is running, or use `--port 4784` and set `UNCAGE_URL=http://127.0.0.1:4784` for the app.
 - **Claude Code shows "需要登录" (auth required)**: run `claude`, type `/login`, then restart `uncage serve`.
-- Run `pnpm uncage doctor`. Every failing check prints its fix.
+- Run `npx uncage doctor`. Every failing check prints its fix.

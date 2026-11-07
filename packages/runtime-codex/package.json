@@ -1,6 +1,6 @@
 {
   "name": "@uncage/runtime-codex",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Uncage runtime adapter for Codex via the Codex App Server (stdio JSON-RPC)",
   "type": "module",
   "engines": {

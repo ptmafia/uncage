@@ -1,5 +1,19 @@
 # @uncage/core
 
-Persistence and orchestration: `createUncage({ adapters, dataDir, workspace })` manages sessions, runs (at most one active per session), approvals with a TTL, and an append-only event log in PGlite. Embed it in your own Node process, or let `uncage serve` run it for you.
+The embeddable engine behind `uncage serve`: `createUncage({ adapters, dataDir, workspace, approvals, security })` manages sessions, runs (one active per session), approvals with a TTL and single-winner decisions, per-session settings, attachments, and an append-only event log with replay, persisted in PGlite.
 
-API: [`src/index.ts`](./src/index.ts) (every export is documented with JSDoc) · Project overview: [README](../../README.md)
+```ts
+import { createUncage } from '@uncage/core';
+import { claudeAdapter } from '@uncage/runtime-claude';
+
+const uncage = await createUncage({ adapters: [claudeAdapter()], workspace: { default: process.cwd() } });
+const session = await uncage.sessions.create({ runtime: 'claude' });
+await session.startRun({ prompt: 'Summarize this repo' });
+for await (const e of session.events({ after: 0 })) console.log(e.type);
+```
+
+One process per data directory. To serve it over HTTP use `@uncage/server`, or just `npx uncage serve` from `@uncage/cli`.
+
+---
+
+Part of **Uncage** — bring Claude Code (and Codex) into your own app with approvals, streaming and a ready-made UI. Start with [`@uncage/react-ui`](https://www.npmjs.com/package/@uncage/react-ui) for the 5-minute setup. MIT licensed.

@@ -1,6 +1,6 @@
 {
   "name": "@uncage/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The `uncage` command: serve the local daemon, run doctor, export events",
   "type": "module",
   "engines": {
