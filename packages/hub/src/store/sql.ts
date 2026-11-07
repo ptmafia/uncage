@@ -124,7 +124,17 @@ CREATE TABLE uncage_hub_run_manifests (
 CREATE INDEX uncage_hub_run_manifests_session_idx ON uncage_hub_run_manifests (session_id, created_at)
 `,
   },
+  {
+    id: 5,
+    sql: `
+ALTER TABLE uncage_hub_run_manifests ADD COLUMN nonce text;
+CREATE INDEX uncage_hub_run_manifests_created_idx ON uncage_hub_run_manifests (created_at)
+`,
+  },
 ];
+
+/** Postgres `unique_violation` (PGlite reports the same SQLSTATE). */
+const isUniqueViolation = (e: unknown): boolean => (e as { code?: unknown } | null)?.code === '23505';
 
 /** Applies pending migrations. Callers serialize concurrent first starts (e.g. an advisory lock). */
 export async function migrateHubStore(db: SqlClient): Promise<void> {
@@ -431,8 +441,8 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
 
     async putRunManifest(r) {
       await db.query(
-        'INSERT INTO uncage_hub_run_manifests (key, session_id, tools, created_at) VALUES ($1, $2, $3::jsonb, $4) ON CONFLICT (key) DO NOTHING',
-        [r.key, r.sessionId, json(r.tools), r.createdAt],
+        'INSERT INTO uncage_hub_run_manifests (key, session_id, tools, created_at, nonce) VALUES ($1, $2, $3::jsonb, $4, $5) ON CONFLICT (key) DO NOTHING',
+        [r.key, r.sessionId, json(r.tools), r.createdAt, r.nonce],
       );
     },
     async bindRunManifest(key, runId) {
@@ -442,12 +452,24 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
            WHERE key = $1 AND run_id IS NULL AND NOT EXISTS (SELECT 1 FROM uncage_hub_run_manifests WHERE run_id = $2)`,
           [key, runId],
         );
-      } catch {
-        // lost a race with claimRunManifest for the same run: it is bound either way
+      } catch (e) {
+        // Two binds of the same run id racing past the NOT EXISTS guard: the UNIQUE(run_id) index
+        // let exactly one win, so the run is bound either way. Anything else (e.g. the database
+        // going away) must surface.
+        if (!isUniqueViolation(e)) throw e;
       }
     },
-    async deleteRunManifest(key) {
-      await db.query('DELETE FROM uncage_hub_run_manifests WHERE key = $1 AND run_id IS NULL', [key]);
+    async deleteRunManifest(key, nonce) {
+      await db.query('DELETE FROM uncage_hub_run_manifests WHERE key = $1 AND nonce = $2 AND run_id IS NULL', [key, nonce]);
+    },
+    async pruneRunManifests(o) {
+      const { rows } = await db.query(
+        `DELETE FROM uncage_hub_run_manifests
+         WHERE (run_id IS NULL AND created_at < $1) OR (run_id IS NOT NULL AND created_at < $2)
+         RETURNING key`,
+        [o.unboundBefore, o.boundBefore],
+      );
+      return rows.length;
     },
     getRunTools: (runId) =>
       one<{ tools: string[]; session_id: string }, { sessionId: string; tools: string[] }>(

@@ -339,3 +339,21 @@ describe('ctx.files (file channel)', () => {
   });
 });
 
+
+describe('run-manifest retention sweep', () => {
+  it('the hub periodically drops unbound manifests older than their TTL', async () => {
+    const t = (th = await startTestHub({ manifestSweep: { intervalMs: 50, unboundTtlMs: 5_000, boundTtlMs: 60_000 } }));
+    const at = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
+    await t.store.putRunManifest({ key: 'stale', sessionId: 's', tools: [], createdAt: at(10_000), nonce: 'n' });
+    await t.store.putRunManifest({ key: 'fresh', sessionId: 's', tools: [], createdAt: at(0), nonce: 'n' });
+    await t.store.putRunManifest({ key: 'bound', sessionId: 's', tools: [], createdAt: at(10_000), nonce: 'n' });
+    await t.store.bindRunManifest('bound', 'run_b');
+    await sleep(300);
+    // stale (unbound, past TTL) is gone: binding it now finds nothing
+    await t.store.bindRunManifest('stale', 'run_s');
+    expect(await t.store.getRunTools('run_s')).toBeNull();
+    expect(await t.store.getRunTools('run_b')).not.toBeNull(); // bound TTL not reached
+    await t.store.bindRunManifest('fresh', 'run_f');
+    expect(await t.store.getRunTools('run_f')).not.toBeNull();
+  });
+});

@@ -152,24 +152,51 @@ export function hubStoreContract(make: () => Promise<{ store: HubStore; cleanup?
   it(
     'run manifests: first writer wins, bind by key once, delete only unbound',
     withStore(async (s) => {
-      await s.putRunManifest({ key: 's1:k1', sessionId: 's1', tools: ['a'], createdAt: iso(1) });
-      await s.putRunManifest({ key: 's1:k1', sessionId: 's1', tools: ['b'], createdAt: iso(2) });
+      await s.putRunManifest({ key: 's1:k1', sessionId: 's1', tools: ['a'], createdAt: iso(1), nonce: 'n1' });
+      await s.putRunManifest({ key: 's1:k1', sessionId: 's1', tools: ['b'], createdAt: iso(2), nonce: 'n1b' });
       expect(await s.getRunTools('run_1')).toBeNull();
       await s.bindRunManifest('s1:k1', 'run_1');
       expect(await s.getRunTools('run_1')).toEqual({ sessionId: 's1', tools: ['a'] });
       await s.bindRunManifest('s1:k1', 'run_other'); // already bound
       expect(await s.getRunTools('run_other')).toBeNull();
 
-      await s.putRunManifest({ key: 's1:k2', sessionId: 's1', tools: [], createdAt: iso(2) });
+      await s.putRunManifest({ key: 's1:k2', sessionId: 's1', tools: [], createdAt: iso(2), nonce: 'n2' });
       await s.bindRunManifest('s1:k2', 'run_1'); // run_1 already linked: no-op
       await s.bindRunManifest('s1:k2', 'run_2');
       expect(await s.getRunTools('run_2')).toEqual({ sessionId: 's1', tools: [] });
-      await s.deleteRunManifest('s1:k1'); // bound: kept
+      await s.deleteRunManifest('s1:k1', 'n1'); // bound: kept
       expect(await s.getRunTools('run_1')).not.toBeNull();
-      await s.putRunManifest({ key: 's1:k3', sessionId: 's1', tools: ['c'], createdAt: iso(3) });
-      await s.deleteRunManifest('s1:k3');
+      await s.putRunManifest({ key: 's1:k3', sessionId: 's1', tools: ['c'], createdAt: iso(3), nonce: 'n3' });
+      await s.putRunManifest({ key: 's1:k3', sessionId: 's1', tools: ['c'], createdAt: iso(4), nonce: 'retry' }); // same-key retry: no-op
+      await s.deleteRunManifest('s1:k3', 'retry'); // the retry did not create the row: kept
       await s.bindRunManifest('s1:k3', 'run_3');
-      expect(await s.getRunTools('run_3')).toBeNull();
+      expect(await s.getRunTools('run_3')).toEqual({ sessionId: 's1', tools: ['c'] });
+      await s.putRunManifest({ key: 's1:k4', sessionId: 's1', tools: ['d'], createdAt: iso(5), nonce: 'n4' });
+      await s.deleteRunManifest('s1:k4', 'n4'); // its creator: deleted
+      await s.bindRunManifest('s1:k4', 'run_4');
+      expect(await s.getRunTools('run_4')).toBeNull();
+    }),
+  );
+
+  it(
+    'run manifests: retention prune drops old unbound and old bound rows only',
+    withStore(async (s) => {
+      const H = 3_600_000;
+      const put = (key: string, at: number) => s.putRunManifest({ key, sessionId: 's1', tools: ['a'], createdAt: iso(at), nonce: key });
+      await put('old-unbound', 0);
+      await put('new-unbound', 2 * H);
+      await put('old-bound', 0);
+      await put('mid-bound', 2 * H);
+      await s.bindRunManifest('old-bound', 'run_old');
+      await s.bindRunManifest('mid-bound', 'run_mid');
+      expect(await s.pruneRunManifests({ unboundBefore: iso(H), boundBefore: iso(H) })).toBe(2);
+      expect(await s.getRunTools('run_old')).toBeNull();
+      expect(await s.getRunTools('run_mid')).not.toBeNull();
+      await s.bindRunManifest('new-unbound', 'run_new'); // still there
+      expect(await s.getRunTools('run_new')).not.toBeNull();
+      await put('old-unbound', 0); // gone, so it can be stored again
+      await s.bindRunManifest('old-unbound', 'run_again');
+      expect(await s.getRunTools('run_again')).toEqual({ sessionId: 's1', tools: ['a'] });
     }),
   );
 }

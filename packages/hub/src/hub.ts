@@ -30,6 +30,15 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
 /** How long a tool call for a run whose startRun result is still in flight waits for it. */
 const DEFAULT_RUN_INDEX_WAIT_MS = 10_000;
+/** Run-manifest retention sweep: every hour (on every node; deletes are idempotent). */
+const MANIFEST_SWEEP_MS = 3_600_000;
+/** An unbound manifest (startRun never answered) is dropped after an hour. */
+const UNBOUND_MANIFEST_TTL_MS = 3_600_000;
+/**
+ * A bound manifest is kept 7 days. The hub has no event-retention window to follow (replicated
+ * events are kept), and a run still calling tools a week after it started is not a real case.
+ */
+const BOUND_MANIFEST_TTL_MS = 7 * 24 * 3_600_000;
 /** A `tool_result` must fit one frame with room for the envelope. */
 const TOOL_RESULT_BUDGET = MAX_FRAME_BYTES - 16 * 1024;
 /** Tool arguments larger than this are not stored in the audit table. */
@@ -53,6 +62,8 @@ export interface HubInternals {
   toolExecutor?: ToolExecutor;
   /** See DEFAULT_RUN_INDEX_WAIT_MS (tests shorten it). */
   runIndexWaitMs?: number;
+  /** Run-manifest sweep interval / retention (tests shorten them). */
+  manifestSweep?: { intervalMs?: number; unboundTtlMs?: number; boundTtlMs?: number };
   logger?: HubLogger;
 }
 
@@ -370,6 +381,20 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   }
   await machines.start();
 
+  const sweep = {
+    intervalMs: o.manifestSweep?.intervalMs ?? MANIFEST_SWEEP_MS,
+    unboundTtlMs: o.manifestSweep?.unboundTtlMs ?? UNBOUND_MANIFEST_TTL_MS,
+    boundTtlMs: o.manifestSweep?.boundTtlMs ?? BOUND_MANIFEST_TTL_MS,
+  };
+  const sweepManifests = () => {
+    const now = Date.now();
+    void store
+      .pruneRunManifests({ unboundBefore: new Date(now - sweep.unboundTtlMs).toISOString(), boundBefore: new Date(now - sweep.boundTtlMs).toISOString() })
+      .catch((err: unknown) => logger.error({ err }, 'run-manifest sweep failed'));
+  };
+  const sweepTimer = setInterval(sweepManifests, sweep.intervalMs);
+  sweepTimer.unref();
+
   const setupUrl = basePath === DEFAULT_BASE_PATH ? origin : hubUrl;
   const api = browserApi({
     store,
@@ -421,6 +446,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     close: () =>
       (closing ??= (async () => {
         shutdown.abort();
+        clearInterval(sweepTimer);
         await machines.close();
         if (ownsCluster) await cluster.close();
         if (ownsStore) await store.close();

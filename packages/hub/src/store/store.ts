@@ -175,11 +175,22 @@ export interface HubStore {
    * `key` (`<sessionId>:<idempotencyKey>`); first writer wins. Tool calls are only accepted for
    * tools in their run's set.
    */
-  putRunManifest(r: { key: string; sessionId: string; tools: string[]; createdAt: string }): Promise<void>;
-  /** Links the manifest stored under `key` to `runId` (no-op if either is already linked). */
+  putRunManifest(r: { key: string; sessionId: string; tools: string[]; createdAt: string; nonce: string }): Promise<void>;
+  /**
+   * Links the manifest stored under `key` to `runId` (no-op if either is already linked; a lost
+   * race for the same run is not an error). Other database errors reject.
+   */
   bindRunManifest(key: string, runId: string): Promise<void>;
-  /** Drops an unlinked manifest (its startRun was refused). */
-  deleteRunManifest(key: string): Promise<void>;
+  /**
+   * Drops an unlinked manifest whose startRun was refused — only if `nonce` is the one this
+   * request stored (a concurrent same-key retry that did not create the row must not delete it).
+   */
+  deleteRunManifest(key: string, nonce: string): Promise<void>;
+  /**
+   * Retention: deletes unlinked manifests created before `unboundBefore` and linked ones created
+   * before `boundBefore`. Resolves how many rows were deleted.
+   */
+  pruneRunManifests(o: { unboundBefore: string; boundBefore: string }): Promise<number>;
   /** The run's session and offered tool names, or `null` when the run has no manifest (yet). */
   getRunTools(runId: string): Promise<{ sessionId: string; tools: string[] } | null>;
 

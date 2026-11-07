@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { hubStoreContract } from './contract.js';
 import { pgliteHubStore } from './pglite.js';
 import { postgresHubStore, type PgPoolLike } from './postgres.js';
-import { HUB_MIGRATIONS } from './sql.js';
+import { HUB_MIGRATIONS, migrateHubStore, sqlHubStore, type SqlClient } from './sql.js';
 
 describe('pgliteHubStore', () => {
   hubStoreContract(async () => ({ store: await pgliteHubStore({ dataDir: 'memory://' }) }));
@@ -63,6 +63,36 @@ describe('postgresHubStore (pg Pool adapter, PGlite-backed)', () => {
     await a.close();
     await b.close();
     expect(pool.ended).toBe(false);
+    await pg.close();
+  });
+});
+
+describe('bindRunManifest error handling', () => {
+  const failing = (err: unknown) =>
+    sqlHubStore(
+      {
+        query: async () => {
+          throw err;
+        },
+        transaction: async () => {
+          throw err;
+        },
+      },
+      async () => undefined,
+    );
+
+  it('swallows only unique violations (23505); anything else rejects', async () => {
+    await expect(failing(Object.assign(new Error('duplicate key'), { code: '23505' })).bindRunManifest('k', 'r')).resolves.toBeUndefined();
+    await expect(failing(Object.assign(new Error('terminating connection'), { code: '57P01' })).bindRunManifest('k', 'r')).rejects.toThrow('terminating connection');
+    await expect(failing(new Error('socket hang up')).bindRunManifest('k', 'r')).rejects.toThrow('socket hang up');
+  });
+
+  it('PGlite reports a UNIQUE(run_id) clash as SQLSTATE 23505', async () => {
+    const pg = new PGlite('memory://');
+    await migrateHubStore(pg as unknown as SqlClient);
+    await pg.query(`INSERT INTO uncage_hub_run_manifests (key, session_id, run_id, tools, created_at) VALUES ('a', 's', 'run_1', '[]', 'x')`);
+    const err = await pg.query(`INSERT INTO uncage_hub_run_manifests (key, session_id, run_id, tools, created_at) VALUES ('b', 's', 'run_1', '[]', 'x')`).catch((e: unknown) => e);
+    expect((err as { code?: string }).code).toBe('23505');
     await pg.close();
   });
 });

@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { UncageError } from '@uncage/core';
 import {
   ApprovalDecisionSchema,
@@ -361,7 +362,8 @@ export function browserApi(ctx: ApiContext) {
     // Record the offered tools before the machine can start the run: tool calls are accepted only
     // for tools in their run's manifest (bound to the run id once it is known).
     const manifestKey = `${rec.id}:${key}`;
-    await store.putRunManifest({ key: manifestKey, sessionId: rec.id, tools: manifest.tools.map((t) => t.name), createdAt: new Date().toISOString() });
+    const nonce = randomBytes(12).toString('hex');
+    await store.putRunManifest({ key: manifestKey, sessionId: rec.id, tools: manifest.tools.map((t) => t.name), createdAt: new Date().toISOString(), nonce });
     let run;
     try {
       run = await machines.command(rec.machineId, 'startRun', {
@@ -374,7 +376,7 @@ export function browserApi(ctx: ApiContext) {
     } catch (err) {
       // Refused by the machine: no run will use it. (A timeout may still have started one; a retry
       // with the same Idempotency-Key binds it.)
-      if (!(err instanceof UncageError && err.code === 'machine_offline')) await store.deleteRunManifest(manifestKey).catch(() => undefined);
+      if (!(err instanceof UncageError && err.code === 'machine_offline')) await store.deleteRunManifest(manifestKey, nonce).catch(() => undefined);
       throw err;
     }
     if (run.sessionId === rec.id) {
