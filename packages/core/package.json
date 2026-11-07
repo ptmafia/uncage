@@ -1,13 +1,15 @@
 {
   "name": "@uncage/core",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Uncage core: persistence and orchestration",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -25,11 +27,22 @@
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.15",
-    "@uncage/protocol": "workspace:*",
+    "@uncage/protocol": "workspace:^",
     "drizzle-orm": "^0.45.4",
     "pino": "^10.4.0"
   },
   "devDependencies": {
     "@uncage/testkit": "workspace:*"
+  },
+  "license": "MIT",
+  "keywords": [
+    "uncage",
+    "agent",
+    "ai-agent",
+    "sdk",
+    "orchestration"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

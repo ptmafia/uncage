@@ -1,6 +1,6 @@
 {
   "name": "@uncage/testkit",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Fake runtime adapter and adapter contract suite for Uncage tests",
   "type": "module",
   "engines": {
@@ -25,7 +25,8 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@uncage/protocol": "workspace:*",
+    "@uncage/protocol": "workspace:^",
     "vitest": "^5.1.0"
-  }
+  },
+  "private": true
 }

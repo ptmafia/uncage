@@ -1,13 +1,15 @@
 {
   "name": "@uncage/server",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Uncage local daemon: REST + SSE over @uncage/core, and a same-origin proxy for Next.js",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -28,13 +30,25 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@uncage/core": "workspace:*",
-    "@uncage/protocol": "workspace:*",
+    "@uncage/core": "workspace:^",
+    "@uncage/protocol": "workspace:^",
     "fastify": "^5.12.8",
     "pino": "^10.4.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@uncage/testkit": "workspace:*"
+  },
+  "license": "MIT",
+  "keywords": [
+    "uncage",
+    "agent",
+    "ai-agent",
+    "server",
+    "sse",
+    "proxy"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

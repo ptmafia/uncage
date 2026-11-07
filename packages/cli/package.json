@@ -1,6 +1,6 @@
 {
   "name": "@uncage/cli",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "The `uncage` command: serve the local daemon, run doctor, export events",
   "type": "module",
   "engines": {
@@ -10,7 +10,9 @@
     "uncage": "./dist/bin.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsup",
@@ -19,13 +21,23 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@uncage/core": "workspace:*",
-    "@uncage/protocol": "workspace:*",
-    "@uncage/runtime-claude": "workspace:*",
-    "@uncage/runtime-codex": "workspace:*",
-    "@uncage/server": "workspace:*",
+    "@uncage/core": "workspace:^",
+    "@uncage/protocol": "workspace:^",
+    "@uncage/runtime-claude": "workspace:^",
+    "@uncage/runtime-codex": "workspace:^",
+    "@uncage/server": "workspace:^",
     "pino": "^10.4.0",
     "yaml": "^2.8.0",
     "zod": "^4.6.7"
+  },
+  "license": "MIT",
+  "keywords": [
+    "uncage",
+    "agent",
+    "ai-agent",
+    "cli"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

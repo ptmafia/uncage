@@ -1,7 +1,7 @@
 {
   "name": "@uncage/react-ui",
-  "version": "0.0.0",
-  "description": "Default Uncage chat UI for React, styled after Kumi",
+  "version": "0.1.0",
+  "description": "Default Uncage chat UI for React",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -10,7 +10,9 @@
     "*.css"
   ],
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -28,13 +30,13 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@uncage/protocol": "workspace:*",
+    "@uncage/protocol": "workspace:^",
     "lucide-react": "^1.70.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1"
   },
   "peerDependencies": {
-    "@uncage/react": "workspace:*",
+    "@uncage/react": "workspace:^",
     "react": "^19.0.0"
   },
   "devDependencies": {
@@ -48,5 +50,17 @@
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "vitest": "^5.1.0"
+  },
+  "license": "MIT",
+  "keywords": [
+    "uncage",
+    "agent",
+    "ai-agent",
+    "react",
+    "ui",
+    "chat"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@uncage/runtime-codex",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Uncage runtime adapter for Codex via the Codex App Server (stdio JSON-RPC)",
   "type": "module",
   "engines": {
@@ -8,7 +8,9 @@
   },
   "sideEffects": false,
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -25,9 +27,20 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@uncage/protocol": "workspace:*"
+    "@uncage/protocol": "workspace:^"
   },
   "devDependencies": {
     "@uncage/testkit": "workspace:*"
+  },
+  "license": "MIT",
+  "keywords": [
+    "uncage",
+    "agent",
+    "ai-agent",
+    "codex",
+    "openai"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

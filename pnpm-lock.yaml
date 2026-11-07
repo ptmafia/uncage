@@ -125,19 +125,19 @@ importers:
   packages/cli:
     dependencies:
       '@uncage/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       '@uncage/protocol':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../protocol
       '@uncage/runtime-claude':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../runtime-claude
       '@uncage/runtime-codex':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../runtime-codex
       '@uncage/server':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../server
       pino:
         specifier: ^10.4.0
@@ -152,7 +152,7 @@ importers:
   packages/client:
     dependencies:
       '@uncage/protocol':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../protocol
     devDependencies:
       vitest:
@@ -165,7 +165,7 @@ importers:
         specifier: ^0.5.15
         version: 0.5.15
       '@uncage/protocol':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../protocol
       drizzle-orm:
         specifier: ^0.45.4
@@ -187,10 +187,10 @@ importers:
   packages/react:
     dependencies:
       '@uncage/client':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../client
       '@uncage/protocol':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../protocol
     devDependencies:
       '@testing-library/dom':
@@ -221,7 +221,7 @@ importers:
   packages/react-ui:
     dependencies:
       '@uncage/protocol':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../protocol
       lucide-react:
         specifier: ^1.70.0
@@ -270,7 +270,7 @@ importers:
         specifier: 0.3.318
         version: 0.3.318(@anthropic-ai/sdk@1.6.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(zod@4.6.7)
       '@uncage/protocol':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../protocol
     devDependencies:
       '@uncage/testkit':
@@ -280,7 +280,7 @@ importers:
   packages/runtime-codex:
     dependencies:
       '@uncage/protocol':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../protocol
     devDependencies:
       '@uncage/testkit':
@@ -290,10 +290,10 @@ importers:
   packages/server:
     dependencies:
       '@uncage/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       '@uncage/protocol':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../protocol
       fastify:
         specifier: ^5.12.8
@@ -312,7 +312,7 @@ importers:
   packages/testkit:
     dependencies:
       '@uncage/protocol':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../protocol
       vitest:
         specifier: ^5.1.0
