@@ -7,13 +7,15 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
 import type { TLSSocket } from 'node:tls';
-import type { UncageHandler } from './proxy.js';
 
 /** A Connect/Express-style middleware: `(req, res, next?)`. Errors before the response go to `next`. */
 export type UncageNodeHandler = (req: IncomingMessage, res: ServerResponse, next?: (err?: unknown) => void) => void;
 
-const METHODS = ['GET', 'POST', 'PATCH'] as const;
+const METHODS = ['GET', 'POST', 'PATCH', 'DELETE'] as const;
 type Method = (typeof METHODS)[number];
+
+/** Fetch-style handlers by method; methods without one get 405. */
+export type FetchHandlers = { [M in Method]?: (req: Request) => Promise<Response> };
 
 /** Express adds these to `req`; plain `node:http` requests have neither. */
 interface ExpressLike {
@@ -85,13 +87,15 @@ async function writeResponse(response: Response, res: ServerResponse): Promise<v
   res.end();
 }
 
-/** Wraps Fetch-style handlers (from `createUncageHandler`) as a Node `(req, res, next?)` handler. */
-export function toNodeHandler(handlers: UncageHandler): UncageNodeHandler {
+/** Wraps Fetch-style handlers (from `createUncageHandler` or `@uncage/hub`) as a Node `(req, res, next?)` handler. */
+export function toNodeHandler(handlers: FetchHandlers): UncageNodeHandler {
+  const allowed = METHODS.filter((m) => handlers[m] !== undefined);
   return (req, res, next) => {
     const method = req.method as Method;
-    if (!METHODS.includes(method)) {
+    const handle = allowed.includes(method) ? handlers[method] : undefined;
+    if (!handle) {
       res.statusCode = 405;
-      res.setHeader('allow', METHODS.join(', '));
+      res.setHeader('allow', allowed.join(', '));
       res.end();
       return;
     }
@@ -121,7 +125,7 @@ export function toNodeHandler(handlers: UncageHandler): UncageNodeHandler {
         signal: abort.signal,
         ...(body !== undefined ? { body, duplex: 'half' } : {}),
       } as RequestInit);
-      handlers[method](request).then((response) => writeResponse(response, res)).catch(fail);
+      handle(request).then((response) => writeResponse(response, res)).catch(fail);
     } catch (err) {
       fail(err);
     }

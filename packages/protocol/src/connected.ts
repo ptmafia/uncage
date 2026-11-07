@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { RuntimeInfoSchema } from './domain.js';
+import { SessionSnapshotSchema, StartRunBodySchema, UpdateSessionSettingsBodySchema } from './api.js';
+import { ApprovalDecisionSchema, ApprovalRequestSchema, AttachmentSchema, RunSchema, RuntimeInfoSchema, SessionSchema } from './domain.js';
 import { ErrorBodySchema, type ErrorCode } from './errors.js';
 import { UncageEventSchema } from './events.js';
 
@@ -99,6 +100,50 @@ export const HubCommandOpSchema = z.enum([
   'readEvents',
 ]);
 export type HubCommandOp = z.infer<typeof HubCommandOpSchema>;
+
+const IdempotencyKeySchema = z.string().min(1).max(256);
+const Base64Schema = z.string().regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/);
+/** Most events one `readEvents` command returns. */
+export const MAX_READ_EVENTS = 500;
+
+/**
+ * `args` of each hub → agent `command`, by op. The agent validates these before acting; the
+ * session workspace is always chosen by the agent, never by the hub.
+ */
+export const HubCommandArgsSchemas = {
+  createSession: z.object({ runtime: z.string().min(1), title: z.string().optional() }),
+  startRun: StartRunBodySchema.extend({
+    sessionId: z.string(),
+    idempotencyKey: IdempotencyKeySchema,
+    manifest: SessionManifestSchema,
+  }),
+  cancelRun: z.object({ runId: z.string() }),
+  decide: z.object({ approvalId: z.string(), decision: ApprovalDecisionSchema, idempotencyKey: IdempotencyKeySchema }),
+  updateSettings: z.object({ sessionId: z.string(), patch: UpdateSessionSettingsBodySchema }),
+  addAttachment: z.object({ sessionId: z.string(), name: z.string().min(1), mime: z.string().min(1), data: Base64Schema }),
+  snapshot: z.object({ sessionId: z.string() }),
+  listSessions: z.object({}),
+  readEvents: z.object({
+    sessionId: z.string(),
+    after: z.number().int().nonnegative(),
+    limit: z.number().int().min(1).max(MAX_READ_EVENTS),
+  }),
+} satisfies Record<HubCommandOp, z.ZodType>;
+export type HubCommandArgs = { [K in HubCommandOp]: z.infer<(typeof HubCommandArgsSchemas)[K]> };
+
+/** `data` of a successful `result` for each op (same shapes as the daemon API responses). */
+export const HubCommandResultSchemas = {
+  createSession: SessionSchema,
+  startRun: RunSchema,
+  cancelRun: RunSchema,
+  decide: ApprovalRequestSchema,
+  updateSettings: SessionSchema,
+  addAttachment: AttachmentSchema,
+  snapshot: SessionSnapshotSchema,
+  listSessions: z.array(SessionSchema),
+  readEvents: z.array(UncageEventSchema).max(MAX_READ_EVENTS),
+} satisfies Record<HubCommandOp, z.ZodType>;
+export type HubCommandResults = { [K in HubCommandOp]: z.infer<(typeof HubCommandResultSchemas)[K]> };
 
 export const ToolCallResultSchema = z.object({
   content: z.array(

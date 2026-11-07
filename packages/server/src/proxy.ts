@@ -11,8 +11,8 @@
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { ERROR_CATALOG, type ErrorBody, type ErrorCode } from '@uncage/protocol';
 import { toNodeHandler, type UncageNodeHandler } from './node-handler.js';
+import { errorResponse } from './wire.js';
 
 export type { UncageNodeHandler } from './node-handler.js';
 
@@ -51,21 +51,6 @@ const DROP_RESPONSE_HEADERS = new Set(['connection', 'keep-alive', 'transfer-enc
 
 /** `details.reason` of the proxy's errors for a stopped or unreachable daemon (no token, connection refused). */
 const DAEMON_UNREACHABLE = 'daemon_unreachable';
-
-function errorResponse(
-  code: ErrorCode,
-  opts: { message?: string; hint?: string; details?: Record<string, unknown> } = {},
-): Response {
-  const entry = ERROR_CATALOG[code];
-  const error: ErrorBody = {
-    code,
-    message: opts.message ?? entry.message,
-    hint: opts.hint ?? entry.hint,
-    retryable: entry.retryable,
-    ...(opts.details ? { details: opts.details } : {}),
-  };
-  return Response.json({ error }, { status: entry.status });
-}
 
 /**
  * Event streams end, rather than error, when the daemon drops the connection (e.g. it restarted):

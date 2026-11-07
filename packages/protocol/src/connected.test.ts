@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CONNECTED_PROTOCOL, ERROR_CATALOG, MAX_FRAME_BYTES, ProtocolFrameError, SessionManifestSchema,
   SkillSpecSchema, ToolSpecSchema, RelativePathSchema, DeviceCodeResponseSchema, parseAgentFrame, parseHubFrame,
+  HubCommandArgsSchemas, HubCommandOpSchema, HubCommandResultSchemas, MAX_READ_EVENTS,
 } from './index.js';
 
 const err = { code: 'tool_failed', message: 'x', retryable: true };
@@ -143,5 +144,24 @@ describe('hardening', () => {
     expect(DeviceCodeResponseSchema.safeParse({ ...dc, userCode: 'abcd-efgh' }).success).toBe(false);
     expect(() => parseAgentFrame(JSON.stringify({ ...agentFrames[0], protocol: 0 }))).toThrow();
     expect(ToolSpecSchema.safeParse({ name: 'a', description: 'd', inputSchema: { x: 'y'.repeat(70_000) }, requiresConfirmation: false }).success).toBe(false);
+  });
+});
+
+describe('hub command args / results', () => {
+  it('covers every op', () => {
+    expect(Object.keys(HubCommandArgsSchemas).sort()).toEqual([...HubCommandOpSchema.options].sort());
+    expect(Object.keys(HubCommandResultSchemas).sort()).toEqual([...HubCommandOpSchema.options].sort());
+  });
+
+  it('validates args', () => {
+    expect(HubCommandArgsSchemas.createSession.safeParse({ runtime: 'claude-code' }).success).toBe(true);
+    expect(HubCommandArgsSchemas.createSession.safeParse({ runtime: '' }).success).toBe(false);
+    const startRun = { sessionId: 's', prompt: 'p', idempotencyKey: 'k', manifest: { tools: [], skills: [] } };
+    expect(HubCommandArgsSchemas.startRun.safeParse(startRun).success).toBe(true);
+    expect(HubCommandArgsSchemas.startRun.safeParse({ ...startRun, idempotencyKey: '' }).success).toBe(false);
+    expect(HubCommandArgsSchemas.startRun.safeParse({ ...startRun, manifest: { tools: [{ name: 'Bash' }], skills: [] } }).success).toBe(false);
+    expect(HubCommandArgsSchemas.readEvents.safeParse({ sessionId: 's', after: 0, limit: MAX_READ_EVENTS + 1 }).success).toBe(false);
+    expect(HubCommandArgsSchemas.addAttachment.safeParse({ sessionId: 's', name: 'a', mime: 'text/plain', data: 'not base64!' }).success).toBe(false);
+    expect(HubCommandArgsSchemas.updateSettings.safeParse({ sessionId: 's', patch: {} }).success).toBe(false);
   });
 });

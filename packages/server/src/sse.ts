@@ -1,18 +1,10 @@
 import type { ServerResponse } from 'node:http';
 import { UncageError, type SessionHandle } from '@uncage/core';
-import type { UncageEvent } from '@uncage/protocol';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { toUncageError } from './errors.js';
+import { formatErrorFrame, formatEvent, SSE_HEADERS, SSE_HEARTBEAT } from './wire.js';
 
-export const SSE_HEADERS = {
-  'content-type': 'text/event-stream',
-  'cache-control': 'no-cache, no-transform',
-  connection: 'keep-alive',
-  'x-accel-buffering': 'no',
-} as const;
-
-export const formatEvent = (e: UncageEvent): string =>
-  `id: ${e.eventId}\nevent: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`;
+export { formatEvent, SSE_HEADERS } from './wire.js';
 
 /** Writes a chunk, waiting for `drain` under backpressure (or until the socket closes). */
 async function write(res: ServerResponse, chunk: string): Promise<void> {
@@ -63,7 +55,7 @@ export async function streamEvents(
     res.writeHead(200, SSE_HEADERS);
     res.flushHeaders();
     heartbeat = setInterval(() => {
-      if (!ac.signal.aborted) res.write(': ping\n\n');
+      if (!ac.signal.aborted) res.write(SSE_HEARTBEAT);
     }, opts.heartbeatMs);
     heartbeat.unref();
 
@@ -75,7 +67,7 @@ export async function streamEvents(
     if (!ac.signal.aborted) {
       const uerr = toUncageError(err);
       if (!(err instanceof UncageError)) request.log.error({ err }, 'event stream failed');
-      res.write(`event: error\ndata: ${JSON.stringify(uerr.toBody(request.id))}\n\n`);
+      res.write(formatErrorFrame(uerr.toBody(request.id)));
     }
   } finally {
     clearInterval(heartbeat);

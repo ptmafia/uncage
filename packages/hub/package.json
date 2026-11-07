@@ -1,0 +1,51 @@
+{
+  "name": "@uncage/hub",
+  "version": "0.1.1",
+  "description": "Uncage hub: device login, machine connections and the browser API for Connected Mode, mounted in your website's Node backend",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.15",
+    "@uncage/core": "workspace:^",
+    "@uncage/protocol": "workspace:^",
+    "@uncage/server": "workspace:^",
+    "ws": "^8.18.3",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  },
+  "license": "MIT",
+  "keywords": [
+    "uncage",
+    "agent",
+    "ai-agent",
+    "hub",
+    "websocket",
+    "claude-code"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "author": "Nathan Zhang"
+}
