@@ -33,7 +33,7 @@ UNCAGE_LIVE=1 pnpm exec playwright test --project=connected-live               #
 | Job | Steps |
 | --- | --- |
 | **Node 22 / Node 24** | `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm typecheck`, `pnpm lint`, `pnpm test`, then `pnpm e2e:mock` with Playwright’s Chromium |
-| **Docs** | Build the packages, type-check every code sample on this site (`pnpm --filter docs check:snippets`), then build the site (`pnpm --filter docs build`), which also generates the API reference and validates every internal link |
+| **Docs** (Node 24) | Build the packages the site documents, lint and type-check `apps/docs`, type-check every code sample on this site (`pnpm --filter docs check:snippets`), then build the site (`pnpm --filter docs build`), which also generates the API reference and validates every internal link |
 
 ## Releases
 
@@ -61,7 +61,7 @@ When that commit lands on `main` there are no pending changesets and the version
 
 ## This help site
 
-The site lives in `apps/docs` (Astro + Starlight). It is not part of the root `pnpm build`.
+The site lives in `apps/docs` (Astro + Starlight). It is not part of the root `pnpm build`, `pnpm typecheck` or `pnpm lint` (Astro needs Node.js 22.23.4 or newer; the packages support 22.0+), so it has its own CI job.
 
 ```sh
 pnpm build                          # the packages (the API reference and the sample check use them)

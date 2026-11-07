@@ -24,7 +24,7 @@ Read https://ptmafia.github.io/uncage/skills/uncage/SKILL.md first and follow it
 3. Wire lib/auth.ts to this app's existing sign-in (find how the app reads the current user). Do not keep the development user unless the app has no sign-in at all.
 4. Change the "dev" and "start" scripts to run server.ts with node (Node.js 22.18 or newer), set "type": "module" in package.json and "allowImportingTsExtensions": true in tsconfig.json.
 5. Add .uncage-hub/ to .gitignore.
-Verify: start the dev server, then curl -s http://localhost:3000/api/uncage/install.sh | head -3 prints the installer, and http://localhost:3000/device?code=TEST-TEST responds with the headers Content-Security-Policy: frame-ancestors 'none' and X-Frame-Options: DENY. Report what you changed and anything you could not wire.
+Verify: start the dev server, then curl -s http://localhost:3000/api/uncage/install.sh | head -3 prints the installer, and curl -sI http://localhost:3000/device shows the headers Content-Security-Policy: frame-ancestors 'none' and X-Frame-Options: DENY (no ?code=: unknown codes count as failed guesses and are rate limited). Report what you changed and anything you could not wire.
 ```
 
 ## Before you start
@@ -226,18 +226,33 @@ export default function UncagePage() {
 `uncage setup` sends the user to `/device?code=…` on your site. Approving there gives that computer access to the user’s account, so the page must be served only to the signed-in user, must not be framable, and must record the decision with a POST that only your own origin can send. Next.js Server Actions are POST-only and check the `Origin`, which covers the last point.
 
 ```tsx title="app/device/page.tsx"
+import type { ApproveDeviceProps } from '@uncage/react-ui';
 import { currentUser } from '../../lib/auth.ts';
 import { getHub } from '../../lib/hub-registry.ts';
 import { ApprovePage } from './approve-page.tsx';
 
 export const dynamic = 'force-dynamic';
 
+type DeviceError = NonNullable<ApproveDeviceProps['error']>;
+
 export default async function DevicePage({ searchParams }: { searchParams: Promise<{ code?: string }> }) {
   const { code = '' } = await searchParams;
   const user = await currentUser();
   if (!user) return <p>Sign in first, then open this link again.</p>; // or redirect to your login page
-  const lookup = code ? await getHub().lookupDevice(code, user) : null;
-  return <ApprovePage code={code} lookup={lookup} />;
+  let lookup: ApproveDeviceProps['lookup'] = null;
+  let error: DeviceError | undefined;
+  try {
+    lookup = code ? await getHub().lookupDevice(code, user) : null;
+  } catch (e) {
+    // Unknown codes count as failed guesses; after 10 in 10 minutes lookupDevice throws `rate_limited`.
+    // Show a message instead of crashing the page.
+    const err = e as { code?: string; message?: string };
+    error =
+      err.code === 'rate_limited'
+        ? { code: 'rate_limited', message: 'Too many attempts with unknown codes. Wait a few minutes, then open the link again.' }
+        : { code: 'internal_error', message: 'Could not check this code. Try again in a moment.' };
+  }
+  return <ApprovePage code={code} lookup={lookup} initialError={error} />;
 }
 ```
 
@@ -269,9 +284,13 @@ import '@uncage/react-ui/styles.css';
 import { useState } from 'react';
 import { decide } from './actions.ts';
 
-export function ApprovePage({ code, lookup }: Pick<ApproveDeviceProps, 'code' | 'lookup'>) {
+export function ApprovePage({
+  code,
+  lookup,
+  initialError,
+}: Pick<ApproveDeviceProps, 'code' | 'lookup'> & { initialError?: ApproveDeviceProps['error'] }) {
   const [state, setState] = useState<ApproveDeviceState>('idle');
-  const [error, setError] = useState<ApproveDeviceProps['error']>();
+  const [error, setError] = useState<ApproveDeviceProps['error']>(initialError);
   const act = async (approve: boolean) => {
     setState(approve ? 'approving' : 'denying');
     setError(undefined);

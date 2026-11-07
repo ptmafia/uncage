@@ -57,6 +57,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # The API reference and the sample check read the built packages.
       - run: pnpm exec turbo run build --filter='docs^...'
+      # The root typecheck / lint skip the docs (Astro needs Node >= 22.23.4); they run here on Node 24.
+      - run: pnpm --filter docs lint
+      - run: pnpm --filter docs typecheck
       - name: Type-check every code sample on the site
         run: pnpm --filter docs check:snippets
       - name: Build the site (generates the API reference, validates every internal link)

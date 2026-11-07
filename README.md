@@ -44,6 +44,8 @@ cd examples/connected-demo && pnpm start        # http://localhost:3200
 npm i @uncage/hub @uncage/react-ui zod
 ```
 
+An excerpt to show the shape (`./auth.ts` is your own sign-in). The complete, type-checked files are in the [Connected Mode quickstart](https://ptmafia.github.io/uncage/start/quickstart-connected/) and [Mount the hub](https://ptmafia.github.io/uncage/guides/mount-the-hub/).
+
 ```ts
 // server.ts — mount the hub in your Node server (Express here; Fastify, Hono, Next.js custom servers work too)
 import { createServer } from 'node:http';
@@ -52,12 +54,17 @@ import express from 'express';
 import { z } from 'zod';
 import { getSessionUser } from './auth.ts'; // your sign-in: (req: Request) => Promise<{ id: string } | null>
 
+const notes = new Map<string, Array<{ title: string; text: string }>>(); // stand-in for your database
+
 const saveNote = defineTool({
   name: 'save_note',
   description: 'Save a note to the signed-in user’s notes on the website.',
   input: z.object({ title: z.string(), text: z.string() }),
-  // Runs in your backend, as the signed-in user (db is your database).
-  handler: async ({ title, text }, ctx) => ({ saved: await db.notes.insert({ owner: ctx.user.id, title, text }) }),
+  // Runs in your backend, as the signed-in user.
+  handler: async ({ title, text }, ctx) => {
+    notes.set(ctx.user.id, [...(notes.get(ctx.user.id) ?? []), { title, text }]);
+    return { saved: title };
+  },
 });
 
 const hub = await createHub({ publicUrl: 'https://your.site', getUser: getSessionUser, tools: [saveNote] });

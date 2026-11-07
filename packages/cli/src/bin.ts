@@ -20,6 +20,7 @@ import { restartLaunchAgent, uninstallLaunchAgent } from './launchd.js';
 import { connectedHome, daemonHomeConflict } from './home.js';
 import { runSetup, SETUP_HELP } from './setup.js';
 import { listSites, removeSite, SITES_HELP } from './sites.js';
+import { versionOutput } from './version.js';
 
 const HELP = `uncage - run AI coding agents behind a local, approval-gated API
 
@@ -37,6 +38,7 @@ Connected Mode (a website drives this computer):
   uncage activity [--site <id>] [--follow]          What websites did on this computer.
 
   uncage <command> --help
+  uncage --version
 
 Zero-config: "uncage serve" works with no setup (optional ./uncage.config.yaml).
 Env: UNCAGE_PORT, UNCAGE_LOG_LEVEL; doctor also reads UNCAGE_URL. UNCAGE_HOME (absolute) moves
@@ -58,6 +60,11 @@ async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
   if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') {
     console.log(HELP);
+    return 0;
+  }
+  const version = versionOutput(cmd);
+  if (version !== null) {
+    console.log(version);
     return 0;
   }
   const cwd = process.cwd();

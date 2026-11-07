@@ -67,7 +67,7 @@ In Connected Mode the same code means a cross-site POST reached the hub: the req
 
 ### Port 4783 in use
 
-Another `uncage serve` is running, or use `--port 4784` and set `UNCAGE_URL=`http://127.0.0.1:4784`` for the app.
+Another `uncage serve` is running, or use `--port 4784` and set `UNCAGE_URL=http://127.0.0.1:4784` for the app.
 
 ### Claude Code shows “auth required”
 

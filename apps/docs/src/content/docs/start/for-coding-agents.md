@@ -33,18 +33,28 @@ Each quickstart starts with a **Copy prompt for your coding agent** block. Here 
 
 ### Add Connected Mode to a Next.js app
 
+The same prompt as on the [Connected Mode quickstart](/uncage/start/quickstart-connected/#copy-prompt-for-your-coding-agent):
+
 ```text wrap
-Add Uncage Connected Mode to this Next.js (App Router) app.
-Read https://ptmafia.github.io/uncage/skills/uncage/SKILL.md and follow it, then implement https://ptmafia.github.io/uncage/start/quickstart-connected.md.
-Wire getUser / currentUser to this app's existing sign-in. Keep the /device page unframable (frame-ancestors 'none', X-Frame-Options: DENY) and decide with a Server Action.
-Verify with the commands in the skill's "Verify" section and report the output.
+Add Uncage Connected Mode to this Next.js (App Router) app, following https://ptmafia.github.io/uncage/start/quickstart-connected.md exactly.
+Read https://ptmafia.github.io/uncage/skills/uncage/SKILL.md first and follow its rules.
+1. Install @uncage/hub, @uncage/react-ui and zod.
+2. Create lib/auth.ts, lib/tools.ts, lib/uncage-hub.ts, lib/hub-registry.ts, server.ts, app/uncage/page.tsx, app/device/page.tsx, app/device/actions.ts, app/device/approve-page.tsx and the headers in next.config.ts, as on that page.
+3. Wire lib/auth.ts to this app's existing sign-in (find how the app reads the current user). Do not keep the development user unless the app has no sign-in at all.
+4. Change the "dev" and "start" scripts to run server.ts with node (Node.js 22.18 or newer), set "type": "module" in package.json and "allowImportingTsExtensions": true in tsconfig.json.
+5. Add .uncage-hub/ to .gitignore.
+Verify: start the dev server, then curl -s http://localhost:3000/api/uncage/install.sh | head -3 prints the installer, and curl -sI http://localhost:3000/device shows the headers Content-Security-Policy: frame-ancestors 'none' and X-Frame-Options: DENY (no ?code=: unknown codes count as failed guesses and are rate limited). Report what you changed and anything you could not wire.
 ```
 
 ### Add Local Mode to a Next.js app
 
 ```text wrap
 Add Uncage Local Mode to this Next.js (App Router) app, following https://ptmafia.github.io/uncage/start/quickstart-local.md exactly.
-Never send the daemon token to the browser. Verify with "npx uncage doctor" and report each line.
+1. npm i @uncage/server @uncage/react-ui @uncage/cli
+2. Create app/api/uncage/[...path]/route.ts with createUncageHandler from @uncage/server/proxy (runtime 'nodejs', dynamic 'force-dynamic', export GET, POST, PATCH).
+3. Create a page that renders <UncageProvider><AgentChat /></UncageProvider> from @uncage/react-ui inside a full-height container, and import '@uncage/react-ui/styles.css'.
+Do not expose the daemon token to the browser and do not call the daemon from client code directly.
+Verify: run "npx uncage doctor" and report each line; with "npx uncage serve --workspace <this repo>" running in another terminal and the app on http://localhost:3000, curl -s http://localhost:3000/api/uncage/runtimes returns a JSON array that contains "claude".
 ```
 
 ### Expose one of our features as a site tool

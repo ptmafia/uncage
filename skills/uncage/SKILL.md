@@ -41,7 +41,8 @@ cannot run in serverless functions (Vercel functions); use a custom server or a 
    `tsconfig.json`: `"allowImportingTsExtensions": true` (server-side imports use `.ts` extensions).
 8. Chat page (client component): `<UncageProvider><AgentChat /></UncageProvider>` and `import '@uncage/react-ui/styles.css'`, inside a full-height container.
 9. `/device` approval page: server component calls `getHub().lookupDevice(code, user)`; a Server Action calls
-   `approveDevice` / `denyDevice`; a client component renders `<ApproveDevice code lookup state error onApprove onDeny />`.
+   `approveDevice` / `denyDevice`; catch errors from `lookupDevice` (e.g. `rate_limited`) and pass a message
+   to the `error` prop; a client component renders `<ApproveDevice code lookup state error onApprove onDeny />`.
 10. `next.config.ts` headers for `/device` (or all pages): `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`.
 11. `.gitignore`: `.uncage-hub/` (the default PGlite store).
 
@@ -63,7 +64,7 @@ Connected Mode, with the dev server running on port 3000:
 ```sh
 curl -s http://localhost:3000/api/uncage/install.sh | head -2          # "#!/usr/bin/env bash" + "# Uncage installer…"
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3000/api/uncage/health   # 401 when signed out (200 + {"ok":true,…} when signed in)
-curl -sI 'http://localhost:3000/device?code=TEST-TEST' | grep -iE 'content-security-policy|x-frame-options'
+curl -sI http://localhost:3000/device | grep -iE 'content-security-policy|x-frame-options'   # no ?code=: unknown codes count as failed guesses (rate limited)
 npx tsc --noEmit                                                        # the project type-checks
 ```
 
