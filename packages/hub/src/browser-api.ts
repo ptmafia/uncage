@@ -22,7 +22,7 @@ import {
 import { downloadHeaders } from '@uncage/server/wire';
 import { z } from 'zod';
 import type { ClusterAdapter } from './cluster/cluster.js';
-import type { DeviceFlow } from './device.js';
+import { sha256, type DeviceFlow } from './device.js';
 import { sessionChannel, type MachineHub } from './machines.js';
 import { toSessionSnapshot } from './replica.js';
 import { eventStreamResponse, readHistory, type EventSource } from './sse.js';
@@ -265,6 +265,16 @@ export function browserApi(ctx: ApiContext) {
     const r = await ctx.device.poll(deviceCode);
     if (!r) throw new UncageError('not_found', { message: 'Unknown device code.', hint: 'Start the connection flow again.' });
     return json(r);
+  }, { public: true });
+
+  // `uncage sites remove`: the machine revokes itself with its own token.
+  add('POST', '/machine/revoke', async ({ req }) => {
+    const m = /^Bearer (\S+)$/i.exec(req.headers.get('authorization') ?? '');
+    const machine = m ? await store.findMachineByTokenHash(sha256(m[1]!)) : null;
+    if (!machine) throw new UncageError('unauthorized', { message: 'Unknown or revoked machine token.' });
+    await store.deleteMachine(machine.id);
+    await machines.kick(machine.id);
+    return json({ ok: true });
   }, { public: true });
 
   // ---- Browser API (same shapes as the daemon's /v1) -------------------------------------------

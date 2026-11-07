@@ -1,0 +1,57 @@
+{
+  "name": "@uncage/agent",
+  "version": "0.1.1",
+  "description": "Uncage agent: the Connected Mode daemon on the user's machine. Dials out to one or more website hubs and runs their sessions through @uncage/core",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@uncage/core": "workspace:^",
+    "@uncage/protocol": "workspace:^",
+    "pino": "^10.4.0",
+    "ws": "^8.18.3",
+    "yaml": "^2.8.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1",
+    "@uncage/hub": "workspace:*",
+    "@uncage/testkit": "workspace:*"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ptmafia/uncage.git",
+    "directory": "packages/agent"
+  },
+  "keywords": [
+    "uncage",
+    "agent",
+    "ai-agent",
+    "daemon",
+    "claude-code"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "author": "Nathan Zhang"
+}

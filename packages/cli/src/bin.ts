@@ -13,13 +13,28 @@ import {
   runDoctor,
 } from './doctor.js';
 import { applyWorkspaceFlag, buildAdapters, serve } from './serve.js';
+import { defaultExec } from '@uncage/agent';
+import { ACTIVITY_HELP, showActivity } from './activity-cmd.js';
+import { AGENT_HELP, runAgent } from './agent-cmd.js';
+import { restartLaunchAgent, uninstallLaunchAgent } from './launchd.js';
+import { runSetup, SETUP_HELP } from './setup.js';
+import { listSites, removeSite, SITES_HELP } from './sites.js';
 
 const HELP = `uncage - run AI coding agents behind a local, approval-gated API
 
-Usage:
+Local Mode:
   uncage serve  [--port <n>] [--workspace <dir>] [--data-dir <dir>] [--token-file <file>]
   uncage doctor [--port <n> | --url <url>] [--workspace <dir>] [--data-dir <dir>] [--token-file <file>]
                 [--export-events <sessionId> [--out <file>] [--include-content]]
+
+Connected Mode (a website drives this computer):
+  uncage setup <url> [--no-daemon] [--no-browser]   Connect this computer to a website.
+  uncage agent                                      Run the agent in the foreground.
+  uncage agent uninstall                            Remove the background agent.
+  uncage sites                                      List connected websites.
+  uncage sites remove <id>                          Disconnect a website.
+  uncage activity [--site <id>] [--follow]          What websites did on this computer.
+
   uncage <command> --help
 
 Zero-config: "uncage serve" works with no setup (optional ./uncage.config.yaml).
@@ -113,6 +128,119 @@ async function main(argv: string[]): Promise<number> {
     });
     console.log(formatChecks(checks));
     return doctorExitCode(checks);
+  }
+
+  if (cmd === 'setup') {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      allowPositionals: true,
+      options: {
+        'no-daemon': { type: 'boolean', default: false },
+        'no-browser': { type: 'boolean', default: false },
+        help: { type: 'boolean', short: 'h', default: false },
+      },
+    });
+    if (values.help || positionals.length !== 1) {
+      console.log(SETUP_HELP);
+      return values.help ? 0 : 2;
+    }
+    await runSetup({
+      url: positionals[0]!,
+      home: homedir(),
+      fetch,
+      exec: defaultExec,
+      out: (l) => console.log(l),
+      noDaemon: values['no-daemon'],
+      noBrowser: values['no-browser'],
+    });
+    return 0;
+  }
+
+  if (cmd === 'agent') {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      allowPositionals: true,
+      options: { help: { type: 'boolean', short: 'h', default: false } },
+    });
+    if (values.help) {
+      console.log(AGENT_HELP);
+      return 0;
+    }
+    if (positionals[0] === 'uninstall') {
+      const { removed } = await uninstallLaunchAgent({ home: homedir(), uid: process.getuid?.() ?? 501, exec: defaultExec });
+      console.log(removed ? '✓ Background agent stopped and removed. (~/.uncage/agent.yaml is kept.)' : 'The background agent was not installed.');
+      return 0;
+    }
+    if (positionals.length > 0) {
+      console.error(`Unknown agent command "${positionals[0]}".\n\n${AGENT_HELP}`);
+      return 2;
+    }
+    const agent = await runAgent({ home: homedir() });
+    if (agent.sites === 0) {
+      await agent.close();
+      console.error('No connected websites. Connect one with: uncage setup <url>');
+      return 0; // clean exit: launchd does not restart (KeepAlive only on failure)
+    }
+    let stopping = false;
+    const stop = () => {
+      if (stopping) process.exit(1);
+      stopping = true;
+      setTimeout(() => process.exit(1), 10_000).unref();
+      agent.close().then(
+        () => process.exit(0),
+        () => process.exit(1),
+      );
+    };
+    process.on('SIGINT', stop);
+    process.on('SIGTERM', stop);
+    return -1;
+  }
+
+  if (cmd === 'sites') {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      allowPositionals: true,
+      options: { help: { type: 'boolean', short: 'h', default: false } },
+    });
+    if (values.help) {
+      console.log(SITES_HELP);
+      return 0;
+    }
+    if (positionals.length === 0) {
+      console.log(await listSites(homedir()));
+      return 0;
+    }
+    if (positionals[0] === 'remove' && positionals.length === 2) {
+      await removeSite({ home: homedir(), id: positionals[1]!, fetch, out: (l) => console.log(l) });
+      await restartLaunchAgent({ home: homedir(), uid: process.getuid?.() ?? 501, exec: defaultExec });
+      return 0;
+    }
+    console.error(SITES_HELP);
+    return 2;
+  }
+
+  if (cmd === 'activity') {
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        site: { type: 'string' },
+        follow: { type: 'boolean', short: 'f', default: false },
+        json: { type: 'boolean', default: false },
+        help: { type: 'boolean', short: 'h', default: false },
+      },
+    });
+    if (values.help) {
+      console.log(ACTIVITY_HELP);
+      return 0;
+    }
+    await showActivity({
+      home: homedir(),
+      ...(values.site ? { site: values.site } : {}),
+      follow: values.follow,
+      json: values.json,
+      out: (l) => console.log(l),
+    });
+    return 0;
   }
 
   console.error(`Unknown command "${cmd}".\n\n${HELP}`);

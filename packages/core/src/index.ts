@@ -11,3 +11,4 @@ export type { SessionHandle } from './sessions.js';
 export type { CallTool, StartRunOptions } from './runs.js';
 export { createUncage, type Uncage, type UncageOptions } from './uncage.js';
 export { sanitizeFileName, type AttachmentBody } from './attachments.js';
+export { redactForExport } from './redact.js';

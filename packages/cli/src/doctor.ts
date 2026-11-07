@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { access, constants, mkdir, readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { redactForExport } from '@uncage/core';
 import type { RuntimeAdapter } from '@uncage/protocol';
 import { DEFAULT_PORT, type UncageConfig } from './config.js';
 import { tokenPath } from './token.js';
@@ -330,28 +331,6 @@ export function formatChecks(checks: DoctorCheck[]): string {
 
 const PAGE = 1000;
 
-const SAFE_KEYS = new Set([
-  'id', 'type', 'state', 'status', 'sequence', 'eventId', 'occurredAt', 'createdAt', 'startedAt', 'endedAt',
-  'expiresAt', 'durationMs', 'category', 'name', 'chunkIndex', 'version', 'code', 'retryable', 'decision',
-  'scope', 'runtimeId', 'schemaVersion', 'readOnly', 'allowedScopes', 'availableDecisions', 'capabilities',
-]);
-
-/** Arbitrary user/tool data: never recursed into, so nested key names cannot leak. */
-const OPAQUE_KEYS = new Set(['input', 'output', 'extensions']);
-
-const isSafeKey = (k: string): boolean => SAFE_KEYS.has(k) || k.endsWith('Id');
-
-/** Allowlist redaction: every string not under a known-safe key becomes a length placeholder. Structure is kept. */
-function redact(v: unknown, key = ''): unknown {
-  if (OPAQUE_KEYS.has(key) && v !== undefined && v !== null) {
-    return typeof v === 'string' ? `[redacted ${v.length} chars]` : `[redacted ${Array.isArray(v) ? 'array' : typeof v}]`;
-  }
-  if (typeof v === 'string') return isSafeKey(key) ? v : `[redacted ${v.length} chars]`;
-  if (Array.isArray(v)) return v.map((x) => redact(x, key));
-  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, redact(x, k)]));
-  return v;
-}
-
 export interface ExportEventsOptions {
   sessionId: string;
   config: UncageConfig;
@@ -387,6 +366,6 @@ export async function exportEvents(o: ExportEventsOptions): Promise<unknown[]> {
     if (page.length < PAGE) break;
     after = page[page.length - 1]?.sequence ?? after;
   }
-  return o.includeContent ? all : all.map((e) => redact(e));
+  return o.includeContent ? all : all.map((e) => redactForExport(e));
 }
 

@@ -54,7 +54,11 @@ export interface UncageOptions {
 export interface Uncage {
   runtimes: { list(): Promise<RuntimeInfo[]>; get(id: string): Promise<RuntimeInfo> };
   sessions: {
-    create(b: CreateSessionBody): Promise<SessionHandle>;
+    /**
+     * `opts.id` lets a host pick the session id up front (e.g. the connected agent names the
+     * per-session workspace directory after it); it must look like `newId('ses')` and be unused.
+     */
+    create(b: CreateSessionBody, opts?: { id?: string }): Promise<SessionHandle>;
     get(id: string): Promise<SessionHandle>;
     list(): Promise<Session[]>;
     /** Validated against the policy and the runtime's capabilities; emits `session.updated`. */
@@ -152,7 +156,7 @@ export async function createUncage(opts: UncageOptions): Promise<Uncage> {
     workspace: { default: workspace.default, allowedRoots: [...workspace.allowedRoots] },
     runtimes: { list: () => registry.list(), get: (id) => registry.info(id) },
     sessions: {
-      create: (b) => sessions.create(b),
+      create: (b, o) => sessions.create(b, o),
       get: (id) => sessions.get(id),
       list: () => sessions.list(),
       updateSettings: (id, patch) => sessions.updateSettings(id, patch),

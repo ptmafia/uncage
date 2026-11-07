@@ -208,6 +208,15 @@ describe('connected-mode core hooks', () => {
     expect(error).toHaveBeenCalled();
   });
 
+  it('sessions.create accepts a caller-chosen session id (agent per-session workspaces)', async () => {
+    const u = await make([fake([])]);
+    const s = await u.sessions.create({ runtime: 'fake' }, { id: 'ses_0123456789abcdef0123456789abcdef' });
+    expect(s.id).toBe('ses_0123456789abcdef0123456789abcdef');
+    expect((await u.sessions.get(s.id)).id).toBe(s.id);
+    await expect(u.sessions.create({ runtime: 'fake' }, { id: '../evil' })).rejects.toMatchObject({ code: 'invalid_request' });
+    await expect(u.sessions.create({ runtime: 'fake' }, { id: s.id })).rejects.toMatchObject({ code: 'invalid_request' });
+  });
+
   it('readAfter clamps after to an integer >= 0', async () => {
     const u = await make([fake([{ text: 'ok' }])]);
     const s = await u.sessions.create({ runtime: 'fake' });

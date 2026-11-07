@@ -1,0 +1,703 @@
+import { randomUUID } from 'node:crypto';
+import { mkdir, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createUncage, UncageError, type CallTool, type Uncage } from '@uncage/core';
+import {
+  CONNECTED_PROTOCOL,
+  HubCommandArgsSchemas,
+  MAX_FRAME_BYTES,
+  newId,
+  parseHubFrame,
+  type AgentFrame,
+  type ErrorBody,
+  type HubCommandArgs,
+  type HubCommandOp,
+  type HubFrame,
+  type PermissionMode,
+  type RuntimeAdapter,
+  type ToolCallResult,
+  type UncageEvent,
+} from '@uncage/protocol';
+import { WebSocket } from 'ws';
+import { ActivityLog } from './activity.js';
+import { siteDir, type AgentConfig, type AgentSite } from './config.js';
+import { agentWsUrl } from './device.js';
+import { planPull, sendPull } from './files.js';
+
+/** Close codes the hub uses (see @uncage/hub machines.ts). */
+export const HUB_CLOSE = { revoked: 4401, replaced: 4409, upgrade: 4426, hubTooOld: 4505 } as const;
+
+export interface AgentLogger {
+  info(obj: object, msg?: string): void;
+  warn(obj: object, msg?: string): void;
+  error(obj: object, msg?: string): void;
+}
+
+export interface AgentTiming {
+  /** Reconnect backoff: starts here, doubles per failed attempt (with jitter). Default 1 000. */
+  backoffMinMs: number;
+  /** Default 30 000. */
+  backoffMaxMs: number;
+  /** A `tool_call` without `tool_result` fails with `tool_failed` after this. Default 120 000. */
+  toolTimeoutMs: number;
+  /** No frame from the hub for this long → the connection is presumed dead. Default 35 000 (hub pings every 10 s). */
+  idleTimeoutMs: number;
+}
+
+export const DEFAULT_TIMING: AgentTiming = { backoffMinMs: 1000, backoffMaxMs: 30_000, toolTimeoutMs: 120_000, idleTimeoutMs: 35_000 };
+
+/** Exponential backoff with jitter: a random delay in [base/2, base], base = min(max, min·2^attempt). */
+export function backoffDelay(attempt: number, t: Pick<AgentTiming, 'backoffMinMs' | 'backoffMaxMs'>, random = Math.random): number {
+  const base = Math.min(t.backoffMaxMs, t.backoffMinMs * 2 ** Math.min(attempt, 30));
+  return Math.round(base / 2 + random() * (base / 2));
+}
+
+/** Keep frames comfortably below the hub's 1 MiB limit. */
+const FRAME_BUDGET = MAX_FRAME_BYTES - 16 * 1024;
+const READ_PAGE = 500;
+/** Unacked batches tracked per session before concluding the hub does not ack (machine storage). */
+const MAX_OUTSTANDING = 256;
+
+const byteLength = (s: string): number => Buffer.byteLength(s, 'utf8');
+
+const errorBody = (e: unknown): ErrorBody =>
+  (e instanceof UncageError ? e : new UncageError('internal_error', { message: e instanceof Error ? e.message : String(e) })).toBody();
+
+/** `host[-port]` of a hub URL: the per-site workspace root `~/Uncage/<siteHost>/`. */
+export const siteHost = (url: string): string => {
+  const u = new URL(url);
+  return `${u.hostname}${u.port ? `-${u.port}` : ''}`.toLowerCase().replace(/[^a-z0-9.-]/g, '-');
+};
+
+/** Replication cursor of one session (see `SiteAgent` doc). */
+interface Rep {
+  /** Highest sequence believed to be at the hub (carried across connections). */
+  delivered: number;
+  /** Highest sequence sent (or known present) on the current connection. */
+  sentHigh: number;
+  /** `[first, last]` of batches sent on this connection and not yet acked. */
+  outstanding: Array<[number, number]>;
+  pumping: boolean;
+  dirty: boolean;
+  /** Bumped by rewinds and reconnects: an in-progress pump iteration starts over. */
+  gen: number;
+  /** Events too large for a frame (skipped): never rewind to them again. */
+  skipped: Set<number>;
+}
+
+interface PendingTool {
+  resolve(r: ToolCallResult): void;
+  reject(e: unknown): void;
+}
+
+export type SiteStop = 'revoked' | 'replaced' | 'upgrade' | 'closed';
+
+export interface SiteAgentOptions {
+  site: AgentSite;
+  home: string;
+  adapters: RuntimeAdapter[];
+  localPolicy: AgentConfig['localPolicy'];
+  logger: AgentLogger;
+  timing: AgentTiming;
+  machine: { name: string; os: string };
+  agentVersion: string;
+  /** The site stopped for good (revoked, replaced, or must upgrade). */
+  onStop(reason: Exclude<SiteStop, 'closed'>, detail: { minAgentVersion?: string }): void;
+}
+
+/**
+ * One website: its own core instance (`~/.uncage/sites/<id>/data`), workspace root
+ * (`~/Uncage/<siteHost>/`), activity log and one WebSocket to its hub.
+ *
+ * Replication: every committed event is sent in an `events` frame as soon as the connection is up
+ * (after `welcome`). Per session the agent keeps a cursor. A hub that keeps a replica ("site"
+ * storage) acks each batch and, on connect, the last sequence it has for every session; an ack
+ * that reveals a gap (lower than what was sent, with no batch in flight that would fill it) rewinds
+ * the cursor and the agent resends from there. Since the hub only accepts `lastSequence + 1`
+ * onward, resends never duplicate. A hub without a replica never acks; there the cursor is "sent
+ * while connected", and events produced while offline are sent after the next `welcome`.
+ */
+export class SiteAgent {
+  readonly site: AgentSite;
+  private uncage!: Uncage;
+  private activity: ActivityLog;
+  private root: string;
+  private ws: WebSocket | undefined;
+  private connected = false;
+  private stopped = false;
+  private wake: (() => void) | undefined;
+  private loopDone: Promise<void> = Promise.resolve();
+  private readonly reps = new Map<string, Rep>();
+  private acksOnConn = false;
+  private readonly pendingTools = new Map<string, PendingTool>();
+  private readonly pulls = new Set<AbortController>();
+  private upgradeMin: string | undefined;
+
+  constructor(private readonly o: SiteAgentOptions) {
+    this.site = o.site;
+    this.activity = new ActivityLog(o.home, o.site.id, (err) => o.logger.error({ err, site: o.site.id }, 'activity log write failed'));
+    this.root = join(o.home, 'Uncage', siteHost(o.site.url));
+  }
+
+  private get log(): AgentLogger {
+    return this.o.logger;
+  }
+
+  async start(): Promise<void> {
+    await mkdir(this.root, { recursive: true, mode: 0o700 });
+    const dataDir = join(siteDir(this.o.home, this.site.id), 'data');
+    await mkdir(dataDir, { recursive: true, mode: 0o700 });
+    this.uncage = await createUncage({
+      adapters: this.o.adapters,
+      dataDir,
+      workspace: { allowedRoots: [this.root], default: this.root },
+      security: { allowBypass: this.o.localPolicy.allowBypass },
+      onEvent: (e) => this.onEvent(e),
+    });
+    // Sessions from earlier runs: assume delivered up to their last sequence (a replicating hub's
+    // acks correct this on connect). Events already seen (startup reconciliation) keep their cursor.
+    for (const s of await this.uncage.sessions.list()) {
+      if (this.reps.has(s.id)) continue;
+      const { lastSequence } = await (await this.uncage.sessions.get(s.id)).snapshot();
+      this.reps.set(s.id, this.newRep(lastSequence));
+    }
+    this.loopDone = this.loop();
+  }
+
+  async close(): Promise<void> {
+    this.stopped = true;
+    this.wake?.();
+    const ws = this.ws;
+    if (ws) {
+      ws.close(1000, 'agent shutting down');
+      setTimeout(() => ws.terminate(), 500).unref();
+    }
+    await this.loopDone;
+    await this.uncage?.close();
+    await this.activity.flush();
+  }
+
+  // ---- connection -------------------------------------------------------------------------
+
+  private async loop(): Promise<void> {
+    let attempt = 0;
+    while (!this.stopped) {
+      const r = await this.connectOnce();
+      if (this.stopped) return;
+      if (r.stop) {
+        this.stopped = true;
+        this.o.onStop(r.stop, this.upgradeMin ? { minAgentVersion: this.upgradeMin } : {});
+        return;
+      }
+      if (r.welcomed) attempt = 0;
+      const delay = backoffDelay(attempt++, this.o.timing);
+      this.log.info({ site: this.site.id, delayMs: delay }, 'reconnecting');
+      await new Promise<void>((resolve) => {
+        const t = setTimeout(resolve, delay);
+        this.wake = () => {
+          clearTimeout(t);
+          resolve();
+        };
+      });
+      this.wake = undefined;
+    }
+  }
+
+  private connectOnce(): Promise<{ welcomed: boolean; stop?: Exclude<SiteStop, 'closed'> }> {
+    return new Promise((resolve) => {
+      let welcomed = false;
+      let httpStatus: number | undefined;
+      let idle: NodeJS.Timeout | undefined;
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(agentWsUrl(this.site.url), {
+          headers: { authorization: `Bearer ${this.site.token}` },
+          maxPayload: MAX_FRAME_BYTES,
+          handshakeTimeout: 15_000,
+        });
+      } catch (err) {
+        this.log.error({ err, site: this.site.id }, 'cannot connect');
+        resolve({ welcomed: false });
+        return;
+      }
+      this.ws = ws;
+      const armIdle = () => {
+        clearTimeout(idle);
+        idle = setTimeout(() => {
+          this.log.warn({ site: this.site.id }, 'no frames from the hub; reconnecting');
+          ws.terminate();
+        }, this.o.timing.idleTimeoutMs);
+        idle.unref();
+      };
+
+      ws.on('unexpected-response', (req, res) => {
+        httpStatus = res.statusCode;
+        res.resume();
+        req.destroy();
+        ws.terminate();
+      });
+      ws.on('error', (err) => {
+        if (httpStatus === undefined) this.log.warn({ site: this.site.id, err: err.message }, 'connection error');
+      });
+      ws.on('open', () => {
+        armIdle();
+        void this.hello(ws);
+      });
+      ws.on('message', (data) => {
+        armIdle();
+        let frame: HubFrame;
+        try {
+          frame = parseHubFrame(data.toString());
+        } catch (err) {
+          this.log.warn({ site: this.site.id, err: (err as Error).message }, 'malformed frame from hub');
+          return;
+        }
+        if (frame.t === 'welcome') {
+          welcomed = true;
+          this.onWelcome(ws);
+        } else this.onFrame(ws, frame);
+      });
+      ws.on('close', (code, reason) => {
+        clearTimeout(idle);
+        const wasConnected = welcomed;
+        if (this.ws === ws) {
+          this.ws = undefined;
+          this.onDisconnect();
+        }
+        if (wasConnected) void this.activity.append({ kind: 'disconnected', detail: { code } });
+        if (httpStatus === 401 || code === HUB_CLOSE.revoked) {
+          this.log.warn({ site: this.site.id }, 'machine token revoked by the website; not reconnecting');
+          void this.activity.append({ kind: 'revoked' });
+          return resolve({ welcomed, stop: 'revoked' });
+        }
+        if (code === HUB_CLOSE.replaced) {
+          this.log.warn({ site: this.site.id }, 'replaced by a newer connection for this machine; stopping this one');
+          void this.activity.append({ kind: 'replaced' });
+          return resolve({ welcomed, stop: 'replaced' });
+        }
+        if (code === HUB_CLOSE.upgrade || this.upgradeMin) {
+          void this.activity.append({ kind: 'upgrade', detail: { minAgentVersion: this.upgradeMin ?? 'unknown' } });
+          return resolve({ welcomed, stop: 'upgrade' });
+        }
+        if (code === HUB_CLOSE.hubTooOld) this.log.warn({ site: this.site.id }, 'this website runs an older hub than the agent supports');
+        else if (httpStatus !== undefined) this.log.warn({ site: this.site.id, status: httpStatus }, 'hub refused the connection');
+        else this.log.info({ site: this.site.id, code, reason: reason.toString().slice(0, 200) }, 'disconnected');
+        resolve({ welcomed });
+      });
+    });
+  }
+
+  private async hello(ws: WebSocket): Promise<void> {
+    const runtimes = await this.uncage.runtimes.list().catch(() => []);
+    if (ws.readyState !== WebSocket.OPEN) return;
+    this.rawSend(ws, {
+      t: 'hello',
+      protocol: CONNECTED_PROTOCOL,
+      agentVersion: this.o.agentVersion,
+      machine: { name: this.o.machine.name, os: this.o.machine.os, runtimes },
+    });
+  }
+
+  private onWelcome(ws: WebSocket): void {
+    if (this.ws !== ws) return;
+    this.connected = true;
+    this.acksOnConn = false;
+    this.log.info({ site: this.site.id }, 'connected');
+    void this.activity.append({ kind: 'connected' });
+    for (const rep of this.reps.values()) {
+      rep.sentHigh = rep.delivered;
+      rep.outstanding = [];
+      rep.gen++;
+    }
+    void this.backfillAll();
+  }
+
+  private onDisconnect(): void {
+    if (!this.connected) return;
+    this.connected = false;
+    for (const rep of this.reps.values()) {
+      rep.delivered = this.acksOnConn && rep.outstanding.length > 0 ? rep.outstanding[0]![0] - 1 : rep.sentHigh;
+      rep.outstanding = [];
+      rep.gen++;
+    }
+    const lost = new UncageError('tool_failed', { message: 'The connection to the website was lost.' });
+    for (const p of this.pendingTools.values()) p.reject(lost);
+    this.pendingTools.clear();
+    for (const ac of this.pulls) ac.abort();
+  }
+
+  private rawSend(ws: WebSocket, f: AgentFrame): Promise<void> {
+    const raw = JSON.stringify(f);
+    if (byteLength(raw) > MAX_FRAME_BYTES) return Promise.reject(new Error(`frame "${f.t}" too large`));
+    return new Promise((resolve, reject) => {
+      if (ws.readyState !== WebSocket.OPEN) return reject(new UncageError('machine_offline'));
+      ws.send(raw, (err) => (err ? reject(err) : resolve()));
+    });
+  }
+
+  /** Sends on the current, welcomed connection. */
+  private send(f: AgentFrame): Promise<void> {
+    if (!this.connected || !this.ws) return Promise.reject(new UncageError('machine_offline'));
+    return this.rawSend(this.ws, f);
+  }
+
+  private onFrame(ws: WebSocket, f: HubFrame): void {
+    if (f.t === 'upgrade_required') {
+      this.upgradeMin = f.minAgentVersion;
+      this.log.warn({ site: this.site.id, minAgentVersion: f.minAgentVersion }, 'the website requires a newer agent');
+      return;
+    }
+    if (this.ws !== ws || !this.connected) return;
+    switch (f.t) {
+      case 'ping':
+        void this.send({ t: 'pong', at: f.at }).catch(() => undefined);
+        return;
+      case 'command':
+        void this.onCommand(f.id, f.op, f.args);
+        return;
+      case 'ack':
+        this.onAck(f.sessionId, f.sequence);
+        return;
+      case 'tool_result': {
+        const p = this.pendingTools.get(f.id);
+        if (!p) return;
+        this.pendingTools.delete(f.id);
+        if (f.ok) p.resolve(f.result);
+        else p.reject(new UncageError(f.error.code, { message: f.error.message }));
+        return;
+      }
+      case 'file_pull':
+        void this.onFilePull(f);
+        return;
+      default:
+        return;
+    }
+  }
+
+  // ---- commands ---------------------------------------------------------------------------
+
+  private async onCommand(id: string, op: HubCommandOp, rawArgs: unknown): Promise<void> {
+    let frame: AgentFrame;
+    const parsed = HubCommandArgsSchemas[op].safeParse(rawArgs);
+    if (!parsed.success) {
+      const err = new UncageError('invalid_request', { message: `Invalid ${op} arguments: ${parsed.error.issues[0]?.message ?? 'bad shape'}` });
+      void this.activity.append({ kind: 'command', name: op, ok: false, code: err.code });
+      frame = { t: 'result', id, ok: false, error: err.toBody() };
+    } else {
+      try {
+        const data = await this.execute(op, parsed.data as HubCommandArgs[typeof op]);
+        frame = { t: 'result', id, ok: true, data };
+        void this.activity.append({ kind: 'command', name: op, ok: true, detail: this.activityArgs(op, parsed.data) });
+      } catch (err) {
+        const body = errorBody(err);
+        if (body.code === 'internal_error') this.log.error({ err, site: this.site.id, op }, 'command failed');
+        void this.activity.append({ kind: 'command', name: op, ok: false, code: body.code, detail: this.activityArgs(op, parsed.data) });
+        frame = { t: 'result', id, ok: false, error: body };
+      }
+    }
+    await this.sendResult(frame).catch((err: unknown) => this.log.warn({ site: this.site.id, op, err: (err as Error).message }, 'could not send result'));
+  }
+
+  /** Read-only, high-volume ops carry no detail in the activity log. */
+  private activityArgs(op: HubCommandOp, args: unknown): unknown {
+    return op === 'readEvents' || op === 'snapshot' || op === 'listSessions' ? undefined : args;
+  }
+
+  /** A result too large for one frame: `readEvents` pages shrink; anything else fails cleanly. */
+  private async sendResult(f: AgentFrame): Promise<void> {
+    if (f.t !== 'result' || !f.ok || byteLength(JSON.stringify(f)) <= FRAME_BUDGET) return this.send(f);
+    if (Array.isArray(f.data) && f.data.length > 1) {
+      let events = f.data as unknown[];
+      while (events.length > 1 && byteLength(JSON.stringify({ ...f, data: events })) > FRAME_BUDGET) {
+        events = events.slice(0, Math.ceil(events.length / 2));
+      }
+      if (byteLength(JSON.stringify({ ...f, data: events })) <= FRAME_BUDGET) return this.send({ ...f, data: events });
+    }
+    return this.send({
+      t: 'result',
+      id: f.id,
+      ok: false,
+      error: new UncageError('internal_error', { message: 'The result is too large to send to the website.' }).toBody(),
+    });
+  }
+
+  private assertMode(mode: PermissionMode | undefined): void {
+    if (mode === undefined) return;
+    const { allowBypass, allowedPermissionModes } = this.o.localPolicy;
+    if (mode === 'bypassPermissions' && !allowBypass) {
+      throw new UncageError('policy_denied', {
+        message: 'bypassPermissions can only be enabled on this computer (localPolicy.allowBypass in ~/.uncage/agent.yaml).',
+      });
+    }
+    if (allowedPermissionModes && !allowedPermissionModes.includes(mode)) {
+      throw new UncageError('policy_denied', {
+        message: `Permission mode "${mode}" is not allowed on this computer (localPolicy.allowedPermissionModes).`,
+        details: { allowed: allowedPermissionModes },
+      });
+    }
+  }
+
+  private async execute<K extends HubCommandOp>(op: K, args: HubCommandArgs[K]): Promise<unknown> {
+    const u = this.uncage;
+    switch (op) {
+      case 'createSession': {
+        const a = args as HubCommandArgs['createSession'];
+        const id = newId('ses');
+        const dir = join(this.root, id);
+        await mkdir(dir, { mode: 0o700 });
+        try {
+          const h = await u.sessions.create({ runtime: a.runtime, workspace: dir, ...(a.title !== undefined ? { title: a.title } : {}) }, { id });
+          return await h.get();
+        } catch (err) {
+          await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+          throw err;
+        }
+      }
+      case 'startRun': {
+        const a = args as HubCommandArgs['startRun'];
+        const h = await u.sessions.get(a.sessionId);
+        this.assertMode((await h.get()).settings.permissionMode);
+        return h.startRun({
+          prompt: a.prompt,
+          ...(a.attachmentIds !== undefined ? { attachmentIds: a.attachmentIds } : {}),
+          idempotencyKey: a.idempotencyKey,
+          manifest: a.manifest,
+          callTool: this.callTool,
+        });
+      }
+      case 'cancelRun':
+        return u.runs.cancel((args as HubCommandArgs['cancelRun']).runId);
+      case 'decide': {
+        const a = args as HubCommandArgs['decide'];
+        return u.approvals.decide(a.approvalId, a.decision, a.idempotencyKey);
+      }
+      case 'updateSettings': {
+        const a = args as HubCommandArgs['updateSettings'];
+        this.assertMode(a.patch.permissionMode);
+        return u.sessions.updateSettings(a.sessionId, a.patch);
+      }
+      case 'addAttachment': {
+        // Single-frame path (≤ ~774 KB from the hub). Chunked hub→agent transfer of larger
+        // attachments plugs in here (assemble the chunks, then the same `attachments.add`).
+        const a = args as HubCommandArgs['addAttachment'];
+        return u.attachments.add(a.sessionId, { name: a.name, mime: a.mime, body: Buffer.from(a.data, 'base64') });
+      }
+      case 'snapshot':
+        return (await u.sessions.get((args as HubCommandArgs['snapshot']).sessionId)).snapshot();
+      case 'listSessions':
+        return u.sessions.list();
+      case 'readEvents': {
+        const a = args as HubCommandArgs['readEvents'];
+        return u.events.readAfter(a.sessionId, a.after, a.limit);
+      }
+    }
+    throw new UncageError('invalid_request', { message: `Unknown command "${String(op)}".` });
+  }
+
+  // ---- site tools -------------------------------------------------------------------------
+
+  private readonly callTool: CallTool = (tool, args, ctx) =>
+    new Promise<ToolCallResult>((resolve, reject) => {
+      if (ctx.signal.aborted) return reject(new UncageError('tool_failed', { message: 'The run was cancelled.' }));
+      if (!this.connected) {
+        void this.activity.append({ kind: 'tool_call', name: tool, ok: false, code: 'machine_offline', detail: { sessionId: ctx.sessionId, runId: ctx.runId } });
+        return reject(new UncageError('tool_failed', { message: 'The website is not connected.' }));
+      }
+      const id = `tc_${randomUUID().replaceAll('-', '')}`;
+      const detail = { sessionId: ctx.sessionId, runId: ctx.runId, args };
+      const finish = () => {
+        clearTimeout(timer);
+        ctx.signal.removeEventListener('abort', onAbort);
+        this.pendingTools.delete(id);
+      };
+      const onAbort = () => {
+        finish();
+        void this.activity.append({ kind: 'tool_call', name: tool, ok: false, code: 'cancelled', detail });
+        reject(new UncageError('tool_failed', { message: 'The run was cancelled.' }));
+      };
+      const timer = setTimeout(() => {
+        finish();
+        void this.activity.append({ kind: 'tool_call', name: tool, ok: false, code: 'timeout', detail });
+        reject(new UncageError('tool_failed', { message: `Site tool "${tool}" did not answer within ${Math.round(this.o.timing.toolTimeoutMs / 1000)} s.` }));
+      }, this.o.timing.toolTimeoutMs);
+      ctx.signal.addEventListener('abort', onAbort, { once: true });
+      this.pendingTools.set(id, {
+        resolve: (r) => {
+          finish();
+          void this.activity.append({ kind: 'tool_call', name: tool, ok: !r.isError, detail });
+          resolve(r);
+        },
+        reject: (e) => {
+          finish();
+          void this.activity.append({ kind: 'tool_call', name: tool, ok: false, code: errorBody(e).code, detail });
+          reject(e);
+        },
+      });
+      this.send({ t: 'tool_call', id, sessionId: ctx.sessionId, runId: ctx.runId, tool, args }).catch((e: unknown) =>
+        this.pendingTools.get(id)?.reject(new UncageError('tool_failed', { message: `Could not reach the website: ${(e as Error).message}` })),
+      );
+    });
+
+  // ---- file channel -----------------------------------------------------------------------
+
+  private async onFilePull(f: Extract<HubFrame, { t: 'file_pull' }>): Promise<void> {
+    const ac = new AbortController();
+    this.pulls.add(ac);
+    const detail = { sessionId: f.sessionId, path: f.path, maxBytes: f.maxBytes };
+    try {
+      const session = await (await this.uncage.sessions.get(f.sessionId)).get();
+      const files = await planPull(session.workspace, f.path, f.maxBytes);
+      await sendPull(f.id, files, (frame) => this.send(frame), ac.signal);
+      void this.activity.append({ kind: 'file_pull', ok: true, detail: { ...detail, files: files.length } });
+    } catch (err) {
+      const body = errorBody(err);
+      void this.activity.append({ kind: 'file_pull', ok: false, code: body.code, detail });
+      // There is no dedicated error frame for pulls: a failed pull answers with a `result` frame
+      // carrying the pull id (the hub's file channel treats it as the pull's failure).
+      await this.send({ t: 'result', id: f.id, ok: false, error: body }).catch(() => undefined);
+    } finally {
+      this.pulls.delete(ac);
+    }
+  }
+
+  // ---- replication ------------------------------------------------------------------------
+
+  private newRep(delivered: number): Rep {
+    return { delivered, sentHigh: delivered, outstanding: [], pumping: false, dirty: false, gen: 0, skipped: new Set() };
+  }
+
+  private onEvent(e: UncageEvent): void {
+    if (e.type === 'approval.requested' || e.type === 'approval.resolved') {
+      const a = e.payload.approval;
+      void this.activity.append({ kind: 'approval', name: e.type, detail: { approvalId: a.id, sessionId: e.sessionId, state: a.state, category: a.category } });
+    }
+    let rep = this.reps.get(e.sessionId);
+    if (!rep) {
+      rep = this.newRep(e.sequence - 1);
+      this.reps.set(e.sessionId, rep);
+    }
+    if (!this.connected) return;
+    if (!rep.pumping && e.sequence === rep.sentHigh + 1) {
+      const sent = this.sendBatch(e.sessionId, rep, [e]);
+      if (sent) return;
+    }
+    void this.pump(e.sessionId);
+  }
+
+  /** Sends one `events` frame and advances the cursor; false if not sendable now. */
+  private sendBatch(sessionId: string, rep: Rep, events: UncageEvent[]): Promise<void> | false {
+    if (!this.connected || events.length === 0) return false;
+    const first = events[0]!.sequence;
+    const last = events.at(-1)!.sequence;
+    const p = this.send({ t: 'events', sessionId, events });
+    rep.sentHigh = last;
+    rep.outstanding.push([first, last]);
+    if (!this.acksOnConn && rep.outstanding.length > MAX_OUTSTANDING) rep.outstanding = [];
+    return p.catch((err: unknown) => this.log.warn({ site: this.site.id, err: (err as Error).message }, 'could not send events'));
+  }
+
+  private onAck(sessionId: string, seq: number): void {
+    this.acksOnConn = true;
+    const rep = this.reps.get(sessionId);
+    if (!rep) return;
+    rep.outstanding = rep.outstanding.filter(([, last]) => last > seq);
+    if (seq > rep.sentHigh) {
+      rep.sentHigh = seq;
+      rep.gen++;
+    } else if (
+      seq < rep.sentHigh &&
+      !rep.skipped.has(seq + 1) &&
+      (rep.outstanding.length === 0 || rep.outstanding[0]![0] > seq + 1)
+    ) {
+      // The hub is missing events that nothing in flight will fill: resend from its sequence.
+      rep.sentHigh = seq;
+      rep.outstanding = [];
+      rep.gen++;
+      void this.pump(sessionId);
+    }
+  }
+
+  private async backfillAll(): Promise<void> {
+    try {
+      for (const s of await this.uncage.sessions.list()) {
+        if (!this.reps.has(s.id)) this.reps.set(s.id, this.newRep(0));
+        void this.pump(s.id);
+      }
+    } catch (err) {
+      this.log.error({ err, site: this.site.id }, 'backfill failed');
+    }
+  }
+
+  /** Sends everything after the cursor, page by page, until caught up. One pump per session. */
+  private async pump(sessionId: string): Promise<void> {
+    const rep = this.reps.get(sessionId);
+    if (!rep) return;
+    if (rep.pumping) {
+      rep.dirty = true;
+      return;
+    }
+    rep.pumping = true;
+    try {
+      while (this.connected) {
+        rep.dirty = false;
+        const gen = rep.gen;
+        const from = rep.sentHigh;
+        let page: UncageEvent[];
+        try {
+          page = await this.uncage.events.readAfter(sessionId, from, READ_PAGE);
+        } catch (err) {
+          if (err instanceof UncageError && err.code === 'event_replay_unavailable') {
+            // Retention pruned what the hub is missing: skip to what we still have.
+            const { lastSequence } = await (await this.uncage.sessions.get(sessionId)).snapshot();
+            this.log.warn({ site: this.site.id, sessionId, from, lastSequence }, 'events pruned before replication; skipping');
+            rep.sentHigh = lastSequence;
+            continue;
+          }
+          throw err;
+        }
+        if (rep.gen !== gen) continue;
+        if (page.length === 0) {
+          if (rep.dirty) continue;
+          break;
+        }
+        for (const batch of this.pack(page, rep)) {
+          if (rep.gen !== gen || !this.connected) break;
+          const sent = this.sendBatch(sessionId, rep, batch);
+          if (sent) await sent;
+        }
+        // Past any skipped (oversized) event at the end of the page.
+        if (rep.gen === gen && this.connected) rep.sentHigh = Math.max(rep.sentHigh, page.at(-1)!.sequence);
+      }
+    } catch (err) {
+      this.log.error({ err, site: this.site.id, sessionId }, 'replication failed');
+    } finally {
+      rep.pumping = false;
+    }
+  }
+
+  /** Splits events into frames under the size budget (an event too large on its own is skipped). */
+  private pack(events: UncageEvent[], rep: Rep): UncageEvent[][] {
+    const out: UncageEvent[][] = [];
+    let cur: UncageEvent[] = [];
+    let size = 200;
+    for (const e of events) {
+      const n = byteLength(JSON.stringify(e)) + 1;
+      if (n + 200 > FRAME_BUDGET) {
+        if (!rep.skipped.has(e.sequence)) {
+          this.log.error({ site: this.site.id, sessionId: e.sessionId, sequence: e.sequence }, 'event too large to replicate; skipped');
+        }
+        rep.skipped.add(e.sequence);
+        continue;
+      }
+      if (size + n > FRAME_BUDGET && cur.length > 0) {
+        out.push(cur);
+        cur = [];
+        size = 200;
+      }
+      cur.push(e);
+      size += n;
+    }
+    if (cur.length > 0) out.push(cur);
+    return out;
+  }
+}

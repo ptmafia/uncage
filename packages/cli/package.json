@@ -1,7 +1,7 @@
 {
   "name": "@uncage/cli",
   "version": "0.1.1",
-  "description": "The `uncage` command: serve the local daemon, run doctor, export events",
+  "description": "The `uncage` command: serve the local daemon, run doctor, export events, and connect this computer to websites (Connected Mode)",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -21,6 +21,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@uncage/agent": "workspace:^",
     "@uncage/core": "workspace:^",
     "@uncage/protocol": "workspace:^",
     "@uncage/runtime-claude": "workspace:^",
@@ -29,6 +30,9 @@
     "pino": "^10.4.0",
     "yaml": "^2.8.0",
     "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@uncage/hub": "workspace:*"
   },
   "license": "MIT",
   "repository": {

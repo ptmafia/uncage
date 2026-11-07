@@ -168,6 +168,20 @@ describe('machine connections', () => {
     await expect(connectFakeAgent({ url: t.wsUrl, token: machineToken })).rejects.toThrow(/401/);
   });
 
+  it('a machine can revoke itself with its own token (uncage sites remove)', async () => {
+    const t = await start();
+    const { machineToken } = await t.pair('alice');
+    const a = await connect({ url: t.wsUrl, token: machineToken });
+    expect((await fetch(`${t.api}/machine/revoke`, { method: 'POST' })).status).toBe(401);
+    expect((await fetch(`${t.api}/machine/revoke`, { method: 'POST', headers: { authorization: 'Bearer nope' } })).status).toBe(401);
+    const res = await fetch(`${t.api}/machine/revoke`, { method: 'POST', headers: { authorization: `Bearer ${machineToken}` } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect((await a.closed).code).toBe(CLOSE.revoked);
+    expect(await machinesOf(t, 'alice')).toEqual([]);
+    await expect(connectFakeAgent({ url: t.wsUrl, token: machineToken })).rejects.toThrow(/401/);
+  });
+
   it('answers tool_call with tool_failed (not implemented in this build)', async () => {
     const echo = defineTool({ name: 'echo_text', description: 'Echo', input: z.object({ text: z.string() }), handler: async (a) => a.text });
     const t = await start({ tools: [echo] });
