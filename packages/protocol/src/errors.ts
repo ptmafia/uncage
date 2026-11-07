@@ -19,6 +19,11 @@ export const ErrorCodeSchema = z.enum([
   'store_locked',
   'attachment_too_large',
   'attachment_type_unsupported',
+  'machine_offline',
+  'machine_not_found',
+  'upgrade_required',
+  'tool_failed',
+  'device_code_expired',
   'internal_error',
 ]);
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
@@ -147,6 +152,36 @@ export const ERROR_CATALOG: Record<ErrorCode, ErrorCatalogEntry> = {
     status: 415,
     message: 'This attachment type is not supported.',
     hint: 'Attach a png, jpg, jpeg, gif or webp image, or a supported text, code or pdf file.',
+    retryable: false,
+  },
+  machine_offline: {
+    status: 409,
+    message: 'The machine is offline.',
+    hint: 'Make sure the Uncage agent is running on that machine and connected to the internet.',
+    retryable: true,
+  },
+  machine_not_found: {
+    status: 404,
+    message: 'The machine was not found.',
+    hint: 'Check the machine id or connect the machine again.',
+    retryable: false,
+  },
+  upgrade_required: {
+    status: 426,
+    message: 'The Uncage agent is too old for this hub.',
+    hint: 'Upgrade the agent (npm i -g @uncage/cli) and reconnect.',
+    retryable: false,
+  },
+  tool_failed: {
+    status: 502,
+    message: 'The tool call failed.',
+    hint: 'Check the tool output for details and retry.',
+    retryable: true,
+  },
+  device_code_expired: {
+    status: 410,
+    message: 'The device code has expired.',
+    hint: 'Start the connection flow again to get a new code.',
     retryable: false,
   },
   internal_error: {
