@@ -132,6 +132,19 @@ describe('connected-mode core hooks', () => {
     expect(adapter.calls[0]).not.toHaveProperty('tools');
   });
 
+  it('records run warnings as system.warning events after run.started', async () => {
+    const u = await make([fake([{ text: 'hi' }])]);
+    const s = await u.sessions.create({ runtime: 'fake' });
+    const warnings = Array.from({ length: 10 }, (_, i) => ({ code: i === 0 ? 'site_tools_unsupported' : `w${i}`, message: `m${i}` }));
+    const run = await s.startRun({ prompt: 'hi', warnings });
+    const events = await eventsUntil(s, isTerminal);
+    const types = events.map((e) => e.type);
+    expect(types.indexOf('system.warning')).toBe(types.indexOf('run.started') + 1);
+    const seen = events.filter((e) => e.type === 'system.warning');
+    expect(seen).toHaveLength(8);
+    expect(seen[0]).toMatchObject({ runId: run.id, payload: { code: 'site_tools_unsupported', message: 'm0' } });
+  });
+
   it('rejects manifest tools without callTool, and invalid manifests', async () => {
     const u = await make([fake([{ text: 'hi' }])]);
     const s = await u.sessions.create({ runtime: 'fake' });

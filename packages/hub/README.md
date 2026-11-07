@@ -31,6 +31,9 @@ on whichever node holds the machine's connection:
   started, recorded per run in the store). A registered tool left out of the manifest fails with
   `tool_failed` (`details.reason: 'not_in_manifest'`). Calls for runs not started through the hub are
   refused.
+- Only runtimes that report `capabilities.siteTools` (Claude Code) get tools. For others (Codex) the
+  hub drops the tools, keeps the skills, and the run shows a `system.warning`
+  (`site_tools_unsupported`). `selectManifest` receives the session's `runtime`.
 - Arguments are validated, and parsed, with `input` first. If they do not match, the call fails
   with `invalid_request` and the handler is not called.
 - Return a `ToolCallResult`, a string (becomes a text block) or any JSON value (becomes a json
@@ -80,6 +83,10 @@ runtime may set a lower limit, for example 5 MB images for Claude Code; the mach
 - Larger ones are sent in 256 KiB chunks (`attachment_begin` / `attachment_chunk` /
   `attachment_end`), across nodes if needed.
 
+The hub keeps its own copy of each attachment for the chat history, in both `sessionStorage` modes
+(also `'machine'`). It is deleted after `attachmentRetentionDays` (default 30, hourly sweep) and
+when the machine is revoked.
+
 ## Storage and clustering
 
 | | single node (default) | several nodes |
@@ -119,6 +126,12 @@ const hub = await createHub({
 
 Rate limits (device codes, failed user-code guesses) are counted on each node separately. They are
 not shared through the cluster.
+
+**`POST /device/code` is limited per client IP (20 per minute).** Behind a proxy or load balancer the
+hub only knows the client IP if you tell it: Express `app.set('trust proxy', <hops>)` (then
+`toNodeHandler` passes `req.ip`), or `rateLimits.clientIp(req)` / `rateLimits.trustForwardedFor`.
+Otherwise every user shares one `shared` bucket, and 20 setups per minute across your whole site
+start failing with `429 rate_limited`.
 
 ### Tests
 

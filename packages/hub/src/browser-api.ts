@@ -7,6 +7,7 @@ import {
   MAX_ATTACHMENT_TRANSFER_BYTES,
   MAX_FRAME_BYTES,
   MAX_READ_EVENTS,
+  newId,
   parseEventId,
   SessionManifestSchema,
   StartRunBodySchema,
@@ -14,6 +15,7 @@ import {
   type ActiveRunInfo,
   type HealthResponse,
   type MachineInfo,
+  type RunWarning,
   type Session,
   type SessionManifest,
   type SessionSnapshot,
@@ -240,19 +242,50 @@ export function browserApi(ctx: ApiContext) {
     };
   }
 
-  async function manifestFor(user: HubUser, prompt: string, sessionId: string): Promise<SessionManifest> {
-    const pick = await ctx.selectManifest({ user, prompt, sessionId });
-    const manifest = {
-      tools: [...new Set(pick.tools)].flatMap((n) => (ctx.tools.has(n) ? [ctx.tools.get(n)!] : [])),
-      skills: [...new Set(pick.skills)].flatMap((n) => (ctx.skills.has(n) ? [ctx.skills.get(n)!] : [])),
-    };
+  /** The session's runtime id: recorded at creation; older records ask the snapshot. */
+  async function runtimeOf(rec: SessionRecord): Promise<string> {
+    return rec.runtime ?? rec.snapshot?.session?.runtimeId ?? (await machines.command(rec.machineId, 'snapshot', { sessionId: rec.id })).session.runtimeId;
+  }
+
+  async function manifestFor(
+    user: HubUser,
+    prompt: string,
+    rec: SessionRecord,
+  ): Promise<{ manifest: SessionManifest; warnings: RunWarning[] }> {
+    const runtime = await runtimeOf(rec);
+    const pick = await ctx.selectManifest({ user, prompt, sessionId: rec.id, runtime });
+    let tools = [...new Set(pick.tools)].flatMap((n) => (ctx.tools.has(n) ? [ctx.tools.get(n)!] : []));
+    const warnings: RunWarning[] = [];
+    if (tools.length > 0) {
+      // Core refuses a run whose runtime cannot take site tools: drop them (skills still go) and say so.
+      // Unknown capabilities (a failed probe) are left to the machine, which falls back to the adapter's.
+      const info = (await store.getMachine(rec.machineId))?.runtimes.find((r) => r.id === runtime);
+      if (info?.capabilities?.siteTools === false) {
+        warnings.push({
+          code: 'site_tools_unsupported',
+          message: `${info?.displayName ?? runtime} cannot use this website's tools; this run starts without them (${tools.length} dropped).`,
+        });
+        tools = [];
+      }
+    }
+    const manifest = { tools, skills: [...new Set(pick.skills)].flatMap((n) => (ctx.skills.has(n) ? [ctx.skills.get(n)!] : [])) };
     const r = SessionManifestSchema.safeParse(manifest);
     if (!r.success) {
       throw new UncageError('internal_error', {
         message: `selectManifest picked an invalid manifest: ${r.error.issues[0]?.message ?? 'bad shape'}`,
       });
     }
-    return r.data;
+    return { manifest: r.data, warnings };
+  }
+
+  /** Puts the created session into the replica snapshot unless replication already did (CAS, no clobber). */
+  async function seedSnapshot(id: string, session: Session): Promise<void> {
+    for (let i = 0; i < 3; i++) {
+      const rec = await store.getSession(id);
+      if (!rec || rec.snapshot?.session) return;
+      const snapshot = { ...(rec.snapshot ?? { runs: [], pendingApprovals: [], lastSequence: rec.lastSequence }), session };
+      if (await store.appendEvents(id, rec.lastSequence, [], { snapshot })) return;
+    }
   }
 
   const routes: Route[] = [];
@@ -337,21 +370,41 @@ export function browserApi(ctx: ApiContext) {
   add('POST', '/sessions', async ({ req, user }) => {
     const body = parse(CreateSessionBodySchema.extend({ machineId: z.string().optional() }), await readJson(req));
     const machine = await pickMachine(user, body.machineId);
-    // The machine chooses the session workspace; a browser-supplied `workspace` is ignored.
-    const session = await machines.command(machine.id, 'createSession', {
-      runtime: body.runtime,
-      ...(body.title !== undefined ? { title: body.title } : {}),
-    });
-    const rec = await store.insertSession({
-      id: session.id,
+    // The hub picks the id and records the session before the machine creates it, so the
+    // session's first events (which may arrive before the command result) are recognised.
+    const id = newId('ses');
+    const placeholder = await store.insertSession({
+      id,
       userId: user.id,
       machineId: machine.id,
-      createdAt: session.createdAt,
-      title: session.title,
+      createdAt: new Date().toISOString(),
+      title: body.title ?? '',
       lastSequence: 0,
-      ...(site ? { snapshot: { session, runs: [], pendingApprovals: [], lastSequence: 0 } } : {}),
+      runtime: body.runtime,
+      ...(site ? { snapshot: { runs: [], pendingApprovals: [], lastSequence: 0 } } : {}),
     });
-    if (rec.userId !== user.id || rec.machineId !== machine.id) throw new UncageError('internal_error');
+    if (placeholder.userId !== user.id || placeholder.machineId !== machine.id) throw new UncageError('internal_error');
+    let session: Session;
+    try {
+      // The machine chooses the session workspace; a browser-supplied `workspace` is ignored.
+      session = await machines.command(machine.id, 'createSession', {
+        id,
+        runtime: body.runtime,
+        ...(body.title !== undefined ? { title: body.title } : {}),
+      });
+    } catch (err) {
+      // Refused: no session exists. (A timeout may still have created it; keep the record.)
+      if (!(err instanceof UncageError && err.code === 'machine_offline')) await store.deleteSession(id).catch(() => undefined);
+      throw err;
+    }
+    if (session.id !== id) {
+      // An agent that ignores the hub's id: record the session under the id it chose.
+      await store.deleteSession(id).catch(() => undefined);
+      await store.insertSession({ ...placeholder, id: session.id, ...(site ? { snapshot: { session, runs: [], pendingApprovals: [], lastSequence: 0 } } : {}) });
+    } else {
+      await store.updateSession(id, { title: session.title });
+      if (site) await seedSnapshot(id, session);
+    }
     return json(stamp(session, machine.id), 201);
   });
 
@@ -367,7 +420,7 @@ export function browserApi(ctx: ApiContext) {
     const key = idempotencyKey(req);
     const body = parse(StartRunBodySchema, await readJson(req));
     const rec = await ownedSession(user, params.id!);
-    const manifest = await manifestFor(user, body.prompt, rec.id);
+    const { manifest, warnings } = await manifestFor(user, body.prompt, rec);
     // Record the offered tools before the machine can start the run: tool calls are accepted only
     // for tools in their run's manifest (bound to the run id once it is known).
     const manifestKey = `${rec.id}:${key}`;
@@ -381,6 +434,7 @@ export function browserApi(ctx: ApiContext) {
         ...(body.attachmentIds !== undefined ? { attachmentIds: body.attachmentIds } : {}),
         idempotencyKey: key,
         manifest,
+        ...(warnings.length > 0 ? { warnings } : {}),
       });
     } catch (err) {
       // Refused by the machine: no run will use it. (A timeout may still have started one; a retry
@@ -444,7 +498,7 @@ export function browserApi(ctx: ApiContext) {
         : await machines.upload(rec.machineId, { sessionId: rec.id, name, mime }, data);
     if (attachment.sessionId !== rec.id) throw new UncageError('internal_error', { message: 'The machine sent an invalid response.' });
     await store.putResource(attachment.id, 'attachment', rec.id);
-    await store.putAttachment({ attachment, userId: user.id, data });
+    await store.putAttachment({ attachment, userId: user.id, data, machineId: rec.machineId });
     return json(attachment, 201);
   });
 

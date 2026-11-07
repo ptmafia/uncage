@@ -96,7 +96,7 @@ sequenceDiagram
 ### 2. Send a task
 
 1. The user types in `<AgentChat>`. The browser calls the hub’s browser API (the same shapes as the Local Mode daemon’s `/v1` API).
-2. For every run, the hub calls your `selectManifest({ user, prompt, sessionId })` to pick the tools and skills this run may use. Without it, every registered tool and skill is offered.
+2. For every run, the hub calls your `selectManifest({ user, prompt, sessionId, runtime })` to pick the tools and skills this run may use. Without it, every registered tool and skill is offered. A runtime without site tool support (Codex) gets the skills only, and the session shows a `site_tools_unsupported` warning.
 3. The hub sends `startRun` to the computer with the prompt and the **manifest**: the tools’ names, descriptions and JSON Schemas, and the skills’ text. No code.
 4. The agent runs Claude Code in `~/Uncage/<site host>/<session id>/`. Site tools appear to Claude Code as `mcp__site__<name>`. Skills are written to `.claude/skills/<name>/SKILL.md` in that folder.
 5. Every event (text, tool steps, approvals, run state) is numbered and stored locally first, then sent to the hub and on to the browser over SSE.

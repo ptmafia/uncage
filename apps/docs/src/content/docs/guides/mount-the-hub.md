@@ -188,6 +188,7 @@ Only `publicUrl` and `getUser` are required.
 | `skills` | `[]` | `SkillSpec[]`. [Guide](/uncage/guides/write-skills/) |
 | `selectManifest(ctx)` | all tools and skills | Picks tools and skills per run. [Guide](/uncage/guides/select-manifest/) |
 | `sessionStorage` | `'machine'` | `'site'` keeps a replica of every conversation. [Guide](/uncage/guides/site-storage/) |
+| `attachmentRetentionDays` | `30` | Days the hub keeps its copy of attachments sent through the website (hourly sweep; `Infinity` keeps them). A revoked computer's attachments are deleted at once. [Details](/uncage/guides/site-storage/#attachments) |
 | `store` | `pgliteHubStore({ dataDir: './.uncage-hub' })` | `HubStore`. Use `postgresHubStore` for several nodes. |
 | `cluster` | `memoryCluster()` | `ClusterAdapter`. Use `redisCluster` for several nodes. [Guide](/uncage/guides/multi-node/) |
 | `site` | id and name from `publicUrl`’s host | `{ id?, name? }` shown to computers at pairing. Keep `id` stable. |

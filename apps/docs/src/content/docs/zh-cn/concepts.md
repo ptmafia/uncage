@@ -87,7 +87,7 @@ description: Uncage 背后的概念，一节一个：网站与 hub、电脑与�
 
 ## Manifest
 
-**manifest** 是提供给某一次运行的工具和技能。默认是你注册的全部工具和技能。用 `selectManifest({ user, prompt, sessionId })` 可以按次选择，比如只给付费用户提供发布类工具，或者只在提示词与发票有关时提供 `invoice` 技能。hub 会记录每次运行的工具清单；调用清单以外的工具会失败，返回 `tool_failed`（`details.reason: 'not_in_manifest'`）。你对工具或技能的修改从下一次运行开始生效。
+**manifest** 是提供给某一次运行的工具和技能。默认是你注册的全部工具和技能。用 `selectManifest({ user, prompt, sessionId, runtime })` 可以按次选择，比如只给付费用户提供发布类工具，或者只在提示词与发票有关时提供 `invoice` 技能。hub 会记录每次运行的工具清单；调用清单以外的工具会失败，返回 `tool_failed`（`details.reason: 'not_in_manifest'`）。你对工具或技能的修改从下一次运行开始生效。不支持站点工具的运行时（目前是 Codex）只拿到技能，会话里会出现 `site_tools_unsupported` 警告。
 
 指南：[Choose tools and skills per run](/uncage/guides/select-manifest/)（英文）。
 

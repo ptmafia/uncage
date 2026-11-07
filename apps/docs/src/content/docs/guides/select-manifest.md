@@ -6,10 +6,10 @@ description: Use selectManifest to decide, for each run, which of your site tool
 By default every run is offered every tool and skill you registered. `selectManifest` lets you choose per run.
 
 ```ts nocheck
-selectManifest?(ctx: { user: HubUser; prompt: string; sessionId: string }): Promise<{ tools: string[]; skills: string[] }>;
+selectManifest?(ctx: { user: HubUser; prompt: string; sessionId: string; runtime: string }): Promise<{ tools: string[]; skills: string[] }>;
 ```
 
-The hub calls it each time a run starts (`POST <basePath>/sessions/:id/runs`), before anything is sent to the computer. Return the **names** of the tools and skills to offer.
+The hub calls it each time a run starts (`POST <basePath>/sessions/:id/runs`), before anything is sent to the computer. `runtime` is the session's runtime id (`claude-code`, `codex`, …). Return the **names** of the tools and skills to offer.
 
 ## Example: by plan and by task
 
@@ -59,6 +59,7 @@ export const hub = await createHub({
 - **Keep it fast.** It runs on the request that starts the run. If it throws, starting the run fails (`500 internal_error`), so handle your own lookups’ failures.
 - **Limits:** at most 64 tools and 64 skills per run. Returning more fails the request with `internal_error` (“selectManifest picked an invalid manifest”).
 - Returning `{ tools: [], skills: [] }` gives a plain Claude Code run with none of your tools or skills.
+- **Runtimes without site tools.** Only runtimes that report `capabilities.siteTools` (Claude Code) can call site tools. For any other runtime (Codex today) the hub drops the tools whatever you return, keeps the skills, and the run starts with a `system.warning` event (code `site_tools_unsupported`) that `<AgentChat>` shows. Check `runtime` if you would rather pick different skills for it.
 
 ## When to use it
 

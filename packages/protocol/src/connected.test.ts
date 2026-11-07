@@ -177,8 +177,12 @@ describe('hub command args / results', () => {
   it('validates args', () => {
     expect(HubCommandArgsSchemas.createSession.safeParse({ runtime: 'claude-code' }).success).toBe(true);
     expect(HubCommandArgsSchemas.createSession.safeParse({ runtime: '' }).success).toBe(false);
+    expect(HubCommandArgsSchemas.createSession.safeParse({ runtime: 'claude-code', id: 'ses_0123456789abcdef' }).success).toBe(true);
+    expect(HubCommandArgsSchemas.createSession.safeParse({ runtime: 'claude-code', id: '../../etc' }).success).toBe(false);
     const startRun = { sessionId: 's', prompt: 'p', idempotencyKey: 'k', manifest: { tools: [], skills: [] } };
     expect(HubCommandArgsSchemas.startRun.safeParse(startRun).success).toBe(true);
+    expect(HubCommandArgsSchemas.startRun.safeParse({ ...startRun, warnings: [{ code: 'site_tools_unsupported', message: 'm' }] }).success).toBe(true);
+    expect(HubCommandArgsSchemas.startRun.safeParse({ ...startRun, warnings: Array.from({ length: 9 }, () => ({ code: 'c', message: 'm' })) }).success).toBe(false);
     expect(HubCommandArgsSchemas.startRun.safeParse({ ...startRun, idempotencyKey: '' }).success).toBe(false);
     expect(HubCommandArgsSchemas.startRun.safeParse({ ...startRun, manifest: { tools: [{ name: 'Bash' }], skills: [] } }).success).toBe(false);
     expect(HubCommandArgsSchemas.readEvents.safeParse({ sessionId: 's', after: 0, limit: MAX_READ_EVENTS + 1 }).success).toBe(false);

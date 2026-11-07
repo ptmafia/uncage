@@ -131,6 +131,16 @@ ALTER TABLE uncage_hub_run_manifests ADD COLUMN nonce text;
 CREATE INDEX uncage_hub_run_manifests_created_idx ON uncage_hub_run_manifests (created_at)
 `,
   },
+  {
+    id: 6,
+    sql: `
+ALTER TABLE uncage_hub_sessions ADD COLUMN runtime text;
+ALTER TABLE uncage_hub_attachments ADD COLUMN machine_id text;
+ALTER TABLE uncage_hub_attachments ADD COLUMN created_at text;
+CREATE INDEX uncage_hub_attachments_machine_idx ON uncage_hub_attachments (machine_id);
+CREATE INDEX uncage_hub_attachments_created_idx ON uncage_hub_attachments (created_at)
+`,
+  },
 ];
 
 /** Postgres `unique_violation` (PGlite reports the same SQLSTATE). */
@@ -184,6 +194,7 @@ interface SessionRow {
   active_run: ActiveRunRecord | null;
   last_sequence: number;
   snapshot: ReplicaSnapshot | null;
+  runtime: string | null;
 }
 
 const toMachine = (r: MachineRow): MachineRecord => ({
@@ -220,6 +231,7 @@ const toSession = (r: SessionRow): SessionRecord => ({
   ...(r.active_run !== null ? { activeRun: r.active_run } : {}),
   lastSequence: r.last_sequence,
   ...(r.snapshot !== null ? { snapshot: r.snapshot } : {}),
+  ...(r.runtime !== null ? { runtime: r.runtime } : {}),
 });
 
 interface ToolCallRow {
@@ -324,8 +336,16 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
       await db.query(`UPDATE uncage_hub_machines SET ${sets.join(', ')} WHERE id = $1`, params);
     },
     async deleteMachine(id) {
-      const { rows } = await db.query('DELETE FROM uncage_hub_machines WHERE id = $1 RETURNING id', [id]);
-      return rows.length > 0;
+      return db.transaction(async (tx) => {
+        const { rows } = await tx.query('DELETE FROM uncage_hub_machines WHERE id = $1 RETURNING id', [id]);
+        // Its attachment bytes go too (rows from before migration 6 are matched through their session).
+        await tx.query(
+          `DELETE FROM uncage_hub_attachments WHERE machine_id = $1
+             OR (machine_id IS NULL AND meta->>'sessionId' IN (SELECT id FROM uncage_hub_sessions WHERE machine_id = $1))`,
+          [id],
+        );
+        return rows.length > 0;
+      });
     },
 
     async insertDeviceCode(r) {
@@ -351,8 +371,8 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
 
     async insertSession(r) {
       await db.query(
-        `INSERT INTO uncage_hub_sessions (id, user_id, machine_id, created_at, title, active_run, last_sequence, snapshot)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb) ON CONFLICT (id) DO NOTHING`,
+        `INSERT INTO uncage_hub_sessions (id, user_id, machine_id, created_at, title, active_run, last_sequence, snapshot, runtime)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb, $9) ON CONFLICT (id) DO NOTHING`,
         [
           r.id,
           r.userId,
@@ -362,6 +382,7 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
           r.activeRun ? json(r.activeRun) : null,
           r.lastSequence,
           r.snapshot ? json(r.snapshot) : null,
+          r.runtime ?? null,
         ],
       );
       const stored = await one('SELECT * FROM uncage_hub_sessions WHERE id = $1', [r.id], toSession);
@@ -369,6 +390,12 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
       return stored;
     },
     getSession: (id) => one('SELECT * FROM uncage_hub_sessions WHERE id = $1', [id], toSession),
+    async deleteSession(id) {
+      await db.transaction(async (tx) => {
+        await tx.query('DELETE FROM uncage_hub_events WHERE session_id = $1', [id]);
+        await tx.query('DELETE FROM uncage_hub_sessions WHERE id = $1', [id]);
+      });
+    },
     async listSessions(userId) {
       const { rows } = await db.query<SessionRow>(
         'SELECT * FROM uncage_hub_sessions WHERE user_id = $1 ORDER BY created_at, id',
@@ -428,15 +455,22 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
 
     async putAttachment(r) {
       await db.query(
-        'INSERT INTO uncage_hub_attachments (id, user_id, meta, data) VALUES ($1, $2, $3::jsonb, $4) ON CONFLICT DO NOTHING',
-        [r.attachment.id, r.userId, json(r.attachment), r.data],
+        'INSERT INTO uncage_hub_attachments (id, user_id, meta, data, machine_id, created_at) VALUES ($1, $2, $3::jsonb, $4, $5, $6) ON CONFLICT DO NOTHING',
+        [r.attachment.id, r.userId, json(r.attachment), r.data, r.machineId ?? null, r.attachment.createdAt],
       );
     },
+    async pruneAttachments(before) {
+      const { rows } = await db.query(
+        `DELETE FROM uncage_hub_attachments WHERE COALESCE(created_at, meta->>'createdAt') < $1 RETURNING id`,
+        [before],
+      );
+      return rows.length;
+    },
     getAttachment: (id) =>
-      one<{ user_id: string; meta: Attachment; data: Uint8Array }, AttachmentRecord>(
-        'SELECT user_id, meta, data FROM uncage_hub_attachments WHERE id = $1',
+      one<{ user_id: string; meta: Attachment; data: Uint8Array; machine_id: string | null }, AttachmentRecord>(
+        'SELECT user_id, meta, data, machine_id FROM uncage_hub_attachments WHERE id = $1',
         [id],
-        (r) => ({ attachment: r.meta, userId: r.user_id, data: new Uint8Array(r.data) }),
+        (r) => ({ attachment: r.meta, userId: r.user_id, data: new Uint8Array(r.data), ...(r.machine_id ? { machineId: r.machine_id } : {}) }),
       ),
 
     async putRunManifest(r) {

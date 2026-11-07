@@ -123,6 +123,48 @@ export function hubStoreContract(make: () => Promise<{ store: HubStore; cleanup?
   );
 
   it(
+    'sessions keep their runtime id; delete removes the record and its events',
+    withStore(async (s) => {
+      await s.insertSession({ id: 's1', userId: 'alice', machineId: 'm1', createdAt: iso(), title: 'T', lastSequence: 0, runtime: 'codex' });
+      await s.insertSession({ id: 's2', userId: 'alice', machineId: 'm1', createdAt: iso(), title: 'T', lastSequence: 0 });
+      expect((await s.getSession('s1'))?.runtime).toBe('codex');
+      expect(await s.getSession('s2')).not.toHaveProperty('runtime');
+      expect(await s.appendEvents('s2', 0, [event('s2', 1)], {})).toBe(true);
+      await s.deleteSession('s2');
+      expect(await s.getSession('s2')).toBeNull();
+      expect(await s.readEvents('s2', 0, 10)).toEqual([]);
+    }),
+  );
+
+  it(
+    'attachments: retention prune by createdAt; revoking a machine deletes its attachments',
+    withStore(async (s) => {
+      const att = (id: string, sessionId: string, createdAt: string) => ({
+        id, sessionId, name: `${id}.txt`, mime: 'text/plain', size: 1, kind: 'file' as const, sha256: 'x', createdAt,
+      });
+      const data = new Uint8Array([1]);
+      await s.insertMachine(machine('m1'));
+      await s.insertMachine(machine('m2'));
+      await s.insertSession({ id: 's1', userId: 'alice', machineId: 'm1', createdAt: iso(), title: 'T', lastSequence: 0 });
+      await s.putAttachment({ attachment: att('att_old', 's2', iso(-40 * 86_400_000)), userId: 'alice', data, machineId: 'm2' });
+      await s.putAttachment({ attachment: att('att_new', 's2', iso()), userId: 'alice', data, machineId: 'm2' });
+      await s.putAttachment({ attachment: att('att_m1', 's1', iso()), userId: 'alice', data, machineId: 'm1' });
+      // No machineId (written by an older hub): matched through its session.
+      await s.putAttachment({ attachment: att('att_legacy', 's1', iso()), userId: 'alice', data });
+      expect((await s.getAttachment('att_m1'))?.machineId).toBe('m1');
+
+      expect(await s.pruneAttachments(iso(-30 * 86_400_000))).toBe(1);
+      expect(await s.getAttachment('att_old')).toBeNull();
+      expect(await s.getAttachment('att_new')).not.toBeNull();
+
+      expect(await s.deleteMachine('m1')).toBe(true);
+      expect(await s.getAttachment('att_m1')).toBeNull();
+      expect(await s.getAttachment('att_legacy')).toBeNull();
+      expect(await s.getAttachment('att_new')).not.toBeNull();
+    }),
+  );
+
+  it(
     'tool-call audit: insert running, finish, list per session in start order',
     withStore(async (s) => {
       const base = { sessionId: 's1', runId: 'run_1', userId: 'alice', machineId: 'm1', tool: 'lookup_order' };

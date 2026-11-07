@@ -30,14 +30,29 @@ export interface HubOptions {
    */
   tools?: SiteTool[];
   skills?: SkillSpec[];
-  /** Picks the tools and skills (by name) offered to a run. Defaults to all. */
-  selectManifest?(ctx: { user: HubUser; prompt: string; sessionId: string }): Promise<{ tools: string[]; skills: string[] }>;
+  /**
+   * Picks the tools and skills (by name) offered to a run. Defaults to all. `runtime` is the
+   * session's runtime id (`claude-code`, `codex`, …). Whatever you pick, tools are dropped for a
+   * runtime the machine reports without `capabilities.siteTools` (Codex today): the run still
+   * starts, with its skills, and shows a `system.warning` with code `site_tools_unsupported`.
+   */
+  selectManifest?(ctx: { user: HubUser; prompt: string; sessionId: string; runtime: string }): Promise<{ tools: string[]; skills: string[] }>;
   /**
    * `'machine'` (default): session history lives only on the machine (offline machine → no history).
    * `'site'`: the hub keeps a replica of every session's events and snapshot, readable while the
-   * machine is offline.
+   * machine is offline. In site mode the hub only records sessions it created itself; events a
+   * machine reports for any other session id are ignored (and logged).
+   *
+   * In either mode the hub keeps a copy of each attachment sent through the website (it shows in
+   * the chat history), deleted after `attachmentRetentionDays` or when the machine is revoked.
    */
   sessionStorage?: 'machine' | 'site';
+  /**
+   * Days the hub keeps attachment bytes sent through the website (an hourly sweep deletes older
+   * ones; the machine keeps its own copy). Default 30. `Infinity` keeps them until the machine is
+   * revoked.
+   */
+  attachmentRetentionDays?: number;
   /** Agents older than this are told to upgrade. Defaults to this package's version. */
   minAgentVersion?: string;
   /** `install.sh` installs `@uncage/cli@<range>`. Defaults to `^<major.minor>` of this package. */

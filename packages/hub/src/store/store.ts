@@ -69,6 +69,8 @@ export interface SessionRecord {
   activeRun?: ActiveRunRecord;
   lastSequence: number;
   snapshot?: ReplicaSnapshot;
+  /** The session's runtime id (`claude-code`, `codex`, …); absent on rows written by older hubs. */
+  runtime?: string;
 }
 
 export type SessionPatch = {
@@ -85,6 +87,8 @@ export interface AttachmentRecord {
   attachment: Attachment;
   userId: string;
   data: Uint8Array;
+  /** The machine the attachment was relayed to (its bytes are deleted when that machine is revoked). */
+  machineId?: string;
 }
 
 /** Outcome of a site tool call: `running` until it finishes. */
@@ -133,7 +137,7 @@ export interface HubStore {
   /** Newest `lastSeenAt` first. */
   listMachines(userId: string): Promise<MachineRecord[]>;
   updateMachine(id: string, patch: Partial<Pick<MachineRecord, 'name' | 'os' | 'agentVersion' | 'runtimes' | 'lastSeenAt'>>): Promise<void>;
-  /** Resolves `false` when there was no such machine. */
+  /** Also deletes the attachment bytes relayed to that machine. Resolves `false` when there was no such machine. */
   deleteMachine(id: string): Promise<boolean>;
 
   /** Also prunes device codes that expired over an hour ago. */
@@ -154,6 +158,8 @@ export interface HubStore {
   /** Oldest first, like the daemon's session list. */
   listSessions(userId: string): Promise<SessionRecord[]>;
   updateSession(id: string, patch: SessionPatch): Promise<void>;
+  /** Deletes a session record and its replicated events (a session the machine refused to create). */
+  deleteSession(id: string): Promise<void>;
   /**
    * Replication: appends `events` (contiguous, starting at `expectedLastSequence + 1`) and applies
    * `patch`, atomically, only if the session's `lastSequence` is still `expectedLastSequence`.
@@ -169,6 +175,8 @@ export interface HubStore {
 
   putAttachment(r: AttachmentRecord): Promise<void>;
   getAttachment(id: string): Promise<AttachmentRecord | null>;
+  /** Retention: deletes attachments (bytes and metadata) created before `before` (ISO). Resolves how many. */
+  pruneAttachments(before: string): Promise<number>;
 
   /**
    * The site tools a run was offered (its manifest), recorded before `startRun` is sent under

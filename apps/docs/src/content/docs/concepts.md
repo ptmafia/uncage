@@ -87,7 +87,7 @@ Guide: [Write skills](/uncage/guides/write-skills/).
 
 ## Manifest
 
-The **manifest** is the set of tools and skills offered to one run. By default it is every tool and skill you registered. With `selectManifest({ user, prompt, sessionId })` you choose per run, for example only offering the publishing tools to users on a paid plan, or only the `invoice` skill when the prompt is about invoices. The hub records each run’s tool list; a call to a tool outside it fails with `tool_failed` (`details.reason: 'not_in_manifest'`). Changes to your tools or skills apply from the next run.
+The **manifest** is the set of tools and skills offered to one run. By default it is every tool and skill you registered. With `selectManifest({ user, prompt, sessionId, runtime })` you choose per run, for example only offering the publishing tools to users on a paid plan, or only the `invoice` skill when the prompt is about invoices. The hub records each run’s tool list; a call to a tool outside it fails with `tool_failed` (`details.reason: 'not_in_manifest'`). Changes to your tools or skills apply from the next run. Runtimes without site tool support (Codex) get the skills only, with a `site_tools_unsupported` warning in the session.
 
 Guide: [Choose tools and skills per run](/uncage/guides/select-manifest/).
 

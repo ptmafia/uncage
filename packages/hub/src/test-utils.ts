@@ -274,7 +274,8 @@ export function fakeMachine() {
     const op = cmd.op as HubCommandOp;
     switch (op) {
       case 'createSession': {
-        const id = `ses_${String(++n).padStart(4, '0')}${Math.random().toString(16).slice(2, 10)}`;
+        // Like the real agent: the hub's id when it sent one.
+        const id = (a.id as string | undefined) ?? `ses_${String(++n).padStart(4, '0')}${Math.random().toString(16).slice(2, 10)}`;
         const session = fakeSession(id, (a.title as string | undefined) ?? 'Untitled');
         sessions.set(id, { session, events: [makeEvent(id, 1, 'session.created', { session })] });
         return session;

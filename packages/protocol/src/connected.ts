@@ -90,6 +90,12 @@ export type SkillSpec = z.infer<typeof SkillSpecSchema>;
 export const MAX_MANIFEST_TOOLS = 64;
 export const MAX_MANIFEST_SKILLS = 64;
 
+/** Upper bound on hub-sent run warnings. */
+export const MAX_RUN_WARNINGS = 8;
+/** A notice the hub attaches to a run; shown in the session as a `system.warning` event. */
+export const RunWarningSchema = z.object({ code: z.string().min(1).max(64), message: z.string().max(1000) });
+export type RunWarning = z.infer<typeof RunWarningSchema>;
+
 export const SessionManifestSchema = z.object({
   tools: z.array(ToolSpecSchema).max(MAX_MANIFEST_TOOLS),
   skills: z.array(SkillSpecSchema).max(MAX_MANIFEST_SKILLS),
@@ -119,11 +125,14 @@ export const MAX_READ_EVENTS = 500;
  * session workspace is always chosen by the agent, never by the hub.
  */
 export const HubCommandArgsSchemas = {
-  createSession: z.object({ runtime: z.string().min(1), title: z.string().optional() }),
+  /** `id`: chosen by the hub so it can recognise the session's events (the machine falls back to its own). */
+  createSession: z.object({ runtime: z.string().min(1), title: z.string().optional(), id: z.string().regex(/^ses_[a-z0-9]{8,64}$/).optional() }),
   startRun: StartRunBodySchema.extend({
     sessionId: z.string(),
     idempotencyKey: IdempotencyKeySchema,
     manifest: SessionManifestSchema,
+    /** Notices the machine records as `system.warning` events on the run (e.g. `site_tools_unsupported`). */
+    warnings: z.array(RunWarningSchema).max(MAX_RUN_WARNINGS).optional(),
   }),
   cancelRun: z.object({ runId: z.string() }),
   decide: z.object({ approvalId: z.string(), decision: ApprovalDecisionSchema, idempotencyKey: IdempotencyKeySchema }),

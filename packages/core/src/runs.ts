@@ -51,6 +51,8 @@ export interface StartRunOptions {
   manifest?: SessionManifest;
   /** Required when `manifest.tools` is non-empty. */
   callTool?: CallTool;
+  /** Notices recorded as `system.warning` events right after `run.started` (at most 8 kept). */
+  warnings?: Array<{ code: string; message: string }>;
 }
 
 export const ACTIVE_RUN_STATES: RunState[] = ['queued', 'running', 'waiting_approval'];
@@ -308,6 +310,9 @@ export class RunManager {
         ...(title !== undefined ? { title } : {}),
       });
       await this.log.append(sessionId, 'run.started', { run }, run.id);
+      for (const w of (body.warnings ?? []).slice(0, 8)) {
+        await this.log.append(sessionId, 'system.warning', { code: String(w.code), message: String(w.message) }, run.id);
+      }
       if (reset.length > 0 || title !== undefined) {
         await this.log.append(sessionId, 'session.updated', { session: updated }, run.id);
       }

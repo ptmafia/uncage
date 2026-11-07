@@ -132,6 +132,28 @@ describe('agent ↔ real hub', () => {
     expect(JSON.stringify(activity)).not.toContain('A-1');
   });
 
+  it('a runtime without siteTools still runs (site storage): tools dropped, skills kept, site_tools_unsupported shown', async () => {
+    const lookup = defineTool({ name: 'lookup_order', description: 'Look up an order', input: z.object({}), handler: async () => 'x' });
+    const skill = { name: 'brand-voice', description: 'Brand voice', markdown: '# Voice' };
+    const t = await hubFor({ tools: [lookup], skills: [skill], sessionStorage: 'site' });
+    const h = await home();
+    const site = await t.pair('alice');
+    const adapter = createFakeAdapter({ script: [{ text: 'no tools here' }], capabilities: { siteTools: false } });
+    await agentFor(h, [site], [], { extra: { adapters: () => [adapter] } });
+    await online(t);
+    const session = await createSession(t);
+    expect((await startRun(t, session.id)).status).toBe(202);
+    // Site storage: these events come from the hub's replica, so the hub recognised its own session id.
+    const evs = await until(async () => {
+      const all = await history(t, session.id);
+      return terminal(all) ? all : null;
+    });
+    expect(terminal(evs)?.type).toBe('run.completed');
+    expect(evs.find((e) => e.type === 'system.warning')).toMatchObject({ payload: { code: 'site_tools_unsupported' } });
+    expect(adapter.calls[0]).not.toHaveProperty('tools');
+    expect(adapter.calls[0]?.skills).toEqual([expect.objectContaining({ name: 'brand-voice' })]);
+  });
+
   it('local policy: the hub cannot enable bypass, and modes outside allowedPermissionModes are denied', async () => {
     const t = await hubFor();
     const h = await home();

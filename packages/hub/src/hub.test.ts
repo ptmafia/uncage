@@ -10,6 +10,7 @@ import {
   fakeMachine,
   fakeSession,
   makeEvent,
+  NO_REPLY,
   readSse,
   sleep,
   startTestHub,
@@ -208,8 +209,9 @@ describe('browser API → machine', () => {
     expect(res.status).toBe(201);
     const s = (await j(res)) as Session;
     expect(a2.commands.map((c) => c.op)).toEqual(['createSession']);
-    // The browser cannot choose the workspace.
-    expect(a2.commands[0]!.args).toEqual({ runtime: 'fake', title: 'Hello' });
+    // The browser cannot choose the workspace; the hub chooses the id (and recorded it first).
+    expect(a2.commands[0]!.args).toEqual({ id: s.id, runtime: 'fake', title: 'Hello' });
+    expect(await t.store.getSession(s.id)).toMatchObject({ runtime: 'fake', title: 'Hello' });
     expect(a1.commands).toEqual([]);
     expect((await t.store.getSession(s.id))?.machineId).toBe(m2.machineId);
 
@@ -294,7 +296,7 @@ describe('browser API → machine', () => {
     expect((await t.as('alice', `/sessions/${s.id}/runs`, post({ prompt: 'make a page' }))).status).toBe(400);
     const res = await t.as('alice', `/sessions/${s.id}/runs`, post({ prompt: 'make a page' }, { 'idempotency-key': 'k1' }));
     expect(res.status).toBe(202);
-    expect(seen).toEqual([{ user: { id: 'alice' }, prompt: 'make a page', sessionId: s.id }]);
+    expect(seen).toEqual([{ user: { id: 'alice' }, prompt: 'make a page', sessionId: s.id, runtime: 'fake' }]);
     const cmd = a.commands.find((c) => c.op === 'startRun')!;
     const args = cmd.args as { idempotencyKey: string; manifest: { tools: Array<Record<string, unknown>>; skills: unknown[] } };
     expect(args.idempotencyKey).toBe('k1');
@@ -303,6 +305,65 @@ describe('browser API → machine', () => {
     expect(args.manifest.skills).toEqual([skill]);
     // The run is now routable for its owner.
     expect((await t.store.getResource('run_1', 'run'))?.sessionId).toBe(s.id);
+    expect(args).not.toHaveProperty('warnings');
+  });
+
+  it('a runtime without siteTools (Codex): tools dropped, skills kept, site_tools_unsupported warning', async () => {
+    const tool = defineTool({ name: 'create_asset', description: 'Create', input: z.object({}), handler: async () => 'ok' });
+    const skill = { name: 'landing-page', description: 'Landing page rules', markdown: '# Rules' };
+    const seen: Array<{ runtime: string }> = [];
+    const t = await start({
+      tools: [tool],
+      skills: [skill],
+      selectManifest: async (ctx) => {
+        seen.push(ctx);
+        return { tools: ['create_asset'], skills: ['landing-page'] };
+      },
+    });
+    const fm = fakeMachine();
+    const { machineToken } = await t.pair('alice');
+    const caps = (siteTools: boolean) => ({ ...fakeSession('x').capabilities, siteTools });
+    const a = await connect({
+      url: t.wsUrl,
+      token: machineToken,
+      onCommand: fm.handler,
+      runtimes: [
+        { id: 'codex', displayName: 'Codex', status: 'available', capabilities: caps(false) },
+        { id: 'fake', displayName: 'Fake', status: 'available', capabilities: caps(true) },
+      ],
+    });
+    const codex = (await j(t.as('alice', '/sessions', post({ runtime: 'codex' })))) as Session;
+    expect((await t.as('alice', `/sessions/${codex.id}/runs`, post({ prompt: 'p' }, { 'idempotency-key': 'k1' }))).status).toBe(202);
+    const fake = (await j(t.as('alice', '/sessions', post({ runtime: 'fake' })))) as Session;
+    expect((await t.as('alice', `/sessions/${fake.id}/runs`, post({ prompt: 'p' }, { 'idempotency-key': 'k2' }))).status).toBe(202);
+    expect(seen.map((c) => c.runtime)).toEqual(['codex', 'fake']);
+    const [onCodex, onFake] = a.commands.filter((c) => c.op === 'startRun').map((c) => c.args as { manifest: { tools: unknown[]; skills: unknown[] }; warnings?: unknown });
+    expect(onCodex!.manifest).toEqual({ tools: [], skills: [skill] });
+    expect(onCodex!.warnings).toEqual([{ code: 'site_tools_unsupported', message: expect.stringContaining('Codex') }]);
+    expect(onFake!.manifest.tools).toHaveLength(1);
+    expect(onFake).not.toHaveProperty('warnings');
+  });
+
+  it('session creation: a refusal removes the hub record; an agent that ignores the id is recorded under its own', async () => {
+    const t = await start({ sessionStorage: 'site' });
+    const fm = fakeMachine();
+    const { machineToken } = await t.pair('alice');
+    let mode: 'refuse' | 'own-id' = 'refuse';
+    await connect({
+      url: t.wsUrl,
+      token: machineToken,
+      onCommand: (cmd) => {
+        if (cmd.op !== 'createSession') return fm.handler(cmd);
+        if (mode === 'refuse') throw Object.assign(new Error('Runtime nope not found.'), { code: 'not_found' });
+        return fm.handler({ ...cmd, args: { runtime: 'fake' } });
+      },
+    });
+    expect((await t.as('alice', '/sessions', post({ runtime: 'nope' }))).status).toBe(404);
+    expect(await t.store.listSessions('alice')).toEqual([]);
+    mode = 'own-id';
+    const s = (await j(t.as('alice', '/sessions', post({ runtime: 'fake' })))) as Session;
+    expect((await t.store.listSessions('alice')).map((r) => r.id)).toEqual([s.id]);
+    expect(((await j(t.as('alice', '/sessions'))) as Session[]).map((x) => x.id)).toEqual([s.id]);
   });
 
   it('events from the machine stream to SSE subscribers (history + live, resume with Last-Event-ID)', async () => {
@@ -421,6 +482,38 @@ describe('browser API → machine', () => {
     });
     expect(big.status).toBe(413);
     expect((await j(big)).error.code).toBe('attachment_too_large');
+  });
+
+  it('attachment bytes: swept after attachmentRetentionDays; revoking the machine deletes them', async () => {
+    const t = await start({ attachmentRetentionDays: 1, manifestSweep: { intervalMs: 50 } });
+    const fm = fakeMachine();
+    const { machineToken, machineId } = await t.pair('alice');
+    let n = 0;
+    let createdAt = new Date().toISOString();
+    await connect({
+      url: t.wsUrl,
+      token: machineToken,
+      onCommand: (cmd) => {
+        if (cmd.op !== 'addAttachment') return fm.handler(cmd);
+        const x = cmd.args as { sessionId: string; name: string; mime: string; data: string };
+        return { id: `att_${++n}`, sessionId: x.sessionId, name: x.name, mime: x.mime, size: 1, kind: 'file', sha256: 'x', createdAt };
+      },
+    });
+    const s = (await j(t.as('alice', '/sessions', post({ runtime: 'fake' })))) as Session;
+    const upload = () => t.as('alice', `/sessions/${s.id}/attachments`, { method: 'POST', headers: { 'content-type': 'text/plain', 'x-filename': 'a.txt' }, body: 'a' });
+    createdAt = new Date(Date.now() - 2 * 86_400_000).toISOString();
+    expect((await upload()).status).toBe(201); // att_1: two days old
+    createdAt = new Date().toISOString();
+    expect((await upload()).status).toBe(201); // att_2: fresh
+    await until(async () => (await t.store.getAttachment('att_1')) === null);
+    expect((await t.as('alice', '/attachments/att_1')).status).toBe(404);
+    expect((await t.store.getAttachment('att_2'))?.machineId).toBe(machineId);
+    await t.hub.revokeMachine(machineId, { id: 'alice' });
+    expect(await t.store.getAttachment('att_2')).toBeNull();
+  });
+
+  it('attachmentRetentionDays must be positive', async () => {
+    await expect(createHub({ publicUrl: 'https://x.test', getUser: async () => null, attachmentRetentionDays: 0 })).rejects.toThrow(/attachmentRetentionDays/);
   });
 
   it('install info and install.sh', async () => {
@@ -549,6 +642,55 @@ describe('cross-user isolation', () => {
     expect(await t.store.readEvents(s.id, 0, 10)).toEqual([]);
     expect((await t.store.getSession(s.id))?.userId).toBe('alice');
     expect(b.frames.some((f) => f.t === 'ack')).toBe(false);
+  });
+});
+
+describe('sessions the hub did not create', () => {
+  it('site storage: events for an unknown session id are ignored (nothing stored, no ack, logged)', async () => {
+    const warned: unknown[] = [];
+    const t = await start({ sessionStorage: 'site', logger: { warn: (o: unknown, m: string) => warned.push([o, m]), error: () => undefined } });
+    const { machineToken } = await t.pair('alice');
+    const a = await connect({ url: t.wsUrl, token: machineToken });
+    const rogue = fakeSession('ses_rogue0001');
+    a.sendEvents(rogue.id, [makeEvent(rogue.id, 1, 'session.created', { session: rogue })]);
+    await until(() => warned.length > 0);
+    expect(await t.store.getSession(rogue.id)).toBeNull();
+    expect(await t.store.readEvents(rogue.id, 0, 10)).toEqual([]);
+    expect(a.frames.some((f) => f.t === 'ack')).toBe(false);
+    expect(await j(t.as('alice', '/sessions'))).toEqual([]);
+  });
+
+  it("site storage: a created session's first events may arrive before the createSession result", async () => {
+    const t = await start({ sessionStorage: 'site' });
+    const fm = fakeMachine();
+    const { machineToken } = await t.pair('alice');
+    const a = await connect({
+      url: t.wsUrl,
+      token: machineToken,
+      onCommand: (cmd) => (cmd.op === 'createSession' ? NO_REPLY : fm.handler(cmd)),
+      onFrame: (f, send) => {
+        if (f.t !== 'command' || f.op !== 'createSession') return;
+        const session = fm.handler(f) as Session;
+        send({ t: 'events', sessionId: session.id, events: fm.sessions.get(session.id)!.events });
+        setTimeout(() => send({ t: 'result', id: f.id, ok: true, data: session }), 50);
+      },
+    });
+    const s = (await j(t.as('alice', '/sessions', post({ runtime: 'fake', title: 'Early' })))) as Session;
+    await a.waitFor((f) => f.t === 'ack' && f.sessionId === s.id && f.sequence === 1);
+    expect((await t.store.readEvents(s.id, 0, 10)).map((e) => e.type)).toEqual(['session.created']);
+    expect(((await j(t.as('alice', '/sessions'))) as Session[]).map((x) => x.title)).toEqual(['Early']);
+  });
+
+  it('machine storage: an unknown session id is still indexed so it can be listed', async () => {
+    const t = await start();
+    const fm = fakeMachine();
+    const { machineToken, machineId } = await t.pair('alice');
+    const a = await connect({ url: t.wsUrl, token: machineToken, onCommand: fm.handler });
+    const local = fm.handler({ t: 'command', id: 'x', op: 'createSession', args: { runtime: 'fake' } }) as Session;
+    a.sendEvents(local.id, fm.sessions.get(local.id)!.events);
+    await until(async () => (await t.store.getSession(local.id)) !== null);
+    expect((await t.store.getSession(local.id))?.machineId).toBe(machineId);
+    expect(((await j(t.as('alice', '/sessions'))) as Session[]).map((x) => x.id)).toEqual([local.id]);
   });
 });
 

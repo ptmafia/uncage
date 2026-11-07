@@ -28,6 +28,8 @@ export const hub = await createHub({
 
 ## How the replica works
 
+- The hub replicates only sessions it created itself (`POST <basePath>/sessions` picks the session id and records it before the computer creates the session). Events a computer sends for any other session id are ignored and logged (`events for a session the hub did not create ignored`). With `'machine'` storage such sessions are still indexed so they can be listed.
+
 - Every event of a session has a sequence number (1, 2, 3, …). The computer writes it to its own database first, then sends it to the hub.
 - The hub appends only the **next** sequence it is missing, so the replica is always a gap-free prefix of the session, and acknowledges how far it got.
 - When the computer reconnects, the hub tells it the last sequence it has for each of its sessions, and the computer resends from there. Nothing is lost while it was offline and nothing is stored twice.
@@ -80,7 +82,14 @@ Whatever `sessionStorage` is, the hub records every site tool call: who (`userId
 
 The hub does not delete replicated events. Plan for the space: a typical run is tens to hundreds of events, mostly small text deltas. If you need retention, delete old sessions’ rows in your database on your own schedule (the tables are created by `migrateHubStore`; see `HUB_MIGRATIONS` in `@uncage/hub` for the schema).
 
-Attachments uploaded in the browser are stored by the hub and sent to the computer, which keeps its own copy in the session workspace.
+## Attachments
+
+Attachments uploaded in the browser are sent to the computer, which keeps its own copy in the session workspace. **In both modes, including `'machine'`, the hub also keeps a copy** in its store (`uncage_hub_attachments`), so the image or file still shows in the chat history. That copy is deleted:
+
+- after `attachmentRetentionDays` (default 30, checked by an hourly sweep on every node); after that `GET <basePath>/attachments/:id` answers 404;
+- at once, when the computer is revoked (from the website, `hub.revokeMachine`, or `uncage sites remove` on the computer).
+
+Pass `attachmentRetentionDays: Infinity` to keep them until the computer is revoked, or a smaller number if attachments must not stay on your servers.
 
 ## Switching modes
 

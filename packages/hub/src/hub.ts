@@ -30,6 +30,8 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
 /** How long a tool call for a run whose startRun result is still in flight waits for it. */
 const DEFAULT_RUN_INDEX_WAIT_MS = 10_000;
+/** Hub copies of attachments are deleted after this many days (`attachmentRetentionDays`). */
+const DEFAULT_ATTACHMENT_RETENTION_DAYS = 30;
 /** Run-manifest retention sweep: every hour (on every node; deletes are idempotent). */
 const MANIFEST_SWEEP_MS = 3_600_000;
 /** An unbound manifest (startRun never answered) is dropped after an hour. */
@@ -62,7 +64,7 @@ export interface HubInternals {
   toolExecutor?: ToolExecutor;
   /** See DEFAULT_RUN_INDEX_WAIT_MS (tests shorten it). */
   runIndexWaitMs?: number;
-  /** Run-manifest sweep interval / retention (tests shorten them). */
+  /** Run-manifest (and attachment) sweep interval / retention (tests shorten them). */
   manifestSweep?: { intervalMs?: number; unboundTtlMs?: number; boundTtlMs?: number };
   logger?: HubLogger;
 }
@@ -91,6 +93,8 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   if (compareVersions(minAgentVersion, '0.0.0') < 0) throw new Error(`createHub: invalid minAgentVersion "${minAgentVersion}"`);
   const range = assertVersionRange(o.cliVersionRange ?? defaultCliRange(HUB_VERSION));
   const sessionStorage = o.sessionStorage ?? 'machine';
+  const attachmentRetentionDays = o.attachmentRetentionDays ?? DEFAULT_ATTACHMENT_RETENTION_DAYS;
+  if (!(attachmentRetentionDays > 0)) throw new Error(`createHub: attachmentRetentionDays must be > 0 (got ${attachmentRetentionDays})`);
   const logger = o.logger ?? silent;
   const executor = o.toolExecutor ?? siteToolExecutor(o.tools ?? []);
   const toolTimeoutMs = o.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
@@ -166,7 +170,14 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   async function ingest(machine: MachineRecord, sessionId: string, events: UncageEvent[], send: (f: HubFrame) => void): Promise<UncageEvent[]> {
     if (events.length === 0) return [];
     let rec: SessionRecord | null = await store.getSession(sessionId);
+    if (!rec && sessionStorage === 'site') {
+      // Site mode replicates only sessions this hub created (recorded before createSession is sent).
+      // No ack either: nothing is stored for it.
+      logger.warn({ machineId: machine.id, sessionId }, 'events for a session the hub did not create ignored');
+      return [];
+    }
     if (!rec) {
+      // Machine mode: index it so it can be listed (history stays on the machine).
       const created = events.find((e) => e.type === 'session.created');
       rec = await store.insertSession({
         id: sessionId,
@@ -391,6 +402,11 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     void store
       .pruneRunManifests({ unboundBefore: new Date(now - sweep.unboundTtlMs).toISOString(), boundBefore: new Date(now - sweep.boundTtlMs).toISOString() })
       .catch((err: unknown) => logger.error({ err }, 'run-manifest sweep failed'));
+    if (Number.isFinite(attachmentRetentionDays)) {
+      void store
+        .pruneAttachments(new Date(now - attachmentRetentionDays * 86_400_000).toISOString())
+        .catch((err: unknown) => logger.error({ err }, 'attachment sweep failed'));
+    }
   };
   const sweepTimer = setInterval(sweepManifests, sweep.intervalMs);
   sweepTimer.unref();

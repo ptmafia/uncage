@@ -570,7 +570,7 @@ export class SiteAgent {
     switch (op) {
       case 'createSession': {
         const a = args as HubCommandArgs['createSession'];
-        const id = newId('ses');
+        const id = a.id ?? newId('ses');
         const dir = join(this.root, id);
         await mkdir(dir, { mode: 0o700 });
         try {
@@ -590,6 +590,7 @@ export class SiteAgent {
           ...(a.attachmentIds !== undefined ? { attachmentIds: a.attachmentIds } : {}),
           idempotencyKey: a.idempotencyKey,
           manifest: a.manifest,
+          ...(a.warnings?.length ? { warnings: a.warnings } : {}),
           callTool: this.callTool,
         });
       }
