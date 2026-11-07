@@ -173,6 +173,12 @@ const sameActiveRuns = (a: ActiveRunInfo[], b: ActiveRunInfo[]) =>
     return r.runId === o.runId && r.sessionId === o.sessionId && r.sessionTitle === o.sessionTitle && r.state === o.state && r.startedAt === o.startedAt;
   });
 
+/** Sessions sorted newest first (by `createdAt`, then id), the order the list keeps everywhere. */
+export const newestFirst = (sessions: Session[]): Session[] =>
+  [...sessions].sort((a, b) =>
+    a.createdAt === b.createdAt ? (a.id < b.id ? 1 : a.id > b.id ? -1 : 0) : a.createdAt < b.createdAt ? 1 : -1,
+  );
+
 /**
  * Framework-agnostic normalized store over an UncageClient.
  *
@@ -327,10 +333,10 @@ export function createUncageStore(client: UncageClient): UncageStore {
     if (next !== state.active) set({ active: next });
   };
 
-  /** `state.sessions` with `session` replaced (or prepended when new). */
+  /** `state.sessions` with `session` replaced (or added when new), newest first. */
   const rememberSession = (session: Session) => {
     const i = state.sessions.findIndex((s) => s.id === session.id);
-    if (i === -1) return [session, ...state.sessions];
+    if (i === -1) return newestFirst([session, ...state.sessions]);
     const sessions = [...state.sessions];
     sessions[i] = session;
     return sessions;
@@ -354,6 +360,8 @@ export function createUncageStore(client: UncageClient): UncageStore {
       after,
       onEvent: (e) => {
         updateActive(gen, (s) => applyEvent(s, e));
+        // Keep the session list (sidebar) in step, e.g. the title set by the first run.
+        if (gen === generation && e.type === 'session.updated') set({ sessions: rememberSession(e.payload.session) });
         if (gen === generation && isRunLifecycle(e)) runsChanged();
       },
       onState: (connection) => updateActive(gen, (s) => (s.connection === connection ? s : { ...s, connection })),
@@ -377,7 +385,7 @@ export function createUncageStore(client: UncageClient): UncageStore {
   const createSession = async (b: CreateSessionBody): Promise<Session> => {
     try {
       const session = await client.createSession(b);
-      set({ sessions: [session, ...state.sessions.filter((s) => s.id !== session.id)] });
+      set({ sessions: newestFirst([session, ...state.sessions.filter((s) => s.id !== session.id)]) });
       return session;
     } catch (err) {
       fail(err);
@@ -398,7 +406,7 @@ export function createUncageStore(client: UncageClient): UncageStore {
     async loadSessions() {
       set({ sessionsLoading: true });
       try {
-        set({ sessions: await client.listSessions(), sessionsLoading: false });
+        set({ sessions: newestFirst(await client.listSessions()), sessionsLoading: false });
       } catch (err) {
         set({ sessionsLoading: false, lastError: toClientError(err) });
       }

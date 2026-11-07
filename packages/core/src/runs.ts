@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { basename } from 'node:path';
 import {
   ATTACHMENT_LIMITS,
   newId,
@@ -12,6 +13,7 @@ import {
   type RuntimeAdapter,
   type RuntimeCapabilities,
   type RuntimeEvent,
+  type Session,
   type SessionSettings,
   type StartRunBody,
 } from '@uncage/protocol';
@@ -21,7 +23,7 @@ import { UncageError } from './errors.js';
 import type { EventLog } from './event-log.js';
 import type { Log } from './logger.js';
 import type { AdapterRegistry } from './registry.js';
-import type { WorkspaceConfig } from './sessions.js';
+import { titleFromPrompt, type WorkspaceConfig } from './sessions.js';
 import type { SecurityPolicy } from './settings.js';
 import type { Store } from './store/store.js';
 import { resolveWorkspace } from './workspace.js';
@@ -201,6 +203,7 @@ export class RunManager {
     });
 
     const attachments = await this.resolveAttachments(sessionId, attachmentIds);
+    const title = await this.firstRunTitle(session, prompt);
     const { settings, reset } = effectiveSettings(session.settings, await this.registry.capabilities(session.runtimeId));
 
     const run: Run = {
@@ -245,10 +248,13 @@ export class RunManager {
         status: 'busy',
         activeRunId: run.id,
         ...(reset.length > 0 ? { settings } : {}),
+        ...(title !== undefined ? { title } : {}),
       });
       await this.log.append(sessionId, 'run.started', { run }, run.id);
-      if (reset.length > 0) {
+      if (reset.length > 0 || title !== undefined) {
         await this.log.append(sessionId, 'session.updated', { session: updated }, run.id);
+      }
+      if (reset.length > 0) {
         await this.log.append(
           sessionId,
           'system.warning',
@@ -271,6 +277,19 @@ export class RunManager {
     this.logger.debug({ runId: run.id, promptLength: prompt.length }, 'run prompt received');
     void this.drive(entry);
     return run;
+  }
+
+  /**
+   * The title for a session's first run: the prompt, whitespace-collapsed and cut to 60 characters.
+   * Only for sessions still carrying the default title (the workspace folder name); an explicit
+   * title is kept.
+   */
+  private async firstRunTitle(session: Session, prompt: string): Promise<string | undefined> {
+    if (session.title !== basename(session.workspace)) return undefined;
+    const text = prompt.replace(/\s+/g, ' ').trim();
+    if (text === '' || text === session.title) return undefined;
+    if ((await this.store.listRuns(session.id)).length > 0) return undefined;
+    return titleFromPrompt(text);
   }
 
   /**

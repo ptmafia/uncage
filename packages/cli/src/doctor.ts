@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process';
 import { access, constants, mkdir, readFile, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { parseArgs } from 'node:util';
 import type { RuntimeAdapter } from '@uncage/protocol';
-import type { UncageConfig } from './config.js';
+import { DEFAULT_PORT, type UncageConfig } from './config.js';
 import { tokenPath } from './token.js';
 
 export interface DoctorCheck {
@@ -26,6 +27,107 @@ export interface DoctorDeps {
   tokenFile?: string;
   /** The git executable used for the `.uncage/` ignore check. Defaults to `git`. */
   gitCommand?: string;
+  /** The daemon's base URL (`--url`, `--port`, `UNCAGE_URL`). Defaults to `http://127.0.0.1:<config port>`. */
+  serverUrl?: string;
+  /**
+   * Workspaces for the `.uncage/` git-ignore check (`--workspace`). Defaults to the workspace the
+   * running daemon reports in `/v1/health`, else the config's (what `uncage serve` here would use).
+   */
+  workspaces?: string[];
+}
+
+export const DOCTOR_HELP = `uncage doctor - check the local Uncage setup
+
+Usage:
+  uncage doctor [--port <n> | --url <url>] [--workspace <dir>] [--data-dir <dir>] [--token-file <file>]
+  uncage doctor --export-events <sessionId> [--out <file>] [--include-content] [--port <n> | --url <url>]
+
+Options:
+  --port <n>          Port of the running daemon (same as "uncage serve --port").
+  --url <url>         Base URL of the running daemon (e.g. http://127.0.0.1:4800).
+  --workspace <dir>   Workspace for the .uncage/ git-ignore check (default: the one the daemon reports).
+  --data-dir <dir>    Data directory to check (same as "uncage serve --data-dir").
+  --token-file <file> Token file to check and use (same as "uncage serve --token-file").
+  -h, --help          Show this help.
+
+Env: UNCAGE_URL (the daemon URL, as used by the proxy), UNCAGE_PORT.
+Precedence: --url, --port, UNCAGE_URL, UNCAGE_PORT, uncage.config.yaml, ${DEFAULT_PORT}.`;
+
+export interface DoctorArgs {
+  help: boolean;
+  serverUrl: string;
+  workspace?: string;
+  dataDir?: string;
+  tokenFile?: string;
+  exportEvents?: string;
+  out?: string;
+  includeContent: boolean;
+}
+
+const trimUrl = (u: string): string => u.replace(/\/+$/, '');
+
+/** Parses `uncage doctor` arguments (paths resolved against `cwd`). Throws on unknown options. */
+export function parseDoctorArgs(args: string[], env: NodeJS.ProcessEnv, config: UncageConfig, cwd: string): DoctorArgs {
+  const { values } = parseArgs({
+    args,
+    options: {
+      help: { type: 'boolean', short: 'h', default: false },
+      port: { type: 'string' },
+      url: { type: 'string' },
+      workspace: { type: 'string' },
+      'export-events': { type: 'string' },
+      out: { type: 'string' },
+      'include-content': { type: 'boolean', default: false },
+      'data-dir': { type: 'string' },
+      'token-file': { type: 'string' },
+    },
+  });
+  let serverUrl: string;
+  if (values.url) {
+    try {
+      serverUrl = trimUrl(new URL(values.url).href);
+    } catch {
+      throw new Error(`--url must be an absolute URL such as http://127.0.0.1:4800 (got "${values.url}").`);
+    }
+  } else if (values.port !== undefined) {
+    const port = Number(values.port);
+    if (!/^\d+$/.test(values.port) || port < 1 || port > 65535) {
+      throw new Error(`--port must be an integer between 1 and 65535 (got "${values.port}").`);
+    }
+    serverUrl = `http://127.0.0.1:${port}`;
+  } else if (env.UNCAGE_URL) serverUrl = trimUrl(env.UNCAGE_URL);
+  else serverUrl = `http://127.0.0.1:${config.server.port}`;
+  return {
+    help: values.help ?? false,
+    serverUrl,
+    includeContent: values['include-content'] ?? false,
+    ...(values.workspace ? { workspace: resolve(cwd, values.workspace) } : {}),
+    ...(values['data-dir'] ? { dataDir: resolve(cwd, values['data-dir']) } : {}),
+    ...(values['token-file'] ? { tokenFile: resolve(cwd, values['token-file']) } : {}),
+    ...(values['export-events'] ? { exportEvents: values['export-events'] } : {}),
+    ...(values.out ? { out: values.out } : {}),
+  };
+}
+
+/** `uncage serve` with the port of `serverUrl` when it is a non-default loopback port. */
+function serveFix(serverUrl: string): string {
+  try {
+    const u = new URL(serverUrl);
+    const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname);
+    if (loopback && u.port && Number(u.port) !== DEFAULT_PORT) return `uncage serve --port ${u.port}`;
+    if (!loopback) return `start the Uncage daemon reachable at ${serverUrl}`;
+  } catch {
+    // fall through
+  }
+  return 'uncage serve';
+}
+
+/** The workspace config a running daemon reports in `/v1/health` (absent on older daemons). */
+function reportedWorkspaces(body: unknown): string[] | undefined {
+  const ws = (body as { workspace?: { default?: unknown; allowedRoots?: unknown } } | null)?.workspace;
+  if (!ws || typeof ws.default !== 'string') return undefined;
+  const roots = Array.isArray(ws.allowedRoots) ? ws.allowedRoots.filter((r): r is string => typeof r === 'string') : [];
+  return [ws.default, ...roots];
 }
 
 const RUNTIME_FIX: Record<string, string> = {
@@ -127,22 +229,33 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
     checks.push({ id: 'token', label: 'Token file', ok: false, detail: `${tp} not found`, fix: 'uncage serve' });
   }
 
-  const url = `http://127.0.0.1:${config.server.port}/v1/health`;
+  const serverUrl = trimUrl(deps.serverUrl ?? `http://127.0.0.1:${config.server.port}`);
+  const url = `${serverUrl}/v1/health`;
+  const serve = serveFix(serverUrl);
+  let daemonWorkspaces: string[] | undefined;
   try {
     const token = await readToken(tp);
     const res = await deps.fetch(url, { headers: token ? { authorization: `Bearer ${token}` } : {} });
-    if (res.ok) checks.push({ id: 'server', label: 'Server reachable', ok: true, detail: url });
-    else {
+    if (res.ok) {
+      checks.push({ id: 'server', label: 'Server reachable', ok: true, detail: url });
+      daemonWorkspaces = reportedWorkspaces(await res.json().catch(() => undefined));
+    } else {
       checks.push({
         id: 'server',
         label: 'Server reachable',
         ok: false,
-        detail: `${url} returned HTTP ${res.status}`,
-        fix: res.status === 401 ? `chmod 600 '${tp}' && uncage serve` : 'uncage serve',
+        detail: `${url} returned HTTP ${res.status}${res.status === 401 ? ' (token mismatch: pass the daemon\'s --token-file)' : ''}`,
+        fix: res.status === 401 ? `chmod 600 '${tp}' && ${serve}` : serve,
       });
     }
   } catch {
-    checks.push({ id: 'server', label: 'Server reachable', ok: false, detail: `nothing listening at ${url}`, fix: 'uncage serve' });
+    checks.push({
+      id: 'server',
+      label: 'Server reachable',
+      ok: false,
+      detail: `nothing listening at ${url} (daemon on another port? uncage doctor --port <n>, or set UNCAGE_URL)`,
+      fix: serve,
+    });
   }
 
   for (const a of adapters) {
@@ -175,7 +288,8 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
       });
     }
   }
-  checks.push(...(await uncageIgnoreChecks([config.workspace.default, ...config.workspace.allowedRoots], deps.gitCommand ?? 'git')));
+  const workspaces = deps.workspaces ?? daemonWorkspaces ?? [config.workspace.default, ...config.workspace.allowedRoots];
+  checks.push(...(await uncageIgnoreChecks(workspaces, deps.gitCommand ?? 'git')));
   return checks;
 }
 
@@ -225,6 +339,8 @@ export interface ExportEventsOptions {
   includeContent: boolean;
   /** Overrides the token file (`--token-file`). Defaults to `<home>/.uncage/token`. */
   tokenFile?: string;
+  /** The daemon's base URL. Defaults to `http://127.0.0.1:<config port>`. */
+  serverUrl?: string;
 }
 
 /** Pulls a session's events over the HTTP JSON endpoint (never touches PGlite). Redacted unless includeContent. */
@@ -232,7 +348,7 @@ export async function exportEvents(o: ExportEventsOptions): Promise<unknown[]> {
   const tp = o.tokenFile ?? tokenPath(o.home);
   const token = await readToken(tp);
   if (!token) throw new Error(`No token at ${tp}. Run: uncage serve`);
-  const base = `http://127.0.0.1:${o.config.server.port}`;
+  const base = trimUrl(o.serverUrl ?? `http://127.0.0.1:${o.config.server.port}`);
   const all: Array<{ sequence: number; payload?: unknown } & Record<string, unknown>> = [];
   let after = 0;
   for (;;) {
@@ -242,7 +358,7 @@ export async function exportEvents(o: ExportEventsOptions): Promise<unknown[]> {
         headers: { authorization: `Bearer ${token}`, Accept: 'application/json' },
       });
     } catch {
-      throw new Error(`Cannot reach the server at ${base}. Run: uncage serve`);
+      throw new Error(`Cannot reach the server at ${base}. Run: ${serveFix(base)} (or pass --port / --url)`);
     }
     if (!res.ok) throw new Error(`Server returned HTTP ${res.status} for session ${o.sessionId}.`);
     const page = (await res.json()) as typeof all;

@@ -108,6 +108,40 @@ describe('createUncage', () => {
     expect(await u.runtimes.get('fake')).toMatchObject({ id: 'fake', status: 'available', version: 'fake-1.0.0' });
   });
 
+  it('an untitled session is titled from its first prompt (trimmed, ≤60 chars) via session.updated', async () => {
+    const u = await make([fake([{ text: 'ok' }])]);
+    const session = await u.sessions.create({ runtime: 'fake' });
+    const long = `  Fix   the flaky\nlogin test ${'and more '.repeat(10)}  `;
+    const run = await session.startRun({ prompt: long });
+    const events = await eventsUntil(session, isTerminal);
+    const updated = events.find((e) => e.type === 'session.updated');
+    if (updated?.type !== 'session.updated') throw new Error(`expected session.updated; saw ${types(events).join(', ')}`);
+    expect(updated.runId).toBe(run.id);
+    const title = updated.payload.session.title;
+    expect(title.startsWith('Fix the flaky login test and more')).toBe(true);
+    expect([...title].length).toBeLessThanOrEqual(60);
+    expect(title.endsWith('…')).toBe(true);
+    expect((await session.get()).title).toBe(title);
+    expect((await u.sessions.list())[0]?.title).toBe(title);
+
+    // Later runs keep the title; an explicit title is never replaced.
+    await session.startRun({ prompt: 'second prompt' });
+    const all = await eventsUntil(session, (e) => isTerminal(e) && e.runId !== run.id);
+    expect(all.filter((e) => e.type === 'session.updated')).toHaveLength(1);
+    expect((await session.get()).title).toBe(title);
+
+    const named = await u.sessions.create({ runtime: 'fake', title: 'Mine' });
+    await named.startRun({ prompt: 'short one' });
+    const namedEvents = await eventsUntil(named, isTerminal);
+    expect(namedEvents.some((e) => e.type === 'session.updated')).toBe(false);
+    expect((await named.get()).title).toBe('Mine');
+
+    const short = await u.sessions.create({ runtime: 'fake' });
+    await short.startRun({ prompt: '  hi there  ' });
+    await eventsUntil(short, isTerminal);
+    expect((await short.get()).title).toBe('hi there');
+  });
+
   it('deny keeps run completed', async () => {
     const u = await make([fake([{ approval: { category: 'shell', title: 'rm', target: { command: 'rm x' } } }])]);
     const session = await u.sessions.create({ runtime: 'fake' });

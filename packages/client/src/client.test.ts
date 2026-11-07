@@ -276,3 +276,32 @@ describe('subscribe', () => {
     expect(states).toEqual(['connecting', 'reconnecting', 'offline']);
   });
 });
+
+describe('structural guards (no zod in the browser path)', () => {
+  it('isErrorBody accepts daemon error bodies and rejects partial ones', async () => {
+    const { isErrorBody } = await import('./index.js');
+    expect(isErrorBody({ code: 'session_busy', message: 'busy', retryable: false, hint: 'wait', details: { a: 1 } })).toBe(true);
+    expect(isErrorBody({ code: 'session_busy', message: 'busy' })).toBe(false);
+    expect(isErrorBody({ code: 1, message: 'x', retryable: true })).toBe(false);
+    expect(isErrorBody({ code: 'x', message: 'x', retryable: true, hint: 3 })).toBe(false);
+    expect(isErrorBody(null)).toBe(false);
+  });
+
+  it('isUncageEvent checks the envelope and lets unknown (newer) event types through', async () => {
+    const { isUncageEvent } = await import('./index.js');
+    expect(isUncageEvent(evt(1))).toBe(true);
+    expect(isUncageEvent({ ...evt(1), type: 'future.thing' })).toBe(true);
+    expect(isUncageEvent({ ...evt(1), sequence: -1 })).toBe(false);
+    expect(isUncageEvent({ ...evt(1), sequence: 1.5 })).toBe(false);
+    expect(isUncageEvent({ ...evt(1), payload: null })).toBe(false);
+    expect(isUncageEvent({ ...evt(1), runId: 5 })).toBe(false);
+    expect(isUncageEvent({ nope: 1 })).toBe(false);
+  });
+
+  it('a non-conforming error body becomes a generic http_status error', async () => {
+    const fetch = vi.fn<F>(async () => json({ error: { code: 'session_busy' } }, 409));
+    const err = await createUncageClient({ fetch }).listSessions().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UncageClientError);
+    expect(err).toMatchObject({ code: 'internal_error', status: 409, details: { reason: 'http_status', status: 409 } });
+  });
+});

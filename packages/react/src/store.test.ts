@@ -24,6 +24,38 @@ describe('createUncageStore', () => {
     expect(store.getState().active!.connection).toBe('live');
   });
 
+  it('sessions are newest-first before and after a reload; a first-run title reaches the list', async () => {
+    const at = (s: number) => new Date(Date.parse(T0) + s * 1000).toISOString();
+    const old = session({ id: 'ses_old', title: 'Old', createdAt: at(0) });
+    const mid = session({ id: 'ses_mid', title: 'Mid', createdAt: at(1) });
+    const f = fakeClient(() => snapshot({ session: mid }));
+    // The server lists oldest-first.
+    f.client.listSessions.mockResolvedValue([old, mid]);
+    const store = createUncageStore(f.client);
+    await store.actions.loadSessions();
+    expect(store.getState().sessions.map((s) => s.id)).toEqual(['ses_mid', 'ses_old']);
+
+    const fresh = session({ id: 'ses_new', title: 'ws', createdAt: at(2) });
+    f.client.createSession.mockResolvedValue(fresh);
+    await store.actions.createSession({ runtime: 'claude' });
+    expect(store.getState().sessions.map((s) => s.id)).toEqual(['ses_new', 'ses_mid', 'ses_old']);
+
+    // Selecting an older session keeps the order (no move to the top).
+    await store.actions.selectSession('ses_mid');
+    expect(store.getState().sessions.map((s) => s.id)).toEqual(['ses_new', 'ses_mid', 'ses_old']);
+
+    // The run-scoped session.updated that titles a session updates the sidebar list too.
+    const ev = eventFactory();
+    f.emit(ev('session.updated', { session: { ...mid, title: 'Fix the login test' } }, 'run_1'));
+    expect(store.getState().sessions.find((s) => s.id === 'ses_mid')?.title).toBe('Fix the login test');
+
+    // Reload: same order as before.
+    f.client.listSessions.mockResolvedValue([old, mid, fresh]);
+    const reloaded = createUncageStore(f.client);
+    await reloaded.actions.loadSessions();
+    expect(reloaded.getState().sessions.map((s) => s.id)).toEqual(['ses_new', 'ses_mid', 'ses_old']);
+  });
+
   it('sendPrompt while active is a no-op (no duplicate run)', async () => {
     const f = fakeClient();
     const store = createUncageStore(f.client);

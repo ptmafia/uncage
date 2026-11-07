@@ -1,21 +1,20 @@
-import {
-  ErrorBodySchema,
-  UncageEventSchema,
-  type ActiveRunInfo,
-  type ApprovalDecision,
-  type ApprovalRequest,
-  type Attachment,
-  type CreateSessionBody,
-  type ErrorBody,
-  type Run,
-  type RuntimeInfo,
-  type Session,
-  type SessionSettings,
-  type SessionSnapshot,
-  type StartRunBody,
-  type UncageEvent,
+import type {
+  ActiveRunInfo,
+  ApprovalDecision,
+  ApprovalRequest,
+  Attachment,
+  CreateSessionBody,
+  ErrorBody,
+  Run,
+  RuntimeInfo,
+  Session,
+  SessionSettings,
+  SessionSnapshot,
+  StartRunBody,
+  UncageEvent,
 } from '@uncage/protocol';
 import { ERROR_REASONS, UncageClientError } from './errors.js';
+import { isErrorBody, isUncageEvent } from './guards.js';
 import { parseSSE } from './sse.js';
 
 export type ConnectionState = 'connecting' | 'live' | 'reconnecting' | 'offline';
@@ -85,8 +84,8 @@ export function uploadContentType(file: Blob & { name: string }): string {
 async function toError(res: Response): Promise<UncageClientError> {
   let body: ErrorBody | undefined;
   try {
-    const parsed = ErrorBodySchema.safeParse(((await res.json()) as { error?: unknown }).error);
-    if (parsed.success) body = parsed.data;
+    const error = ((await res.json()) as { error?: unknown } | null)?.error;
+    if (isErrorBody(error)) body = error;
   } catch {
     // non-JSON error body
   }
@@ -213,27 +212,25 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
           for await (const frame of parseSSE(res.body)) {
             attempt = 0;
             if (frame.event === 'error') {
-              const parsed = ErrorBodySchema.safeParse(safeJson(frame.data));
-              if (parsed.success) {
-                if (parsed.data.code === 'event_replay_unavailable') {
-                  terminal(new UncageClientError(parsed.data, 200));
-                  return;
-                }
+              const body = safeJson(frame.data);
+              if (isErrorBody(body) && body.code === 'event_replay_unavailable') {
+                terminal(new UncageClientError(body, 200));
+                return;
               }
               continue;
             }
-            const parsed = UncageEventSchema.safeParse(safeJson(frame.data));
-            if (!parsed.success) {
+            const event = safeJson(frame.data);
+            if (!isUncageEvent(event)) {
               if (!warned) {
                 warned = true;
                 console.warn('[uncage] dropped malformed SSE event frame');
               }
               continue;
             }
-            if (parsed.data.sequence <= lastSequence) continue;
-            lastSequence = parsed.data.sequence;
+            if (event.sequence <= lastSequence) continue;
+            lastSequence = event.sequence;
             if (frame.id) lastEventId = frame.id;
-            guard(() => h.onEvent(parsed.data));
+            guard(() => h.onEvent(event));
           }
         } catch {
           // fall through to backoff (aborts exit via the loop condition)

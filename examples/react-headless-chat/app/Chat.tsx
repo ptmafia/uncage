@@ -13,6 +13,7 @@ import {
   useSession,
   useSessions,
   useSessionSettings,
+  usePersistSession,
   useStoreSelector,
   useUncageError,
   useUncageStore,
@@ -36,22 +37,6 @@ const RESOLVED_LABEL: Partial<Record<ApprovalRequest['state'], (a: ApprovalReque
   expired: () => '确认已过期',
   cancelled: () => '已取消',
 };
-
-/** Opens `?session=<id>` on load and mirrors the open session into the URL (reload-safe). */
-function useSessionInUrl(): void {
-  const { activeSessionId, select } = useSessions();
-  useEffect(() => {
-    const id = new URLSearchParams(window.location.search).get('session');
-    if (id) void select(id);
-  }, [select]);
-  useEffect(() => {
-    if (activeSessionId === undefined) return;
-    const url = new URL(window.location.href);
-    if (url.searchParams.get('session') === activeSessionId) return;
-    url.searchParams.set('session', activeSessionId);
-    window.history.replaceState(null, '', url);
-  }, [activeSessionId]);
-}
 
 function Approval({ approval }: { approval: ApprovalRequest }) {
   const { decide, pending } = useApprovalActions();
@@ -237,7 +222,8 @@ function SentAttachments({ runId }: { runId: string }) {
 
 /** A complete chat built only from `@uncage/react` hooks, with its own markup and plain CSS. */
 export function Chat() {
-  useSessionInUrl();
+  // Opens `?session=<id>` on load and mirrors the open session into the URL (reload-safe).
+  usePersistSession('url');
   const store = useUncageStore();
   const { runtimes } = useRuntimes();
   const { activeSessionId, select } = useSessions();

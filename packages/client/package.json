@@ -30,6 +30,7 @@
     "@uncage/protocol": "workspace:^"
   },
   "devDependencies": {
+    "esbuild": "^0.28.2",
     "vitest": "^5.1.0"
   },
   "license": "MIT",

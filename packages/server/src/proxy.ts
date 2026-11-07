@@ -4,11 +4,17 @@
  *
  *   // app/api/uncage/[...path]/route.ts
  *   export const { GET, POST, PATCH } = createUncageHandler();
+ *
+ *   // Express / Connect / node:http (mount before any body parser)
+ *   app.use('/api/uncage', createUncageNodeHandler());
  */
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ERROR_CATALOG, type ErrorBody, type ErrorCode } from '@uncage/protocol';
+import { toNodeHandler, type UncageNodeHandler } from './node-handler.js';
+
+export type { UncageNodeHandler } from './node-handler.js';
 
 export interface ProxyOptions {
   /** Defaults to env `UNCAGE_URL`, else `http://127.0.0.1:4783`. */
@@ -168,7 +174,13 @@ export function createUncageHandler(o: ProxyOptions = {}): UncageHandler {
   const handle = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     const host = requestHost(req, url);
-    if (!host) return errorResponse('forbidden_origin', { message: 'The request Host header is invalid.' });
+    if (!host) {
+      return errorResponse('forbidden_origin', {
+        message: 'The request Host header is invalid.',
+        hint: 'Send a plain host[:port] Host header; allow the hostname with createUncageHandler({ allowedHosts }) or UNCAGE_ALLOWED_HOSTS',
+        details: { reason: 'invalid_host' },
+      });
+    }
     if (!allowedHosts.has(host.hostname)) {
       return errorResponse('forbidden_origin', {
         message: `Host ${host.hostname} is not allowed to use the Uncage proxy.`,
@@ -182,7 +194,25 @@ export function createUncageHandler(o: ProxyOptions = {}): UncageHandler {
     const origin = req.headers.get('origin');
     const crossSiteFetch = req.method !== 'GET' && req.headers.get('sec-fetch-site') === 'cross-site';
     const expected = new URL(`${url.protocol}//${host.host}`);
-    if ((origin !== null && !sameOrigin(origin, expected)) || crossSiteFetch) return errorResponse('forbidden_origin');
+    // These requests never reach the daemon, so its allowedOrigins cannot help: say which header
+    // disagreed and what usually rewrites it.
+    if (origin !== null && !sameOrigin(origin, expected)) {
+      return errorResponse('forbidden_origin', {
+        message: `Origin ${origin} does not match Host ${host.host} (expected Origin ${expected.origin}).`,
+        hint:
+          'A dev server or reverse proxy in front of this app is rewriting the Host header; forward the browser\'s Host ' +
+          '(Vite server.proxy: changeOrigin: false; nginx: proxy_set_header Host $host). If the page really is on ' +
+          'another origin, serve it from the same origin as the app.',
+        details: { reason: 'origin_mismatch', origin, host: host.host },
+      });
+    }
+    if (crossSiteFetch) {
+      return errorResponse('forbidden_origin', {
+        message: 'Cross-site request refused (Sec-Fetch-Site: cross-site).',
+        hint: 'Call the Uncage proxy from pages served by this app (same origin).',
+        details: { reason: 'cross_site' },
+      });
+    }
     if (!url.pathname.startsWith(`${basePath}/`)) return errorResponse('not_found');
     const endpoint = (o.endpoint ?? process.env.UNCAGE_URL ?? DEFAULT_ENDPOINT).replace(/\/+$/, '');
     const target = new URL(`${endpoint}/v1/${url.pathname.slice(basePath.length + 1)}${url.search}`);
@@ -235,4 +265,21 @@ export function createUncageHandler(o: ProxyOptions = {}): UncageHandler {
   };
 
   return { GET: handle, POST: handle, PATCH: handle };
+}
+
+/**
+ * The same proxy as a Node `(req, res, next?)` handler for Express, Connect, Fastify
+ * (`reply.hijack()` then `handler(request.raw, reply.raw)`) and `node:http`:
+ *
+ *   app.use('/api/uncage', createUncageNodeHandler());
+ *
+ * The URL is rebuilt from `req.originalUrl` (Express) or `req.url`, and the browser's `Host`
+ * header, so mount it under `basePath` (default `/api/uncage`) without rewriting Host. Mount it
+ * before body parsers and compression: request bodies stream upstream untouched (a body already
+ * parsed by `express.json()` is re-encoded as JSON), and event streams are written chunk by chunk
+ * with backpressure. Disconnecting browsers abort the upstream request. Behind a TLS terminator,
+ * set Express `trust proxy` so `req.protocol` is `https` (the Origin check compares schemes).
+ */
+export function createUncageNodeHandler(o: ProxyOptions = {}): UncageNodeHandler {
+  return toNodeHandler(createUncageHandler(o));
 }

@@ -70,6 +70,8 @@ export interface Uncage {
     list(q: { sessionId: string; pendingOnly?: boolean }): Promise<ApprovalRequest[]>;
     decide(id: string, d: ApprovalDecision, idempotencyKey: string): Promise<ApprovalRequest>;
   };
+  /** The resolved workspace config: new sessions default to `default`, all live under `allowedRoots`. */
+  readonly workspace: { readonly default: string; readonly allowedRoots: readonly string[] };
   close(): Promise<void>;
 }
 
@@ -130,6 +132,7 @@ export async function createUncage(opts: UncageOptions): Promise<Uncage> {
 
   let closing: Promise<void> | undefined;
   return {
+    workspace: { default: workspace.default, allowedRoots: [...workspace.allowedRoots] },
     runtimes: { list: () => registry.list(), get: (id) => registry.info(id) },
     sessions: {
       create: (b) => sessions.create(b),

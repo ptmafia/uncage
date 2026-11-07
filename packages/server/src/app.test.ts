@@ -88,6 +88,13 @@ describe('security', () => {
     expect(nullOrigin.statusCode).toBe(403);
   });
 
+  it('health reports the daemon workspace to authenticated callers (doctor git-ignore check)', async () => {
+    const s = await servers.make([], {}, { workspace: { default: '/tmp', allowedRoots: ['/tmp'] } });
+    const res = await s.app.inject({ url: '/v1/health', headers: auth });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, protocol: '1.0', workspace: { default: '/tmp', allowedRoots: ['/tmp'] } });
+  });
+
   it('allowed Origin passes', async () => {
     const s = await servers.make([], { allowedOrigins: ['http://localhost:3000'] });
     const res = await s.app.inject({ url: '/v1/health', headers: { ...auth, origin: 'http://localhost:3000' } });
@@ -134,7 +141,7 @@ describe('routes', () => {
     const s = await servers.make([]);
     const res = await s.app.inject({ url: '/v1/health', headers: auth });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true, protocol: '1.0', version: pkg.version });
+    expect(res.json()).toEqual({ ok: true, protocol: '1.0', version: pkg.version, workspace: s.uncage.workspace });
   });
 
   it('runtimes, sessions list and snapshot', async () => {

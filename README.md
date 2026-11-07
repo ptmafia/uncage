@@ -62,7 +62,7 @@ npx uncage serve --workspace /absolute/path/to/the/project/the/agent/works/in
 Uncage listening on http://127.0.0.1:4783 · workspace /…/project · runtimes: claude ✓, codex ✗ (not installed)
 ```
 
-Check everything with `npx uncage doctor`: each line is ✓ or ✗, and every ✗ prints the exact `fix:` command. Codex showing "not installed" is fine, it is optional.
+Check everything with `npx uncage doctor`: each line is ✓ or ✗, and every ✗ prints the exact `fix:` command. Codex showing "not installed" is fine, it is optional. For a daemon on another port or with its own token file, pass the same flags: `npx uncage doctor --port 4800 --token-file …` (or set `UNCAGE_URL`).
 
 **5. Run your app**
 
@@ -70,11 +70,22 @@ Check everything with `npx uncage doctor`: each line is ✓ or ✗, and every �
 npm run dev
 ```
 
-Open http://localhost:3000, pick **Claude Code**, and ask something like "Scan this repo and run the tests". Commands and file edits show an approval card: **Allow once** / **Deny**. **Stop** cancels the run and kills its processes. Refresh any time: history and pending approvals come back.
+Open http://localhost:3000, pick **Claude Code**, and ask something like "Scan this repo and run the tests". Commands and file edits show an approval card: **Allow once** / **Deny**. **Stop** cancels the run and kills its processes. Refresh any time: `<AgentChat>` keeps the open conversation in `?session=<id>`, so history and pending approvals come back. (`persistSession="localStorage"` keeps the URL clean; `persistSession={false}` turns it off.) Each session is titled after its first prompt.
 
 > **How it fits together.** The browser talks only to your app (`/api/uncage/*`). Your app's server forwards to the daemon on `127.0.0.1:4783` with the token. The daemon runs Claude Code on the same machine, under that machine's Claude login. So the daemon must run on the machine where the agent should work (a developer laptop, a desktop app, an internal box). It is not a multi-tenant cloud service: don't expose it to the internet or share one Claude login among many users.
 
-**Other frameworks.** `createUncageHandler()` returns standard `(Request) => Promise<Response>` handlers, so it also works in any Fetch-style server route (Remix/React Router, SvelteKit, Hono, Bun). Mount it under `/api/uncage/*` (or pass `basePath`). The UI packages are plain React 19 components.
+**Other frameworks.** `createUncageHandler()` returns standard `(Request) => Promise<Response>` handlers, so it also works in any Fetch-style server route (Remix/React Router, SvelteKit, Hono, Bun): `app.all('/api/uncage/*', (c) => h[c.req.method](c.req.raw))` with `const h = createUncageHandler()` in Hono. Mount it under `/api/uncage/*` (or pass `basePath`). The UI packages are plain React 19 components.
+
+**Express, Connect, Fastify, `node:http`.** Use the Node `(req, res, next)` handler. It streams request bodies and SSE without buffering and closes the upstream stream when the browser leaves:
+
+```js
+import { createUncageNodeHandler } from '@uncage/server/proxy';
+app.use('/api/uncage', createUncageNodeHandler()); // before express.json() and compression()
+```
+
+Fastify: `fastify.all('/api/uncage/*', (req, reply) => { reply.hijack(); handler(req.raw, reply.raw); })`, in a plugin with `removeAllContentTypeParsers()` and `addContentTypeParser('*', (_r, _p, done) => done(null))` so the body stays unread. Behind a TLS terminator, set Express `trust proxy` (the Origin check compares the scheme).
+
+**A Vite (or webpack) SPA with a separate backend.** Point the dev server's proxy at your backend and keep the browser's `Host`: `server: { proxy: { '/api': { target: 'http://127.0.0.1:3200', changeOrigin: false } } }`. With `changeOrigin: true` the page loads and lists runtimes, but every POST gets 403 `forbidden_origin` ("Origin http://localhost:5173 does not match Host 127.0.0.1:3200"), because the proxy compares `Origin` with the rewritten `Host`.
 
 **Try it from source instead.** Clone this repo, `pnpm install && pnpm build`, `pnpm uncage serve --workspace …`, then `pnpm --filter nextjs-default-chat dev` for the bundled example (Chinese UI) or `pnpm --filter react-headless-chat dev` for the headless one.
 
@@ -118,7 +129,8 @@ Build your own UI with `@uncage/react`. Wrap your app in `<UncageProvider>` and 
 | Hook | Returns | Use it for |
 | --- | --- | --- |
 | `useRuntimes()` | `{ runtimes, loading }` | Runtime picker: `status` is `available` / `not_installed` / `auth_required` / …, with `hint` and `installUrl` |
-| `useSessions()` | `{ sessions, activeSessionId, loading, select(id), create(body), reload() }` | Session list, new chat, opening `?session=<id>` |
+| `useSessions()` | `{ sessions, activeSessionId, loading, select(id), create(body), reload() }` | Session list (newest first), new chat |
+| `usePersistSession(mode = 'url')` | `void` | Reopen the last session on reload (`?session=<id>` or `'localStorage'`); `<AgentChat>` does this for you |
 | `useSession()` | `{ session, connection, replayIncomplete }` | Header, connection banner |
 | `useRun()` | `{ run, isActive, send(prompt), cancel() }` | Composer and Stop button. `send` resolves `true` once the run is accepted |
 | `useMessages()` | `{ timeline, messages, tools }` | The conversation |
@@ -135,7 +147,7 @@ Build your own UI with `@uncage/react`. Wrap your app in `<UncageProvider>` and 
 
 Before the first prompt there is no session yet. Open a draft with `useUncageStore().actions.openDraft(runtimeId)` so settings and files can be picked. Then send with `commitDraft()` (creates the session, applies the draft settings, uploads queued files), then `selectSession(id)`, then `sendPrompt(text)`. The headless example does exactly this.
 
-Lower levels: `@uncage/client` (browser REST + resumable SSE, no React), the HTTP API itself (`/v1/*`, typed in `@uncage/protocol`), or embed the daemon in your own Node process with `createUncage()` (`@uncage/core`) + `createUncageServer()` (`@uncage/server`).
+Lower levels: `@uncage/client` (browser REST + resumable SSE, no React, about 5 KB minified; see its [README](packages/client/README.md) for a vanilla chat), the HTTP API itself (`/v1/*`, typed in `@uncage/protocol`; `POST /sessions/:id/runs` and `POST /approvals/:id/decision` need an `Idempotency-Key` header, e.g. a UUID), or embed the daemon in your own Node process with `createUncage()` (`@uncage/core`) + `createUncageServer()` (`@uncage/server`).
 
 ## Security model
 
@@ -178,7 +190,7 @@ runtimes:
 | CLI | |
 | --- | --- |
 | `uncage serve [--port n] [--workspace dir] [--data-dir dir] [--token-file file]` | Start the daemon. Env: `UNCAGE_PORT`, `UNCAGE_LOG_LEVEL`, `UNCAGE_ALLOW_BYPASS=1` |
-| `uncage doctor [--data-dir dir] [--token-file file]` | Check Node, data dir, token, server and runtimes, with a fix for each failure. Warns (`!`, non-fatal) when a workspace is a git repo that does not ignore `.uncage/` |
+| `uncage doctor [--port n \| --url url] [--workspace dir] [--data-dir dir] [--token-file file]` | Check Node, data dir, token, server and runtimes, with a fix for each failure. Finds the daemon via `--url`, `--port`, `UNCAGE_URL`, then `UNCAGE_PORT`. Warns (`!`, non-fatal) when the daemon's workspace (as it reports it, or `--workspace`) is a git repo that does not ignore `.uncage/`. `uncage <command> --help` lists the flags |
 | `uncage doctor --export-events <sessionId> [--out file] [--include-content]` | Export a session's events for a bug report (content redacted unless `--include-content`) |
 
 Proxy env (host app): `UNCAGE_URL` (default `http://127.0.0.1:4783`), `UNCAGE_TOKEN` (default: read `~/.uncage/token`), `UNCAGE_ALLOWED_HOSTS`. If you start the daemon with `--token-file`, pass that token to the app as `UNCAGE_TOKEN`.
@@ -216,7 +228,9 @@ The E2E suites and smoke scripts run TypeScript files directly with `node`, so t
 ## Troubleshooting
 
 - **"The Uncage daemon is not reachable" / "token was not found"**: start `npx uncage serve` first. If the daemon was started with `--token-file`, give the app `UNCAGE_TOKEN`.
-- **403 `forbidden_origin` in the app**: the `Host` your browser sends isn't an allowed hostname, for example you opened the `Network:` URL that `next dev` prints, a dev domain, or a tunnel. Add that hostname (without the port) to `allowedHosts` / `UNCAGE_ALLOWED_HOSTS` (see [Security model](#security-model)). The error message names the rejected host. Behind a reverse proxy, check that it passes the original `Host` header through.
+- **403 `forbidden_origin` in the app**: read the message, it names the header.
+  - "Host … is not allowed": the `Host` your browser sends isn't an allowed hostname, for example you opened the `Network:` URL that `next dev` prints, a dev domain, or a tunnel. Add that hostname (without the port) to `allowedHosts` / `UNCAGE_ALLOWED_HOSTS` (see [Security model](#security-model)).
+  - "Origin … does not match Host …": something between the browser and your app rewrites `Host`. Vite/webpack dev proxy: `changeOrigin: false`. nginx: `proxy_set_header Host $host;`. The daemon's `allowedOrigins` does not help here, the request never reaches it.
 - **Port 4783 in use**: another `uncage serve` is running, or use `--port 4784` and set `UNCAGE_URL=http://127.0.0.1:4784` for the app.
 - **Claude Code shows "需要登录" (auth required)**: run `claude`, type `/login`, then restart `uncage serve`.
 - Run `npx uncage doctor`. Every failing check prints its fix.

@@ -3,18 +3,31 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { loadConfig } from './config.js';
-import { doctorExitCode, exportEvents, formatChecks, runDoctor } from './doctor.js';
+import { DOCTOR_HELP, doctorExitCode, exportEvents, formatChecks, parseDoctorArgs, runDoctor } from './doctor.js';
 import { applyWorkspaceFlag, buildAdapters, serve } from './serve.js';
 
 const HELP = `uncage - run AI coding agents behind a local, approval-gated API
 
 Usage:
   uncage serve  [--port <n>] [--workspace <dir>] [--data-dir <dir>] [--token-file <file>]
-  uncage doctor [--data-dir <dir>] [--token-file <file>]
+  uncage doctor [--port <n> | --url <url>] [--workspace <dir>] [--data-dir <dir>] [--token-file <file>]
                 [--export-events <sessionId> [--out <file>] [--include-content]]
+  uncage <command> --help
 
 Zero-config: "uncage serve" works with no setup (optional ./uncage.config.yaml).
-Env: UNCAGE_PORT, UNCAGE_LOG_LEVEL.`;
+Env: UNCAGE_PORT, UNCAGE_LOG_LEVEL; doctor also reads UNCAGE_URL.`;
+
+const SERVE_HELP = `uncage serve - start the local Uncage daemon
+
+Usage:
+  uncage serve [--port <n>] [--workspace <dir>] [--data-dir <dir>] [--token-file <file>]
+
+Options:
+  --port <n>          Port to listen on (default 4783, or UNCAGE_PORT).
+  --workspace <dir>   Directory the agent works in (default: the current directory).
+  --data-dir <dir>    Where sessions and events are stored (default ~/.uncage/data).
+  --token-file <file> Where the bearer token is kept (default ~/.uncage/token).
+  -h, --help          Show this help.`;
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -32,8 +45,13 @@ async function main(argv: string[]): Promise<number> {
         workspace: { type: 'string' },
         'data-dir': { type: 'string' },
         'token-file': { type: 'string' },
+        help: { type: 'boolean', short: 'h', default: false },
       },
     });
+    if (values.help) {
+      console.log(SERVE_HELP);
+      return 0;
+    }
     let config = await loadConfig(cwd, values.port ? { ...process.env, UNCAGE_PORT: values.port } : process.env);
     if (values.workspace) config = applyWorkspaceFlag(config, values.workspace, cwd);
     await serve({
@@ -45,34 +63,29 @@ async function main(argv: string[]): Promise<number> {
   }
 
   if (cmd === 'doctor') {
-    const { values } = parseArgs({
-      args: rest,
-      options: {
-        'export-events': { type: 'string' },
-        out: { type: 'string' },
-        'include-content': { type: 'boolean', default: false },
-        'data-dir': { type: 'string' },
-        'token-file': { type: 'string' },
-      },
-    });
-    const tokenFile = values['token-file'] ? { tokenFile: resolve(cwd, values['token-file']) } : {};
     const config = await loadConfig(cwd, process.env);
+    const args = parseDoctorArgs(rest, process.env, config, cwd);
+    if (args.help) {
+      console.log(DOCTOR_HELP);
+      return 0;
+    }
+    const tokenFile = args.tokenFile ? { tokenFile: args.tokenFile } : {};
     const home = homedir();
-    const sessionId = values['export-events'];
-    if (sessionId) {
+    if (args.exportEvents) {
       const events = await exportEvents({
-        sessionId,
+        sessionId: args.exportEvents,
         config,
         home,
         fetch,
+        serverUrl: args.serverUrl,
         ...tokenFile,
-        includeContent: values['include-content'] ?? false,
+        includeContent: args.includeContent,
       });
       const json = JSON.stringify(events, null, 2);
-      if (values.out) {
-        await writeFile(values.out, `${json}\n`);
+      if (args.out) {
+        await writeFile(args.out, `${json}\n`);
         console.error(
-          `Wrote ${events.length} events to ${values.out}${values['include-content'] ? '' : ' (content redacted; add --include-content to keep it)'}`,
+          `Wrote ${events.length} events to ${args.out}${args.includeContent ? '' : ' (content redacted; add --include-content to keep it)'}`,
         );
       } else console.log(json);
       return 0;
@@ -82,8 +95,10 @@ async function main(argv: string[]): Promise<number> {
       adapters: buildAdapters(config),
       fetch,
       home,
+      serverUrl: args.serverUrl,
       ...tokenFile,
-      ...(values['data-dir'] ? { dataDir: resolve(cwd, values['data-dir']) } : {}),
+      ...(args.dataDir ? { dataDir: args.dataDir } : {}),
+      ...(args.workspace ? { workspaces: [args.workspace] } : {}),
     });
     console.log(formatChecks(checks));
     return doctorExitCode(checks);

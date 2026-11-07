@@ -32,6 +32,16 @@ export interface WorkspaceConfig {
   default: string;
 }
 
+/** Longest title derived from a prompt, in characters (code points). */
+export const MAX_TITLE_LENGTH = 60;
+
+/** A session title from a prompt: whitespace collapsed, trimmed, cut to 60 characters with `…`. */
+export function titleFromPrompt(prompt: string): string {
+  const chars = [...prompt.replace(/\s+/g, ' ').trim()];
+  if (chars.length <= MAX_TITLE_LENGTH) return chars.join('');
+  return `${chars.slice(0, MAX_TITLE_LENGTH - 1).join('').trimEnd()}…`;
+}
+
 /** Strips store-internal fields from a stored session. */
 const toPublic = (stored: Session & { nativeSessionRef?: string; lastSequence?: number }): Session => {
   const s = { ...stored };
@@ -68,6 +78,7 @@ export class SessionService {
       id: newId('ses'),
       runtimeId: adapter.id,
       workspace,
+      // Untitled sessions show the workspace folder until their first prompt names them (RunManager).
       title: b.title ?? basename(workspace),
       status: 'ready',
       readOnly: false,

@@ -33,6 +33,8 @@ export const HealthResponseSchema = z.object({
   ok: z.literal(true),
   protocol: z.literal('1.0'),
   version: z.string(),
+  /** The daemon's workspace config (default + allowed roots); used by `uncage doctor`. */
+  workspace: z.object({ default: z.string(), allowedRoots: z.array(z.string()) }).optional(),
 });
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 

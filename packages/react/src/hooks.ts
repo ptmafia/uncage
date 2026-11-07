@@ -238,3 +238,72 @@ export function useAttachmentUrl(attachmentId: string): string {
   const store = useUncageStore();
   return useMemo(() => store.attachmentUrl(attachmentId), [store, attachmentId]);
 }
+
+/** Where the open session is remembered across reloads (see `usePersistSession`). */
+export type PersistSessionMode = 'url' | 'localStorage' | false;
+
+/** The `?session=` query parameter (`'url'`) and the storage key (`'localStorage'`). */
+export const PERSIST_SESSION_PARAM = 'session';
+export const PERSIST_SESSION_STORAGE_KEY = 'uncage:session';
+
+function readPersisted(mode: PersistSessionMode): string | undefined {
+  if (mode === false || typeof window === 'undefined') return undefined;
+  try {
+    const id =
+      mode === 'url'
+        ? new URLSearchParams(window.location.search).get(PERSIST_SESSION_PARAM)
+        : window.localStorage.getItem(PERSIST_SESSION_STORAGE_KEY);
+    return id || undefined;
+  } catch {
+    return undefined; // storage disabled (privacy mode, sandboxed iframe)
+  }
+}
+
+function writePersisted(mode: PersistSessionMode, id: string | undefined): void {
+  if (mode === false || typeof window === 'undefined') return;
+  try {
+    if (mode === 'url') {
+      const url = new URL(window.location.href);
+      if ((url.searchParams.get(PERSIST_SESSION_PARAM) ?? undefined) === id) return;
+      if (id === undefined) url.searchParams.delete(PERSIST_SESSION_PARAM);
+      else url.searchParams.set(PERSIST_SESSION_PARAM, id);
+      // replaceState keeps the router's state object (Next.js stores its tree there).
+      window.history.replaceState(window.history.state, '', url);
+    } else if (id === undefined) window.localStorage.removeItem(PERSIST_SESSION_STORAGE_KEY);
+    else window.localStorage.setItem(PERSIST_SESSION_STORAGE_KEY, id);
+  } catch {
+    // storage disabled: nothing to remember
+  }
+}
+
+/**
+ * Remembers the open session so a reload lands on the same conversation: on mount it reopens the
+ * remembered session (`?session=<id>` with `'url'`, a `localStorage` entry with `'localStorage'`),
+ * then mirrors the open session there (`history.replaceState`, no new history entries) and clears
+ * it when a new draft is opened. A remembered session that no longer exists falls back to a new
+ * draft. `<AgentChat>` calls this (default `'url'`); headless UIs call it once near the root.
+ */
+export function usePersistSession(mode: PersistSessionMode = 'url'): void {
+  const store = useUncageStore();
+  const activeSessionId = useStoreSelector((s) => s.activeSessionId);
+  const draftOpen = useStoreSelector((s) => s.draft.open);
+
+  useEffect(() => {
+    const id = readPersisted(mode);
+    if (id === undefined || store.getState().activeSessionId !== undefined) return;
+    void store.actions.selectSession(id).then(() => {
+      const s = store.getState();
+      if (s.activeSessionId !== id || s.active !== undefined || s.lastError?.code !== 'not_found') return;
+      // Deleted or from another server: forget it and start fresh instead of showing an error.
+      store.actions.dismissError();
+      writePersisted(mode, undefined);
+      store.actions.openDraft();
+    });
+  }, [store, mode]);
+
+  useEffect(() => {
+    // Before anything is open (first render, restore in flight) there is nothing to write.
+    if (draftOpen) writePersisted(mode, undefined);
+    else if (activeSessionId !== undefined) writePersisted(mode, activeSessionId);
+  }, [mode, draftOpen, activeSessionId]);
+}

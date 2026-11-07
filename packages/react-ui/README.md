@@ -37,6 +37,7 @@ Then `npm run dev` and open http://localhost:3000. `npx uncage doctor` checks yo
 ## Customizing
 
 - `locale`: `'en'` (default) or `'zh-CN'`. `theme`: `'auto'` (default), `'light'`, `'dark'`.
+- `persistSession`: `'url'` (default) keeps the open session in `?session=<id>` so a reload reopens it; `'localStorage'` keeps the URL clean; `false` leaves it to your router.
 - Restyle with the `--uncage-*` CSS variables; every class uses the `uc-` prefix.
 - Replace parts via the `components` prop, or build your own UI with the hooks in [`@uncage/react`](https://www.npmjs.com/package/@uncage/react).
 - `bypassPermissions` (no approvals) is only offered when the daemon is started with `UNCAGE_ALLOW_BYPASS=1`; choosing it asks for confirmation.

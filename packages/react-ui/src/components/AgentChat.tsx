@@ -7,7 +7,9 @@ import {
   useSession,
   useSessions,
   useStoreSelector,
+  usePersistSession,
   useUncageStore,
+  type PersistSessionMode,
 } from '@uncage/react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { ChatControllerContext, cx, UncageUIProvider, useUi, type ChatComponents, type ChatController } from '../context.js';
@@ -35,6 +37,12 @@ export interface AgentChatProps {
   starterPrompts?: string[];
   /** Show tool steps between messages (default `true`). */
   showTools?: boolean;
+  /**
+   * Where the open session is remembered so a reload reopens it (default `'url'`: `?session=<id>`,
+   * kept in sync with `history.replaceState`). `'localStorage'` keeps the URL clean; `false` turns
+   * it off (e.g. when the host app routes sessions itself).
+   */
+  persistSession?: PersistSessionMode;
   /** Replace any of the default building blocks. */
   components?: Partial<ChatComponents>;
   className?: string;
@@ -62,10 +70,12 @@ interface LayoutProps {
   className?: string;
   defaultRuntime?: string;
   starterPrompts: string[];
+  persistSession: PersistSessionMode;
 }
 
-function ChatLayout({ sidebar, theme, className, defaultRuntime, starterPrompts }: LayoutProps): JSX.Element {
+function ChatLayout({ sidebar, theme, className, defaultRuntime, starterPrompts, persistSession }: LayoutProps): JSX.Element {
   const { locale, components } = useUi();
+  usePersistSession(persistSession);
   const controller = useChatSession(defaultRuntime, starterPrompts);
   const { draft } = controller.value;
   const { activeSessionId, select } = useSessions();
@@ -193,6 +203,7 @@ export function AgentChat({
   defaultRuntime,
   starterPrompts,
   showTools = true,
+  persistSession = 'url',
   components,
   className,
 }: AgentChatProps): JSX.Element {
@@ -202,6 +213,7 @@ export function AgentChat({
         sidebar={sidebar}
         theme={theme}
         starterPrompts={starterPrompts ?? NO_PROMPTS}
+        persistSession={persistSession}
         {...(defaultRuntime !== undefined ? { defaultRuntime } : {})}
         {...(className !== undefined ? { className } : {})}
       />
