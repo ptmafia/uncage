@@ -1,6 +1,6 @@
 {
   "name": "@uncage/protocol",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Uncage wire protocol: types and Zod schemas",
   "type": "module",
   "engines": {
@@ -8,9 +8,9 @@
   },
   "sideEffects": false,
   "files": [
-    "dist",
+    "LICENSE",
     "README.md",
-    "LICENSE"
+    "dist"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -45,5 +45,9 @@
   "publishConfig": {
     "access": "public"
   },
-  "author": "Nathan Zhang"
+  "author": "Nathan Zhang",
+  "homepage": "https://ptmafia.github.io/uncage/",
+  "bugs": {
+    "url": "https://github.com/ptmafia/uncage/issues"
+  }
 }

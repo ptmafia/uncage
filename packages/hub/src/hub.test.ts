@@ -438,7 +438,7 @@ describe('browser API → machine', () => {
     expect(sh).toContain('uname -s');
     expect(sh).toContain('-lt 22');
     expect(sh).toContain('command -v claude');
-    expect(sh).toContain('npm install -g "@uncage/cli@^0.1"');
+    expect(sh).toContain('npm install -g "@uncage/cli@^0.2"');
     expect(sh).toContain('uncage setup');
   });
 

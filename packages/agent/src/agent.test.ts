@@ -390,14 +390,14 @@ describe('agent ↔ real hub', () => {
       throw Object.assign(new Error('EACCES'), { stderr: 'permission denied' });
     });
     const exit = vi.fn();
-    const agent = await agentFor(h, [s1, s2], [{ text: 'x' }], { extra: { exec, exit, agentVersion: '0.1.1' } });
+    const agent = await agentFor(h, [s1, s2], [{ text: 'x' }], { extra: { exec, exit, agentVersion: '0.2.0' } });
     await until(async () => (await readActivity(h, s1.id)).find((e) => e.kind === 'upgrade' && e.ok === false));
     expect(exec).toHaveBeenCalledTimes(1);
     expect(exit).not.toHaveBeenCalled();
     await online(ok);
     await until(() => agent.status()[s2.id] === 'connected');
     await until(() => agent.status()[s1.id] === 'upgrade_failed');
-    expect(await readUpgradeState(h)).toMatchObject({ fromVersion: '0.1.1', minAgentVersion: '99.0.0', failedAt: expect.any(String) });
+    expect(await readUpgradeState(h)).toMatchObject({ fromVersion: '0.2.0', minAgentVersion: '99.0.0', failedAt: expect.any(String) });
     // The healthy site keeps working.
     await online(ok);
     expect((await (await ok.as('alice', '/sessions', { method: 'POST', body: JSON.stringify({ runtime: 'fake' }) })).status)).toBe(201);
@@ -413,7 +413,7 @@ describe('agent ↔ real hub', () => {
       timing: FAST,
       exec: exec2,
       exit,
-      agentVersion: '0.1.1',
+      agentVersion: '0.2.0',
     });
     cleanups.push(() => again.close());
     await until(() => again.status()[s1.id] === 'upgrade_failed');

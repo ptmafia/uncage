@@ -1,14 +1,15 @@
 {
   "name": "@uncage/hub",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Uncage hub: device login, machine connections and the browser API for Connected Mode, mounted in your website's Node backend",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "files": [
-    "dist",
-    "LICENSE"
+    "LICENSE",
+    "README.md",
+    "dist"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -71,5 +72,9 @@
   "publishConfig": {
     "access": "public"
   },
-  "author": "Nathan Zhang"
+  "author": "Nathan Zhang",
+  "homepage": "https://ptmafia.github.io/uncage/",
+  "bugs": {
+    "url": "https://github.com/ptmafia/uncage/issues"
+  }
 }

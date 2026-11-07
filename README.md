@@ -14,7 +14,7 @@ Your website gives the instructions. Each user’s own Claude Code does the work
 
 **Help site (for developers and coding agents): https://ptmafia.github.io/uncage/** · [llms.txt](https://ptmafia.github.io/uncage/llms.txt) · [Skill for coding agents](skills/uncage/SKILL.md)
 
-> Status: Connected Mode is new in 0.2 (`@uncage/hub`, `@uncage/agent`, `uncage setup`). The user’s side runs on macOS with Node.js 22+. Claude Code is verified live, end to end ([compatibility](docs/compatibility.md)); Codex is implemented but not yet verified against a real binary and has no site-tool support. Local Mode (0.1) is unchanged.
+> Status: Connected Mode is new in 0.2 (`@uncage/hub`, `@uncage/agent`, `uncage setup`). The user’s side runs on macOS with Node.js 22+. Claude Code is verified live, end to end ([compatibility](docs/compatibility.md)); Codex is implemented but not yet verified against a real binary and has no site-tool support. Local Mode (the 0.1 daemon + chat, with no hub) keeps working and is documented in the help site.
 
 ## Try it in 5 minutes
 

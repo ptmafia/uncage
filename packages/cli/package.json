@@ -1,6 +1,6 @@
 {
   "name": "@uncage/cli",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "The `uncage` command: serve the local daemon, run doctor, export events, and connect this computer to websites (Connected Mode)",
   "type": "module",
   "engines": {
@@ -10,9 +10,9 @@
     "uncage": "./dist/bin.js"
   },
   "files": [
-    "dist",
+    "LICENSE",
     "README.md",
-    "LICENSE"
+    "dist"
   ],
   "scripts": {
     "build": "tsup",
@@ -49,5 +49,9 @@
   "publishConfig": {
     "access": "public"
   },
-  "author": "Nathan Zhang"
+  "author": "Nathan Zhang",
+  "homepage": "https://ptmafia.github.io/uncage/",
+  "bugs": {
+    "url": "https://github.com/ptmafia/uncage/issues"
+  }
 }
