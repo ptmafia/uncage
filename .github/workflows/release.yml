@@ -16,6 +16,7 @@ permissions:
 
 jobs:
   release:
+    if: github.repository == 'ptmafia/uncage'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,5 +46,4 @@ jobs:
       - name: Explain Version PR permission failure
         if: failure() && steps.changesets.outcome == 'failure'
         run: |
-          echo "::error::Release failed. If the log above says GitHub Actions is not permitted to create or approve pull requests, nothing was published."
-          echo "::error::Enable Settings > Actions > General > 'Allow GitHub Actions to create and approve pull requests' (org and repo), or version locally with 'pnpm changeset version' and push. See CONTRIBUTING.md#releasing."
+          echo "::error::The release step failed. If the failure was creating the Version PR (missing permission), nothing was published: see CONTRIBUTING.md#releasing. Otherwise check the publish log above."
