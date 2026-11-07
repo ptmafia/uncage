@@ -31,9 +31,10 @@ export type FakeStep =
   /**
    * Calls the run's site tool `name` (`input.tools`) and replies with its result as text: text parts
    * joined by newlines, json parts JSON-encoded. Errors (unknown tool, thrown or `isError`) are
-   * reported as `tool error: <message>` text; the run continues.
+   * reported as `tool error: <message>` text; the run continues. `args` may be a function of the
+   * earlier `callTool` replies in this run (e.g. pass an id returned by a previous tool).
    */
-  | { callTool: { name: string; args: unknown } }
+  | { callTool: { name: string; args: unknown | ((previous: string[]) => unknown) } }
   /** Replies with what the run received: `describeRunInput(input)`. */
   | { echo: true }
   | { crash: string }
@@ -134,13 +135,21 @@ export function createFakeAdapter(
     const steps = typeof opts.script === 'function' ? opts.script(input) : opts.script;
     const interrupted = (): RuntimeEvent => ({ type: 'run.interrupted', reason: 'aborted' });
 
+    const toolReplies: string[] = [];
+    const toolStep = async (c: { name: string; args: unknown }): Promise<{ text: string }> => {
+      const args = typeof c.args === 'function' ? (c.args as (previous: string[]) => unknown)([...toolReplies]) : c.args;
+      const text = await callSiteTool(input, c.name, args);
+      toolReplies.push(text);
+      return { text };
+    };
+
     for (const scripted of steps) {
       if (ctx.signal.aborted) return yield interrupted();
       const step: FakeStep =
         'echo' in scripted
           ? { text: describeRunInput(input) }
           : 'callTool' in scripted
-            ? { text: await callSiteTool(input, scripted.callTool.name, scripted.callTool.args) }
+            ? await toolStep(scripted.callTool)
             : scripted;
       if (ctx.signal.aborted) return yield interrupted();
 

@@ -41,6 +41,9 @@ importers:
       '@playwright/test':
         specifier: ^1.65.0
         version: 1.65.0
+      '@uncage/agent':
+        specifier: workspace:*
+        version: link:../packages/agent
       '@uncage/cli':
         specifier: workspace:*
         version: link:../packages/cli
@@ -56,12 +59,61 @@ importers:
       '@uncage/testkit':
         specifier: workspace:*
         version: link:../packages/testkit
+      connected-demo:
+        specifier: workspace:*
+        version: link:../examples/connected-demo
       nextjs-default-chat:
         specifier: workspace:*
         version: link:../examples/nextjs-default-chat
       react-headless-chat:
         specifier: workspace:*
         version: link:../examples/react-headless-chat
+
+  examples/connected-demo:
+    dependencies:
+      '@uncage/hub':
+        specifier: workspace:*
+        version: link:../../packages/hub
+      '@uncage/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@uncage/react':
+        specifier: workspace:*
+        version: link:../../packages/react
+      '@uncage/react-ui':
+        specifier: workspace:*
+        version: link:../../packages/react-ui
+      ioredis:
+        specifier: ^5.11.1
+        version: 5.11.1
+      next:
+        specifier: ^16.4.5
+        version: 16.4.5(@opentelemetry/api@1.10.0)(@playwright/test@1.65.0)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      pg:
+        specifier: ^8.23.1
+        version: 8.23.1
+      react:
+        specifier: ^19.3.1
+        version: 19.3.1
+      react-dom:
+        specifier: ^19.3.1
+        version: 19.3.1(react@19.3.1)
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.6
+        version: 26.6.6
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
+      '@types/react':
+        specifier: ^19.3.0
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: ^19.3.0
+        version: 19.3.0(@types/react@19.3.0)
 
   examples/nextjs-default-chat:
     dependencies:

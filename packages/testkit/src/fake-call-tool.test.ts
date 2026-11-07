@@ -45,4 +45,21 @@ describe('fake adapter callTool step', () => {
     const bad = tool('bad', () => Promise.resolve({ content: [{ type: 'text', text: 'denied' }], isError: true }));
     expect(await reply({ ...base, tools: [bad] }, 'bad')).toEqual(['tool error: denied']);
   });
+
+  it('computes args from the earlier callTool replies when args is a function', async () => {
+    const create = tool('create', () => Promise.resolve({ content: [{ type: 'json', json: { id: 'a_1' } }] }));
+    const publish = vi.fn((args: unknown) => Promise.resolve<ToolCallResult>({ content: [{ type: 'text', text: `ok ${JSON.stringify(args)}` }] }));
+    const adapter = createFakeAdapter({
+      script: [
+        { callTool: { name: 'create', args: {} } },
+        { text: 'between' },
+        { callTool: { name: 'publish', args: (prev: string[]) => ({ id: (JSON.parse(prev[0]!) as { id: string }).id }) } },
+      ],
+    });
+    const ctx = { signal: new AbortController().signal, requestApproval: () => Promise.reject(new Error('unused')) };
+    const texts: string[] = [];
+    for await (const e of adapter.run({ ...base, tools: [create, tool('publish', publish)] }, ctx)) if (e.type === 'message.completed') texts.push(e.text);
+    expect(publish).toHaveBeenCalledWith({ id: 'a_1' });
+    expect(texts).toEqual(['{"id":"a_1"}', 'between', 'ok {"id":"a_1"}']);
+  });
 });

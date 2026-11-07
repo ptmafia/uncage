@@ -112,8 +112,33 @@ Record the result (Chrome version, ✓/✗ per step) here.
 - A skill (`<cwd>/.claude/skills/kumquat-signoff/SKILL.md`, rule "always end every answer with KUMQUAT") was found and loaded through the `Skill` tool (no approval requested), and the answer ended with KUMQUAT. When a run carries skills, the adapter adds `'project'` to `settingSources`.
 - Codex: `siteTools: false`. Codex has no site-tool support yet, so core refuses a manifest with tools for a Codex session (`unsupported_capability`).
 
+## Connected mode end to end: the connected-demo website (Claude Code)
+
+`examples/connected-demo` is a website with the hub mounted in its own Node server. It offers two site tools: `create_asset`, and `publish_asset` (needs confirmation, pulls files with `ctx.files.pull`). It also has a `landing-page` skill and `sessionStorage: 'site'`. The specs in `e2e/connected/` drive it in system Chrome, all through the same golden path (`golden-path.ts`):
+
+1. Sign in. The chat shows `ConnectMachine` with `uncage setup <url>`.
+2. The **real** CLI runs `uncage setup <url> --no-daemon --no-browser`. Playwright opens the printed `/device?code=…` link in a second tab, checks `X-Frame-Options: DENY` and `frame-ancestors 'none'` and that the code matches, then clicks 批准. Setup exits 0.
+3. The agent starts and the header shows `电脑：<name>（在线）`.
+4. The spec sends "做一个介绍 Uncage 的落地页并发布" and allows every approval card until the run ends. The run must be `completed`, and one card must be `publish_asset`.
+5. `/assets` lists the asset as 已发布. Its page shows `<iframe sandbox="allow-scripts">`, an `<h1>` renders inside it, and `/asset-files/…` is served with `sandbox allow-scripts` + `default-src 'none'`.
+6. Reload: the conversation is shown.
+7. The agent is stopped and the page reloaded: the conversation is still shown (site replica), the composer reads "你的电脑离线了，等待重新连接…" and is disabled.
+
+The agents run with `UNCAGE_HOME=<tmp>` (new in `@uncage/cli`: it moves `~/.uncage` and `~/Uncage`) and the real `HOME`, so Claude Code keeps its login and the user's `~/.uncage` is never touched. A tmp `HOME` does not work on macOS: Claude Code then reports "Not logged in", because its login is found through `HOME` (Keychain / `~/.claude.json`). Setting `CLAUDE_CONFIG_DIR` breaks its config lookup.
+
+Run record, 2026-11-07. Environment: macOS 26.6.2 (arm64), Node 24.15.0, pnpm 10.33.0, Playwright 1.65.0, Google Chrome 157.0.8103.39 (system, headless), Next.js 16.4.5, Claude Code CLI 2.1.318, Claude Agent SDK 0.3.318, Docker with `redis:7-alpine` and `postgres:16-alpine`.
+
+| Project | Stack | Result |
+| --- | --- | --- |
+| `connected-mock` (in `pnpm e2e:mock`) | Demo on one node (PGlite + memory cluster), real `uncage setup`, the real `@uncage/agent` with the testkit fake runtime (`e2e/connected/fake-agent.ts`: writes `landing/index.html`, then calls `create_asset`, raises a `publish_asset` card, and calls `publish_asset` with the `assetId` it got back) | ✓ 22 s, plus a second spec ✓: a cross-site sign-in POST gets 403, `/device` with an unknown code offers no 批准, and another user sees no assets |
+| `connected-multinode` (`UNCAGE_DOCKER_TESTS=1`) | `scripts/multinode.ts` runs `HUB_NODES=2` on throwaway Redis + Postgres containers behind the round-robin proxy. Four consecutive `/machines` requests (alternating nodes) all show the machine online, and both nodes served traffic. Same golden path | ✓ 23 s (containers removed afterwards) |
+| `connected-live` (`UNCAGE_LIVE=1`, in `pnpm e2e:live`) | Real `uncage agent` with Claude Code (default permission mode) | ✓ 1.8 min. The full `UNCAGE_LIVE=1 pnpm e2e:live` passed 21/21 in 4.8 min (the 20 Local Mode specs above + this one) |
+
+Observed live (Claude Code 2.1.318, default model). Claude Code called `create_asset` with no card (a tool without confirmation). In the full run it then raised cards for its own Bash (`ls`/`find` to look at the workspace), WebSearch (about Uncage) and Write (`landing/index.html`). Last came the `publish_asset` card: `publish_asset({"assetId":"a_…","dir":"landing"})`, with the id `create_asset` had returned. After Allow the site stored the single `index.html`. It was an inline-CSS dark landing page with one `<h1>` ("打开笼子，让 AI 真正动手做事") and no external resources, and it rendered in the sandboxed iframe. On the first standalone run the cards were WebSearch, Write and `publish_asset`. The exact steps vary between runs; the spec allows every card. Screenshots and process logs go to `e2e/connected/results/` (gitignored).
+
 ## How to re-verify
 
 - Claude Code, full live E2E: `pnpm build && UNCAGE_LIVE=1 pnpm e2e:live`. It needs a logged-in `claude`, Google Chrome and Node ≥ 22.18, and it uses a little Claude usage (about 3 minutes of short runs). Codex must be absent for spec 1 as written. Ports 4795–4798 and 3102–3105 must be free. Facts the composer specs observe (model list, the picked model, plan-mode cards, the `auto` outcome) are written to `e2e/live/results/composer-live.json`.
 - Claude Code, single smoke run: `pnpm --filter @uncage/runtime-claude smoke`. It costs a few tokens and needs a logged-in `claude`. It runs in a fresh tmp dir and records the raw SDK messages to `sdk-messages.jsonl` there, so you can diff their shapes against `packages/runtime-claude/src/fixtures/`. Composer flags: `-- --image $PWD/e2e/fixtures/uncage-42.png` (image + resume with a file), `-- --permission-mode acceptEdits` (no approval expected), `--model <id>`, `--effort <level>`. Connected mode: `-- --site` (site tools via MCP, a confirmation tool, a skill).
+- Connected Mode: `pnpm build`, then from `e2e/`: `pnpm exec playwright test --project=connected-mock`, `UNCAGE_DOCKER_TESTS=1 pnpm exec playwright test --project=connected-multinode` (needs Docker and pulls nothing if the two images are present), `UNCAGE_LIVE=1 pnpm exec playwright test --project=connected-live` (a logged-in `claude`; about 2 minutes of model time). Ports 3210, 3220–3222 and 3230 must be free.
 - Codex: there is no live check yet. `pnpm --filter @uncage/runtime-codex test` runs the adapter against the fake app-server.

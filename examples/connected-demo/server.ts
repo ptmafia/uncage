@@ -1,0 +1,71 @@
+/**
+ * The demo website's server: one Node `http` server carrying
+ *   - the Uncage hub's browser API and device endpoints under /api/uncage (`toNodeHandler(hub)`),
+ *   - the machines' WebSockets at /api/uncage/agent (`hub.attach(server)`),
+ *   - everything else: the Next.js app (pages, server actions, /asset-files).
+ *
+ *   pnpm dev                    # next dev mode
+ *   pnpm build && pnpm start    # production mode
+ *
+ * Env: PORT (3200), HOST (127.0.0.1), PUBLIC_URL (http://localhost:$PORT), DEMO_DATA_DIR (./.data),
+ * DATABASE_URL + REDIS_URL (multi-node), TRUST_PROXY=1 (behind scripts/multinode.ts).
+ */
+import { createServer } from 'node:http';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { toNodeHandler } from '@uncage/hub';
+import next from 'next';
+import { publicUrl } from './lib/config.ts';
+import { createDemoHub } from './lib/hub.ts';
+import { publishHub } from './lib/hub-registry.ts';
+
+const dev = process.env.NODE_ENV !== 'production';
+const port = Number(process.env.PORT || 3200);
+const host = process.env.HOST || '127.0.0.1';
+const dir = dirname(fileURLToPath(import.meta.url));
+
+const { hub, close: closeHub } = await createDemoHub();
+publishHub(hub);
+const hubHandler = toNodeHandler(hub);
+
+const server = createServer();
+const app = next({ dev, dir, hostname: host, port, httpServer: server });
+const handle = app.getRequestHandler();
+await app.prepare();
+
+server.on('request', (req, res) => {
+  // Hub paths are answered by the hub; anything else falls through to Next.js.
+  hubHandler(req, res, () => {
+    handle(req, res).catch((err: unknown) => {
+      console.error(err);
+      if (!res.headersSent) res.statusCode = 500;
+      res.end();
+    });
+  });
+});
+
+hub.attach(server); // machine WebSockets at <basePath>/agent
+if (dev) {
+  // Next's own upgrades (HMR); the hub ignores paths that are not its own.
+  const upgrade = app.getUpgradeHandler();
+  const agentPath = `${hub.basePath}/agent`;
+  server.on('upgrade', (req, socket, head) => {
+    if ((req.url ?? '').split('?')[0] !== agentPath) void upgrade(req, socket, head);
+  });
+}
+
+server.listen(port, host, () => {
+  console.log(`ready ${publicUrl()} (listening on http://${host}:${port}, ${dev ? 'dev' : 'production'})`);
+});
+
+let stopping = false;
+const stop = (): void => {
+  if (stopping) return;
+  stopping = true;
+  setTimeout(() => process.exit(1), 10_000).unref();
+  server.closeAllConnections();
+  server.close();
+  Promise.allSettled([closeHub(), app.close()]).then(() => process.exit(0));
+};
+process.on('SIGTERM', stop);
+process.on('SIGINT', stop);

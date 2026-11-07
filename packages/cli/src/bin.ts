@@ -17,6 +17,7 @@ import { defaultExec } from '@uncage/agent';
 import { ACTIVITY_HELP, showActivity } from './activity-cmd.js';
 import { AGENT_HELP, runAgent } from './agent-cmd.js';
 import { restartLaunchAgent, uninstallLaunchAgent } from './launchd.js';
+import { connectedHome, daemonHomeConflict } from './home.js';
 import { runSetup, SETUP_HELP } from './setup.js';
 import { listSites, removeSite, SITES_HELP } from './sites.js';
 
@@ -38,7 +39,8 @@ Connected Mode (a website drives this computer):
   uncage <command> --help
 
 Zero-config: "uncage serve" works with no setup (optional ./uncage.config.yaml).
-Env: UNCAGE_PORT, UNCAGE_LOG_LEVEL; doctor also reads UNCAGE_URL.`;
+Env: UNCAGE_PORT, UNCAGE_LOG_LEVEL; doctor also reads UNCAGE_URL. UNCAGE_HOME (absolute) moves
+Connected Mode state (~/.uncage/agent.yaml, ~/Uncage workspaces) for tests/dev; HOME is untouched.`;
 
 const SERVE_HELP = `uncage serve - start the local Uncage daemon
 
@@ -144,9 +146,14 @@ async function main(argv: string[]): Promise<number> {
       console.log(SETUP_HELP);
       return values.help ? 0 : 2;
     }
+    const conflict = daemonHomeConflict(process.env, values['no-daemon']);
+    if (conflict) {
+      console.error(conflict);
+      return 2;
+    }
     await runSetup({
       url: positionals[0]!,
-      home: homedir(),
+      home: connectedHome(),
       fetch,
       exec: defaultExec,
       out: (l) => console.log(l),
@@ -175,7 +182,7 @@ async function main(argv: string[]): Promise<number> {
       console.error(`Unknown agent command "${positionals[0]}".\n\n${AGENT_HELP}`);
       return 2;
     }
-    const agent = await runAgent({ home: homedir() });
+    const agent = await runAgent({ home: connectedHome() });
     if (agent.sites === 0) {
       await agent.close();
       console.error('No connected websites. Connect one with: uncage setup <url>');
@@ -207,12 +214,13 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     if (positionals.length === 0) {
-      console.log(await listSites(homedir()));
+      console.log(await listSites(connectedHome()));
       return 0;
     }
     if (positionals[0] === 'remove' && positionals.length === 2) {
-      await removeSite({ home: homedir(), id: positionals[1]!, fetch, out: (l) => console.log(l) });
-      await restartLaunchAgent({ home: homedir(), uid: process.getuid?.() ?? 501, exec: defaultExec });
+      await removeSite({ home: connectedHome(), id: positionals[1]!, fetch, out: (l) => console.log(l) });
+      // The background agent never runs with UNCAGE_HOME (setup refuses), so leave it alone then.
+      if (!process.env.UNCAGE_HOME) await restartLaunchAgent({ home: homedir(), uid: process.getuid?.() ?? 501, exec: defaultExec });
       return 0;
     }
     console.error(SITES_HELP);
@@ -234,7 +242,7 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     await showActivity({
-      home: homedir(),
+      home: connectedHome(),
       ...(values.site ? { site: values.site } : {}),
       follow: values.follow,
       json: values.json,

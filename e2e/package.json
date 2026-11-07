@@ -8,18 +8,20 @@
     "node": ">=22"
   },
   "scripts": {
-    "e2e:mock": "playwright test --project=mock-default --project=mock-headless",
-    "e2e:live": "playwright test --project=live-claude --pass-with-no-tests",
+    "e2e:mock": "playwright test --project=mock-default --project=mock-headless --project=connected-mock --project=connected-multinode",
+    "e2e:live": "playwright test --project=live-claude --project=connected-live --pass-with-no-tests",
     "typecheck": "tsc --noEmit",
     "lint": "eslint ."
   },
   "devDependencies": {
     "@playwright/test": "^1.65.0",
+    "@uncage/agent": "workspace:*",
     "@uncage/cli": "workspace:*",
     "@uncage/core": "workspace:*",
     "@uncage/protocol": "workspace:*",
     "@uncage/server": "workspace:*",
     "@uncage/testkit": "workspace:*",
+    "connected-demo": "workspace:*",
     "nextjs-default-chat": "workspace:*",
     "react-headless-chat": "workspace:*"
   }
