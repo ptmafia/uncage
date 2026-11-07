@@ -32,6 +32,7 @@ export const session = (over: Partial<Session> = {}): Session => ({
     diffEvents: false,
     mcp: false,
     skills: 'unknown',
+    siteTools: false,
     models: [],
     efforts: [],
     permissionModes: ['default'],

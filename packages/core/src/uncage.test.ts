@@ -22,6 +22,7 @@ const CAPS: RuntimeCapabilities = {
   diffEvents: false,
   mcp: false,
   skills: 'unknown',
+  siteTools: false,
   models: [],
   efforts: [],
   permissionModes: ['default'],

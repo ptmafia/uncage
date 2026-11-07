@@ -13,6 +13,7 @@ import type {
   RuntimeInfo,
   Session,
   SessionSettings,
+  UncageEvent,
 } from '@uncage/protocol';
 import type { Logger } from 'pino';
 import { ApprovalBridge } from './approvals.js';
@@ -42,6 +43,12 @@ export interface UncageOptions {
   /** `allowBypass` (default false) enables the `bypassPermissions` permission mode. */
   security?: { allowBypass?: boolean };
   logger?: Logger;
+  /**
+   * Sees every committed event of every session (e.g. to replicate them elsewhere), in sequence
+   * order per session, synchronously after commit. Keep it cheap and non-blocking; a throwing
+   * listener is logged and never affects the run.
+   */
+  onEvent?(e: UncageEvent): void;
 }
 
 export interface Uncage {
@@ -70,6 +77,14 @@ export interface Uncage {
     list(q: { sessionId: string; pendingOnly?: boolean }): Promise<ApprovalRequest[]>;
     decide(id: string, d: ApprovalDecision, idempotencyKey: string): Promise<ApprovalRequest>;
   };
+  events: {
+    /**
+     * At most `limit` (default 500, max 1000) committed events of the session with sequence > `after`,
+     * in sequence order: a page for catch-up / replication. `not_found` for an unknown session;
+     * `event_replay_unavailable` when retention already pruned part of the range.
+     */
+    readAfter(sessionId: string, after: number, limit?: number): Promise<UncageEvent[]>;
+  };
   /** The resolved workspace config: new sessions default to `default`, all live under `allowedRoots`. */
   readonly workspace: { readonly default: string; readonly allowedRoots: readonly string[] };
   close(): Promise<void>;
@@ -86,7 +101,8 @@ export async function createUncage(opts: UncageOptions): Promise<Uncage> {
   const policy: SecurityPolicy = { allowBypass: opts.security?.allowBypass === true };
   const registry = new AdapterRegistry(opts.adapters, policy);
   const store = opts.store ?? (await openPgliteStore({ dataDir: opts.dataDir ?? join(homedir(), '.uncage', 'data') }));
-  const log = new EventLog(store);
+  const onEvent = opts.onEvent;
+  const log = new EventLog(store, onEvent ? (e) => onEvent(e) : undefined, logger);
   const bridge = new ApprovalBridge(store, log, opts.approvals?.ttlMs ?? DEFAULT_TTL_MS, logger);
   const cwd = process.cwd();
   const workspace: WorkspaceConfig = {
@@ -144,6 +160,14 @@ export async function createUncage(opts: UncageOptions): Promise<Uncage> {
       add: (sessionId, input) => attachments.add(sessionId, input),
       get: (id) => attachments.get(id),
       pruneOrphans: (olderThan) => attachments.pruneOrphans(olderThan),
+    },
+    events: {
+      readAfter: async (sessionId, after, limit) => {
+        if (!(await store.getSession(sessionId))) {
+          throw new UncageError('not_found', { message: `Session ${sessionId} not found.` });
+        }
+        return log.readAfter(sessionId, after, limit);
+      },
     },
     runs: { get: (id) => runs.get(id), cancel: (id) => runs.cancel(id), listActive: () => runs.listActive() },
     approvals: {

@@ -12,7 +12,7 @@ import {
 import { UncageError } from './errors.js';
 import type { EventLog } from './event-log.js';
 import type { AdapterRegistry } from './registry.js';
-import type { RunManager } from './runs.js';
+import type { RunManager, StartRunOptions } from './runs.js';
 import { mergeSettings, type SecurityPolicy } from './settings.js';
 import type { Store } from './store/store.js';
 import { resolveWorkspace } from './workspace.js';
@@ -21,8 +21,11 @@ export interface SessionHandle {
   readonly id: string;
   get(): Promise<Session>;
   snapshot(): Promise<SessionSnapshot>;
-  /** Returns once the run is queued; execution continues in the background. */
-  startRun(b: StartRunBody & { idempotencyKey?: string }): Promise<Run>;
+  /**
+   * Returns once the run is queued; execution continues in the background. `manifest` (connected
+   * mode) offers site tools and skills to the runtime for this run; tool calls go to `callTool`.
+   */
+  startRun(b: StartRunBody & StartRunOptions): Promise<Run>;
   /** Replays from the store, then streams live events. Never ends on its own; abort via `signal`. */
   events(opts?: { after?: number; signal?: AbortSignal }): AsyncIterable<UncageEvent>;
 }

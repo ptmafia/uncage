@@ -25,6 +25,8 @@ export function claudeCapabilities(o: { models: ModelOption[]; allowBypass: bool
     diffEvents: false,
     mcp: true,
     skills: 'supported',
+    // Site tools (connected mode) are wired up in a later change.
+    siteTools: false,
     models: o.models,
     ...(o.modelsAuthoritative ? { modelsAuthoritative: true } : {}),
     efforts: ['low', 'medium', 'high', 'xhigh', 'max'],

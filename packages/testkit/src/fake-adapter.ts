@@ -10,6 +10,7 @@ import {
   type RuntimeCapabilities,
   type RuntimeEvent,
   type RuntimeProbe,
+  type ToolCallResult,
 } from '@uncage/protocol';
 import { ATTACHMENT_LIMITS } from '@uncage/protocol';
 
@@ -27,6 +28,12 @@ export type FakeStep =
     }
   | { approval: NativeApprovalInput; onDeny?: 'continue' | 'fail' }
   | { waitMs: number }
+  /**
+   * Calls the run's site tool `name` (`input.tools`) and replies with its result as text: text parts
+   * joined by newlines, json parts JSON-encoded. Errors (unknown tool, thrown or `isError`) are
+   * reported as `tool error: <message>` text; the run continues.
+   */
+  | { callTool: { name: string; args: unknown } }
   /** Replies with what the run received: `describeRunInput(input)`. */
   | { echo: true }
   | { crash: string }
@@ -47,6 +54,7 @@ const DEFAULT_CAPABILITIES: RuntimeCapabilities = {
   diffEvents: false,
   mcp: false,
   skills: 'unknown',
+  siteTools: true,
   models: [],
   efforts: [],
   permissionModes: ['default'],
@@ -61,6 +69,21 @@ export function describeRunInput(input: AdapterRunInput): string {
   const { model, effort, permissionMode } = input.settings;
   const names = input.attachments.map((a) => a.name).join(',');
   return `settings: model=${model ?? '-'} effort=${effort ?? '-'} mode=${permissionMode}; attachments: ${names || '-'}`;
+}
+
+const resultText = (r: ToolCallResult): string => {
+  const text = r.content.map((c) => (c.type === 'text' ? c.text : JSON.stringify(c.json))).join('\n');
+  return r.isError ? `tool error: ${text}` : text;
+};
+
+async function callSiteTool(input: AdapterRunInput, name: string, args: unknown): Promise<string> {
+  const tool = input.tools?.find((t) => t.name === name);
+  if (!tool) return `tool error: unknown tool ${name}`;
+  try {
+    return resultText(await tool.call(args));
+  } catch (e) {
+    return `tool error: ${e instanceof Error ? e.message : String(e)}`;
+  }
 }
 
 /** Resolves true after `ms`, or false as soon as the signal aborts. */
@@ -113,7 +136,13 @@ export function createFakeAdapter(
 
     for (const scripted of steps) {
       if (ctx.signal.aborted) return yield interrupted();
-      const step: FakeStep = 'echo' in scripted ? { text: describeRunInput(input) } : scripted;
+      const step: FakeStep =
+        'echo' in scripted
+          ? { text: describeRunInput(input) }
+          : 'callTool' in scripted
+            ? { text: await callSiteTool(input, scripted.callTool.name, scripted.callTool.args) }
+            : scripted;
+      if (ctx.signal.aborted) return yield interrupted();
 
       if ('text' in step) {
         const messageId = newId('msg');

@@ -64,6 +64,7 @@ describe('codexAdapter', () => {
       diffEvents: false,
       mcp: true,
       skills: 'unknown',
+      siteTools: false,
       models: [{ id: 'default', label: 'Default' }],
       efforts: ['low', 'medium', 'high'],
       permissionModes: ['default'],

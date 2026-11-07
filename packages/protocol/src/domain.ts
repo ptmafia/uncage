@@ -85,6 +85,8 @@ export const RuntimeCapabilitiesSchema = z.object({
   diffEvents: z.boolean(),
   mcp: z.boolean(),
   skills: z.enum(['supported', 'partial', 'unknown']),
+  /** Whether runs can be given site tools (`AdapterRunInput.tools`, connected mode). */
+  siteTools: z.boolean(),
   models: z.array(ModelOptionSchema),
   /** True only when `models` is the runtime's real list (not a fallback); a stored model is reset only against an authoritative list. */
   modelsAuthoritative: z.boolean().optional(),

@@ -339,6 +339,7 @@ export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
     diffEvents: false,
     mcp: true,
     skills: 'unknown',
+    siteTools: false,
     models,
     ...(modelsAuthoritative ? { modelsAuthoritative: true } : {}),
     efforts: [...EFFORTS],

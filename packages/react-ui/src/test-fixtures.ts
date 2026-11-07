@@ -27,6 +27,7 @@ const capabilities = {
   diffEvents: false,
   mcp: false,
   skills: 'unknown' as const,
+  siteTools: false,
   models: [],
   efforts: [],
   permissionModes: ['default' as const],

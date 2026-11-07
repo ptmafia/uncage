@@ -12,10 +12,15 @@ import {
   type RunState,
   type RuntimeAdapter,
   type RuntimeCapabilities,
+  type RunTool,
   type RuntimeEvent,
   type Session,
+  type SessionManifest,
+  SessionManifestSchema,
   type SessionSettings,
+  type SkillSpec,
   type StartRunBody,
+  type ToolCallResult,
 } from '@uncage/protocol';
 import type { ApprovalBridge } from './approvals.js';
 import { publicAttachment } from './attachments.js';
@@ -27,6 +32,18 @@ import { titleFromPrompt, type WorkspaceConfig } from './sessions.js';
 import type { SecurityPolicy } from './settings.js';
 import type { Store } from './store/store.js';
 import { resolveWorkspace } from './workspace.js';
+
+/** Routes a site tool call made during a run (connected mode: to the hub, then the site). */
+export type CallTool = (tool: string, args: unknown, ctx: { sessionId: string; runId: string }) => Promise<ToolCallResult>;
+
+/** Per-run extras beyond the HTTP body. */
+export interface StartRunOptions {
+  idempotencyKey?: string;
+  /** Site tools and skills offered to the runtime for this run. Tools need `capabilities.siteTools`. */
+  manifest?: SessionManifest;
+  /** Required when `manifest.tools` is non-empty. */
+  callTool?: CallTool;
+}
 
 export const ACTIVE_RUN_STATES: RunState[] = ['queued', 'running', 'waiting_approval'];
 const CANCEL_GRACE_MS = 5_000;
@@ -45,6 +62,8 @@ interface ActiveRun {
   /** The session's settings when the run started; later changes apply from the next run. */
   settings: SessionSettings;
   attachments: ResolvedAttachment[];
+  tools?: RunTool[];
+  skills?: SkillSpec[];
   adapter: RuntimeAdapter;
   abort: AbortController;
   cancelRequested: boolean;
@@ -98,6 +117,26 @@ const hashRequest = (prompt: string, attachmentIds: string[]) =>
     .update(attachmentIds.length === 0 ? prompt : `${prompt}\0${attachmentIds.join(',')}`)
     .digest('hex');
 
+/** Validates an optional run manifest; tools also need a `callTool` route. */
+function parseManifest(body: StartRunOptions): SessionManifest | undefined {
+  if (body.manifest === undefined) return undefined;
+  const parsed = SessionManifestSchema.safeParse(body.manifest);
+  if (!parsed.success) {
+    throw new UncageError('invalid_request', {
+      message: 'Invalid session manifest.',
+      details: { issues: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })) },
+    });
+  }
+  const names = parsed.data.tools.map((t) => t.name);
+  if (new Set(names).size !== names.length) {
+    throw new UncageError('invalid_request', { message: 'Session manifest tool names must be unique.' });
+  }
+  if (parsed.data.tools.length > 0 && body.callTool === undefined) {
+    throw new UncageError('invalid_request', { message: 'Site tools need a callTool handler.' });
+  }
+  return parsed.data;
+}
+
 /** Owns run execution: starting, driving adapter iterators, cancelling, and shutting down. */
 export class RunManager {
   private readonly active = new Map<string, ActiveRun>();
@@ -141,7 +180,7 @@ export class RunManager {
   }
 
   /** Persists a queued run and starts driving it in the background. Serialised per session. */
-  start(sessionId: string, body: StartRunBody & { idempotencyKey?: string }): Promise<Run> {
+  start(sessionId: string, body: StartRunBody & StartRunOptions): Promise<Run> {
     const prev = this.startLocks.get(sessionId) ?? Promise.resolve();
     const next = prev.catch(() => undefined).then(() => this.startLocked(sessionId, body));
     this.startLocks.set(sessionId, next);
@@ -153,7 +192,7 @@ export class RunManager {
     return next;
   }
 
-  private async startLocked(sessionId: string, body: StartRunBody & { idempotencyKey?: string }): Promise<Run> {
+  private async startLocked(sessionId: string, body: StartRunBody & StartRunOptions): Promise<Run> {
     const { idempotencyKey: key, prompt } = body;
     const attachmentIds = body.attachmentIds ?? [];
     if (attachmentIds.some((a) => a === '') || new Set(attachmentIds).size !== attachmentIds.length) {
@@ -164,6 +203,7 @@ export class RunManager {
         message: `At most ${ATTACHMENT_LIMITS.maxPerMessage} attachments can be sent with one message.`,
       });
     }
+    const manifest = parseManifest(body);
     const hash = hashRequest(prompt, attachmentIds);
     if (key !== undefined) {
       const prior = await this.store.getIdempotent(key, runIdemScope(sessionId));
@@ -202,9 +242,16 @@ export class RunManager {
       });
     });
 
+    const caps = await this.registry.capabilities(session.runtimeId);
+    if (manifest && manifest.tools.length > 0 && !caps.siteTools) {
+      throw new UncageError('unsupported_capability', {
+        message: `Runtime ${session.runtimeId} does not support site tools.`,
+        details: { runtime: session.runtimeId, capability: 'siteTools' },
+      });
+    }
     const attachments = await this.resolveAttachments(sessionId, attachmentIds);
     const title = await this.firstRunTitle(session, prompt);
-    const { settings, reset } = effectiveSettings(session.settings, await this.registry.capabilities(session.runtimeId));
+    const { settings, reset } = effectiveSettings(session.settings, caps);
 
     const run: Run = {
       id: newId('run'),
@@ -232,6 +279,8 @@ export class RunManager {
       done: new Promise<void>((r) => (markDone = r)),
       markDone: () => markDone(),
     };
+    if (manifest && manifest.tools.length > 0) entry.tools = this.bindTools(entry, manifest.tools, body.callTool!);
+    if (manifest && manifest.skills.length > 0) entry.skills = manifest.skills;
     // Claim the attachments atomically before the run exists, so a concurrent prune (or anything
     // else that changed them since they were checked) fails the start instead of the run.
     if (attachmentIds.length > 0 && (await this.store.markAttachmentsReferenced(attachmentIds, run.id)) !== attachmentIds.length) {
@@ -277,6 +326,19 @@ export class RunManager {
     this.logger.debug({ runId: run.id, promptLength: prompt.length }, 'run prompt received');
     void this.drive(entry);
     return run;
+  }
+
+  /** Wraps each tool so its calls reach `callTool` with this run's ids; refused once the run has ended. */
+  private bindTools(entry: ActiveRun, tools: SessionManifest['tools'], callTool: CallTool): RunTool[] {
+    return tools.map((spec) => ({
+      ...spec,
+      call: (args: unknown) => {
+        if (entry.finished || entry.abort.signal.aborted) {
+          return Promise.reject(new UncageError('invalid_request', { message: 'The run has ended; tool calls are no longer accepted.' }));
+        }
+        return callTool(spec.name, args, { sessionId: entry.sessionId, runId: entry.run.id });
+      },
+    }));
   }
 
   /**
@@ -360,6 +422,8 @@ export class RunManager {
           cwd: entry.workspace,
           settings: entry.settings,
           attachments: entry.attachments,
+          ...(entry.tools ? { tools: entry.tools } : {}),
+          ...(entry.skills ? { skills: entry.skills } : {}),
           ...(entry.nativeSessionRef !== undefined ? { nativeSessionRef: entry.nativeSessionRef } : {}),
         },
         { signal: entry.abort.signal, requestApproval: (i) => this.requestApproval(entry, i) },
