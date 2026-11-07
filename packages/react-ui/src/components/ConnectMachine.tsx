@@ -25,7 +25,9 @@ export interface ConnectMachineProps {
   className?: string;
 }
 
-const FOCUSABLE = 'button:not([disabled]), [href], summary, [tabindex]:not([tabindex="-1"])';
+/** Tab stops (roving-tabindex items such as the inactive OS tab are skipped). */
+const FOCUSABLE =
+  'button:not([disabled]):not([tabindex="-1"]), [href]:not([tabindex="-1"]), summary:not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])';
 
 /**
  * "Connect your computer": the two commands to run on the computer (install the CLI, then
@@ -49,13 +51,14 @@ export function ConnectMachine({ variant = 'dialog', onClose, onConnected, class
     onConnectedRef.current = onConnected;
   });
 
+  const mounted = useRef(true);
   useEffect(() => {
-    let live = true;
+    mounted.current = true;
     void loadInstallInfo().then((ok) => {
-      if (live && !ok) setInstallFailed(store.getState().machines.error);
+      if (mounted.current && !ok) setInstallFailed(store.getState().machines.error);
     });
     return () => {
-      live = false;
+      mounted.current = false;
     };
   }, [store, loadInstallInfo]);
 
@@ -80,7 +83,7 @@ export function ConnectMachine({ variant = 'dialog', onClose, onConnected, class
   const retryInstall = () => {
     setInstallFailed(undefined);
     void loadInstallInfo().then((ok) => {
-      if (!ok) setInstallFailed(store.getState().machines.error);
+      if (mounted.current && !ok) setInstallFailed(store.getState().machines.error);
     });
   };
 

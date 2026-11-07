@@ -629,7 +629,6 @@ describe('machines (connected mode)', () => {
     f.client.createSession.mockResolvedValue(session({ id: 'ses_9' }));
     await store.actions.createSession({ runtime: 'claude' });
     expect(f.client.createSession).toHaveBeenCalledWith({ runtime: 'claude', machineId: 'mac_on' });
-    expect(store.getState().machines.bySession).toEqual({ ses_9: 'mac_on' });
     store.actions.selectMachine('mac_off');
     expect(store.getState().machines.selectedId).toBe('mac_off');
     // An unknown id is ignored.
@@ -674,12 +673,52 @@ describe('machines (connected mode)', () => {
     expect(fn).toHaveBeenCalled();
   });
 
-  it('a non-404 failure on the first probe leaves the mode unknown (retried later)', async () => {
-    const f = fakeClient();
-    f.client.machines.mockRejectedValueOnce(clientError('internal_error', 503));
-    const store = createUncageStore(f.client);
-    await store.actions.loadMachines();
-    expect(store.getState().machines.mode).toBe('unknown');
+  it('a non-404 failure on the first probe retries after 2 s, 5 s, 10 s, then every 30 s until it answers', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = fakeClient(undefined, { machines: [machine()] });
+      f.client.machines.mockRejectedValue(clientError('internal_error', 503));
+      const store = createUncageStore(f.client);
+      await store.actions.loadMachines();
+      expect(store.getState().machines.mode).toBe('unknown');
+      const calls = () => f.client.machines.mock.calls.length;
+      for (const [wait, total] of [[2000, 2], [5000, 3], [10_000, 4], [30_000, 5], [30_000, 6]] as const) {
+        await vi.advanceTimersByTimeAsync(wait - 1);
+        expect(calls()).toBe(total - 1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(calls()).toBe(total);
+      }
+      f.client.machines.mockResolvedValue([machine()]);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(store.getState().machines.mode).toBe('connected');
+      const n = calls();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(calls()).toBe(n);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('Local Mode (404) is never probed again; dispose stops pending retries', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = fakeClient();
+      const store = createUncageStore(f.client);
+      await store.actions.loadMachines();
+      expect(store.getState().machines.mode).toBe('local');
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(f.client.machines).toHaveBeenCalledTimes(1);
+
+      const g = fakeClient();
+      g.client.machines.mockRejectedValue(clientError('internal_error', 503));
+      const other = createUncageStore(g.client);
+      await other.actions.loadMachines();
+      other.dispose();
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(g.client.machines).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps the selection while that machine is listed; reselects when it disappears', async () => {

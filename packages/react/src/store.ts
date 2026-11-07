@@ -91,7 +91,9 @@ export interface UncageStore {
     watchActiveRuns(): () => void;
     /**
      * Connected mode: fetches the user's computers. The first answer decides `machines.mode` (a
-     * 404 means a local daemon: `'local'`). Failures go to `machines.error`, never `lastError`.
+     * 404 means a local daemon: `'local'`, never probed again). Any other failure while the mode
+     * is unknown is retried after 2 s, 5 s, 10 s, then every 30 s. Failures go to
+     * `machines.error`, never `lastError`.
      */
     loadMachines(): Promise<void>;
     /**
@@ -142,6 +144,8 @@ export const UPLOAD_FAILED_REASON = 'attachment_upload_failed';
 
 const ACTIVE_RUNS_POLL_MS = 3000;
 const MACHINES_POLL_MS = 3000;
+/** Retry delays for a first `/machines` probe that failed with anything but 404 (then every 30 s). */
+const PROBE_RETRY_MS = [2000, 5000, 10_000, 30_000];
 const SETTING_KEYS = ['model', 'effort', 'permissionMode'] as const;
 const EMPTY_ATTACHMENTS: AttachmentsState = { items: [], rejected: [] };
 
@@ -243,7 +247,7 @@ export function createUncageStore(client: UncageClient): UncageStore {
     draft: { open: false, settings: DEFAULT_SETTINGS },
     attachments: EMPTY_ATTACHMENTS,
     activeRuns: [],
-    machines: { mode: 'unknown', list: [], loading: false, bySession: {} },
+    machines: { mode: 'unknown', list: [], loading: false },
   };
   const listeners = new Set<() => void>();
   let unsubscribe: (() => void) | undefined;
@@ -378,6 +382,22 @@ export function createUncageStore(client: UncageClient): UncageStore {
   let machinesTimer: { id: ReturnType<typeof setInterval>; ms: number } | undefined;
   let machinesLoading: Promise<void> | undefined;
   let machinesEpoch = 0;
+  let probeTimer: ReturnType<typeof setTimeout> | undefined;
+  let probeFailures = 0;
+  const clearProbeRetry = () => {
+    clearTimeout(probeTimer);
+    probeTimer = undefined;
+  };
+  /** While the mode is still unknown, probe again later (2 s, 5 s, 10 s, then every 30 s). */
+  const scheduleProbeRetry = () => {
+    if (probeTimer !== undefined || state.machines.mode !== 'unknown') return;
+    const ms = PROBE_RETRY_MS[Math.min(probeFailures, PROBE_RETRY_MS.length - 1)]!;
+    probeFailures++;
+    probeTimer = setTimeout(() => {
+      probeTimer = undefined;
+      if (state.machines.mode === 'unknown') void loadMachines();
+    }, ms);
+  };
 
   /**
    * Stores the connected-mode machine list and selection. Runtimes follow the selected computer
@@ -418,13 +438,19 @@ export function createUncageStore(client: UncageClient): UncageStore {
       try {
         const list = await client.machines();
         if (epoch !== machinesEpoch) return;
+        clearProbeRetry();
         setMachineList(list, state.machines.selectedId, { loading: false });
       } catch (err) {
         if (epoch !== machinesEpoch) return;
         const e = toClientError(err);
         // No /machines: a local daemon. Anything else is not an answer about the mode.
-        if (state.machines.mode !== 'connected' && e.status === 404) setMachines({ mode: 'local', loading: false });
-        else setMachines({ loading: false, error: e });
+        if (state.machines.mode !== 'connected' && e.status === 404) {
+          clearProbeRetry();
+          setMachines({ mode: 'local', loading: false });
+        } else {
+          setMachines({ loading: false, error: e });
+          scheduleProbeRetry();
+        }
       } finally {
         if (epoch === machinesEpoch) machinesLoading = undefined;
         syncMachinesPolling();
@@ -451,6 +477,8 @@ export function createUncageStore(client: UncageClient): UncageStore {
   };
   const stopMachinesPolling = () => {
     machinesEpoch++;
+    clearProbeRetry();
+    probeFailures = 0;
     machinesLoading = undefined;
     machineWatchers.clear();
     if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onMachinesVisibility);
@@ -519,12 +547,7 @@ export function createUncageStore(client: UncageClient): UncageStore {
     const machineId = requested ?? (state.machines.mode === 'connected' ? state.machines.selectedId : undefined);
     try {
       const session = await client.createSession(machineId !== undefined ? { ...body, machineId } : body);
-      set({
-        sessions: newestFirst([session, ...state.sessions.filter((s) => s.id !== session.id)]),
-        ...(machineId !== undefined
-          ? { machines: { ...state.machines, bySession: { ...state.machines.bySession, [session.id]: machineId } } }
-          : {}),
-      });
+      set({ sessions: newestFirst([session, ...state.sessions.filter((s) => s.id !== session.id)]) });
       return session;
     } catch (err) {
       fail(err);

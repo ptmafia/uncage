@@ -130,8 +130,6 @@ export interface MachinesState {
   install?: InstallInfo;
   /** The last failed `loadMachines`/`loadInstallInfo` (cleared by the next success). */
   error?: UncageClientError;
-  /** Machine each session created from this store runs on (the hub's session list has no machine). */
-  bySession: Record<string, string>;
 }
 
 export interface StoreState {

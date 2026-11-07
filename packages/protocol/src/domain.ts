@@ -125,6 +125,8 @@ export const SessionSchema = z.object({
   capabilities: RuntimeCapabilitiesSchema,
   settings: SessionSettingsSchema,
   activeRunId: z.string().optional(),
+  /** Connected Mode: the computer the session runs on (set by the hub; absent in Local Mode). */
+  machineId: z.string().optional(),
 });
 export type Session = z.infer<typeof SessionSchema>;
 

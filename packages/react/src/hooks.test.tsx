@@ -259,21 +259,34 @@ describe('useMachines', () => {
     expect(result.current.selected).toMatchObject({ id: 'b', online: false });
   });
 
-  it('current is the machine the open session was created on', async () => {
-    const f = fakeClient(() => snapshot({ session: session({ id: 'ses_b' }) }), {
-      machines: [machine({ id: 'a' }), machine({ id: 'b' })],
+  it('current is the open session\'s own machine (session.machineId), also after a page reload', async () => {
+    const onB = session({ id: 'ses_b', machineId: 'b' });
+    const f = fakeClient(() => snapshot({ session: onB }), {
+      machines: [machine({ id: 'a' }), machine({ id: 'b', online: false })],
     });
-    f.client.createSession.mockResolvedValue(session({ id: 'ses_b' }));
+    f.client.listSessions.mockResolvedValue([onB]);
+    // A fresh provider + store is what a reload gives: nothing remembered in memory.
+    for (let load = 0; load < 2; load++) {
+      const { result, unmount } = renderHook(() => ({ m: useMachines(), s: useSessions() }), { wrapper: wrap(f) });
+      await waitFor(() => expect(result.current.m.connected).toBe(true));
+      expect(result.current.m.selected?.id).toBe('a');
+      expect(result.current.m.current?.id).toBe('a');
+      await act(async () => result.current.s.select('ses_b'));
+      expect(result.current.m.selected?.id).toBe('a');
+      expect(result.current.m.current).toMatchObject({ id: 'b', online: false });
+      expect(result.current.m.currentId).toBe('b');
+      unmount();
+    }
+  });
+
+  it('a session whose machine is no longer listed has currentId but no current', async () => {
+    const gone = session({ id: 'ses_g', machineId: 'gone' });
+    const f = fakeClient(() => snapshot({ session: gone }), { machines: [machine({ id: 'a' })] });
     const { result } = renderHook(() => ({ m: useMachines(), s: useSessions() }), { wrapper: wrap(f) });
     await waitFor(() => expect(result.current.m.connected).toBe(true));
-    act(() => result.current.m.select('b'));
-    await act(async () => {
-      await result.current.s.create({ runtime: 'fake' });
-      await result.current.s.select('ses_b');
-    });
-    act(() => result.current.m.select('a'));
-    expect(result.current.m.selected?.id).toBe('a');
-    expect(result.current.m.current?.id).toBe('b');
+    await act(async () => result.current.s.select('ses_g'));
+    expect(result.current.m.currentId).toBe('gone');
+    expect(result.current.m.current).toBeUndefined();
   });
 
   it('watch polls while mounted and stops on unmount', async () => {

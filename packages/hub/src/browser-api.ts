@@ -154,6 +154,15 @@ export function browserApi(ctx: ApiContext) {
   const { store, machines } = ctx;
   const site = ctx.sessionStorage === 'site';
 
+  /** Every session the browser sees carries the machine it runs on. */
+  const stamp = (session: Session, machineId: string): Session => ({ ...session, machineId });
+  const stampEvents = (events: UncageEvent[], machineId: string): UncageEvent[] =>
+    events.map((e) =>
+      e.type === 'session.created' || e.type === 'session.updated'
+        ? ({ ...e, payload: { ...e.payload, session: stamp(e.payload.session, machineId) } } as UncageEvent)
+        : e,
+    );
+
   const sessionNotFound = (id: string) => new UncageError('not_found', { message: `Session ${id} not found.` });
 
   /** The user's session, or 404 — identical for "missing" and "someone else's". */
@@ -207,23 +216,23 @@ export function browserApi(ctx: ApiContext) {
   });
 
   async function snapshotOf(rec: SessionRecord): Promise<SessionSnapshot> {
-    if (site) {
-      const s = toSessionSnapshot(rec.snapshot);
-      if (s) return s;
-    }
-    return machines.command(rec.machineId, 'snapshot', { sessionId: rec.id });
+    const snap = (site ? toSessionSnapshot(rec.snapshot) : null) ?? (await machines.command(rec.machineId, 'snapshot', { sessionId: rec.id }));
+    return { ...snap, session: stamp(snap.session, rec.machineId) };
   }
 
   function eventSource(rec: SessionRecord): EventSource {
     return {
-      history: (after, limit) =>
-        site
-          ? store.readEvents(rec.id, after, limit)
-          : machines.command(rec.machineId, 'readEvents', { sessionId: rec.id, after, limit: Math.min(limit, MAX_READ_EVENTS) }),
+      history: async (after, limit) =>
+        stampEvents(
+          site
+            ? await store.readEvents(rec.id, after, limit)
+            : await machines.command(rec.machineId, 'readEvents', { sessionId: rec.id, after, limit: Math.min(limit, MAX_READ_EVENTS) }),
+          rec.machineId,
+        ),
       subscribe: (fn) =>
         ctx.cluster.subscribe(sessionChannel(rec.id), (raw) => {
           try {
-            fn((JSON.parse(raw) as { events: UncageEvent[] }).events);
+            fn(stampEvents((JSON.parse(raw) as { events: UncageEvent[] }).events, rec.machineId));
           } catch {
             // ignore a malformed broadcast
           }
@@ -311,12 +320,12 @@ export function browserApi(ctx: ApiContext) {
 
   add('GET', '/sessions', async ({ user }) => {
     const recs = await store.listSessions(user.id);
-    if (site) return json(recs.flatMap((r) => (r.snapshot?.session ? [r.snapshot.session] : [])));
+    if (site) return json(recs.flatMap((r) => (r.snapshot?.session ? [stamp(r.snapshot.session, r.machineId)] : [])));
     const owned = new Map(recs.map((r) => [r.id, r]));
     const lists = await Promise.allSettled(
       (await store.listMachines(user.id)).map(async (m) =>
         (await machines.isOnline(m.id))
-          ? (await machines.command(m.id, 'listSessions', {})).filter((s) => owned.get(s.id)?.machineId === m.id)
+          ? (await machines.command(m.id, 'listSessions', {})).filter((s) => owned.get(s.id)?.machineId === m.id).map((s) => stamp(s, m.id))
           : [],
       ),
     );
@@ -343,7 +352,7 @@ export function browserApi(ctx: ApiContext) {
       ...(site ? { snapshot: { session, runs: [], pendingApprovals: [], lastSequence: 0 } } : {}),
     });
     if (rec.userId !== user.id || rec.machineId !== machine.id) throw new UncageError('internal_error');
-    return json(session, 201);
+    return json(stamp(session, machine.id), 201);
   });
 
   add('GET', '/sessions/:id', async ({ params, user }) => json(await snapshotOf(await ownedSession(user, params.id!))));
@@ -351,7 +360,7 @@ export function browserApi(ctx: ApiContext) {
   add('PATCH', '/sessions/:id/settings', async ({ req, params, user }) => {
     const rec = await ownedSession(user, params.id!);
     const patch = parse(UpdateSessionSettingsBodySchema, await readJson(req));
-    return json(await machines.command(rec.machineId, 'updateSettings', { sessionId: rec.id, patch }));
+    return json(stamp(await machines.command(rec.machineId, 'updateSettings', { sessionId: rec.id, patch }), rec.machineId));
   });
 
   add('POST', '/sessions/:id/runs', async ({ req, params, user }) => {

@@ -86,7 +86,8 @@ export function Composer(): JSX.Element {
   const loading = !controller.draft && session === undefined;
   const readOnly = !controller.draft && session?.readOnly === true;
   // Connected mode: the computer that runs the conversation is offline, or none is connected yet.
-  const machineOffline = machines.connected && machines.current !== undefined && !machines.current.online;
+  // (A session whose computer is no longer listed counts as offline too.)
+  const machineOffline = machines.connected && machines.currentId !== undefined && machines.current?.online !== true;
   const noMachine = machines.connected && machines.machines.length === 0;
   const unavailable = info !== undefined && info.status !== 'available';
   const hint = noMachine

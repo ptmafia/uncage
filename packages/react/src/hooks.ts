@@ -238,7 +238,7 @@ export function useRunningSessions(): { runs: ActiveRunInfo[]; count: number } {
  * Connected mode: the signed-in user's computers on an Uncage hub. The first use probes the server
  * (`GET /machines`): a hub answers with the list (`connected`), a local daemon with 404 (`mode:
  * 'local'`; everything else stays as in Local Mode). `selected` is the computer new sessions run
- * on; `current` is the one the open session runs on when known (created from this page), else
+ * on; `current` is the one the open session runs on (`session.machineId`, set by the hub), else
  * `selected`. `watch` polls while mounted and the page is visible (`true` = every 3 s, or a number
  * of ms).
  */
@@ -247,7 +247,10 @@ export function useMachines(opts: { watch?: boolean | number } = {}): {
   connected: boolean;
   machines: MachineInfo[];
   selected?: MachineInfo;
+  /** The open session's computer (`session.machineId`), else `selected`; absent if not listed. */
   current?: MachineInfo;
+  /** Id of `current`, also when that computer is no longer listed (e.g. disconnected). */
+  currentId?: string;
   loading: boolean;
   error?: UncageClientError;
   install?: InstallInfo;
@@ -260,6 +263,8 @@ export function useMachines(opts: { watch?: boolean | number } = {}): {
   const m = useStoreSelector((s) => s.machines);
   const draft = useStoreSelector(isDraft);
   const activeSessionId = useStoreSelector((s) => s.activeSessionId);
+  const activeSession = useStoreSelector((s) => s.active?.session);
+  const sessions = useStoreSelector((s) => s.sessions);
   const watch = opts.watch === true ? 3000 : typeof opts.watch === 'number' ? opts.watch : undefined;
   useEffect(() => {
     const s = store.getState().machines;
@@ -268,14 +273,21 @@ export function useMachines(opts: { watch?: boolean | number } = {}): {
   useEffect(() => (watch !== undefined ? store.actions.watchMachines(watch) : undefined), [store, watch]);
   return useMemo(() => {
     const selected = m.list.find((x) => x.id === m.selectedId);
-    const sessionMachine = !draft && activeSessionId !== undefined ? m.bySession[activeSessionId] : undefined;
-    const current = (sessionMachine !== undefined ? m.list.find((x) => x.id === sessionMachine) : undefined) ?? selected;
+    // The hub stamps every session with its machine; it survives reloads.
+    const sessionMachine =
+      draft || activeSessionId === undefined
+        ? undefined
+        : (activeSession?.id === activeSessionId ? activeSession.machineId : undefined) ??
+          sessions.find((s) => s.id === activeSessionId)?.machineId;
+    const currentId = sessionMachine ?? selected?.id;
+    const current = currentId !== undefined ? m.list.find((x) => x.id === currentId) : undefined;
     return {
       mode: m.mode,
       connected: m.mode === 'connected',
       machines: m.list,
       ...(selected ? { selected } : {}),
       ...(current ? { current } : {}),
+      ...(currentId !== undefined ? { currentId } : {}),
       loading: m.loading,
       ...(m.error ? { error: m.error } : {}),
       ...(m.install ? { install: m.install } : {}),
@@ -284,7 +296,7 @@ export function useMachines(opts: { watch?: boolean | number } = {}): {
       revoke: store.actions.revokeMachine,
       loadInstallInfo: store.actions.loadInstallInfo,
     };
-  }, [store, m, draft, activeSessionId]);
+  }, [store, m, draft, activeSessionId, activeSession, sessions]);
 }
 
 /** The URL of an attachment's content, for `<img src>` or links. */

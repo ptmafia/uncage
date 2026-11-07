@@ -166,7 +166,9 @@ const en = {
   offline: 'Offline — updates are paused. Reload the page to reconnect.',
   replayIncomplete: 'Some earlier events are no longer available, so this history may be incomplete.',
   dismiss: 'Dismiss',
-  // Connected mode: computers
+  // Connected mode: computers.
+  // Terminology: the background process on the user's computer (`uncage agent`) is "the agent" in
+  // English and "守护进程" in Chinese, everywhere. The computer itself is "computer" / "电脑".
   connectTitle: 'Connect your computer',
   connectSubtitle: 'Run these two commands on the computer you want to connect. It shows up here as soon as the agent is online.',
   connectStep1: 'Install the Uncage CLI',
@@ -178,6 +180,7 @@ const en = {
   comingSoon: 'Coming soon',
   copy: 'Copy',
   copied: 'Copied',
+  copyFailed: 'Copy failed — select the text',
   copyCommand: (cmd: string) => `Copy command: ${cmd}`,
   loadingCommands: 'Loading commands…',
   waitingForComputer: 'Waiting for your computer…',
@@ -224,7 +227,7 @@ const en = {
     approval_expired: 'This approval has expired.',
     approval_already_resolved: 'This approval was already handled.',
     internal_error: 'Something went wrong on the server. Try again in a moment.',
-    machine_offline: 'Your computer is offline. Make sure `uncage agent` is running on it.',
+    machine_offline: 'Your computer is offline. Make sure the agent (`uncage agent`) is running on it.',
     machine_not_found: 'No computer is connected yet. Connect your computer first.',
     rate_limited: 'Too many requests. Wait a moment and try again.',
     device_code_expired: 'This code has expired. Run `uncage setup` again to get a new one.',
@@ -389,6 +392,7 @@ const zhCN: Strings = {
   comingSoon: '即将支持',
   copy: '复制',
   copied: '已复制',
+  copyFailed: '复制失败，请手动选择文本',
   copyCommand: (cmd: string) => `复制命令：${cmd}`,
   loadingCommands: '正在获取命令…',
   waitingForComputer: '等待你的电脑上线…',
@@ -432,7 +436,7 @@ const zhCN: Strings = {
     approval_expired: '这个确认已过期。',
     approval_already_resolved: '这个确认已经处理过了。',
     internal_error: '服务出错了，请稍后重试。',
-    machine_offline: '你的电脑离线了。请确认那台电脑上 `uncage agent` 正在运行。',
+    machine_offline: '你的电脑离线了。请确认那台电脑上的守护进程（`uncage agent`）正在运行。',
     machine_not_found: '还没有连接电脑，先连接你的电脑。',
     rate_limited: '请求太频繁了，稍等一下再试。',
     device_code_expired: '验证码已过期。重新运行 `uncage setup` 获取新的验证码。',

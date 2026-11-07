@@ -30,15 +30,17 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-/** A one-line shell command in a mono block with a copy button ("Copied" for 2 s). */
+/**
+ * A one-line shell command in a mono block with a copy button: "Copied" for 2 s, or (no clipboard
+ * access) "Copy failed — select the text"; the command text selects with one click.
+ */
 export function CopyCommand({ command }: { command: string }): JSX.Element {
   const { t } = useUi();
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<'ok' | 'failed' | false>(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
   const onCopy = async () => {
-    if (!(await copyText(command))) return;
-    setCopied(true);
+    setCopied((await copyText(command)) ? 'ok' : 'failed');
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setCopied(false), COPIED_MS);
   };
@@ -49,13 +51,13 @@ export function CopyCommand({ command }: { command: string }): JSX.Element {
         type="button"
         className="uc-btn uc-btn-ghost uc-btn-icon-sm uc-command-copy"
         aria-label={t.copyCommand(command)}
-        title={copied ? t.copied : t.copy}
+        title={copied === 'ok' ? t.copied : copied === 'failed' ? t.copyFailed : t.copy}
         onClick={() => void onCopy()}
       >
-        {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
+        {copied === 'ok' ? <Check aria-hidden /> : <Copy aria-hidden />}
       </button>
       <span className="uc-sr-only" role="status">
-        {copied ? t.copied : ''}
+        {copied === 'ok' ? t.copied : copied === 'failed' ? t.copyFailed : ''}
       </span>
     </div>
   );

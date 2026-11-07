@@ -222,6 +222,35 @@ describe('browser API → machine', () => {
     expect(list.map((x) => x.id).sort()).toEqual([s.id, ((await j(res1)) as Session).id].sort());
   });
 
+  for (const storage of ['machine', 'site'] as const) {
+    it(`every session the browser sees carries its machineId (${storage} storage)`, async () => {
+      const t = await start({ sessionStorage: storage });
+      const fm = fakeMachine();
+      const { machineToken, machineId } = await t.pair('alice');
+      const a = await connect({
+        url: t.wsUrl,
+        token: machineToken,
+        onCommand: (cmd) =>
+          cmd.op === 'updateSettings'
+            ? { ...fm.sessions.get((cmd.args as { sessionId: string }).sessionId)!.session, settings: { permissionMode: 'plan' } }
+            : fm.handler(cmd),
+      });
+      const s = (await j(t.as('alice', '/sessions', post({ runtime: 'fake' })))) as Session;
+      expect(s.machineId).toBe(machineId);
+      // The machine itself never sends machineId; the hub stamps it.
+      expect(fm.sessions.get(s.id)!.session.machineId).toBeUndefined();
+      if (storage === 'site') a.sendEvents(s.id, fm.sessions.get(s.id)!.events);
+      if (storage === 'site') await a.waitFor((f) => f.t === 'ack');
+      expect(((await j(t.as('alice', '/sessions'))) as Session[]).map((x) => x.machineId)).toEqual([machineId]);
+      expect((await j(t.as('alice', `/sessions/${s.id}`))).session.machineId).toBe(machineId);
+      const patched = await j(t.as('alice', `/sessions/${s.id}/settings`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ permissionMode: 'plan' }) }));
+      expect(patched.machineId).toBe(machineId);
+      const events = (await j(t.as('alice', `/sessions/${s.id}/events?after=0`, { headers: { accept: 'application/json' } }))) as UncageEvent[];
+      const created = events.find((e) => e.type === 'session.created') as Extract<UncageEvent, { type: 'session.created' }>;
+      expect(created.payload.session.machineId).toBe(machineId);
+    });
+  }
+
   it('no machine → machine_not_found; offline → machine_offline', async () => {
     const t = await start();
     let res = await t.as('alice', '/sessions', post({ runtime: 'fake' }));

@@ -47,6 +47,16 @@ export interface ApproveDeviceProps {
  * code to compare with the terminal, and Approve / Deny. Presentational: the website looks the
  * code up and records the decision server-side (`hub.lookupDevice` / `approveDevice` /
  * `denyDevice` with the signed-in user) and passes the outcome back in `state`.
+ *
+ * Security — approving gives a computer remote access to the user's account, so the page is a
+ * clickjacking and CSRF target:
+ * - Serve it only on the website's own origin, behind the user's normal signed-in session.
+ * - Refuse framing: send `Content-Security-Policy: frame-ancestors 'none'` and
+ *   `X-Frame-Options: DENY` on the page's response.
+ * - Record the decision with a POST protected against CSRF (Next.js Server Actions check the
+ *   Origin; a plain route handler needs an Origin check or CSRF token and SameSite cookies). Never
+ *   approve from a GET or from the `?code=` link alone.
+ * See the `@uncage/react-ui` README for a Next.js example.
  */
 export function ApproveDevice(props: ApproveDeviceProps): JSX.Element {
   if (props.locale === undefined) return <ApproveDeviceView {...props} />;

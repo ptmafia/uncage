@@ -16,6 +16,9 @@ app.use('/api/uncage', toNodeHandler(hub));
 hub.attach(httpServer); // machine WebSockets at /api/uncage/agent
 ```
 
+Every `Session` the browser API returns (create, list, snapshot, settings, and `session.*` events)
+carries `machineId`, the computer it runs on, so UIs can show that computer's status.
+
 ## Site tools
 
 `defineTool` declares a website capability that the agent sees as an MCP tool. The machine gets

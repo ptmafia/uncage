@@ -12,7 +12,7 @@ export function ConversationHeader(): JSX.Element | null {
   const { t } = useUi();
   const { session } = useSession();
   const { draft, startNewSession } = useChatController();
-  const { connected, current } = useMachines();
+  const { connected, currentId } = useMachines();
   const { name } = useRuntimeInfo(session?.runtimeId);
   const showSession = session !== undefined && !draft;
   if (!showSession && !connected) return null;
@@ -37,7 +37,7 @@ export function ConversationHeader(): JSX.Element | null {
         <div className="uc-header-end">
           <MachineStatus
             onSelect={(m) => {
-              if (!draft && current !== undefined && m.id !== current.id) startNewSession?.();
+              if (!draft && currentId !== undefined && m.id !== currentId) startNewSession?.();
             }}
           />
         </div>

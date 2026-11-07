@@ -10,8 +10,9 @@ const CONNECT_ID = '__connect__';
 
 export interface MachineStatusProps {
   /**
-   * Called after a computer is picked (it is already selected for new sessions). `<AgentChat>`
-   * opens a new draft when the pick differs from the open session's computer.
+   * Called after a computer is picked, or connected from "Connect another computer…" (it is
+   * already selected for new sessions). `<AgentChat>` opens a new draft when it differs from the
+   * open session's computer.
    */
   onSelect?(machine: MachineInfo): void;
 }
@@ -67,7 +68,7 @@ export function MachineStatus({ onSelect }: MachineStatusProps): JSX.Element | n
           onSelect?.(m);
         }}
       />
-      {connecting && <ConnectMachine onClose={() => setConnecting(false)} />}
+      {connecting && <ConnectMachine onClose={() => setConnecting(false)} onConnected={(m) => onSelect?.(m)} />}
     </>
   );
 }

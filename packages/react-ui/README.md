@@ -55,7 +55,35 @@ Against a local daemon (`uncage serve`, no `/machines`) nothing changes.
 
 `<ConnectMachine onConnected onClose />` (a dialog; `variant="inline"` to embed) and `<MachineStatus />` can be used on their own inside `UncageProvider`.
 
-`uncage setup` sends the user to your website's approval page (`/device?code=…` by default). Render it with `<ApproveDevice>`; it is presentational, the decision is made server-side with the signed-in user. A Next.js example:
+`uncage setup` sends the user to your website's approval page (`/device?code=…` by default). Render it with `<ApproveDevice>`; it is presentational, the decision is made server-side with the signed-in user.
+
+**Security.** Approving gives a computer access to the user's account, so this page is a clickjacking and CSRF target:
+
+- serve it only on your website's own origin, behind the user's normal signed-in session;
+- refuse framing: `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`;
+- record the decision with a CSRF-protected POST (Next.js Server Actions are POST-only and check `Origin` against the host; a hand-written route handler needs its own Origin check or CSRF token plus `SameSite` cookies). Never approve from a GET or from the link alone.
+
+A Next.js example:
+
+```ts
+// next.config.ts — the approval page may never be framed
+import type { NextConfig } from 'next';
+const config: NextConfig = {
+  async headers() {
+    return [
+      {
+        source: '/device',
+        headers: [
+          { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
+          { key: 'X-Frame-Options', value: 'DENY' },
+        ],
+      },
+    ];
+  },
+};
+export default config;
+// (or in middleware.ts: for '/device', set the same two headers on NextResponse.next())
+```
 
 ```tsx
 // app/device/page.tsx (server component)
@@ -69,11 +97,11 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ c
   return <ApprovePage code={code} lookup={lookup} />;
 }
 
-// app/device/actions.ts
+// app/device/actions.ts — a Server Action: POST with Next.js's built-in Origin (CSRF) check
 'use server';
 import { hub, currentUser } from '@/lib/uncage';
 export async function decide(code: string, approve: boolean) {
-  const user = await currentUser();
+  const user = await currentUser(); // must be the signed-in user of this website; reject otherwise
   try {
     return { result: await (approve ? hub.approveDevice(code, user) : hub.denyDevice(code, user)) }; // 'ok' | 'not_found' | 'expired'
   } catch (e) {
@@ -108,7 +136,7 @@ export function ApprovePage({ code, lookup }: Pick<ApproveDeviceProps, 'code' | 
 }
 ```
 
-Errors such as `machine_offline`, `machine_not_found` and `rate_limited` are shown in the UI language.
+Errors such as `machine_offline`, `machine_not_found` and `rate_limited` are shown in the UI language. Wording: the background process on the user's computer (`uncage agent`) is always "the agent" in English and "守护进程" in Chinese; the machine is "computer" / "电脑".
 
 ---
 

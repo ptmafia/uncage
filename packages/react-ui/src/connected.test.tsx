@@ -10,7 +10,7 @@ import {
   type AgentChatProps,
   type ApproveDeviceProps,
 } from './index.js';
-import { clientError, fakeClient, INSTALL, machine, runtime, session } from './test-fixtures.js';
+import { clientError, fakeClient, INSTALL, machine, runtime, session, snapshot } from './test-fixtures.js';
 
 afterEach(() => {
   cleanup();
@@ -55,6 +55,7 @@ describe('Local Mode (daemon without /machines)', () => {
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Send' })));
     await waitFor(() => expect(f.client.startRun).toHaveBeenCalled());
     expect(f.client.createSession).toHaveBeenCalledWith({ runtime: 'claude' });
+    expect(Object.keys(f.client.createSession.mock.calls[0]![0])).not.toContain('machineId');
     // The open session's header is the same as before: title and runtime, no computer.
     const header = await screen.findByRole('banner');
     expect(within(header).getByRole('heading', { name: 'Fix the build' })).toBeTruthy();
@@ -111,6 +112,17 @@ describe('connected mode: no computer yet', () => {
     expect(document.activeElement).toBe(win);
     expect(within(region).getByText('Coming soon')).toBeTruthy();
     expect(within(region).queryByText(INSTALL.install)).toBeNull();
+  });
+
+  it('a failed copy says so and asks to select the text', async () => {
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn(async () => Promise.reject(new Error('denied'))) }, configurable: true });
+    Object.defineProperty(document, 'execCommand', { value: () => false, configurable: true });
+    const f = fakeClient({ machines: [] });
+    renderChat(f, { locale: 'zh-CN' });
+    const btn = await screen.findByRole('button', { name: `复制命令：${INSTALL.setup}` });
+    await act(async () => fireEvent.click(btn));
+    expect(btn.getAttribute('title')).toBe('复制失败，请手动选择文本');
+    expect(screen.getAllByRole('status').some((n) => n.textContent === '复制失败，请手动选择文本')).toBe(true);
   });
 
   it('copy buttons write the command to the clipboard and say Copied', async () => {
@@ -282,6 +294,56 @@ describe('connected mode: machine status and picker', () => {
     expect(onConnected).toHaveBeenCalledTimes(1);
   });
 
+  it('the open session\'s own computer drives the offline state, not the selected one (also after a reload)', async () => {
+    const onB = session({ machineId: 'mac_2' });
+    const f = fakeClient({ machines: two(), sessions: [onB], snapshot: () => snapshot({ session: onB }) });
+    window.history.replaceState(null, '', '/?session=ses_1'); // a reload with the session in the URL
+    renderChat(f);
+    await screen.findByRole('heading', { name: 'Fix the build' });
+    await screen.findByRole('button', { name: 'Computer: Linux Box (offline)' });
+    await waitFor(() => expect(textbox().disabled).toBe(true));
+    expect(screen.getByText(/Your computer is offline/)).toBeTruthy();
+  });
+
+  it('a computer connected from the dialog while a session runs elsewhere starts a new session draft', async () => {
+    fakeIntervals();
+    let list = [machine({ id: 'mac_1', name: 'MacBook Pro' })];
+    const f = fakeClient({ machines: () => list, sessions: [session({ machineId: 'mac_1' })], snapshot: () => snapshot({ session: session({ machineId: 'mac_1' }) }) });
+    renderChat(f);
+    const item = await screen.findByRole('button', { name: /Fix the build/ });
+    await act(async () => fireEvent.click(item));
+    await screen.findByRole('heading', { name: 'Fix the build' });
+    fireEvent.click(screen.getByRole('button', { name: 'Computer: MacBook Pro (online)' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Connect another computer…' }));
+    const dialog = screen.getByRole('dialog');
+    await within(dialog).findByText(INSTALL.install);
+    list = [...list, machine({ id: 'mac_9', name: 'New Box', runtimes: [runtime({ id: 'codex', displayName: 'Codex' })] })];
+    await advance(3000);
+    expect(within(dialog).getByText('Connected: New Box')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
+    await screen.findByRole('heading', { name: 'Start a session with Codex' });
+    expect(screen.getByRole('button', { name: 'Computer: New Box (online)' })).toBeTruthy();
+  });
+
+  it('the dialog focus trap skips the inactive tab (tabindex=-1)', async () => {
+    const f = fakeClient({ machines: [machine()] });
+    render(
+      <UncageProvider client={f.client}>
+        <ConnectMachine onClose={() => undefined} />
+      </UncageProvider>,
+    );
+    const dialog = screen.getByRole('dialog');
+    await within(dialog).findByText(INSTALL.install);
+    const cancel = within(dialog).getByRole('button', { name: 'Cancel' });
+    cancel.focus();
+    fireEvent.keyDown(cancel, { key: 'Tab' });
+    expect(document.activeElement).toBe(within(dialog).getByRole('tab', { name: 'macOS / Linux' }));
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(cancel);
+    // The inactive Windows tab is never a tab stop.
+    expect(within(dialog).getByRole('tab', { name: 'Windows' }).getAttribute('tabindex')).toBe('-1');
+  });
+
   it('picking another computer with a session open starts a new session draft', async () => {
     const f = fakeClient({ machines: two(), sessions: [session()] });
     renderChat(f);
@@ -300,7 +362,7 @@ describe('connected mode: machine status and picker', () => {
     await screen.findByRole('button', { name: '电脑：MacBook Pro（在线）' });
     fireEvent.change(textbox_zh(), { target: { value: 'hi' } });
     await act(async () => fireEvent.click(screen.getByRole('button', { name: '发送' })));
-    await screen.findByText('你的电脑离线了。请确认那台电脑上 `uncage agent` 正在运行。');
+    await screen.findByText('你的电脑离线了。请确认那台电脑上的守护进程（`uncage agent`）正在运行。');
   });
 });
 
