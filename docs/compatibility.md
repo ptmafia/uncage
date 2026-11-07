@@ -102,8 +102,20 @@ Dictation uses the browser's Web Speech API, which needs a real microphone and t
 
 Record the result (Chrome version, ✓/✗ per step) here.
 
+## Connected mode: site tools and skills (Claude Code)
+
+`pnpm --filter @uncage/runtime-claude smoke -- --site`, 2026-11-07. Environment: macOS 26.6.2 (arm64), Node 24.15.0, Claude Code CLI 2.1.318, Claude Agent SDK 0.3.318, model `claude-fable-5-1`. All checks passed, in `default` and in `bypassPermissions` mode.
+
+- Site tools run as an in-process MCP server named `site` (`createSdkMcpServer`, `alwaysLoad: true`); Claude Code sees them as `mcp__site__<name>`. Each tool's JSON Schema is converted with zod 4 `z.fromJSONSchema`, and the MCP server validates arguments against it. A schema that is not an object schema, or that zod can't convert, gets a permissive object schema instead, and the hub validates those arguments.
+- `echo_text` (`requiresConfirmation: false`) is pre-allowed via `allowedTools`. Claude called it without an approval card, got `ECHO-7731: hello uncage` back, and quoted it in the answer.
+- `stamp_note` (`requiresConfirmation: true`) raised exactly one approval: category `mcp`, title = the tool description, `target.command` = `stamp_note({"note":"smoke"})`. The smoke auto-allowed it. Its `json` result (`STAMP-5150`) showed up in the answer. The server declares `permission_policy: 'always_ask'` for confirmation tools, so the approval was requested **even under `bypassPermissions`**.
+- A skill (`<cwd>/.claude/skills/kumquat-signoff/SKILL.md`, rule "always end every answer with KUMQUAT") was found and loaded through the `Skill` tool (no approval requested), and the answer ended with KUMQUAT. When a run carries skills, the adapter adds `'project'` to `settingSources`.
+- Expected warning: the SDK prints `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED` once per run that has pre-allowed site tools. That's intended: those tools are allowed without asking.
+- In `auto` mode, Claude Code's classifier decides on `always_ask` tools (SDK docs). Not checked live.
+- Codex: `siteTools: false`. Codex has no site-tool support yet, so core refuses a manifest with tools for a Codex session (`unsupported_capability`).
+
 ## How to re-verify
 
 - Claude Code, full live E2E: `pnpm build && UNCAGE_LIVE=1 pnpm e2e:live`. It needs a logged-in `claude`, Google Chrome and Node ≥ 22.18, and it uses a little Claude usage (about 3 minutes of short runs). Codex must be absent for spec 1 as written. Ports 4795–4798 and 3102–3105 must be free. Facts the composer specs observe (model list, the picked model, plan-mode cards, the `auto` outcome) are written to `e2e/live/results/composer-live.json`.
-- Claude Code, single smoke run: `pnpm --filter @uncage/runtime-claude smoke`. It costs a few tokens and needs a logged-in `claude`. It runs in a fresh tmp dir and records the raw SDK messages to `sdk-messages.jsonl` there, so you can diff their shapes against `packages/runtime-claude/src/fixtures/`. Composer flags: `-- --image $PWD/e2e/fixtures/uncage-42.png` (image + resume with a file), `-- --permission-mode acceptEdits` (no approval expected), `--model <id>`, `--effort <level>`.
+- Claude Code, single smoke run: `pnpm --filter @uncage/runtime-claude smoke`. It costs a few tokens and needs a logged-in `claude`. It runs in a fresh tmp dir and records the raw SDK messages to `sdk-messages.jsonl` there, so you can diff their shapes against `packages/runtime-claude/src/fixtures/`. Composer flags: `-- --image $PWD/e2e/fixtures/uncage-42.png` (image + resume with a file), `-- --permission-mode acceptEdits` (no approval expected), `--model <id>`, `--effort <level>`. Connected mode: `-- --site` (site tools via MCP, a confirmation tool, a skill).
 - Codex: there is no live check yet. `pnpm --filter @uncage/runtime-codex test` runs the adapter against the fake app-server.

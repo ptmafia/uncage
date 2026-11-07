@@ -19,7 +19,7 @@ describe('claudeCapabilities', () => {
       diffEvents: false,
       mcp: true,
       skills: 'supported',
-      siteTools: false,
+      siteTools: true,
       models,
       efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
       permissionModes: ['default', 'acceptEdits', 'plan', 'auto'],

@@ -1,8 +1,8 @@
 import { collect, runAdapterContract } from '@uncage/testkit';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { AdapterRunContext, AdapterRunInput, ApprovalOutcome, NativeApprovalInput } from '@uncage/protocol';
+import type { AdapterRunContext, AdapterRunInput, ApprovalOutcome, NativeApprovalInput, RunTool } from '@uncage/protocol';
 import type { Options, Query, SDKUserMessage, query } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CLAUDE_FALLBACK_MODELS, claudeAdapter, claudeCapabilities } from './index.js';
@@ -291,6 +291,87 @@ function modelsQuery(supportedModels: () => Promise<unknown>) {
   }) as typeof query;
   return { query: fn, calls };
 }
+
+describe('site tools and skills', () => {
+  const tools = (): RunTool[] => [
+    {
+      name: 'echo_text',
+      description: 'Echo text',
+      inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+      requiresConfirmation: false,
+      call: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
+    },
+    {
+      name: 'publish_page',
+      description: 'Publish the page',
+      inputSchema: { type: 'object', properties: { id: { type: 'string' } } },
+      requiresConfirmation: true,
+      call: async () => ({ content: [{ type: 'text', text: 'published' }] }),
+    },
+  ];
+
+  it('reports siteTools: true', () => {
+    expect(claudeAdapter({ query: scriptedQuery().query }).capabilities().siteTools).toBe(true);
+  });
+
+  it('passes mcpServers.site and pre-allows only non-confirmation tools', async () => {
+    const s = scriptedQuery();
+    await collect(claudeAdapter({ query: s.query }).run({ ...run, prompt: 'simple', tools: tools() }, ctxWith({ decision: 'allow' }).ctx));
+    const o = s.calls[0]!.options;
+    expect(o.mcpServers?.site).toMatchObject({ type: 'sdk', name: 'site' });
+    expect(o.allowedTools).toEqual(['mcp__site__echo_text']);
+  });
+
+  it('without tools, no mcpServers / allowedTools are passed', async () => {
+    const s = scriptedQuery();
+    await collect(claudeAdapter({ query: s.query }).run({ ...run, prompt: 'simple' }, ctxWith({ decision: 'allow' }).ctx));
+    expect(s.calls[0]!.options).not.toHaveProperty('mcpServers');
+    expect(s.calls[0]!.options).not.toHaveProperty('allowedTools');
+  });
+
+  it('a confirmation tool raises an mcp approval titled by its description', async () => {
+    const s = scriptedQuery();
+    const { ctx, requests } = ctxWith({ decision: 'allow' });
+    const input: AdapterRunInput = { ...run, prompt: 'simple', tools: tools() };
+    await collect(claudeAdapter({ query: s.query }).run(input, ctx));
+    const permission = await s.calls[0]!.options.canUseTool!('mcp__site__publish_page', { id: 'p1' }, {
+      signal: new AbortController().signal,
+      toolUseID: 'toolu_site',
+      requestId: 'req_2',
+      title: 'Claude wants to use mcp__site__publish_page',
+    });
+    expect(requests).toEqual([
+      { toolId: 'toolu_site', category: 'mcp', title: 'Publish the page', target: { command: 'publish_page({"id":"p1"})', cwd: run.cwd } },
+    ]);
+    expect(permission).toEqual({ behavior: 'allow', updatedInput: { id: 'p1' } });
+  });
+
+  it('an invalid tool name fails the run without starting Claude Code', async () => {
+    const s = scriptedQuery();
+    const bad = [{ ...tools()[0]!, name: 'Bash' }];
+    const events = await collect(claudeAdapter({ query: s.query }).run({ ...run, prompt: 'simple', tools: bad }, ctxWith({ decision: 'allow' }).ctx));
+    expect(events).toEqual([expect.objectContaining({ type: 'run.failed', error: expect.objectContaining({ code: 'invalid_request' }) })]);
+    expect(s.calls).toHaveLength(0);
+  });
+
+  it('materializes skills and makes sure project settings are loaded', async () => {
+    const s = scriptedQuery();
+    const cwd = mkdtempSync(join(tmpdir(), 'uncage-claude-skills-'));
+    const skills = [{ name: 'kumquat', description: 'Sign-off', markdown: 'End with KUMQUAT.' }];
+    await collect(claudeAdapter({ query: s.query, settingSources: ['user'] }).run({ ...run, cwd, prompt: 'simple', skills }, ctxWith({ decision: 'allow' }).ctx));
+    expect(readFileSync(join(cwd, '.claude', 'skills', 'kumquat', 'SKILL.md'), 'utf8')).toContain('End with KUMQUAT.');
+    expect(s.calls[0]!.options.settingSources).toEqual(['user', 'project']);
+  });
+
+  it('a skill file path traversal fails the run without starting Claude Code', async () => {
+    const s = scriptedQuery();
+    const cwd = mkdtempSync(join(tmpdir(), 'uncage-claude-skills-'));
+    const skills = [{ name: 'evil', description: 'd', markdown: 'm', files: [{ path: '../../escape.md', content: 'x' }] }];
+    const events = await collect(claudeAdapter({ query: s.query }).run({ ...run, cwd, prompt: 'simple', skills }, ctxWith({ decision: 'allow' }).ctx));
+    expect(events).toEqual([expect.objectContaining({ type: 'run.failed', error: expect.objectContaining({ code: 'invalid_request' }) })]);
+    expect(s.calls).toHaveLength(0);
+  });
+});
 
 describe('refreshCapabilities', () => {
   afterEach(() => {

@@ -13,6 +13,7 @@ import { CLAUDE_FALLBACK_MODELS, claudeCapabilities, toModelOptions } from './ca
 import { buildPrompt } from './input.js';
 import { CANCELLED_MESSAGE, DENIED_MESSAGE, EXPIRED_MESSAGE, categorize, createMapper, isResumeFailure, runFailed } from './map.js';
 import { probeClaude, type ExecFile } from './probe.js';
+import { materializeSkills, siteApprovalRequest, siteMcpOptions, type SiteMcpOptions } from './site-tools.js';
 
 export interface ClaudeAdapterOptions {
   /** Injectable for tests. */
@@ -168,6 +169,21 @@ export function claudeAdapter(o: ClaudeAdapterOptions = {}): RuntimeAdapter {
       return yield runFailed('invalid_request', `Could not read an attachment: ${err instanceof Error ? err.message : String(err)}`);
     }
 
+    let site: SiteMcpOptions | undefined;
+    try {
+      if (input.tools?.length) site = siteMcpOptions(input.tools);
+    } catch (err) {
+      return yield runFailed('invalid_request', `Invalid site tools: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const skills = input.skills ?? [];
+    try {
+      await materializeSkills(input.cwd, skills);
+    } catch (err) {
+      return yield runFailed('invalid_request', `Could not write site skills: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    // Skills live in `<cwd>/.claude/skills`, which Claude Code only reads with project settings.
+    const sources = skills.length > 0 && !settingSources.includes('project') ? [...settingSources, 'project' as const] : settingSources;
+
     const abortController = new AbortController();
     const denials = new Map<string, string>();
     const mapMessage = createMapper(denials);
@@ -180,7 +196,8 @@ export function claudeAdapter(o: ClaudeAdapterOptions = {}): RuntimeAdapter {
       mapMessage(m).map((e) => (e.type === 'run.failed' ? (lost(e.error.message) ?? e) : e));
 
     const canUseTool: CanUseTool = async (toolName, toolInput, opts) => {
-      const request: NativeApprovalInput = defined({
+      const siteTool = site?.byFullName.get(toolName);
+      const request: NativeApprovalInput = siteTool ? siteApprovalRequest(siteTool, toolInput, opts.toolUseID, input.cwd) : defined({
         toolId: opts.toolUseID,
         category: categorize(toolName),
         title: opts.title ?? toolName,
@@ -206,8 +223,10 @@ export function claudeAdapter(o: ClaudeAdapterOptions = {}): RuntimeAdapter {
         permissionMode: settings.permissionMode,
         allowDangerouslySkipPermissions: settings.permissionMode === 'bypassPermissions' ? true : undefined,
         includePartialMessages: true,
-        settingSources,
+        settingSources: sources,
         abortController,
+        mcpServers: site?.mcpServers,
+        allowedTools: site?.allowedTools.length ? site.allowedTools : undefined,
         // Registered in every mode: whatever the mode leaves to the user still goes through Uncage.
         canUseTool,
         // 'default' means the CLI's own choice.

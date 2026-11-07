@@ -29,7 +29,8 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.318",
-    "@uncage/protocol": "workspace:^"
+    "@uncage/protocol": "workspace:^",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@uncage/testkit": "workspace:*"
