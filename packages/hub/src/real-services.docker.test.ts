@@ -1,7 +1,7 @@
 /** Real Redis + real Postgres (containers from docker-setup.ts). Runs only with UNCAGE_DOCKER_TESTS=1. */
 import { randomBytes } from 'node:crypto';
 import pg from 'pg';
-import { afterAll, describe, inject, it } from 'vitest';
+import { afterAll, describe, expect, inject, it } from 'vitest';
 import { clusterContract } from './cluster/contract.js';
 import { redisCluster } from './cluster/redis.js';
 import { runMultiNodeScenario } from './multinode-scenario.js';
@@ -24,6 +24,29 @@ describe('postgresHubStore on Postgres 16', () => {
   hubStoreContract(async () => {
     const db = await freshDatabase();
     return { store: await postgresHubStore({ connectionString: db.url }), cleanup: db.drop };
+  });
+});
+
+describe('postgresHubStore survives a database connection drop', () => {
+  it('idle pool connections terminated by the server: logged (no uncaught error), store keeps working', async () => {
+    const db = await freshDatabase();
+    const errors: string[] = [];
+    const store = await postgresHubStore({ connectionString: db.url, onError: (e) => errors.push(e.message) });
+    try {
+      await Promise.all([store.listMachines('a'), store.listSessions('a'), store.getMachine('x')]); // open a few connections
+      const name = new URL(db.url).pathname.slice(1);
+      await admin.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()', [name]);
+      const start = Date.now();
+      while (errors.length === 0 && Date.now() - start < 5000) await new Promise((r) => setTimeout(r, 50));
+      expect(errors.length).toBeGreaterThan(0); // vitest would also fail the run on an uncaught 'error'
+      // A query racing the drop may still hit a dying connection once; the pool then recovers.
+      let result: unknown;
+      for (let i = 0; i < 5 && result === undefined; i++) result = await store.listMachines('a').catch(() => undefined);
+      expect(result).toEqual([]);
+    } finally {
+      await store.close();
+      await db.drop();
+    }
   });
 });
 

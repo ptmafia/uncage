@@ -9,6 +9,7 @@ export interface RedisLike {
   subscribe(...channels: string[]): Promise<unknown>;
   unsubscribe(...channels: string[]): Promise<unknown>;
   on(event: 'message', listener: (channel: string, message: string) => void): unknown;
+  on(event: 'error', listener: (err: Error) => void): unknown;
   set(key: string, value: string, mode: 'EX', seconds: number): Promise<unknown>;
   get(key: string): Promise<string | null>;
   eval(script: string, numKeys: number, ...args: Array<string | number>): Promise<unknown>;
@@ -22,13 +23,18 @@ const CLEAR_IF_OWNER = "if redis.call('get', KEYS[1]) == ARGV[1] then return red
 
 /**
  * Cluster adapter on Redis, for running several hub nodes behind a load balancer: commands and
- * session events travel over Redis pub/sub (in publish order per connection), machine presence is
- * a `SET … EX` key per machine (`<keyPrefix>presence:<machineId>`).
+ * session events travel over Redis pub/sub (in publish order per connection; channel names are
+ * prefixed with `keyPrefix` too), machine presence is a `SET … EX` key per machine
+ * (`<keyPrefix>presence:<machineId>`).
  *
  * - `{ url }`: the adapter connects with `ioredis` (install it) and closes its connections on
  *   `close()`.
  * - `{ client }`: your ioredis client; it is used for publishing and presence and left open on
- *   `close()`. The adapter subscribes on its own `client.duplicate()` connection, which it closes.
+ *   `close()`. Attach your own `'error'` listener to it. The adapter subscribes on its own
+ *   `client.duplicate()` connection, which it closes.
+ *
+ * Connection errors on the connections the adapter owns go to `onError` (default: `console.error`)
+ * instead of crashing the process; ioredis reconnects by itself.
  *
  * Every node must use the same Redis (and `keyPrefix`). Rate limits are not shared through the
  * cluster: each node counts on its own.
@@ -36,8 +42,11 @@ const CLEAR_IF_OWNER = "if redis.call('get', KEYS[1]) == ARGV[1] then return red
  * @example
  * const cluster = redisCluster({ url: process.env.REDIS_URL! });
  */
-export function redisCluster(o: ({ url: string } | { client: RedisLike }) & { keyPrefix?: string }): ClusterAdapter {
+export function redisCluster(
+  o: ({ url: string } | { client: RedisLike }) & { keyPrefix?: string; onError?: (err: Error) => void },
+): ClusterAdapter {
   const prefix = o.keyPrefix ?? 'uncage:';
+  const onError = o.onError ?? ((err: Error) => console.error('[uncage] redis cluster connection error:', err.message));
   const owned = 'url' in o;
   const pub: Promise<RedisLike> =
     'client' in o
@@ -45,7 +54,9 @@ export function redisCluster(o: ({ url: string } | { client: RedisLike }) & { ke
       : import('ioredis').then(
           (m) => {
             const Redis = ((m as unknown as { default?: unknown }).default ?? (m as unknown as { Redis: unknown }).Redis) as new (url: string) => RedisLike;
-            return new Redis(o.url);
+            const client = new Redis(o.url);
+            client.on('error', onError);
+            return client;
           },
           (e: unknown) => {
             throw new Error('redisCluster({ url }) needs the "ioredis" package: npm install ioredis', { cause: e });
@@ -61,8 +72,10 @@ export function redisCluster(o: ({ url: string } | { client: RedisLike }) & { ke
   const subscriber = (): Promise<RedisLike> =>
     (sub ??= pub.then((p) => {
       const s = p.duplicate();
+      s.on('error', onError);
       s.on('message', (channel, message) => {
-        for (const fn of [...(handlers.get(channel) ?? [])]) {
+        if (!channel.startsWith(prefix)) return;
+        for (const fn of [...(handlers.get(channel.slice(prefix.length)) ?? [])]) {
           try {
             fn(message);
           } catch {
@@ -77,7 +90,7 @@ export function redisCluster(o: ({ url: string } | { client: RedisLike }) & { ke
 
   return {
     async publish(channel, msg) {
-      await (await pub).publish(channel, msg);
+      await (await pub).publish(prefix + channel, msg);
     },
     async subscribe(channel, fn) {
       const s = await subscriber();
@@ -86,7 +99,7 @@ export function redisCluster(o: ({ url: string } | { client: RedisLike }) & { ke
       if (!set) handlers.set(channel, (set = new Set()));
       const wrapped = (msg: string) => fn(msg);
       set.add(wrapped);
-      if (first) active.set(channel, s.subscribe(channel));
+      if (first) active.set(channel, s.subscribe(prefix + channel));
       try {
         await active.get(channel);
       } catch (e) {
@@ -102,7 +115,7 @@ export function redisCluster(o: ({ url: string } | { client: RedisLike }) & { ke
         if (set.size === 0 && handlers.get(channel) === set) {
           handlers.delete(channel);
           active.delete(channel);
-          if (!closed) void s.unsubscribe(channel).catch(() => undefined);
+          if (!closed) void s.unsubscribe(prefix + channel).catch(() => undefined);
         }
       };
     },

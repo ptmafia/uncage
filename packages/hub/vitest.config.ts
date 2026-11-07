@@ -13,7 +13,16 @@ export default defineConfig({
     // once) unbounded workers starve other packages' first-PGlite tests past their 5 s timeout.
     maxWorkers: 3,
     projects: [
-      { test: { name: 'unit', include: ['src/**/*.test.ts'], exclude: ['src/**/*.docker.test.ts'] } },
+      {
+        test: {
+          name: 'unit',
+          include: ['src/**/*.test.ts'],
+          exclude: ['src/**/*.docker.test.ts'],
+          // Cold PGlite starts can take several seconds under load: do not flake.
+          testTimeout: 20_000,
+          hookTimeout: 20_000,
+        },
+      },
       ...(docker
         ? [
             {

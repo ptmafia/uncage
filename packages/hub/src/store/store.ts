@@ -170,6 +170,19 @@ export interface HubStore {
   putAttachment(r: AttachmentRecord): Promise<void>;
   getAttachment(id: string): Promise<AttachmentRecord | null>;
 
+  /**
+   * The site tools a run was offered (its manifest), recorded before `startRun` is sent under
+   * `key` (`<sessionId>:<idempotencyKey>`); first writer wins. Tool calls are only accepted for
+   * tools in their run's set.
+   */
+  putRunManifest(r: { key: string; sessionId: string; tools: string[]; createdAt: string }): Promise<void>;
+  /** Links the manifest stored under `key` to `runId` (no-op if either is already linked). */
+  bindRunManifest(key: string, runId: string): Promise<void>;
+  /** Drops an unlinked manifest (its startRun was refused). */
+  deleteRunManifest(key: string): Promise<void>;
+  /** The run's session and offered tool names, or `null` when the run has no manifest (yet). */
+  getRunTools(runId: string): Promise<{ sessionId: string; tools: string[] } | null>;
+
   /** Tool-call audit: a row per call, inserted as `running`. */
   insertToolCall(r: ToolCallRecord): Promise<void>;
   finishToolCall(id: string, r: ToolCallFinish): Promise<void>;

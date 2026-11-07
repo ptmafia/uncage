@@ -111,6 +111,19 @@ CREATE TABLE uncage_hub_tool_calls (
 CREATE INDEX uncage_hub_tool_calls_session_idx ON uncage_hub_tool_calls (session_id, started_at)
 `,
   },
+  {
+    id: 4,
+    sql: `
+CREATE TABLE uncage_hub_run_manifests (
+  key text PRIMARY KEY,
+  session_id text NOT NULL,
+  run_id text UNIQUE,
+  tools jsonb NOT NULL,
+  created_at text NOT NULL
+);
+CREATE INDEX uncage_hub_run_manifests_session_idx ON uncage_hub_run_manifests (session_id, created_at)
+`,
+  },
 ];
 
 /** Applies pending migrations. Callers serialize concurrent first starts (e.g. an advisory lock). */
@@ -414,6 +427,33 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
         'SELECT user_id, meta, data FROM uncage_hub_attachments WHERE id = $1',
         [id],
         (r) => ({ attachment: r.meta, userId: r.user_id, data: new Uint8Array(r.data) }),
+      ),
+
+    async putRunManifest(r) {
+      await db.query(
+        'INSERT INTO uncage_hub_run_manifests (key, session_id, tools, created_at) VALUES ($1, $2, $3::jsonb, $4) ON CONFLICT (key) DO NOTHING',
+        [r.key, r.sessionId, json(r.tools), r.createdAt],
+      );
+    },
+    async bindRunManifest(key, runId) {
+      try {
+        await db.query(
+          `UPDATE uncage_hub_run_manifests SET run_id = $2
+           WHERE key = $1 AND run_id IS NULL AND NOT EXISTS (SELECT 1 FROM uncage_hub_run_manifests WHERE run_id = $2)`,
+          [key, runId],
+        );
+      } catch {
+        // lost a race with claimRunManifest for the same run: it is bound either way
+      }
+    },
+    async deleteRunManifest(key) {
+      await db.query('DELETE FROM uncage_hub_run_manifests WHERE key = $1 AND run_id IS NULL', [key]);
+    },
+    getRunTools: (runId) =>
+      one<{ tools: string[]; session_id: string }, { sessionId: string; tools: string[] }>(
+        'SELECT tools, session_id FROM uncage_hub_run_manifests WHERE run_id = $1',
+        [runId],
+        (r) => ({ sessionId: r.session_id, tools: r.tools }),
       ),
 
     async insertToolCall(r) {

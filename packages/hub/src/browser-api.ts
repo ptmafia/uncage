@@ -358,14 +358,29 @@ export function browserApi(ctx: ApiContext) {
     const body = parse(StartRunBodySchema, await readJson(req));
     const rec = await ownedSession(user, params.id!);
     const manifest = await manifestFor(user, body.prompt, rec.id);
-    const run = await machines.command(rec.machineId, 'startRun', {
-      sessionId: rec.id,
-      prompt: body.prompt,
-      ...(body.attachmentIds !== undefined ? { attachmentIds: body.attachmentIds } : {}),
-      idempotencyKey: key,
-      manifest,
-    });
-    if (run.sessionId === rec.id) await store.putResource(run.id, 'run', rec.id);
+    // Record the offered tools before the machine can start the run: tool calls are accepted only
+    // for tools in their run's manifest (bound to the run id once it is known).
+    const manifestKey = `${rec.id}:${key}`;
+    await store.putRunManifest({ key: manifestKey, sessionId: rec.id, tools: manifest.tools.map((t) => t.name), createdAt: new Date().toISOString() });
+    let run;
+    try {
+      run = await machines.command(rec.machineId, 'startRun', {
+        sessionId: rec.id,
+        prompt: body.prompt,
+        ...(body.attachmentIds !== undefined ? { attachmentIds: body.attachmentIds } : {}),
+        idempotencyKey: key,
+        manifest,
+      });
+    } catch (err) {
+      // Refused by the machine: no run will use it. (A timeout may still have started one; a retry
+      // with the same Idempotency-Key binds it.)
+      if (!(err instanceof UncageError && err.code === 'machine_offline')) await store.deleteRunManifest(manifestKey).catch(() => undefined);
+      throw err;
+    }
+    if (run.sessionId === rec.id) {
+      await store.putResource(run.id, 'run', rec.id);
+      await store.bindRunManifest(manifestKey, run.id);
+    }
     return json(run, 202);
   });
 

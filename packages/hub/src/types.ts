@@ -58,6 +58,11 @@ export interface HubOptions {
   /** A site tool handler still running after this fails with `tool_failed`. Defaults to 120 000 ms. */
   toolTimeoutMs?: number;
   /**
+   * Site tool calls one machine connection may have executing at once. Further calls fail at once
+   * with `tool_failed` (`details.reason: 'too_many_concurrent'`). Defaults to 8.
+   */
+  maxConcurrentToolCalls?: number;
+  /**
    * Abuse limits, counted in memory per hub node (with several nodes each counts on its own until
    * limits are shared through the cluster adapter). Exceeding one → 429 `rate_limited`.
    */

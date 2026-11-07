@@ -131,8 +131,16 @@ export async function runMultiNodeScenario(o: { clusterA: ClusterAdapter; cluste
       expect(dec.status).toBe(200);
       expect(decisions).toEqual([{ approvalId: approval.id, decision: { decision: 'allow', scope: 'once' }, idempotencyKey: 'k1' }]);
 
-      // Tool call on A (where the machine is) pulls a 3-file directory over the file channel.
-      agent.send({ t: 'tool_call', id: 'tc_1', sessionId: session.id, runId: 'run_1', tool: 'publish_site', args: { dir: 'site' } });
+      // A run started through B (its manifest is recorded in the shared store) ...
+      const started = await B.as('alice', `/sessions/${session.id}/runs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'idempotency-key': 'run-1' },
+        body: JSON.stringify({ prompt: 'publish' }),
+      });
+      expect(started.status).toBe(202);
+      const run = (await started.json()) as { id: string };
+      // ... whose tool call on A (where the machine is) pulls a 3-file directory over the file channel.
+      agent.send({ t: 'tool_call', id: 'tc_1', sessionId: session.id, runId: run.id, tool: 'publish_site', args: { dir: 'site' } });
       const result = await agent.waitFor((f) => f.t === 'tool_result' && f.id === 'tc_1', 8000);
       expect(result).toMatchObject({ ok: true, result: { content: [{ type: 'text', text: 'published 3 files for alice' }] } });
       expect(pulled).toEqual([

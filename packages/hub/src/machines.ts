@@ -6,7 +6,9 @@ import {
   CONNECTED_PROTOCOL,
   ErrorBodySchema,
   FILE_CHUNK_BYTES,
+  HubCommandOpSchema,
   HubCommandResultSchemas,
+  HubFrameSchema,
   MAX_FRAME_BYTES,
   parseAgentFrame,
   type AgentFrame,
@@ -19,6 +21,7 @@ import {
   type UncageEvent,
 } from '@uncage/protocol';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
+import { z } from 'zod';
 import type { ClusterAdapter } from './cluster/cluster.js';
 import { sha256 } from './device.js';
 import { PullAssembler, type PullOutcome } from './files.js';
@@ -90,6 +93,15 @@ type NodeMsg =
   /** One frame of a chunked upload, forwarded as-is to the machine (`begin` registers the reply route). */
   | { k: 'up'; id: string; from: string; machineId: string; frame: HubFrame };
 
+/** Shape check for cluster messages: anything else on a node channel is dropped. */
+const NodeMsgSchema = z.discriminatedUnion('k', [
+  z.object({ k: z.literal('cmd'), id: z.string(), from: z.string(), machineId: z.string(), op: HubCommandOpSchema, args: z.unknown() }),
+  z.object({ k: z.literal('res'), id: z.string(), ok: z.boolean(), data: z.unknown().optional(), error: z.unknown().optional() }),
+  z.object({ k: z.literal('kick'), machineId: z.string(), reason: z.enum(['revoked', 'replaced']), except: z.string().optional() }),
+  z.object({ k: z.literal('up'), id: z.string(), from: z.string(), machineId: z.string(), frame: HubFrameSchema }),
+]);
+const UPLOAD_FRAMES = new Set(['attachment_begin', 'attachment_chunk', 'attachment_end', 'attachment_abort']);
+
 export const nodeChannel = (nodeId: string): string => `uncage:node:${nodeId}`;
 export const sessionChannel = (sessionId: string): string => `uncage:session:${sessionId}`;
 
@@ -110,6 +122,8 @@ interface Conn {
   ready: boolean;
   /** Aborted when the connection is retired (cancels its tool calls and pulls). */
   abort: AbortController;
+  /** Site tool calls from this connection still executing. */
+  toolCalls: number;
 }
 
 interface PullState {
@@ -137,6 +151,8 @@ export interface MachineHubDeps {
   pingIntervalMs: number;
   missedPings: number;
   commandTimeoutMs: number;
+  /** Site tool calls one connection may have executing at once; more fail with `too_many_concurrent`. */
+  maxConcurrentToolCalls: number;
   logger: HubLogger;
   /** After `welcome`: e.g. send replication `ack`s. */
   onConnected(machine: MachineRecord, send: (f: HubFrame) => void): Promise<void>;
@@ -168,7 +184,12 @@ export class MachineHub {
     this.unsubscribe = await this.d.cluster.subscribe(nodeChannel(this.d.nodeId), (raw) => {
       let msg: NodeMsg;
       try {
-        msg = JSON.parse(raw) as NodeMsg;
+        const parsed = NodeMsgSchema.safeParse(JSON.parse(raw));
+        if (!parsed.success) {
+          this.d.logger.warn({ issue: parsed.error.issues[0]?.message }, 'malformed cluster message dropped');
+          return;
+        }
+        msg = parsed.data as NodeMsg;
       } catch {
         return;
       }
@@ -267,6 +288,7 @@ export class MachineHub {
       dead: false,
       ready: false,
       abort: new AbortController(),
+      toolCalls: 0,
     };
   }
 
@@ -391,13 +413,23 @@ export class MachineHub {
         return;
       }
       case 'tool_call':
+        if (c.toolCalls >= this.d.maxConcurrentToolCalls) {
+          const err = new UncageError('tool_failed', {
+            message: `Too many site tool calls at once (at most ${this.d.maxConcurrentToolCalls}).`,
+            details: { reason: 'too_many_concurrent' },
+          });
+          this.send(c, { t: 'tool_result', id: frame.id, ok: false, error: err.toBody() });
+          return;
+        }
+        c.toolCalls++;
         // Not serialized: a slow tool must not hold up events.
         void this.d
           .onToolCall(c.machine, frame, c.abort.signal)
           .then((f) => {
             if (f) this.send(c, f);
           })
-          .catch((err) => this.send(c, { t: 'tool_result', id: frame.id, ok: false, error: errorBody(err) }));
+          .catch((err) => this.send(c, { t: 'tool_result', id: frame.id, ok: false, error: errorBody(err) }))
+          .finally(() => c.toolCalls--);
         return;
       case 'file_chunk':
       case 'file_done': {
@@ -455,6 +487,11 @@ export class MachineHub {
 
   private async onNodeMessage(msg: NodeMsg): Promise<void> {
     if (msg.k === 'up') {
+      // Only upload frames of this very upload are forwarded, nothing else.
+      if (!UPLOAD_FRAMES.has(msg.frame.t) || !('id' in msg.frame) || msg.frame.id !== msg.id) {
+        this.d.logger.warn({ t: msg.frame.t }, 'cluster upload message with a foreign frame dropped');
+        return;
+      }
       // Synchronous on purpose: upload frames must reach the socket in publish order.
       const c = this.conns.get(msg.machineId);
       const live = c && c.ready && !c.dead && c.ws.readyState === WebSocket.OPEN;
@@ -572,6 +609,12 @@ export class MachineHub {
       for (let at = 0, seq = 0; at < buf.length; at += FILE_CHUNK_BYTES, seq++) {
         if (!this.pending.has(id)) break; // already answered (e.g. refused at begin)
         await send({ t: 'attachment_chunk', id, seq, data: buf.subarray(at, at + FILE_CHUNK_BYTES).toString('base64') });
+        // The timeout is about the machine going silent, not the size of the upload.
+        const p = this.pending.get(id);
+        if (p) {
+          arm();
+          p.timer = timer;
+        }
       }
       if (this.pending.has(id)) {
         await send({ t: 'attachment_end', id });

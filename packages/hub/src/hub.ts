@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { posix } from 'node:path';
 import { UncageError } from '@uncage/core';
 import { MAX_FRAME_BYTES, SkillSpecSchema, type HubFrame, type SkillSpec, type ToolCallResult, type ToolSpec, type UncageEvent } from '@uncage/protocol';
 import { errorResponse } from '@uncage/server/wire';
@@ -27,15 +28,31 @@ const DEFAULT_MISSED_PINGS = DEFAULT_HEARTBEAT.missedPings;
 const DEFAULT_SSE_HEARTBEAT_MS = 15_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
+/** How long a tool call for a run whose startRun result is still in flight waits for it. */
+const DEFAULT_RUN_INDEX_WAIT_MS = 10_000;
 /** A `tool_result` must fit one frame with room for the envelope. */
 const TOOL_RESULT_BUDGET = MAX_FRAME_BYTES - 16 * 1024;
 /** Tool arguments larger than this are not stored in the audit table. */
 const MAX_AUDIT_ARGS_BYTES = 16 * 1024;
+/**
+ * `./a//b/` → `a/b`: the machine's file paths are workspace-relative with single forward slashes.
+ * Paths that leave the workspace are refused here (the machine refuses them too).
+ */
+function normalizeWorkspacePath(p: string): string {
+  const n = posix.normalize(p.replace(/\\/g, '/')).replace(/^(\.\/)+/, '').replace(/\/+$/, '');
+  if (n === '' || n === '.' || n === '..' || n.startsWith('../') || n.startsWith('/')) {
+    throw new UncageError('invalid_request', { message: `"${p}" is not a path inside the session workspace.` });
+  }
+  return n;
+}
+
 const RUN_END = new Set(['run.completed', 'run.failed', 'run.cancelled', 'run.interrupted']);
 
 /** Hooks not (yet) part of the public options: the tool executor seam and a logger. */
 export interface HubInternals {
   toolExecutor?: ToolExecutor;
+  /** See DEFAULT_RUN_INDEX_WAIT_MS (tests shorten it). */
+  runIndexWaitMs?: number;
   logger?: HubLogger;
 }
 
@@ -66,6 +83,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   const logger = o.logger ?? silent;
   const executor = o.toolExecutor ?? siteToolExecutor(o.tools ?? []);
   const toolTimeoutMs = o.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+  const runIndexWaitMs = o.runIndexWaitMs ?? DEFAULT_RUN_INDEX_WAIT_MS;
   /** Site tool calls executing on this node; aborted when their run ends. */
   const activeCalls = new Set<{ machineId: string; runId: string; abort(): void }>();
   const defaults = siteDefaults(publicUrl);
@@ -195,6 +213,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     pingIntervalMs: o.heartbeat?.pingIntervalMs ?? DEFAULT_PING_MS,
     missedPings: o.heartbeat?.missedPings ?? DEFAULT_MISSED_PINGS,
     commandTimeoutMs: o.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
+    maxConcurrentToolCalls: o.maxConcurrentToolCalls ?? 8,
     logger,
     async onConnected(machine, send) {
       if (sessionStorage !== 'site') return;
@@ -231,9 +250,19 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     if (!rec || rec.machineId !== machine.id || rec.userId !== machine.userId) {
       return fail(new UncageError('not_found', { message: `Session ${call.sessionId} not found.` }));
     }
-    const run = await store.getResource(call.runId, 'run');
-    if (run && run.sessionId !== rec.id) return fail(new UncageError('not_found', { message: `Run ${call.runId} not found.` }));
-    if (!tools.has(call.tool)) return fail(new UncageError('tool_failed', { message: `Unknown site tool "${call.tool}".` }));
+    // Only runs started through this hub, and only the tools their manifest offered. The startRun
+    // result (which binds the run id) may still be in flight: wait for it briefly.
+    let runTools = await store.getRunTools(call.runId);
+    for (const until = Date.now() + runIndexWaitMs; !runTools && Date.now() < until && !connSignal.aborted; ) {
+      await new Promise((r) => setTimeout(r, 50));
+      runTools = await store.getRunTools(call.runId);
+    }
+    if (!runTools || runTools.sessionId !== rec.id) {
+      return fail(new UncageError('not_found', { message: `Run ${call.runId} not found.`, details: { reason: 'run_not_indexed' } }));
+    }
+    if (!tools.has(call.tool) || !runTools.tools.includes(call.tool)) {
+      return fail(new UncageError('tool_failed', { message: `Site tool "${call.tool}" is not available in this run.`, details: { reason: 'not_in_manifest' } }));
+    }
 
     const ac = new AbortController();
     let why: 'timeout' | 'cancelled' | undefined;
@@ -278,16 +307,26 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
         .catch((e: unknown) => logger.error({ err: e, tool: call.tool }, 'tool-call audit update failed'));
 
     const files: ToolContext['files'] = {
-      pull: (path, opts) =>
+      pull: (raw, opts) =>
         filePull(async () => {
+          const path = normalizeWorkspacePath(raw);
           const max = opts?.maxBytes ?? DEFAULT_PULL_MAX_BYTES;
           if (!Number.isInteger(max) || max < 1) throw new UncageError('invalid_request', { message: 'maxBytes must be a positive integer.' });
           return machines.pull(machine.id, rec.id, path, Math.min(max, DEFAULT_PULL_MAX_BYTES), ac.signal);
         }),
-      read: async (path) => {
-        const r = await machines.pull(machine.id, rec.id, path, DEFAULT_READ_MAX_BYTES, ac.signal);
+      read: async (raw) => {
+        const path = normalizeWorkspacePath(raw);
+        let r;
+        try {
+          r = await machines.pull(machine.id, rec.id, path, DEFAULT_READ_MAX_BYTES, ac.signal);
+        } catch (err) {
+          if (err instanceof UncageError && err.code === 'not_found') {
+            throw new UncageError('not_found', { message: `"${path}" does not exist in the session workspace.` });
+          }
+          throw err;
+        }
         const f = r.files.length === 1 && r.files[0]!.path === path ? r.files[0]! : undefined;
-        if (!f) throw new UncageError('invalid_request', { message: `"${path}" is a directory, not a file.` });
+        if (!f) throw new UncageError('invalid_request', { message: `"${path}" is a directory, not a file.`, details: { reason: 'is_directory' } });
         return f.data;
       },
     };

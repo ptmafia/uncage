@@ -12,6 +12,22 @@ export interface PgPoolLike {
   query(sql: string, params?: unknown[]): Promise<{ rows: unknown[] }>;
   connect(): Promise<PgClientLike>;
   end(): Promise<void>;
+  on?(event: 'error', listener: (err: Error) => void): unknown;
+}
+
+/**
+ * node-postgres emits `'error'` on a pool when an idle connection dies (database restart,
+ * failover, network cut); with no listener that is an uncaught exception that kills the process.
+ * The pool drops the broken connection and opens a new one on demand, so logging is enough.
+ */
+export function watchPoolErrors(pool: Pick<PgPoolLike, 'on'>, onError: (err: Error) => void): void {
+  pool.on?.('error', (err) => {
+    try {
+      onError(err);
+    } catch {
+      // a throwing logger must not turn this back into a crash
+    }
+  });
 }
 
 /** Arbitrary constant key for the migration advisory lock ("uncage" in ASCII, as an int). */
@@ -59,7 +75,10 @@ function poolClient(pool: PgPoolLike): SqlClient {
  * - `{ connectionString }`: the store creates a `pg.Pool` (install the `pg` package) and ends it on
  *   `close()`.
  * - `{ pool }`: your own `pg.Pool` (or anything with its `query` / `connect` / `end` shape); it
- *   is left open on `close()`.
+ *   is left open on `close()`. **Attach your own `pool.on('error', …)` listener**: without one, an
+ *   idle connection dying (e.g. a database failover) crashes the process.
+ *
+ * Errors of a pool the store created go to `onError` (default: `console.error`).
  *
  * Migrations run on start under a Postgres advisory lock, so several nodes can start at once.
  *
@@ -67,7 +86,9 @@ function poolClient(pool: PgPoolLike): SqlClient {
  * const store = await postgresHubStore({ connectionString: process.env.DATABASE_URL! });
  * const hub = await createHub({ ..., store, cluster: redisCluster({ url: process.env.REDIS_URL! }) });
  */
-export async function postgresHubStore(o: { connectionString: string } | { pool: PgPoolLike }): Promise<HubStore> {
+export async function postgresHubStore(
+  o: ({ connectionString: string } | { pool: PgPoolLike }) & { onError?: (err: Error) => void },
+): Promise<HubStore> {
   let pool: PgPoolLike;
   let owned = false;
   if ('pool' in o) pool = o.pool;
@@ -81,6 +102,7 @@ export async function postgresHubStore(o: { connectionString: string } | { pool:
     }
     pool = new pg.Pool({ connectionString: o.connectionString });
     owned = true;
+    watchPoolErrors(pool, o.onError ?? ((err) => console.error('[uncage] postgres pool error:', err.message)));
   }
 
   try {

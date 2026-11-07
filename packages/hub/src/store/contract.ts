@@ -148,4 +148,28 @@ export function hubStoreContract(make: () => Promise<{ store: HubStore; cleanup?
       expect(await s.listToolCalls('s1', 1)).toHaveLength(1);
     }),
   );
+
+  it(
+    'run manifests: first writer wins, bind by key once, delete only unbound',
+    withStore(async (s) => {
+      await s.putRunManifest({ key: 's1:k1', sessionId: 's1', tools: ['a'], createdAt: iso(1) });
+      await s.putRunManifest({ key: 's1:k1', sessionId: 's1', tools: ['b'], createdAt: iso(2) });
+      expect(await s.getRunTools('run_1')).toBeNull();
+      await s.bindRunManifest('s1:k1', 'run_1');
+      expect(await s.getRunTools('run_1')).toEqual({ sessionId: 's1', tools: ['a'] });
+      await s.bindRunManifest('s1:k1', 'run_other'); // already bound
+      expect(await s.getRunTools('run_other')).toBeNull();
+
+      await s.putRunManifest({ key: 's1:k2', sessionId: 's1', tools: [], createdAt: iso(2) });
+      await s.bindRunManifest('s1:k2', 'run_1'); // run_1 already linked: no-op
+      await s.bindRunManifest('s1:k2', 'run_2');
+      expect(await s.getRunTools('run_2')).toEqual({ sessionId: 's1', tools: [] });
+      await s.deleteRunManifest('s1:k1'); // bound: kept
+      expect(await s.getRunTools('run_1')).not.toBeNull();
+      await s.putRunManifest({ key: 's1:k3', sessionId: 's1', tools: ['c'], createdAt: iso(3) });
+      await s.deleteRunManifest('s1:k3');
+      await s.bindRunManifest('s1:k3', 'run_3');
+      expect(await s.getRunTools('run_3')).toBeNull();
+    }),
+  );
 }

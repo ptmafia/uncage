@@ -265,6 +265,9 @@ export function makeEvent<K extends EventType>(sessionId: string, sequence: numb
 /** A minimal machine-side session store answering commands like a real agent would. */
 export function fakeMachine() {
   const sessions = new Map<string, { session: Session; events: UncageEvent[] }>();
+  const runsByKey = new Map<string, unknown>();
+  /** The manifest each run was started with, by run id. */
+  const manifests = new Map<string, { tools: Array<{ name: string }> }>();
   let n = 0;
   const handler: CommandHandler = (cmd) => {
     const a = cmd.args as Record<string, unknown>;
@@ -275,6 +278,17 @@ export function fakeMachine() {
         const session = fakeSession(id, (a.title as string | undefined) ?? 'Untitled');
         sessions.set(id, { session, events: [makeEvent(id, 1, 'session.created', { session })] });
         return session;
+      }
+      case 'startRun': {
+        const s = sessions.get(a.sessionId as string);
+        if (!s) throw Object.assign(new Error('Session not found.'), { code: 'not_found' });
+        const key = a.idempotencyKey as string;
+        const existing = runsByKey.get(`${s.session.id}:${key}`);
+        if (existing) return existing;
+        const run = { id: `run_${String(++n).padStart(4, '0')}${Math.random().toString(16).slice(2, 10)}`, sessionId: s.session.id, prompt: a.prompt as string, state: 'running', createdAt: new Date().toISOString() };
+        runsByKey.set(`${s.session.id}:${key}`, run);
+        manifests.set(run.id, a.manifest as { tools: Array<{ name: string }> });
+        return run;
       }
       case 'listSessions':
         return [...sessions.values()].map((s) => s.session);
@@ -299,7 +313,7 @@ export function fakeMachine() {
     s.events.push(e);
     return e;
   };
-  return { sessions, handler, append };
+  return { sessions, handler, append, manifests };
 }
 
 /** Reads SSE frames from a fetch Response. */

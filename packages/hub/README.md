@@ -24,10 +24,19 @@ on whichever node holds the machine's connection:
 
 - `ctx.user` is the session owner. The hub checks that the session belongs to this machine and user
   before it calls the handler.
+- A run can only call the tools its manifest offered (what `selectManifest` picked when the run
+  started, recorded per run in the store). A registered tool left out of the manifest fails with
+  `tool_failed` (`details.reason: 'not_in_manifest'`). Calls for runs not started through the hub are
+  refused.
 - Arguments are validated, and parsed, with `input` first. If they do not match, the call fails
   with `invalid_request` and the handler is not called.
 - Return a `ToolCallResult`, a string (becomes a text block) or any JSON value (becomes a json
   block). A throw becomes `tool_failed` with the thrown message.
+- **Thrown messages are shown to the user and the model** (they travel to the machine as the tool
+  error). Throw user-safe messages: no stack traces, SQL, internal hostnames or secrets. Log the
+  details on your side instead.
+- One machine connection may have at most `maxConcurrentToolCalls` (default 8) calls executing at
+  once. Further calls fail with `tool_failed` (`details.reason: 'too_many_concurrent'`).
 - A handler still running after `toolTimeoutMs` (default 120 s) fails with `tool_failed`. If the run
   ends or the machine disconnects first, the call is dropped. In every case `ctx.signal` aborts.
 - Every call is recorded in the store (`store.listToolCalls(sessionId)`). The browser sees it in the
@@ -56,7 +65,8 @@ const hub = await createHub({ ..., tools: [publishSite] });
   10 MiB per file. It is all-or-nothing. If the pull fails part-way, nothing is yielded and it
   throws. The machine never follows symlinks and refuses paths outside the workspace. A directory
   pull skips hard-linked files and lists them in `pull.skipped`.
-- `read(path)` returns one file's bytes.
+- `read(path)` returns one file's bytes. The path is normalized first (`./a//b` → `a/b`); a
+  directory fails with `invalid_request` and a missing path with `not_found`.
 
 ## Attachments
 
@@ -76,6 +86,13 @@ runtime may set a lower limit, for example 5 MB images for Claude Code; the mach
 
 Both stores use the same tables and SQL and meet the same `HubStore` contract. Migrations run on
 start; with Postgres they run under an advisory lock, so nodes can start together.
+
+Connection errors: node-postgres emits `'error'` on a pool when an idle connection dies (database
+restart, failover), and with no listener that crashes the process. A pool or Redis client the hub
+creates (`{ connectionString }`, `{ url }`) gets a listener that logs (`onError`, default
+`console.error`). **If you pass your own `{ pool }` or `{ client }`, attach your own `'error'`
+listener.** `redisCluster`'s `keyPrefix` (default `uncage:`) prefixes its pub/sub channels as well
+as its presence keys, so several deployments can share one Redis.
 
 With several nodes behind a load balancer, a machine's WebSocket lives on one node (A) while browser
 requests land anywhere (B):

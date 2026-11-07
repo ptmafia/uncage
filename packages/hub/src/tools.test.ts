@@ -1,4 +1,4 @@
-import type { HubFrame, Session } from '@uncage/protocol';
+import type { HubFrame, Run, Session } from '@uncage/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
@@ -24,21 +24,32 @@ afterEach(async () => {
 const post = (body: unknown): RequestInit => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 type ToolResultFrame = Extract<HubFrame, { t: 'tool_result' }>;
 
-/** A hub with `tools`, a fake machine paired to alice, and one session. */
-async function setup(tools: SiteTool[], o: { onFrame?: Parameters<typeof connectFakeAgent>[0]['onFrame']; toolTimeoutMs?: number } = {}) {
-  const t = (th = await startTestHub({ tools, ...(o.toolTimeoutMs ? { toolTimeoutMs: o.toolTimeoutMs } : {}) }));
+/** A hub with `tools`, a fake machine paired to alice, one session and one run started through the hub. */
+async function setup(
+  tools: SiteTool[],
+  o: { onFrame?: Parameters<typeof connectFakeAgent>[0]['onFrame']; hub?: Parameters<typeof startTestHub>[0] } = {},
+) {
+  const t = (th = await startTestHub({ tools, runIndexWaitMs: 200, ...o.hub }));
   const fm = fakeMachine();
   const { machineToken, machineId } = await t.pair('alice');
   const a = await connectFakeAgent({ url: t.wsUrl, token: machineToken, onCommand: fm.handler, ...(o.onFrame ? { onFrame: o.onFrame } : {}) });
   agents.push(a);
   const s = (await (await t.as('alice', '/sessions', post({ runtime: 'fake' }))).json()) as Session;
-  let n = 0;
-  const call = async (tool: string, args: unknown, runId = 'run_1'): Promise<ToolResultFrame> => {
-    const id = `tc_${++n}`;
-    a.send({ t: 'tool_call', id, sessionId: s.id, runId, tool, args });
-    return (await a.waitFor((f) => f.t === 'tool_result' && f.id === id, 8000)) as ToolResultFrame;
+  const startRun = async (sessionId = s.id, key = `k-${Math.random()}`): Promise<Run> => {
+    const res = await t.as('alice', `/sessions/${sessionId}/runs`, { ...post({ prompt: 'go' }), headers: { 'content-type': 'application/json', 'idempotency-key': key } });
+    expect(res.status).toBe(202);
+    return (await res.json()) as Run;
   };
-  return { t, a, s, fm, machineId, call };
+  const run = await startRun();
+  let n = 0;
+  const send = (tool: string, args: unknown, runId = run.id, sessionId = s.id): string => {
+    const id = `tc_${++n}`;
+    a.send({ t: 'tool_call', id, sessionId, runId, tool, args });
+    return id;
+  };
+  const result = async (id: string) => (await a.waitFor((f) => f.t === 'tool_result' && f.id === id, 8000)) as ToolResultFrame;
+  const call = async (tool: string, args: unknown, runId = run.id): Promise<ToolResultFrame> => result(send(tool, args, runId));
+  return { t, a, s, fm, machineId, run, startRun, send, result, call };
 }
 
 describe('defineTool / normalizeToolResult', () => {
@@ -71,17 +82,17 @@ describe('site tool execution on the hub', () => {
         return { order: args.id, user: ctx.user.id };
       },
     });
-    const { t, s, call, machineId } = await setup([lookup]);
+    const { t, s, call, machineId, run } = await setup([lookup]);
     const r = await call('lookup_order', { id: 'A-1' });
     expect(r).toEqual({ t: 'tool_result', id: 'tc_1', ok: true, result: { content: [{ type: 'json', json: { order: 'A-1', user: 'alice' } }] } });
     expect(seen!.args).toEqual({ id: 'A-1', limit: 5 }); // parsed (defaults applied)
-    expect(seen!.ctx).toMatchObject({ user: { id: 'alice' }, sessionId: s.id, runId: 'run_1' });
+    expect(seen!.ctx).toMatchObject({ user: { id: 'alice' }, sessionId: s.id, runId: run.id });
     const audit = await until(async () => {
       const rows = await t.store.listToolCalls(s.id);
       return rows[0]?.status === 'ok' ? rows : null;
     });
     expect(audit!).toEqual([
-      expect.objectContaining({ callId: 'tc_1', sessionId: s.id, runId: 'run_1', userId: 'alice', machineId, tool: 'lookup_order', args: { id: 'A-1' }, status: 'ok' }),
+      expect.objectContaining({ callId: 'tc_1', sessionId: s.id, runId: run.id, userId: 'alice', machineId, tool: 'lookup_order', args: { id: 'A-1' }, status: 'ok' }),
     ]);
     expect(audit![0]!.durationMs).toBeGreaterThanOrEqual(0);
   });
@@ -115,7 +126,7 @@ describe('site tool execution on the hub', () => {
         return new Promise(() => undefined);
       },
     });
-    const { t, s, call } = await setup([tool], { toolTimeoutMs: 150 });
+    const { t, s, call } = await setup([tool], { hub: { toolTimeoutMs: 150 } });
     expect(await call('slow', {})).toMatchObject({ ok: false, error: { code: 'tool_failed', message: expect.stringContaining('did not finish') } });
     expect(signal?.aborted).toBe(true);
     await until(async () => (await t.store.listToolCalls(s.id))[0]?.status === 'timeout');
@@ -132,29 +143,79 @@ describe('site tool execution on the hub', () => {
         return new Promise((resolve) => ctx.signal.addEventListener('abort', () => resolve('late')));
       },
     });
-    const { t, a, s, fm } = await setup([tool]);
-    a.send({ t: 'tool_call', id: 'tc_x', sessionId: s.id, runId: 'run_9', tool: 'waits', args: {} });
+    const { t, a, s, fm, run, send } = await setup([tool]);
+    const id = send('waits', {});
     await until(() => signal !== undefined);
-    a.sendEvents(s.id, [fm.append(s.id, 'run.cancelled', { runId: 'run_9' }, 'run_9')]);
+    a.sendEvents(s.id, [fm.append(s.id, 'run.cancelled', { runId: run.id }, run.id)]);
     await until(() => signal!.aborted);
     await sleep(100);
-    expect(a.frames.some((f) => f.t === 'tool_result' && f.id === 'tc_x')).toBe(false);
+    expect(a.frames.some((f) => f.t === 'tool_result' && f.id === id)).toBe(false);
     await until(async () => (await t.store.listToolCalls(s.id))[0]?.status === 'cancelled');
   });
 
-  it('refuses unknown tools, foreign sessions and runs of another session', async () => {
-    const tool = defineTool({ name: 'ok_tool', description: 'x', input: z.object({}), handler: async () => 'ok' });
-    const { t, a, s, call, fm } = await setup([tool]);
-    expect(await call('nope_tool', {})).toMatchObject({ ok: false, error: { code: 'tool_failed', message: expect.stringContaining('Unknown site tool') } });
-    a.send({ t: 'tool_call', id: 'tc_f', sessionId: 'ses_other', runId: 'run_1', tool: 'ok_tool', args: {} });
-    expect(await a.waitFor((f) => f.t === 'tool_result' && f.id === 'tc_f')).toMatchObject({ ok: false, error: { code: 'not_found' } });
-    // run_b belongs to another session of this machine
-    const s2 = (await (await t.as('alice', '/sessions', post({ runtime: 'fake' }))).json()) as Session;
-    a.sendEvents(s2.id, [fm.append(s2.id, 'run.started', { run: { id: 'run_b', sessionId: s2.id, state: 'running', createdAt: new Date().toISOString(), prompt: 'x' } as never }, 'run_b')]);
-    await until(async () => (await t.store.getResource('run_b', 'run'))?.sessionId === s2.id);
-    expect(await call('ok_tool', {}, 'run_b')).toMatchObject({ ok: false, error: { code: 'not_found' } });
-    expect(await call('ok_tool', {}, 'run_1')).toMatchObject({ ok: true });
+  it('refuses unknown tools, foreign sessions, runs of another session and runs not started through the hub', async () => {
+    let calls = 0;
+    const tool = defineTool({ name: 'ok_tool', description: 'x', input: z.object({}), handler: async () => ((calls++), 'ok') });
+    const { s, call, send, result, startRun } = await setup([tool]);
+    expect(await call('nope_tool', {})).toMatchObject({ ok: false, error: { code: 'tool_failed', details: { reason: 'not_in_manifest' } } });
+    expect(await result(send('ok_tool', {}, undefined, 'ses_other'))).toMatchObject({ ok: false, error: { code: 'not_found' } });
+    // A run of another session of this machine.
+    const s2 = (await (await th!.as('alice', '/sessions', post({ runtime: 'fake' }))).json()) as Session;
+    const run2 = await startRun(s2.id);
+    expect(await call('ok_tool', {}, run2.id)).toMatchObject({ ok: false, error: { code: 'not_found' } });
+    // A run id the hub never started (and never sees bound): refused after the short wait.
+    expect(await call('ok_tool', {}, 'run_made_up')).toMatchObject({ ok: false, error: { code: 'not_found', details: { reason: 'run_not_indexed' } } });
+    expect(calls).toBe(0);
+    expect(await call('ok_tool', {})).toMatchObject({ ok: true });
+    expect(calls).toBe(1);
     void s;
+  });
+
+  it('only tools in the run\'s manifest can be called: a registered tool selectManifest withheld is refused', async () => {
+    let secretRuns = 0;
+    const open = defineTool({ name: 'open_tool', description: 'x', input: z.object({}), handler: async () => 'open' });
+    const secret = defineTool({ name: 'admin_tool', description: 'x', input: z.object({}), handler: async () => ((secretRuns++), 'secret') });
+    const { call, fm, run } = await setup([open, secret], { hub: { selectManifest: async () => ({ tools: ['open_tool'], skills: [] }) } });
+    expect(fm.manifests.get(run.id)?.tools.map((x) => x.name)).toEqual(['open_tool']);
+    expect(await call('admin_tool', {})).toMatchObject({ ok: false, error: { code: 'tool_failed', details: { reason: 'not_in_manifest' } } });
+    expect(secretRuns).toBe(0);
+    expect(await call('open_tool', {})).toMatchObject({ ok: true, result: { content: [{ type: 'text', text: 'open' }] } });
+  });
+
+  it('a tool call racing the startRun result waits for the run to be bound', async () => {
+    const tool = defineTool({ name: 'ok_tool', description: 'x', input: z.object({}), handler: async () => 'ok' });
+    const { t, s, fm, run, send, result, a } = await setup([tool], { hub: { runIndexWaitMs: 5000 } });
+    // Hold the hub's binding of the next run id back: the machine calls the tool before it lands.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const bind = t.store.bindRunManifest.bind(t.store);
+    t.store.bindRunManifest = async (k, id) => {
+      await gate;
+      return bind(k, id);
+    };
+    const pending = t.as('alice', `/sessions/${s.id}/runs`, { ...post({ prompt: 'go' }), headers: { 'content-type': 'application/json', 'idempotency-key': 'race' } });
+    const runId = await until(() => [...fm.manifests.keys()].find((id) => id !== run.id));
+    const id = send('ok_tool', {}, runId);
+    await sleep(300);
+    expect(a.frames.some((f) => f.t === 'tool_result' && f.id === id)).toBe(false);
+    release();
+    expect(await result(id)).toMatchObject({ ok: true });
+    expect((await pending).status).toBe(202);
+  });
+
+  it('caps concurrent tool calls per connection (too_many_concurrent)', async () => {
+    let started = 0;
+    let release!: () => void;
+    const gate = new Promise<string>((r) => (release = () => r('done')));
+    const tool = defineTool({ name: 'slow_tool', description: 'x', input: z.object({}), handler: async () => ((started++), gate) });
+    const { send, result } = await setup([tool], { hub: { maxConcurrentToolCalls: 2 } });
+    const ids = [send('slow_tool', {}), send('slow_tool', {}), send('slow_tool', {})];
+    expect(await result(ids[2]!)).toMatchObject({ ok: false, error: { code: 'tool_failed', details: { reason: 'too_many_concurrent' } } });
+    await until(() => started === 2);
+    release();
+    expect(await result(ids[0]!)).toMatchObject({ ok: true });
+    expect(await result(ids[1]!)).toMatchObject({ ok: true });
+    expect(await result(send('slow_tool', {}))).toMatchObject({ ok: true }); // slots freed
   });
 
   it('fails cleanly when the result is too large for one frame', async () => {
@@ -212,6 +273,8 @@ describe('ctx.files (file channel)', () => {
     let skipped: unknown;
     let text = '';
     let dirErr: unknown;
+    let missingErr: unknown;
+    let escapeErr: unknown;
     const tool = defineTool({
       name: 'inspect',
       description: 'x',
@@ -220,8 +283,10 @@ describe('ctx.files (file channel)', () => {
         const pull = ctx.files.pull('site', { maxBytes: 5 * 1024 * 1024 });
         for await (const f of pull) void f;
         skipped = pull.skipped;
-        text = Buffer.from(await ctx.files.read('notes.txt')).toString();
-        dirErr = await ctx.files.read('site').catch((e: unknown) => e);
+        text = Buffer.from(await ctx.files.read('./notes.txt')).toString(); // normalized to notes.txt
+        dirErr = await ctx.files.read('site/').catch((e: unknown) => e);
+        missingErr = await ctx.files.read('nope.txt').catch((e: unknown) => e);
+        escapeErr = await ctx.files.read('../etc/passwd').catch((e: unknown) => e);
         return 'ok';
       },
     });
@@ -230,8 +295,15 @@ describe('ctx.files (file channel)', () => {
     expect(await call('inspect', {})).toMatchObject({ ok: true });
     expect(skipped).toEqual([{ path: 'site/link.bin', reason: 'more than one hard link' }]);
     expect(text).toBe('n');
-    expect(dirErr).toMatchObject({ code: 'invalid_request', message: expect.stringContaining('directory') });
-    expect(ps.pulls.map((p) => p.maxBytes)).toEqual([5 * 1024 * 1024, 10 * 1024 * 1024, 10 * 1024 * 1024]);
+    expect(dirErr).toMatchObject({ code: 'invalid_request', message: '"site" is a directory, not a file.', details: { reason: 'is_directory' } });
+    expect(missingErr).toMatchObject({ code: 'not_found', message: '"nope.txt" does not exist in the session workspace.' });
+    expect(escapeErr).toMatchObject({ code: 'invalid_request' });
+    expect(ps.pulls.map((p) => [p.path, p.maxBytes])).toEqual([
+      ['site', 5 * 1024 * 1024],
+      ['notes.txt', 10 * 1024 * 1024],
+      ['site', 10 * 1024 * 1024],
+      ['nope.txt', 10 * 1024 * 1024],
+    ]);
   });
 
   it('refuses chunks that break the stream rules (out of order / more than maxBytes)', async () => {

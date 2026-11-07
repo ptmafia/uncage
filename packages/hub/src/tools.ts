@@ -44,7 +44,8 @@ export interface SiteTool<I = any> {
   requiresConfirmation?: boolean;
   /**
    * Returns a `ToolCallResult`, a string (→ one text block) or any other JSON value (→ one json
-   * block). A throw becomes a `tool_failed` error carrying its message.
+   * block). A throw becomes a `tool_failed` error carrying its message, which the user and the
+   * model see: throw user-safe messages (no stack traces, SQL or secrets).
    */
   handler(args: I, ctx: ToolContext): Promise<ToolCallResult | string | object>;
 }
