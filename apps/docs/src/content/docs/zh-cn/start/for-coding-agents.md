@@ -1,5 +1,5 @@
 ---
-title: 给 coding agent
+title: 面向 coding agent
 description: Claude Code、Codex 等 coding agent 应该如何阅读本站、要安装哪个技能，以及可直接粘贴的 Uncage 集成提示词。
 ---
 
@@ -12,13 +12,13 @@ description: Claude Code、Codex 等 coding agent 应该如何阅读本站、要
 | Uncage 技能 | [`/skills/uncage/SKILL.md`](/docs/skills/uncage/SKILL.md) | “把 Uncage 集成进一个网站”：什么情况用哪种模式、具体步骤、验证命令、常见陷阱。可以安装为技能，也可以把它的 URL 贴进提示词。 |
 | 索引 | [`/llms.txt`](/docs/llms.txt) | 每个页面一行，附 Markdown 版本的 URL（[llmstxt.org](https://llmstxt.org) 格式）。 |
 | 全部内容 | [`/llms-full.txt`](/docs/llms-full.txt) | 按阅读顺序把所有指南页合成一个 Markdown 文件（自动生成的 API 参考只给链接，不包含正文）。 |
-| 任意页面 | 在网址后面加 `.md` | 例如 `https://uncage.vercel.app/docs/guides/define-tools.md`。每个页面顶部的 **View as Markdown** 链接就指向这里。 |
+| 任意页面 | 在网址后面加 `.md` | 例如 `https://uncage.vercel.app/docs/guides/define-tools.md`。每个页面顶部的 **本页 Markdown** 链接就指向这里。 |
 
 Markdown 版本里的链接指向其他页面的 Markdown 版本，agent 不用解析 HTML 就能顺着读下去。
 
 ### 安装技能
 
-对 Claude Code，把它放进你的项目（或者放进 `~/.claude/skills/`，对所有项目生效）：
+使用 Claude Code 时，把它放进你的项目（或者放进 `~/.claude/skills/`，对所有项目生效）：
 
 ```sh
 mkdir -p .claude/skills/uncage

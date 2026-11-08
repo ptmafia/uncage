@@ -202,7 +202,7 @@ curl -s http://localhost:3000/api/uncage/health                 # needs a signed
 | `maxConcurrentToolCalls` | `8` | 一台电脑同时可以进行的工具调用数。 |
 | `rateLimits` | 见下文 | 设备登录的防滥用限制。 |
 
-`rateLimits`：`deviceCodesPerMinute`（每个客户端 IP 20 次）、`userCodeFailures`（每个用户 10 次猜错的码）每 `userCodeWindowMs`（10 分钟），以及 `clientIp(req)` 和 `trustForwardedFor`（见[反向代理或负载均衡之后](#反向代理或负载均衡之后)）。超出限制时返回 `429 rate_limited`。限制按节点分别计数。
+`rateLimits`：`deviceCodesPerMinute`（每个客户端 IP 20 次）、`userCodeFailures`（每个用户猜错验证码的次数上限，10 次）和 `userCodeWindowMs`（统计窗口，10 分钟），以及 `clientIp(req)` 和 `trustForwardedFor`（见[反向代理或负载均衡之后](#反向代理或负载均衡之后)）。超出限制时返回 `429 rate_limited`。限制按节点分别计数。
 
 返回的 `Hub` 有 `basePath`、`handler(req, info?)`、`attach(server, { path? })`、`approveDevice`、`denyDevice`、`lookupDevice`、`revokeMachine` 和 `close()`。只有存储和集群是 hub 自己创建的时候，`close()` 才会关闭它们；你自己创建的，请在它之后自行关闭。
 

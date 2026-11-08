@@ -26,7 +26,7 @@ Rules for translators:
 | activity log | 活动日志 | アクティビティログ | `uncage activity`. |
 | manifest | 清单 | マニフェスト | The tools and skills offered to one run. |
 | permission mode | 权限模式 | パーミッションモード | |
-| bypass (permissions) | 绕过权限 | バイパス（権限確認の省略） | Mode `bypassPermissions`. |
+| bypass (permissions) | 绕过权限（UI 显示为「完全放行」） | バイパス（権限確認の省略） | Mode `bypassPermissions`. |
 | agent (the background process) | 守护进程（agent） | エージェント（バックグラウンドプロセス） | Matches the existing zh UI word. |
 | website / site | 网站 | ウェブサイト | |
 | computer online / offline | 在线 / 离线 | オンライン / オフライン | |

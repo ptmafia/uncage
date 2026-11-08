@@ -16,8 +16,8 @@ Connected 模式让网站可以在用户自己的电脑上启动工作。这就�
 | `bypassPermissions` 只能由用户打开 | 除非那台电脑的 `~/.uncage/agent.yaml` 里设置了 `localPolicy.allowBypass: true`，否则守护进程会以 `policy_denied` 拒绝这个模式。hub 的任何选项都改变不了这一点。 |
 | 可选的本机上限 | `localPolicy.allowedPermissionModes` 限制任何网站在这台电脑上能使用的模式。 |
 | 需确认的工具永远询问 | 设置了 `requiresConfirmation: true` 的网站工具，每次调用都会弹出审批卡片，即使在 `bypassPermissions` 模式下。 |
-| 完整的本地记录 | 每条命令、每次网站工具调用、每次文件拉取和每次审批，都会追加到 `~/.uncage/sites/<站点 id>/activity.log`，用 `uncage activity` 查看。 |
-| 目录隔离 | 每个会话在自己的目录 `~/Uncage/<站点主机名>/<会话 id>/` 里运行，绝不进入用户已有的项目。文件拉取不能超出这个目录，也从不跟随符号链接。 |
+| 完整的本地记录 | 每条命令、每次网站工具调用、每次文件拉取和每次审批，都会追加到 `~/.uncage/sites/<site id>/activity.log`，用 `uncage activity` 查看。 |
+| 目录隔离 | 每个会话在自己的目录 `~/Uncage/<site host>/<session id>/` 里运行，绝不进入用户已有的项目。文件拉取不能超出这个目录，也从不跟随符号链接。 |
 | 用户随时可以断开 | `uncage sites remove <id>` 会在网站上吊销这台电脑，并删除本地令牌；`uncage agent uninstall` 会停掉守护进程。 |
 
 ## 网站能做什么
@@ -36,7 +36,7 @@ Connected 模式让网站可以在用户自己的电脑上启动工作。这就�
 - 决定会话在磁盘上的位置。Connected 模式下浏览器传来的 `workspace` 字段会被忽略；目录由守护进程创建。
 - 访问其他用户的电脑或会话。每个浏览器请求都会用 `getUser(req)` 校验，别人的会话或电脑会返回 `404`，和不存在的一模一样。
 - 看到机器令牌。hub 只保存令牌的哈希；令牌从不写入日志或事件。
-- 读取用户的 Claude 登录。Claude Code 在那台电脑上使用它自己的凭据。
+- 读取用户的 Claude 登录凭据。Claude Code 在那台电脑上使用它自己的凭据。
 
 ## 用户应该知道的
 
@@ -48,12 +48,12 @@ Connected 模式让网站可以在用户自己的电脑上启动工作。这就�
 
 ## 给网站开发者：你这一侧的责任
 
-Uncage 无法防止一个网站滥用它自己用户的信任，但它给了你配得上这份信任所需的一切：
+Uncage 无法防止一个网站滥用它自己用户的信任，但它提供了让你配得上这份信任的各项手段：
 
 - **认证每一个请求。** `getUser(req)` 必须返回真实的已登录用户，或者 `null`。见[认证与设备授权](/docs/zh-cn/guides/auth-and-device-approval/)。
-- **保护 `/device`。** 批准一个码就是把一台电脑关联到一个账号。只对已登录用户提供这个页面，禁止被嵌入框架，并用带 CSRF 防护的 POST 做决定。
+- **保护 `/device`。** 批准一个验证码就是把一台电脑关联到一个账号。只对已登录用户提供这个页面，禁止被嵌入框架，并用带 CSRF 防护的 POST 做决定。
 - **在工具 handler 里检查归属。** `ctx.user` 是会话所属用户；每次查询都用它（`WHERE owner = ctx.user.id`）。
-- **抛出对用户安全的错误信息。** handler 抛出的消息会展示给用户和模型。
+- **抛出可以安全展示给用户的错误信息。** handler 抛出的消息会展示给用户和模型。
 - **对任何发布、发送、付款或删除类的工具使用 `requiresConfirmation`。**
 
 传输、令牌和各项限制另见[安全](/docs/zh-cn/reference/security/)。

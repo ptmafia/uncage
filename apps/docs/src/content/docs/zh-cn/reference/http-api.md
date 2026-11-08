@@ -53,7 +53,7 @@ Local 模式的 Uncage 服务在 `/v1` 下有同样的路由，但没有 `/machi
 | 方法和路径 | |
 | --- | --- |
 | `GET /install.sh` | 安装脚本（`text/plain`）。内容固定；只有 CLI 版本范围会变化 |
-| `POST /device/code` | 发起设备登录。返回用户码、验证链接、轮询间隔（2 秒）和过期时间（600 秒）。按客户端 IP 限流 |
+| `POST /device/code` | 发起设备登录。返回验证码、验证链接、轮询间隔（2 秒）和过期时间（600 秒）。按客户端 IP 限流 |
 | `POST /device/token` | `{ deviceCode }`：轮询直到用户批准；然后返回一次机器令牌 |
 | `POST /machine/revoke` | `Authorization: Bearer <machine token>`：电脑吊销自己（`uncage sites remove`） |
 | `GET /agent`（WebSocket 升级） | 守护进程的连接（`Authorization: Bearer <machine token>`），由 `hub.attach(server)` 注册。协议版本 1；帧为 JSON，每帧最大 1 MiB |

@@ -30,7 +30,7 @@ description: 输入框的各项控制、附件、绕过权限、配置（uncage.
 - **Local 模式：** 在 `uncage.config.yaml` 里设置 `security.allowBypass: true`，或用 `UNCAGE_ALLOW_BYPASS=1` 启动 Uncage 服务。`uncage serve` 随后会打印一条警告。
 - **Connected 模式：** 只有用户本人可以开启，方法是在自己电脑的 `~/.uncage/agent.yaml` 里设置 `localPolicy.allowBypass: true`（见[本地策略](/docs/zh-cn/guides/local-policy/)）。
 
-即便如此，在界面里选择它时仍会要求确认，开启期间会一直显示红色横幅。
+即便如此，在界面里选择**完全放行**时仍会要求确认，开启期间会一直显示红色横幅（“已开启完全放行”）。
 
 :::caution
 只在你能接受 agent 未经审查就做出改动的机器和工作区上允许绕过权限。它可以删除文件，也可以运行你的用户账号能运行的任何东西。

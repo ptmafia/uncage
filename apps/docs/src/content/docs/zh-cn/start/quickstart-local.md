@@ -74,7 +74,7 @@ npx uncage serve --workspace /absolute/path/to/the/project/the/agent/works/in
 Uncage listening on http://127.0.0.1:4783 · workspace /…/project · runtimes: claude ✓, codex ✗ (not installed)
 ```
 
-用 `npx uncage doctor` 检查一切。每一行是 ✓ 或 ✗，每个 ✗ 都会打印准确的 `fix:` 命令。Codex 显示 “not installed” 没关系，它是可选的。
+用 `npx uncage doctor` 检查一切。每一行是 ✓ 或 ✗，每个 ✗ 都会打印准确的 `fix:` 命令。Codex 显示“not installed” 没关系，它是可选的。
 
 ## 5. 运行你的应用
 
@@ -82,10 +82,10 @@ Uncage listening on http://127.0.0.1:4783 · workspace /…/project · runtimes:
 npm run dev
 ```
 
-打开 `http://localhost:3000`，选择 **Claude Code**，然后问一句，比如“扫描这个仓库的结构，然后运行测试”。
+打开 `http://localhost:3000`，选择 **Claude Code**，然后问一句，比如“扫描这个仓库并运行测试”。
 
-- 执行命令和修改文件会弹出审批卡片：**允许执行 / 拒绝**。
-- **停止**会取消这次运行，并结束它的进程。
+- 执行命令和修改文件会弹出审批卡片：**Allow once**（允许执行）/ **Deny**（拒绝）。设置 `locale="zh-CN"` 后，界面会显示中文。
+- **Stop**（停止）会取消这次运行，并结束它的进程。
 - 随时刷新：`<AgentChat>` 把打开的对话记在 `?session=<id>` 里，历史和待审批项都会回来。
 
 ## 整体结构

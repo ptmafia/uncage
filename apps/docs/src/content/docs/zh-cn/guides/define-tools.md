@@ -159,7 +159,7 @@ export const publishAsset = defineTool({
 });
 ```
 
-把拉取到的文件当作**不可信的输入**：它们是 AI agent 在别人电脑上写出来的。如果要对外提供它们（HTML、SVG），请放在沙箱里。演示用 `Content-Security-Policy: sandbox allow-scripts; default-src 'none'; …` 提供已发布的页面，并在 `<iframe sandbox="allow-scripts">` 里展示；见它的 `lib/asset-csp.ts`。
+把拉取到的文件当作**不可信的输入**：它们是 AI agent 在别人电脑上写出来的。如果要对外提供它们（HTML、SVG），请放在沙箱里。演示项目用 `Content-Security-Policy: sandbox allow-scripts; default-src 'none'; …` 提供已发布的页面，并在 `<iframe sandbox="allow-scripts">` 里展示；见它的 `lib/asset-csp.ts`。
 
 ## 与其他工具配合的工具
 

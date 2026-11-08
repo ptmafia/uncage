@@ -42,7 +42,7 @@ hub 要和每台已连接的电脑保持一条 WebSocket，所以它需要一个
 npm i @uncage/hub @uncage/react-ui zod
 ```
 
-## 2. 谁登录了
+## 2. 识别当前登录用户
 
 hub 在每个浏览器请求上都会问你的应用：当前用户是谁。这个快速上手里先用一个固定的开发用户。[认证指南](/docs/zh-cn/guides/auth-and-device-approval/)介绍如何接入真正的登录。
 
@@ -311,7 +311,7 @@ export function ApprovePage({
 禁止审批页（最简单的做法是所有页面）被嵌入框架：
 
 :::caution[整个替换这个文件]
-较新的 `create-next-app` 模板会在 `next.config.ts` 里加上 `cacheComponents: true`，它和 `/device` 页面上的 `export const dynamic = 'force-dynamic'` 冲突（`next build` 会报 “Route segment config "dynamic" is not compatible with `nextConfig.cacheComponents`”）。请用下面的文件整个替换生成的文件，不要合并。
+较新的 `create-next-app` 模板会在 `next.config.ts` 里加上 `cacheComponents: true`，它和 `/device` 页面上的 `export const dynamic = 'force-dynamic'` 冲突（`next build` 会报“Route segment config "dynamic" is not compatible with `nextConfig.cacheComponents`”）。请用下面的文件整个替换生成的文件，不要合并。
 :::
 
 ```ts title="next.config.ts"
@@ -350,7 +350,7 @@ curl -s http://localhost:3000/api/uncage/install.sh | head -3
 
 ## 9. 连接你的电脑（用户一侧）
 
-打开 `http://localhost:3000/uncage`。对话框显示 **Connect your computer（连接你的电脑）** 和两条命令。真实部署时用户会复制这两条命令；本地测试时：
+打开 `http://localhost:3000/uncage`。对话框显示 **Connect your computer**（连接你的电脑） 和两条命令。真实部署时用户会复制这两条命令；本地测试时：
 
 1. **安装 CLI。** `curl -fsSL http://localhost:3000/api/uncage/install.sh | bash` 可以用，也可以直接安装：`npm i -g @uncage/cli`。
 2. **连接。** 运行页面上显示的 setup 命令：
@@ -359,9 +359,9 @@ curl -s http://localhost:3000/api/uncage/install.sh | head -3
    uncage setup http://localhost:3000
    ```
 
-   它会打印一个码，并打开 `http://localhost:3000/device?code=…`。确认码一致后点击**批准（Approve）**。setup 会把机器令牌存到 `~/.uncage/agent.yaml`，并启动后台守护进程（launchd 服务）。
+   它会打印一个验证码，并打开 `http://localhost:3000/device?code=…`。确认验证码一致后点击 **Approve**（批准）。setup 会把机器令牌存到 `~/.uncage/agent.yaml`，并启动后台守护进程（launchd 服务）。
 
-回到对话页，状态从“等待你的电脑上线…”变为**已连接：&lt;你的电脑名&gt;**。
+回到对话页，状态从“Waiting for your computer…”（等待你的电脑上线…）变为 **Connected: &lt;你的电脑名&gt;**（已连接）。
 
 :::tip[纯 http]
 守护进程只对 `localhost` 和 `127.0.0.1` 接受 `http://`。其他网站都必须用 `https://`（WebSocket 随之使用 `wss://`）。
@@ -371,9 +371,9 @@ curl -s http://localhost:3000/api/uncage/install.sh | head -3
 
 点击示例提示词，或者输入：“Write a short poem about this website and save it with save_note”。
 
-- Claude Code 在你的电脑上、在 `~/Uncage/localhost-3000/<会话 id>/` 里运行。
+- Claude Code 在你的电脑上、在 `~/Uncage/localhost-3000/<session id>/` 里运行。
 - 它调用 `mcp__site__save_note`，handler 以 `dev-user` 身份在你的 Next.js 服务器里运行。
-- 回答以流式显示在对话框里。执行命令和修改文件会弹出审批卡片，按钮是**允许执行 / 拒绝**。
+- 回答以流式显示在对话框里。执行命令和修改文件会弹出审批卡片，按钮是 **Allow once**（允许执行）/ **Deny**（拒绝）。
 
 停掉守护进程（`uncage agent uninstall`；如果你是在前台运行的 `uncage agent`，直接退出它），再刷新页面：因为配置了 `sessionStorage: 'site'`，对话仍然都在（地址栏保留 `?session=…`，左侧会话列表里也能找到），输入框提示电脑离线。
 
@@ -381,7 +381,7 @@ curl -s http://localhost:3000/api/uncage/install.sh | head -3
 
 | 文件 | 作用 |
 | --- | --- |
-| `lib/auth.ts` | 谁登录了（换成你的登录体系） |
+| `lib/auth.ts` | 当前登录用户（换成你的登录体系） |
 | `lib/tools.ts` | 你的网站工具 |
 | `lib/uncage-hub.ts`、`lib/hub-registry.ts` | 创建 hub，并共享给页面 |
 | `server.ts` | 一个 HTTP 服务器：hub API、电脑的 WebSocket、Next.js |

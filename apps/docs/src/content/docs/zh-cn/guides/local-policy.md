@@ -97,7 +97,7 @@ uncage sites remove app.example.com   # disconnect
 
 ## 后台守护进程
 
-- `uncage setup <url>` 把它安装成 launchd 用户代理：登录时启动，崩溃或自我升级后由 launchd 重启（正常退出后不会重启，例如没有剩余网站时）。
+- `uncage setup <url>` 把它安装成 launchd 用户级服务（LaunchAgent）：登录时启动，崩溃或自我升级后由 launchd 重启（正常退出后不会重启，例如没有剩余网站时）。
 - `uncage agent uninstall` 停止它并移除服务。`agent.yaml` 和数据会保留。
 - `uncage agent` 在前台运行它（先停掉服务）。设置 `UNCAGE_LOG_LEVEL=debug` 可以输出更多信息。
 - 升级：如果某个 hub 要求更新的守护进程（`upgrade_required`），守护进程会运行一次 `npm i -g @uncage/cli@latest`，然后重启。

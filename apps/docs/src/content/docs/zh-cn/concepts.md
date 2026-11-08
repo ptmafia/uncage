@@ -9,7 +9,7 @@ description: Uncage 背后的概念，一节一个：网站与 hub、电脑与�
 
 **网站**就是你的 Web 应用。**hub**（`@uncage/hub`）是你用 `createHub()` 挂进网站 Node 后端的那部分 Uncage。它在同一个基础路径（默认 `/api/uncage`）下提供：
 
-- 你的界面使用的**浏览器 API**（请求和响应的形状与 Local 模式 Uncage 服务（`uncage serve`）的 `/v1` API 相同，所以 `@uncage/client`、`@uncage/react` 和 `@uncage/react-ui` 无需修改即可使用）；
+- 你的界面使用的**浏览器 API**（请求和响应的形状与 Local 模式 Uncage 服务的 `/v1` API 相同，所以 `@uncage/client`、`@uncage/react` 和 `@uncage/react-ui` 无需修改即可使用）；
 - CLI 连接电脑时用的**设备端点**和 `install.sh`；
 - 已连接电脑主动接入的 **WebSocket**（`<basePath>/agent`，通过 `hub.attach(server)` 注册）。
 
@@ -25,15 +25,15 @@ description: Uncage 背后的概念，一节一个：网站与 hub、电脑与�
 
 当电脑的 WebSocket 已连接并响应心跳时，它就是**在线**的。hub 每 10 秒 ping 一次，连续两次没有回应就标记为离线，所以界面会在约 30 秒内显示“离线”。
 
-**配对**使用设备登录，和在电视应用上登录很像：`uncage setup <url>` 拿到一个短的**用户码**，用户在你网站的 `/device` 页面批准，CLI 随后获得**机器令牌**。令牌只保存在电脑上（`~/.uncage/agent.yaml`，权限 0600）；hub 只保存它的 SHA-256 哈希。吊销一台电脑（在你的网站上，或在电脑上运行 `uncage sites remove`）会让令牌立即失效。
+**配对**使用设备登录，和在电视应用上登录很像：`uncage setup <url>` 拿到一个简短的**验证码**（user code），用户在你网站的 `/device` 页面批准，CLI 随后获得**机器令牌**。令牌只保存在电脑上（`~/.uncage/agent.yaml`，权限 0600）；hub 只保存它的 SHA-256 哈希。吊销一台电脑（在你的网站上，或在电脑上运行 `uncage sites remove`）会让令牌立即失效。
 
 ## 会话（session）
 
 **会话**是一段对话：一个运行时，在一台电脑上。会话 id 由电脑生成。hub 返回的每个会话都带有 `machineId`，你的界面可以据此显示那台电脑的状态。
 
-- 在电脑上，每个会话有自己的**工作区**目录：`~/Uncage/<站点主机名>/<会话 id>/`。浏览器无法指定目录。
-- 会话的**数据以电脑本地数据库为准**（`~/.uncage/sites/<站点 id>/data`）。
-- 新会话运行在你通过 `machineId` 指定的电脑上；不指定时，运行在该用户最近在线、且当前在线的电脑上。没有在线的电脑时，创建会话会失败并返回 `machine_offline`（如果用户从未连接过电脑，则是 `machine_not_found`）。
+- 在电脑上，每个会话有自己的**工作区**目录：`~/Uncage/<site host>/<session id>/`。浏览器无法指定目录。
+- 会话的**数据以电脑本地数据库为准**（`~/.uncage/sites/<site id>/data`）。
+- 新会话运行在你通过 `machineId` 指定的电脑上；不指定时，运行在该用户当前在线的电脑中最近活跃的那一台上。没有在线的电脑时，创建会话会失败并返回 `machine_offline`（如果用户从未连接过电脑，则是 `machine_not_found`）。
 
 ## 运行（run）
 
@@ -72,7 +72,7 @@ description: Uncage 背后的概念，一节一个：网站与 hub、电脑与�
 
 **网站工具**是 Claude Code 可以调用的你网站的一项能力，用 `defineTool({ name, description, input, handler, requiresConfirmation? })` 声明。
 
-- 电脑只收到名称、描述和 `input` 的 JSON Schema。Claude Code 把工具看作 `mcp__site__<名称>`。
+- 电脑只收到名称、描述和 `input` 的 JSON Schema。Claude Code 把工具看作 `mcp__site__<name>`。
 - **handler 在你的后端运行**，在持有这台电脑连接的 hub 节点上执行，`ctx.user` 是会话所属用户。
 - `requiresConfirmation: true` 会让每次调用都先弹出审批卡片，即使是 `bypassPermissions` 模式。
 - 每次调用都会被检查（会话属于这台电脑和用户、这次运行提供了这个工具、参数符合 `input`），并记录在 hub 的存储里。
@@ -81,11 +81,11 @@ description: Uncage 背后的概念，一节一个：网站与 hub、电脑与�
 
 ## 技能（skill）
 
-**技能**是一份说明（Markdown）加上可选的模板文件，声明为 `SkillSpec`（`{ name, description, markdown, files? }`）。运行开始前，守护进程把它写到会话工作区的 `.claude/skills/<名称>/SKILL.md`，Claude Code 会像加载普通 Claude Code 技能一样，在任务符合描述时加载它。技能是数据，绝不是 hub 要执行的代码。
+**技能**是一份说明（Markdown）加上可选的模板文件，声明为 `SkillSpec`（`{ name, description, markdown, files? }`）。运行开始前，守护进程把它写到会话工作区的 `.claude/skills/<name>/SKILL.md`，Claude Code 会像加载普通 Claude Code 技能一样，在任务符合描述时加载它。技能是数据，绝不是 hub 要执行的代码。
 
 指南：[编写技能](/docs/zh-cn/guides/write-skills/)。
 
-## 清单（清单）
+## 清单（manifest）
 
 **清单**是提供给某一次运行的工具和技能。默认是你注册的全部工具和技能。用 `selectManifest({ user, prompt, sessionId, runtime })` 可以按次选择，比如只给付费用户提供发布类工具，或者只在提示词与发票有关时提供 `invoice` 技能。hub 会记录每次运行的工具列表；调用列表以外的工具会失败，返回 `tool_failed`（`details.reason: 'not_in_manifest'`）。你对工具或技能的修改从下一次运行开始生效。不支持网站工具的运行时（Codex）只拿到技能，会话里会出现 `site_tools_unsupported` 警告。
 
@@ -101,7 +101,7 @@ description: Uncage 背后的概念，一节一个：网站与 hub、电脑与�
 
 有两处存储：
 
-- **电脑上：** 会话数据（以此为准），PGlite，位于 `~/.uncage/sites/<站点 id>/`。
+- **电脑上：** 会话数据（以此为准），PGlite，位于 `~/.uncage/sites/<site id>/`。
 - **hub 上（`HubStore`）：** 电脑、设备码、会话索引（哪个用户拥有哪个会话、在哪台电脑上）、运行清单、经 hub 上传的附件，以及工具调用审计。默认是 `pgliteHubStore`（内嵌，单进程）；多节点用 `postgresHubStore`。
 
 **会话存储**（`sessionStorage` 选项）决定 hub 是否也保存对话：

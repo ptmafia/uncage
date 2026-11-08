@@ -3,7 +3,7 @@ title: 用 hooks 自定义界面
 description: 定制 AgentChat（语言、主题、组件、CSS 变量），或基于无界面的 @uncage/react hooks 构建你自己的对话界面和“连接你的电脑”流程，Connected 模式和 Local 模式均适用。
 ---
 
-你可以停在三个层次中的任意一层：
+你可以按需选用以下三个层次中的任意一层：
 
 1. 原样使用 **`<AgentChat>`**（`@uncage/react-ui`），调整样式，替换部分组件。
 2. 在你自己的布局里使用 `@uncage/react-ui` 的**各个组件**（`<ConnectMachine>`、`<MachineStatus>`、`<ApproveDevice>`、`<ApprovalCard>`、`<Composer>`……）。

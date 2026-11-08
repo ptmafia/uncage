@@ -22,14 +22,14 @@ description: Uncage 的每个错误码及其 HTTP 状态、是否可重试、含
 | `upgrade_required` | 426 | 否 | 守护进程的版本低于 hub 的 `minAgentVersion`。守护进程会自我升级（`npm i -g @uncage/cli@latest`）并重新连接。 |
 | `tool_failed` | 502 | 是 | 网站工具调用失败：你的 handler 抛错（其消息会被传递）、超时（`toolTimeoutMs`）、结果过大，或者 `details.reason` 为 `not_in_manifest` 或 `too_many_concurrent`。 |
 | `policy_denied` | 403 | 否 | 被策略拒绝：没有 `localPolicy.allowBypass`（Connected）或 `security.allowBypass`（Local）却使用 `bypassPermissions`，或者使用了 `localPolicy.allowedPermissionModes` 以外的模式。 |
-| `rate_limited` | 429 | 是 | 同一 IP 申请的设备码过多，或同一用户输错用户码的次数过多（`details.retryAfterSec`）。 |
-| `device_code_expired` | 410 | 否 | setup 码已超过 10 分钟。重新运行 `uncage setup <url>`。 |
+| `rate_limited` | 429 | 是 | 同一 IP 申请的设备码过多，或同一用户输错验证码的次数过多（`details.retryAfterSec`）。 |
+| `device_code_expired` | 410 | 否 | setup 验证码已超过 10 分钟。重新运行 `uncage setup <url>`。 |
 | `session_busy` | 409 | 是 | 会话已有一个进行中的运行。等待它结束，或停止它。 |
 | `session_read_only` | 409 | 否 | 会话无法再继续（例如 Claude Code 丢失了它的原生会话）。新建一个会话。 |
 | `approval_expired` | 410 | 否 | 审批等待超过了 10 分钟。重新发起。 |
 | `approval_already_resolved` | 409 | 否 | 有人（另一个标签页、另一个节点）先做了决定。刷新页面。 |
 | `event_replay_unavailable` | 410 | 否 | 请求的事件已经不在了。获取一份新的快照，从它的 `lastSequence` 继续。 |
-| `runtime_unavailable` | 503 | 否 | 那台机器上没有安装该运行时（Claude Code、Codex）。 |
+| `runtime_unavailable` | 503 | 否 | 那台电脑上没有安装该运行时（Claude Code、Codex）。 |
 | `auth_required` | 401 | 否 | 运行时没有登录。运行 `claude`，然后输入 `/login`。 |
 | `unsupported_capability` | 422 | 否 | 运行时做不到这件事，例如在 Codex 会话上使用网站工具。 |
 | `runtime_disconnected` | 502 | 是 | 运行时进程在运行中途退出了。开始一次新的运行；历史会保留。 |

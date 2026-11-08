@@ -1,6 +1,6 @@
 ---
 title: 工作原理
-description: Connected 模式由哪几部分组成（浏览器、挂着 hub 的网站、运行守护进程（agent）的用户电脑），以及用户连接电脑、发任务、Claude Code 调用你的工具时，每一步发生了什么。
+description: Connected 模式由哪几部分组成（浏览器、挂着 hub 的网站、运行 agent 守护进程的用户电脑），以及用户连接电脑、发任务、Claude Code 调用你的工具时，每一步发生了什么。
 ---
 
 Connected 模式的代码运行在三个地方，其中只有一个需要你来部署。
@@ -88,17 +88,17 @@ sequenceDiagram
    ```
 
 2. `install.sh` 是 hub 提供的固定脚本：检查 macOS、Node.js 22+ 和 npm，缺 Claude Code 时告诉用户怎么装，然后全局安装 `@uncage/cli`。它不会下载其他任何东西。
-3. `uncage setup` 发起设备登录：拿到一个 8 位的码（10 分钟内有效），并打开 `https://your.site/device?code=…`。
-4. 已登录你网站的用户核对这个码，点击**批准**。你的审批页调用 `hub.approveDevice(code, user)`，把这台电脑绑定到该用户。
+3. `uncage setup` 发起设备登录：拿到一个 8 位验证码（10 分钟内有效），并打开 `https://your.site/device?code=…`。
+4. 已登录你网站的用户核对验证码，点击**批准**。你的审批页调用 `hub.approveDevice(code, user)`，把这台电脑绑定到该用户。
 5. CLI 拿到一个**机器令牌**（随机生成，每台电脑每个网站一枚），存到 `~/.uncage/agent.yaml`（权限 0600），并把守护进程安装成 launchd 服务。
 6. 守护进程连上 `wss://your.site/api/uncage/agent`。你的页面从“等待你的电脑上线…”变成“已连接”。
 
 ### 2. 发任务
 
-1. 用户在 `<AgentChat>` 里输入。浏览器调用 hub 的浏览器 API（和 Local 模式 Uncage 服务（`uncage serve`）的 `/v1` API 形状相同）。
+1. 用户在 `<AgentChat>` 里输入。浏览器调用 hub 的浏览器 API（和 Local 模式 Uncage 服务的 `/v1` API 形状相同）。
 2. 每次运行开始时，hub 调用你的 `selectManifest({ user, prompt, sessionId, runtime })`，挑出这次运行可以用的工具和技能。不配置时，所有注册过的工具和技能都会提供。不支持网站工具的运行时（Codex）只拿到技能，会话里会显示 `site_tools_unsupported` 警告。
 3. hub 把提示词和**清单**一起通过 `startRun` 发给电脑：清单里是工具的名称、描述和 JSON Schema，以及技能的文本。没有代码。
-4. 守护进程在 `~/Uncage/<站点主机名>/<会话 id>/` 里运行 Claude Code。网站工具在 Claude Code 里显示为 `mcp__site__<名称>`。技能写到该目录下的 `.claude/skills/<名称>/SKILL.md`。
+4. 守护进程在 `~/Uncage/<site host>/<session id>/` 里运行 Claude Code。网站工具在 Claude Code 里显示为 `mcp__site__<name>`。技能写到该目录下的 `.claude/skills/<name>/SKILL.md`。
 5. 每个事件（文本、工具步骤、审批、运行状态）都有序号，先写入本地，再发给 hub，然后经 SSE 推给浏览器。
 
 ### 3. Claude Code 调用你的工具
@@ -117,9 +117,9 @@ handler 已经把文件存好，你自己的页面就能展示它们。配置 `s
 | 什么 | 在哪里 |
 | --- | --- |
 | 机器令牌 | 只在用户电脑的 `~/.uncage/agent.yaml`（权限 0600）。hub 只保存它的 SHA-256 哈希。 |
-| 会话数据（以此为准） | 用户电脑，`~/.uncage/sites/<站点 id>/data`（PGlite） |
-| 会话工作区 | 用户电脑上的 `~/Uncage/<站点主机名>/<会话 id>/` |
-| 活动日志 | 用户电脑上的 `~/.uncage/sites/<站点 id>/activity.log`（`uncage activity`） |
+| 会话数据（以此为准） | 用户电脑，`~/.uncage/sites/<site id>/data`（PGlite） |
+| 会话工作区 | 用户电脑上的 `~/Uncage/<site host>/<session id>/` |
+| 活动日志 | 用户电脑上的 `~/.uncage/sites/<site id>/activity.log`（`uncage activity`） |
 | 电脑、会话索引、工具调用审计 | hub 的 `HubStore`（默认 PGlite，多节点用 Postgres） |
 | 对话副本 | hub 的 `HubStore`，仅当 `sessionStorage: 'site'` |
 | 工具拉取的文件 | 你的 handler 放在哪里就在哪里 |

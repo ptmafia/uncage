@@ -15,7 +15,7 @@ uncage setup <url> [--no-daemon] [--no-browser]
 
 把这台电脑连接到一个网站。`<url>` 就是你网站上显示的地址：网站的源，例如 `https://app.example.com`。没有路径的 URL 会自动补上 `/api/uncage`（挂在其他基础路径上的 hub 会显示完整 URL，按原样使用）；没有协议的 URL 会补上 `https://`。
 
-1. 申请一个设备码，并打印链接和码。
+1. 申请一个设备码，并打印链接和验证码。
 2. 在浏览器里打开链接（`open`），由已登录用户批准。
 3. 等待批准，然后把网站和机器令牌保存到 `~/.uncage/agent.yaml`（权限 0600）。
 4. 安装并（重新）启动后台守护进程（launchd：`~/Library/LaunchAgents/dev.uncage.agent.plist`）。
@@ -23,7 +23,7 @@ uncage setup <url> [--no-daemon] [--no-browser]
 | 参数 | |
 | --- | --- |
 | `--no-daemon` | 不安装也不启动后台守护进程；你自己运行 `uncage agent`。 |
-| `--no-browser` | 不打开浏览器，只打印链接和码（适用于没有浏览器的电脑：在另一台设备上打开链接）。 |
+| `--no-browser` | 不打开浏览器，只打印链接和验证码（适用于没有浏览器的电脑：在另一台设备上打开链接）。 |
 
 纯 `http://` 只对 `localhost`、`127.0.0.1` 和 `[::1]` 有效。
 

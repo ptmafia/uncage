@@ -52,22 +52,22 @@ export async function getUser(req: Request): Promise<HubUser | null> {
 
 ## 审批页（`/device`）
 
-`uncage setup https://your.site` 会打开 `https://your.site/device?code=ABCD-EFGH`。路径可以用 `verificationPath` 选项修改。已登录用户在这个页面上批准或拒绝这个码。**批准就等于让那台电脑访问该用户的账号**，所以这个页面是点击劫持和 CSRF 的攻击目标。它必须：
+`uncage setup https://your.site` 会打开 `https://your.site/device?code=ABCD-EFGH`。路径可以用 `verificationPath` 选项修改。已登录用户在这个页面上批准或拒绝这个验证码。**批准就等于让那台电脑访问该用户的账号**，所以这个页面是点击劫持和 CSRF 的攻击目标。它必须：
 
 1. **要求正常的登录会话。** 用户未登录时，把他带到你的登录页，登录后再回来。
 2. **禁止被嵌入框架：** `Content-Security-Policy: frame-ancestors 'none'` 和 `X-Frame-Options: DENY`。
 3. **用带 CSRF 防护的 POST 做决定。** 绝不要通过 GET 批准，也不要仅凭链接本身就批准。
-4. **展示正在批准的内容：** 码（用户拿它和终端里的对照），以及 `hub.lookupDevice` 返回的电脑名称和操作系统。
+4. **展示正在批准的内容：** 验证码（用户拿它和终端里的对照），以及 `hub.lookupDevice` 返回的电脑名称和操作系统。
 
-hub 提供三个调用，每个都接收码和已登录用户：
+hub 提供三个调用，每个都接收验证码和已登录用户：
 
 | 调用 | 返回 |
 | --- | --- |
-| `hub.lookupDevice(code, user)` | 码待处理时返回 `{ name?, os?, expiresAt, repairsMachine }`，否则返回 `null`。如果批准会重新配对该用户的某台电脑，则设置 `repairsMachine`：那台电脑保留原来的 id 和会话，旧令牌失效。 |
+| `hub.lookupDevice(code, user)` | 验证码待处理时返回 `{ name?, os?, expiresAt, repairsMachine }`，否则返回 `null`。如果批准会重新配对该用户的某台电脑，则设置 `repairsMachine`：那台电脑保留原来的 id 和会话，旧令牌失效。 |
 | `hub.approveDevice(code, user)` | `'ok'`、`'not_found'` 或 `'expired'` |
 | `hub.denyDevice(code, user)` | `'ok'`、`'not_found'` 或 `'expired'` |
 
-码由 `ABCDEFGHJKMNPQRSTUVWXYZ23456789` 中的 8 个字符组成，显示为 `ABCD-EFGH`，10 分钟内有效。大小写、空格和短横线都会被忽略。未知的码算作猜错：10 分钟内猜错 10 次后（`rateLimits.userCodeFailures`、`userCodeWindowMs`），这些调用会抛出 `code: 'rate_limited'` 的错误（`details.retryAfterSec`）。
+验证码由 `ABCDEFGHJKMNPQRSTUVWXYZ23456789` 中的 8 个字符组成，显示为 `ABCD-EFGH`，10 分钟内有效。大小写、空格和短横线都会被忽略。未知的验证码算作猜错：10 分钟内猜错 10 次后（`rateLimits.userCodeFailures`、`userCodeWindowMs`），这些调用会抛出 `code: 'rate_limited'` 的错误（`details.retryAfterSec`）。
 
 `@uncage/react-ui` 里的 `<ApproveDevice>` 负责渲染这个页面：码、电脑、重新配对警告、批准和拒绝按钮，以及结果。它只负责展示；决定在服务器上做。把失败调用的错误传给它的 `error` 属性：错误会以本地化文字显示（`rate_limited` 时为“请求太频繁了，稍等一下再试。”）；有查询结果时显示在按钮上方，`lookupDevice` 本身失败、`lookup` 为 `null` 时则替代“验证码无效或已过期”的提示。
 
