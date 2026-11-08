@@ -1,0 +1,72 @@
+---
+title: デモを試す
+description: 2つのコマンドで自分のMacを公開中のUncageサイトに接続し、自分のClaude Codeがサイトのツールを使ってノートを保存・公開する様子を、ブラウザでの承認カードとあわせて確認します。
+---
+
+import { Image } from 'astro:assets';
+import DemoLink from '../../../../components/DemoLink.astro';
+import chatApproval from '../../../../assets/demo/chat-approval.png';
+import chatDone from '../../../../assets/demo/chat-done.png';
+import chatAfterReload from '../../../../assets/demo/chat-after-reload.png';
+import notes from '../../../../assets/demo/notes.png';
+import chatOffline from '../../../../assets/demo/chat-offline.png';
+
+このデモは、Uncageで作った小さなノートサイトです（[`connected-demo`のサンプル](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo)）。自分のコンピュータをデモに接続し、自分のClaude Codeにノートの保存と公開を依頼して、公開をブラウザで承認します。所要時間は約5分です。
+
+<DemoLink />
+
+## 始める前に
+
+- Mac（UncageのエージェントはmacOSで動作します）。
+- Node.js 22以降。
+- Claude Codeがインストール済みで、サインインしていること：`npm i -g @anthropic-ai/claude-code`を実行し、`claude`を一度起動して`/login`と入力します。
+
+## コンピュータを接続する
+
+デモサイトを開きます。チャットに**Connect your computer**（コンピュータを接続）と2つのコマンドが表示されます。ターミナルで、`<demo>`をデモのアドレスに置き換えて実行します：
+
+```sh
+curl -fsSL <demo>/api/uncage/install.sh | bash
+uncage setup <demo>
+```
+
+グローバルにインストールしない場合は、2つ目のコマンドを`npx uncage setup <demo>`として実行できます。`uncage setup`はコードを表示し、デモの承認ページを開きます。コードがターミナルに表示されたものと一致していることを確認し、**Approve**（承認）をクリックします。チャットに**Connected**（接続済み）とコンピュータ名が表示されます。
+
+## 実際の動き
+
+チャットにノートの保存と公開を依頼します。たとえば「Save a note titled hello with the text ‘hi from Uncage’, then publish it.」（helloというタイトルで「hi from Uncage」というテキストのノートを保存し、公開して）と入力します。
+
+Claude Codeはあなたのコンピュータ上で、あなた自身のログインで動き、デモサイトのツールを呼び出します。ノートの保存には確認は不要です。公開には確認が必要なので、チャットにはまず承認カードが表示され、あなたが応答するまで何も実行されません。
+
+<Image src={chatApproval} alt="チャットに2つのステップが表示されています。save_noteは完了、publish_noteは応答待ちで、Deny（拒否）とAllow once（許可）を選べる承認カードが表示されています。" />
+
+*承認カード。`publish_note`は`requiresConfirmation`付きで定義されているので、サイトは呼び出しのたびに確認します。実行は待機し、応答しなければ何も起きません。*
+
+<Image src={chatDone} alt="Allow once（許可）の後、実行が完了し、Claude Codeがノートを保存して公開したと報告しています。" />
+
+***Allow once**（許可）の後、ツールはサイトのサーバーであなたとして実行され、Claude Codeが結果を報告します。*
+
+<Image src={notes} alt="サイトのNotesページに、公開済みバッジの付いたノートhelloが表示されています。" />
+
+*成果物はあなたのコンピュータではなくウェブサイトにあります。Notesページには、いま公開したノートが表示されます。公開されたページを開けるのは所有者だけで、所有者とはそのブラウザのゲストIDです。*
+
+<Image src={chatAfterReload} alt="ページをリロードした後も、同じ会話のすべてのステップと回答が残っています。" />
+
+*ページをリロードしても、会話は残っています。サイトはすべてのセッションの履歴を保持しています。*
+
+<Image src={chatOffline} alt="コンピュータがオフラインであることを知らせる通知が表示され、それまでの会話はすべて読める状態のチャット。" />
+
+*ノートパソコンを閉じるかエージェントを停止しても、それまでの会話は読めます。チャットにはコンピュータがオフラインであることが表示され、再接続を待ちます（`uncage agent`で再び起動できます）。*
+
+## データの扱い
+
+- デモにはゲストとしてサインインしており、使っているブラウザで識別されます。別のブラウザからは、あなたのノートは一切見えません。
+- デモは公開の共有環境です。すべてのデータはデプロイや再起動のたびに消去され、アセット（ノートと公開ページ）は最後に作成または公開されてから24時間後に削除されます。
+- 公開ページを閲覧できるのは所有者だけです。
+- デモには個人的な情報を入力しないでください。
+
+使い終わってコンピュータを切断するには、`uncage sites`で接続中のサイトを一覧表示し、デモのIDを指定して`uncage sites remove <id>`を実行します。[CLIリファレンス](/docs/ja/reference/cli/)を参照してください。
+
+## デモを自分で動かす
+
+デモのソースは、通常のUncage Connected モードのサイトです。自分のマシンで動かすには、[サンプルのREADME](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo#run-it-single-node)に従ってください。自分のサイトを構築するには、[クイックスタート：Connected モード](/docs/ja/start/quickstart-connected/)に進んでください。
