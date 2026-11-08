@@ -73,7 +73,7 @@
     "access": "public"
   },
   "author": "Nathan Zhang",
-  "homepage": "https://ptmafia.github.io/uncage/",
+  "homepage": "https://uncage.vercel.app/docs/",
   "bugs": {
     "url": "https://github.com/ptmafia/uncage/issues"
   }

@@ -84,3 +84,17 @@ pre.mermaid,
   max-width: 100%;
   height: auto;
 }
+
+/* CJK glyph forms follow the page language: the brand stack lists 'PingFang SC' before the Japanese fonts,
+   so Japanese pages would otherwise render kanji with Chinese forms. Mirrors apps/site. */
+:root:lang(ja) {
+  --sl-font: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'Hiragino Sans',
+    'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', 'Yu Gothic', Meiryo, 'Noto Sans JP', 'Noto Sans CJK JP', system-ui,
+    sans-serif;
+  --uc-font-sans: var(--sl-font);
+}
+:root:lang(zh-CN) {
+  --sl-font: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans SC', system-ui, sans-serif;
+  --uc-font-sans: var(--sl-font);
+}
