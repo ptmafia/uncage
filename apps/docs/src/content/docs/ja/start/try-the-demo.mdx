@@ -9,7 +9,9 @@ import connect from '../../../../assets/demo/connect.png';
 import deviceApprove from '../../../../assets/demo/device-approve.png';
 import chatRunning from '../../../../assets/demo/chat-running.png';
 import approvalCard from '../../../../assets/demo/approval-card.png';
+import chatDone from '../../../../assets/demo/chat-done.png';
 import assets from '../../../../assets/demo/assets.png';
+import assetPreview from '../../../../assets/demo/asset-preview.png';
 import offline from '../../../../assets/demo/offline.png';
 
 このデモは、Uncageで作った小さなウェブサイトです（[`connected-demo`のサンプル](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo)）。自分のコンピュータをデモに接続し、ランディングページを依頼します。自分のClaude Codeが自分のコンピュータ上でページを作り、サイトのツールを使ってサイトに公開します。確認が必要なステップは、ブラウザであなたが承認します。所要時間は約5分です。
@@ -49,21 +51,27 @@ uncage setup <demo>
 
 たとえば「做一个介绍 Uncage 的落地页并发布」（Uncageを紹介するランディングページを作って公開して）と送信します。Claude Codeはあなたのコンピュータ上で、あなた自身のログインで、`~/Uncage/`の下の専用フォルダで動きます。サイトの`landing-page`スキルを読み込み、サイトツール`create_asset`を呼び出してページを書き、`publish_asset`の実行を求めます。
 
-<Image src={chatRunning} alt="実行中のチャット。Skill、Bashコマンド、ToolSearch、WebSearch、mcp__site__create_assetの各ステップにチェックが付き、承認したステップの後に已允许（許可済み）と表示されています。" />
+<Image src={chatRunning} alt="実行中のチャット。Skillとmcp__site__create_assetの各ステップにチェックが付き、Claude Codeが次のステップを考えています。" />
 
 *ステップは実行に合わせてチャットに表示されます。`mcp__site__create_asset`はサイトのツールで、サイトのサーバー上であなたのゲストアカウントとして実行され、確認は不要です。*
 
 Claude Codeは、パーミッションモードが自動では許可しないステップ（コンポーザーには**每次询问**（毎回確認）と表示されています）、たとえばコマンドの実行やファイルの書き込みの前に確認を求めます。`publish_asset`は`requiresConfirmation`付きで定義されているので、どのモードでも、サイトは呼び出しのたびに確認します。どの確認も承認カードとして表示され、あなたが応答するまで実行は待機します。
 
-<Image src={approvalCard} alt="「需要你确认：Bash」（確認が必要です：Bash）という承認カード。コマンド、その実行フォルダ、短い理由が表示され、拒绝（拒否）と允许执行（1回だけ許可）のボタンがあります。" />
+<Image src={approvalCard} alt="mcp__site__publish_assetの承認カード。アセットIDとフォルダlandingを指定したpublish_assetの呼び出しと作業フォルダが表示され、拒绝（拒否）と允许执行（1回だけ許可）のボタンがあります。" />
 
-*承認カード（ここではコマンドの例）。**允许执行**（1回だけ許可）か**拒绝**（拒否）をクリックします。`publish_asset`のカードも同じ形です。**允许执行**をクリックすると、サイトがページのフォルダをあなたのコンピュータからコピーして公開します。*
+*`publish_asset`の承認カード。**允许执行**（1回だけ許可）か**拒绝**（拒否）をクリックします。**允许执行**をクリックすると、サイトがページのフォルダをあなたのコンピュータからコピーして公開します。コマンドの実行やファイルの書き込みなどのステップにも同じ形のカードが出ます。*
+
+<Image src={chatDone} alt="完了した会話。Claude Codeの要約に、ランディングページが素材ページで公開されたこと、ページのヒーロー、特長、始め方、締めくくりの内容が書かれ、下に完成（完了）と所要時間が表示されています。" />
+
+*実行が終わると、Claude Codeが作った内容を要約します。サイトの`landing-page`スキルが事実を渡しているので、要約のUncageの説明は正確です。*
 
 ## サイトで結果を見る
 
 **素材**（アセット、`/assets`）を開きます。公開されたページが一覧に表示され、クリックするとサンドボックス化されたプレビューで見られます。ページはあなたのコンピュータではなくウェブサイトにあり、開けるのはあなただけです。
 
 <Image src={assets} alt="素材（アセット）ページに、已发布（公開済み）バッジの付いたランディングページが1件表示されています。" />
+
+<Image src={assetPreview} alt="サンドボックス化されたプレビューに表示されたアセットのページ。見出し「让网站驱动你自己的 Claude Code」の暗い色のランディングページで、已发布（公開済み）バッジが付いています。" />
 
 ここでノートパソコンを閉じるか、エージェントを停止します（`uncage agent uninstall`でバックグラウンドのエージェントが停止します）。会話はサイトが保持しているので読めるままで、ヘッダーのコンピュータはオフラインと表示されます。`uncage agent`を実行すると戻ります。
 

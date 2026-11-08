@@ -9,7 +9,9 @@ import connect from '../../../assets/demo/connect.png';
 import deviceApprove from '../../../assets/demo/device-approve.png';
 import chatRunning from '../../../assets/demo/chat-running.png';
 import approvalCard from '../../../assets/demo/approval-card.png';
+import chatDone from '../../../assets/demo/chat-done.png';
 import assets from '../../../assets/demo/assets.png';
+import assetPreview from '../../../assets/demo/asset-preview.png';
 import offline from '../../../assets/demo/offline.png';
 
 The demo is a small website built with Uncage (the [`connected-demo` example](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo)). You connect your own computer to it and ask for a landing page. Your own Claude Code builds the page on your computer and publishes it to the site through the site's tools, and you approve the steps in the browser. It takes about five minutes.
@@ -49,21 +51,27 @@ Without a global install you can run the second one as `npx uncage setup <demo>`
 
 Send, for example, 「做一个介绍 Uncage 的落地页并发布」 ("build a landing page about Uncage and publish it"). Claude Code runs on your computer, under your own login, in a folder of its own under `~/Uncage/`. It loads the site's `landing-page` skill, calls the site tool `create_asset`, writes the page, and then asks to run `publish_asset`.
 
-<Image src={chatRunning} alt="The chat while the run is going: the steps Skill, a Bash command, ToolSearch, WebSearch and mcp__site__create_asset, each with a check mark, and 已允许 (Allowed) after the approved ones." />
+<Image src={chatRunning} alt="The chat while the run is going: the steps Skill and mcp__site__create_asset with check marks, and Claude Code thinking about the next step." />
 
 *The steps appear in the chat as they happen. `mcp__site__create_asset` is the site's tool: it runs on the site's server, as your guest account, and needs no question.*
 
 Claude Code asks before steps that its permission mode does not allow on its own (the composer shows **每次询问**, Ask every time), such as running a command or writing a file. `publish_asset` is defined with `requiresConfirmation`, so the site asks before every call, in every mode. Each question is an approval card, and the run waits until you answer.
 
-<Image src={approvalCard} alt="An approval card titled 需要你确认: Bash, showing the command, its folder and a short reason, with the buttons 拒绝 (Deny) and 允许执行 (Allow once)." />
+<Image src={approvalCard} alt="An approval card for mcp__site__publish_asset, showing the call publish_asset with the asset ID and the folder landing, the working folder, and the buttons 拒绝 (Deny) and 允许执行 (Allow once)." />
 
-*An approval card, here for a command. Click **允许执行** (Allow once) or **拒绝** (Deny). The `publish_asset` card looks the same; after **允许执行**, the site copies the page's folder from your computer and publishes it.*
+*The approval card for `publish_asset`. Click **允许执行** (Allow once) or **拒绝** (Deny). After **允许执行**, the site copies the page's folder from your computer and publishes it. Steps such as a command or a file write get the same kind of card.*
+
+<Image src={chatDone} alt="The finished conversation: Claude Code's summary says the landing page is published at /assets, and describes the page's hero, features, how to start and closing sections, with 完成 (Done) and the time taken below." />
+
+*When the run is done, Claude Code summarizes what it built. The summary describes Uncage correctly because the site's `landing-page` skill gave it the facts.*
 
 ## See the result on the site
 
 Open **素材** (Assets, `/assets`). The published page is listed there; click it to see it in a sandboxed preview. The page lives on the website, not on your computer, and only you can open it.
 
 <Image src={assets} alt="The 素材 (Assets) page lists one landing page with the badge 已发布 (Published)." />
+
+<Image src={assetPreview} alt="The asset's page in the sandboxed preview: a dark landing page headed 让网站驱动你自己的 Claude Code (Let your website drive your own Claude Code), with the badge 已发布 (Published)." />
 
 Now close the lid, or stop the agent (`uncage agent uninstall` stops the background agent). The conversation stays readable, because the site keeps it, and the computer in the header turns offline. Run `uncage agent` to bring it back.
 
