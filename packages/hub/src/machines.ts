@@ -185,6 +185,9 @@ export class MachineHub {
   /** Node-channel subscription: refcounted while replies are awaited, permanent once WebSockets are served. */
   private subRefs = 0;
   private subscription?: Promise<() => void>;
+  /** `enableWebSocket()` ran: this node must hold its node-channel subscription for good. */
+  private wsEnabled = false;
+  /** The permanent subscription (pending or live); unset after a failed subscribe so it is retried. */
   private wsReady?: Promise<void>;
   private closed = false;
 
@@ -211,13 +214,16 @@ export class MachineHub {
    * commands for its machines reach it. Idempotent.
    */
   enableWebSocket(): void {
-    if (this.wsReady || this.closed) return;
-    this.wsReady = this.acquire().catch((err: unknown) => {
-      this.wsReady = undefined;
+    if (this.closed) return;
+    this.wsEnabled = true;
+    if (this.wsReady) return;
+    const p: Promise<void> = this.acquire().catch((err: unknown) => {
+      if (this.wsReady === p) this.wsReady = undefined;
       this.d.logger.error({ err }, 'cluster subscribe failed');
       throw err;
     });
-    this.wsReady.catch(() => undefined);
+    this.wsReady = p;
+    p.catch(() => undefined);
   }
 
   /** Runs `fn` when the hub closes (e.g. detaching a WebSocket server). */
@@ -323,7 +329,12 @@ export class MachineHub {
       const gone = () => s.dead || link.signal.aborted;
       if (gone()) return 'ok'; // went away during the awaits
       // Commands for this machine are routed to our node channel: be listening before taking presence.
-      if (this.wsReady) await this.wsReady;
+      if (this.wsEnabled) {
+        // A failed subscribe is retried here; if it fails again the hello fails (the socket closes
+        // with 1011) instead of taking presence that commands could never reach.
+        if (!this.wsReady) this.enableWebSocket();
+        await this.wsReady;
+      }
       if (gone()) return 'ok';
       const machineId = link.machine.id;
       const previous = this.active.get(machineId);

@@ -1,4 +1,6 @@
 import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -11,6 +13,8 @@ import type { Hub, HubOptions } from './types.js';
 import { fromBase64, randomHex, randomInt, randomToken, sha256Hex, toBase64, utf8Length } from './web.js';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..');
+const built = existsSync(join(pkgDir, 'dist/index.js'));
+const needsBuild = built ? '' : ' (skipped: dist/index.js missing, run `pnpm --filter @uncage/hub build` first)';
 
 let store: HubStore;
 beforeAll(async () => {
@@ -54,9 +58,32 @@ describe('the Web-standard hub core', () => {
     expect(await store.getMachine('mch_none')).toBeNull();
   });
 
-  it('the root bundle contains no Node built-ins', () => {
+  it.skipIf(!built)(`the root bundle contains no Node built-ins${needsBuild}`, () => {
     const r = spawnSync(process.execPath, ['scripts/check-web-entry.mjs'], { cwd: pkgDir, encoding: 'utf8' });
     expect(r.status, r.stderr).toBe(0); // Review Focus #5
+  });
+
+  it('check-web-entry fails on Node built-ins and Node globals, allowing only typeof checks', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'uncage-cwe-'));
+    try {
+      const run = (name: string, code: string) => {
+        writeFileSync(join(dir, name), code);
+        return spawnSync(process.execPath, ['scripts/check-web-entry.mjs', join(dir, name)], { cwd: pkgDir, encoding: 'utf8' });
+      };
+      const fs = run('fs.mjs', "import { readFileSync } from 'node:fs';\nexport const f = readFileSync;\n");
+      expect(fs.status).toBe(1);
+      expect(fs.stderr).toContain('Node built-in: node:fs');
+      const globals = run(
+        'globals.mjs',
+        'export const a = new Buffer(1);\nexport const b = (x) => x instanceof Buffer;\nexport const c = process?.env;\nexport const d = process["env"];\nexport const e = globalThis.process;\n',
+      );
+      expect(globals.status).toBe(1);
+      for (const g of ['Buffer(1)', 'process?.env', 'process["env"]']) expect(globals.stderr).toContain(g);
+      const clean = run('clean.mjs', 'export const ok = typeof process !== "undefined";\nexport const s = "another process. Buffer.from(x)";\n');
+      expect(clean.status, clean.stderr).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

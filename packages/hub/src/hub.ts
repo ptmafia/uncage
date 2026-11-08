@@ -448,6 +448,8 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   let closing: Promise<void> | undefined;
   return {
     basePath,
+    // TODO(Task 4/6): hand background work (opportunistic maintenance, outbox writes after the
+    // response) to `info.waitUntil` on platforms that provide it; unused so far.
     async fetch(req, info) {
       const requestId = `req_${randomHex(12)}`;
       try {

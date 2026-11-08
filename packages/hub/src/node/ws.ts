@@ -31,6 +31,9 @@ const HELLO_TIMEOUT_MS = 10_000;
 /** After sending a close frame to a retired socket, how long before the TCP connection is cut. */
 export const CLOSE_GRACE_MS = 500;
 
+/** Hubs with a WebSocket server attached (one at a time: one offered URL, one sweep timer). */
+const attached = new WeakSet<MachineHub>();
+
 function internals(hub: Hub): HubInternalsHandle {
   const h = (hub as Partial<Hub>)[HUB_INTERNALS];
   if (!h) throw new Error('attachWebSocket: not a hub created by createHub');
@@ -41,7 +44,8 @@ function internals(hub: Hub): HubInternalsHandle {
  * Accepts machine WebSockets on `server` at `path` (default `<basePath>/agent`), the traditional
  * mode transport; the URL offered to agents follows `path`. Also runs the hub's retention sweep
  * hourly in this long-running process. Returns a function that stops accepting new sockets
- * (connected machines stay until `hub.close()`); `hub.close()` detaches too.
+ * (connected machines stay until `hub.close()`); `hub.close()` detaches too. One server per hub
+ * at a time: a second call before detaching throws.
  *
  *   const server = app.listen(3000);
  *   attachWebSocket(hub, server);
@@ -51,6 +55,9 @@ export function attachWebSocket(hub: Hub, server: Server, o: { path?: string } =
   const { machines, logger } = h;
   const path = o.path ?? `${h.basePath}/agent`;
   if (!path.startsWith('/')) throw new Error(`attachWebSocket: path must start with "/" (got "${path}")`);
+  if (machines.isClosed) throw new Error('attachWebSocket: the hub is closed');
+  if (attached.has(machines)) throw new Error('attachWebSocket: this hub already has a WebSocket server attached (call its detach function first)');
+  attached.add(machines);
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
   let detached = false;
 
@@ -88,6 +95,7 @@ export function attachWebSocket(hub: Hub, server: Server, o: { path?: string } =
   const detach = () => {
     if (detached) return;
     detached = true;
+    attached.delete(machines);
     clearInterval(sweep);
     server.off('upgrade', listener);
     wss.close();
