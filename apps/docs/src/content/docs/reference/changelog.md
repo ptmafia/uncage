@@ -1,6 +1,6 @@
 ---
 title: Changelog
-description: What changed in each Uncage release: 0.3 (the hub runs anywhere, any ACP agent, macOS / Linux / Windows), 0.2 (Connected Mode) and 0.1. The authoritative changelog is CHANGELOG.md in the repository and on each npm package.
+description: "What changed in each Uncage release: 0.3 (the hub runs anywhere, any ACP agent, macOS / Linux / Windows), 0.2 (Connected Mode) and 0.1. The authoritative changelog is CHANGELOG.md in the repository and on each npm package."
 ---
 
 All public `@uncage/*` packages share one version. The authoritative record is [`CHANGELOG.md`](https://github.com/ptmafia/uncage/blob/main/CHANGELOG.md) in the repository (and each package’s changelog on npm), written by [Changesets](/docs/guides/ci-and-releases/#releases) at release time.
