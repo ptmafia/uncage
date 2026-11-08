@@ -45,7 +45,7 @@ function html(locale) {
   .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 12px; background: repeating-linear-gradient(90deg, #c4651a 0 24px, transparent 24px 40px); opacity: .9; }
   </style></head><body>
   <div class="logo">${logo}</div>
-  <div class="foot">npx uncage setup</div>
+  <div class="foot">uncage setup</div>
   <h1>${title}</h1>
   <p>${esc(t.tagline)}</p>
   <div class="bar"></div>

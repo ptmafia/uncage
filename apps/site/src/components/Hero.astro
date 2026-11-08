@@ -40,7 +40,7 @@ const phrases = headline(t.hero.title);
     </div>
     <div class="install">
       <p class="install-label">{t.hero.installLabel}</p>
-      <Command cmd="npx uncage setup https://your.site" locale={locale} />
+      <Command cmd={['npm i -g @uncage/cli', 'uncage setup https://your.site']} locale={locale} />
     </div>
   </div>
   <FlowDiagram locale={locale} />

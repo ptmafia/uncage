@@ -39,7 +39,7 @@ curl -fsSL <demo>/api/uncage/install.sh | bash
 uncage setup <demo>
 ```
 
-如果不想全局安装，第二条命令可以用 `npx uncage setup <demo>` 运行。`uncage setup` 会打印一个验证码，并在浏览器里打开演示网站的授权页。
+也可以用 `npm i -g @uncage/cli` 代替第一条命令来安装 CLI。`uncage setup` 会打印一个验证码，并在浏览器里打开演示网站的授权页。
 
 <Image src={deviceApprove} alt="授权页“连接这台电脑?”写明了请求连接的电脑，用大字显示验证码，并提供“拒绝”和“批准”两个按钮。" />
 
@@ -61,7 +61,7 @@ Claude Code 的权限模式不自动放行的步骤（输入框下方显示 **�
 
 <Image src={chatDone} alt="已完成的对话：Claude Code 的总结说明落地页已发布在“素材”页面，并介绍了页面的首屏、特性、如何开始和结尾几个部分，下方是“完成”和用时。" />
 
-*运行结束后，Claude Code 会总结它做了什么。总结对 Uncage 的描述是准确的，因为网站的 `landing-page` 技能给了它这些事实。*
+*运行结束后，Claude Code 会总结它做了什么。网站的 `landing-page` 技能会把 Uncage 的相关事实提供给它，供它写页面时参考。*
 
 ## 在网站上查看结果
 

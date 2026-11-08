@@ -41,7 +41,7 @@ curl -fsSL <demo>/api/uncage/install.sh | bash
 uncage setup <demo>
 ```
 
-Without a global install you can run the second one as `npx uncage setup <demo>`. `uncage setup` prints a code and opens the demo's approval page in your browser.
+Or install the CLI with `npm i -g @uncage/cli` instead of the first command. `uncage setup` prints a code and opens the demo's approval page in your browser.
 
 <Image src={deviceApprove} alt="The approval page 连接这台电脑? names the computer asking to connect, shows the 验证码 (verification code) in large letters, and offers 拒绝 (Deny) and 批准 (Approve)." />
 
@@ -63,7 +63,7 @@ Claude Code asks before steps that its permission mode does not allow on its own
 
 <Image src={chatDone} alt="The finished conversation: Claude Code's summary says the landing page is published at /assets, and describes the page's hero, features, how to start and closing sections, with 完成 (Done) and the time taken below." />
 
-*When the run is done, Claude Code summarizes what it built. The summary describes Uncage correctly because the site's `landing-page` skill gave it the facts.*
+*When the run is done, Claude Code summarizes what it built. The site's `landing-page` skill gives it the facts about Uncage to build from.*
 
 ## See the result on the site
 

@@ -73,7 +73,7 @@ export const en: Dict = {
         'Their Claude Code, configs, MCP servers and repos',
         'Their own login, never shared with you or stored by you',
         'Zero model cost on your side',
-        'Files stay on their machine unless your tool pulls them',
+        'Your site sees only what the conversation shows and what your tools pull',
       ],
     },
   },
@@ -85,7 +85,7 @@ export const en: Dict = {
       {
         tag: 'Connect',
         title: 'The user links their computer',
-        body: 'One command, one approval in the browser. A background agent dials out to your site, so no ports are opened.',
+        body: 'Two commands, one approval in the browser. A background agent dials out to your site, so no ports are opened.',
       },
       {
         tag: 'Instruct',

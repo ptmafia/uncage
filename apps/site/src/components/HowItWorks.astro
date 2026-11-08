@@ -6,7 +6,7 @@ interface Props {
 }
 
 const t = getDict(Astro.props.locale).how;
-const codes = ['npx uncage setup https://your.site', '<AgentChat />', 'defineTool({ name, input, handler })'];
+const codes = [['npm i -g @uncage/cli', 'uncage setup https://your.site'], '<AgentChat />', 'defineTool({ name, input, handler })'];
 ---
 
 <section class="section" id="how" aria-labelledby="how-title">
@@ -24,7 +24,7 @@ const codes = ['npx uncage setup https://your.site', '<AgentChat />', 'defineToo
             </p>
             <h3>{s.title}</h3>
             <p class="body">{s.body}</p>
-            <code translate="no">{codes[i]}</code>
+            <code translate="no">{[codes[i]].flat().map((line) => <span class="line">{line}</span>)}</code>
           </li>
         ))
       }
@@ -105,6 +105,9 @@ const codes = ['npx uncage setup https://your.site', '<AgentChat />', 'defineToo
     color: var(--uc-ink);
     overflow-x: auto;
     white-space: nowrap;
+  }
+  .line {
+    display: block;
   }
   @media (max-width: 860px) {
     .steps {

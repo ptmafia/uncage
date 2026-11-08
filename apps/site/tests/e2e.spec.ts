@@ -96,7 +96,7 @@ test('copy button copies the setup command', async ({ page, context }) => {
   const btn = page.locator('.install button.copy');
   await btn.click();
   await expect(btn).toHaveAttribute('data-copied', '');
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('npx uncage setup https://your.site');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('npm i -g @uncage/cli && uncage setup https://your.site');
 });
 
 test('reduced motion: the flow diagram is fully visible at once', async ({ browser }) => {
