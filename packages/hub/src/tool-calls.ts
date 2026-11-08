@@ -130,6 +130,10 @@ export function toolCalls(d: ToolCallsDeps): {
     // (the cap, the session, the run): the machine's own call id, so nothing else is checked.
     const existing = await store.getToolCall(machine.id, call.id);
     if (existing && existing.status !== 'running') return finishedResult(existing);
+    // Still running under a live lease (on this or another instance): its result follows. Answered
+    // from this one read, so a resend loop costs no session/run lookups, subscribes or claims.
+    // A running row past its lease (or without one) goes on to the claim, which interrupts it.
+    if (existing?.leaseUntil && Date.parse(existing.leaseUntil) > Date.now()) return null;
 
     const rec = await store.getSession(call.sessionId);
     // The session must be this machine's, and its owner the machine's user (ctx.user).

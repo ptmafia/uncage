@@ -26,6 +26,7 @@ import {
   type FakeHttpAgent,
 } from './test-utils.js';
 import { defineTool, type SiteTool } from './tools.js';
+import { HUB_INTERNALS } from './types.js';
 
 const closers: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
@@ -543,5 +544,38 @@ describe('stored results come first; one outcome per call', () => {
     await two.t.hub.close();
     expect(Date.now() - started).toBeLessThan(1_500);
     expect(await two.t.store.listToolCalls(two.s.id)).toMatchObject([{ status: 'interrupted', result: { ok: false, error: INTERRUPTED } }]);
+  });
+});
+
+describe('resends of a running call are cheap', () => {
+  it('N resends of a running call: N getToolCall reads, no session lookups, subscribes or claims', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const tool = defineTool({ name: 'gated', description: 'x', input: z.object({}), handler: async () => ((await gate), 'gated') });
+    const { t, a, s, frame } = await wsSetup([tool]);
+    a.send(frame('tc_run', 'gated'));
+    await until(async () => (await t.store.listToolCalls(s.id))[0]?.status === 'running');
+    const counts = { getToolCall: 0, getSession: 0, claimToolCall: 0, subscribe: 0 };
+    const spy = <K extends 'getToolCall' | 'getSession' | 'claimToolCall'>(k: K) => {
+      const orig = t.store[k].bind(t.store) as (...args: unknown[]) => unknown;
+      (t.store as unknown as Record<string, unknown>)[k] = (...args: unknown[]) => ((counts[k] += 1), orig(...args));
+    };
+    spy('getToolCall');
+    spy('getSession');
+    spy('claimToolCall');
+    const { sessionChannel } = await import('./machines.js');
+    const sub = t.hub[HUB_INTERNALS].machines as unknown as { d: { cluster: { subscribe: (c: string, fn: (m: string) => void) => Promise<() => void> } } };
+    const origSub = sub.d.cluster.subscribe.bind(sub.d.cluster);
+    sub.d.cluster.subscribe = (c, fn) => {
+      if (c === sessionChannel(s.id)) counts.subscribe++;
+      return origSub(c, fn);
+    };
+    const N = 10;
+    for (let i = 0; i < N; i++) a.send(frame('tc_run', 'gated'));
+    await until(() => counts.getToolCall === N);
+    await sleep(100);
+    expect(counts).toEqual({ getToolCall: N, getSession: 0, claimToolCall: 0, subscribe: 0 });
+    release();
+    expect(await a.waitFor((f) => f.t === 'tool_result' && f.id === 'tc_run')).toMatchObject({ ok: true });
   });
 });
