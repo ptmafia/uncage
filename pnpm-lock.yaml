@@ -569,6 +569,9 @@ importers:
       '@agentclientprotocol/sdk':
         specifier: 2.4.0
         version: 2.4.0(zod@4.6.7)
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.32.2(zod@4.6.7)
       '@uncage/protocol':
         specifier: workspace:^
         version: link:../protocol
@@ -633,6 +636,9 @@ importers:
       '@agentclientprotocol/sdk':
         specifier: 2.4.0
         version: 2.4.0(zod@4.6.7)
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.32.2(zod@4.6.7)
       '@uncage/protocol':
         specifier: workspace:^
         version: link:../protocol

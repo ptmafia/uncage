@@ -84,7 +84,8 @@ export const RuntimeCapabilitiesSchema = z.object({
   nativeResume: z.boolean(),
   diffEvents: z.boolean(),
   mcp: z.boolean(),
-  skills: z.enum(['supported', 'partial', 'unknown']),
+  /** 'prompt': skills are given to the agent as text context (no native skill support). */
+  skills: z.enum(['supported', 'partial', 'prompt', 'unknown']),
   /** Whether runs can be given site tools (`AdapterRunInput.tools`, connected mode). */
   siteTools: z.boolean(),
   models: z.array(ModelOptionSchema),

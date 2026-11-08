@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "2.4.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@uncage/protocol": "workspace:^",
     "zod": "^4.6.7"
   },

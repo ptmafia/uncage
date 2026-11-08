@@ -4,10 +4,12 @@ import {
   RequestError,
   type ClientContext,
   type InitializeResponse,
+  type McpServer,
   type NewSessionResponse,
   type PromptResponse,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
+  type SessionModeState,
   type SessionUpdate,
 } from '@agentclientprotocol/sdk';
 import {
@@ -16,15 +18,19 @@ import {
   type AdapterRunInput,
   type ApprovalOutcome,
   type ErrorCode,
+  type NativeApprovalInput,
   type RuntimeAdapter,
   type RuntimeCapabilities,
   type RuntimeEvent,
   type RuntimeProbe,
 } from '@uncage/protocol';
-import { DEFAULT_ACP_CAPABILITIES, mapCapabilities } from './capabilities.js';
-import { approvalInput, chooseOption, createAcpMapper } from './map.js';
+import { NO_ALLOW_ONCE_WARNING, permissionDecision, toPermissionResponse } from './approvals.js';
+import { defaultCapabilities, mapCapabilities } from './capabilities.js';
+import { createAcpMapper } from './map.js';
 import { AcpProtocolError, startAcpProcess, type AcpProcess } from './process.js';
 import { toPromptBlocks } from './prompt.js';
+import { siteMcpDeclaration, startSiteMcpServer, type SiteMcpServer } from './site-mcp.js';
+import { skillsPreamble } from './skills.js';
 
 export interface AcpAdapterOptions {
   /** Runtime id, `acp-<name>` (/^acp-[a-z][a-z0-9-]{0,31}$/). */
@@ -36,7 +42,10 @@ export interface AcpAdapterOptions {
   env?: Record<string, string>;
   /** Offer (and accept) the `bypassPermissions` mode. Defaults to false. */
   allowBypass?: boolean;
-  /** How site tools reach the agent (Task A2). Defaults to 'auto'. */
+  /**
+   * How site tools reach the agent: `auto` declares the run's loopback MCP server as `http` when the
+   * agent supports it, else through the stdio bridge; `off` disables site tools. Defaults to 'auto'.
+   */
   mcp?: 'auto' | 'http' | 'stdio' | 'off';
   /** Shown when the command is not installed. */
   installHint?: string;
@@ -214,8 +223,7 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
     return attempt;
   }
 
-  const capabilities = (): RuntimeCapabilities =>
-    init ? mapCapabilities(init, { allowBypass, mcp }) : { ...DEFAULT_ACP_CAPABILITIES, permissionModes: allowBypass ? ['default', 'bypassPermissions'] : ['default'] };
+  const capabilities = (): RuntimeCapabilities => (init ? mapCapabilities(init, { allowBypass, mcp }) : defaultCapabilities({ allowBypass, mcp }));
 
   function authHint(): string {
     const names = (init?.authMethods ?? []).map((m) => m.name).filter(Boolean);
@@ -227,11 +235,12 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
   async function* run(input: AdapterRunInput, ctx: AdapterRunContext): AsyncGenerator<RuntimeEvent> {
     if (ctx.signal.aborted) return yield ABORTED_EVENT;
     const { permissionMode } = input.settings;
-    const bypass = permissionMode === 'bypassPermissions';
-    if (bypass && !allowBypass) return yield failed('policy_denied', 'bypassPermissions is not allowed on this server.');
-    if (permissionMode !== 'default' && !bypass) {
+    if (permissionMode === 'bypassPermissions' && !allowBypass) return yield failed('policy_denied', 'bypassPermissions is not allowed on this server.');
+    if (permissionMode !== 'default' && permissionMode !== 'acceptEdits' && permissionMode !== 'bypassPermissions') {
       return yield failed('invalid_request', `${o.displayName} does not support the ${permissionMode} permission mode.`);
     }
+    const tools = mcp === 'off' ? [] : (input.tools ?? []);
+    const siteToolNames: ReadonlySet<string> = new Set(tools.map((t) => t.name));
 
     const map = createAcpMapper(() => randomUUID());
     const queue = createQueue<Incoming>();
@@ -246,30 +255,48 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
     let prompt: Promise<unknown> | undefined;
     let promptSettled = false;
     let cancelSent = false;
+    let site: SiteMcpServer | undefined;
+    let warnedNoAllowOnce = false;
+    /** Answers of permission requests waiting for the user; answered `cancelled` on abort. */
+    const pendingAnswers = new Set<(r: Promise<RequestPermissionResponse>) => void>();
 
-    /** `session/cancel` once, while the prompt is running; kills an agent that ignores it. */
-    const cancelPrompt = (): void => {
+    /**
+     * `session/cancel` once, while the prompt is running; kills an agent that ignores it. Decided
+     * now, sent after `before` (the answers to pending permissions go out first).
+     */
+    const cancelPrompt = (before: Promise<void> = Promise.resolve()): void => {
       if (!conn || conn.closed || sessionId === undefined || !prompt || promptSettled || cancelSent) return;
       cancelSent = true;
       const c = conn;
-      void c.proc.conn.agent.notify(methods.agent.session.cancel, { sessionId }).catch(() => undefined);
+      const sid = sessionId;
+      void before.then(() => c.proc.conn.agent.notify(methods.agent.session.cancel, { sessionId: sid })).catch(() => undefined);
       const timer = setTimeout(() => {
         if (!promptSettled && !c.closed) c.proc.kill();
       }, cancelGraceMs);
       timer.unref();
       void prompt.finally(() => clearTimeout(timer)).catch(() => undefined);
     };
-    // Registered before any approval waits on the signal, so `session/cancel` goes out before the
-    // pending permission requests are answered `cancelled`.
+    /** Answers every permission request still waiting (asked or queued) with `cancelled`. */
+    const answerPending = (): void => {
+      for (const respond of pendingAnswers) respond(Promise.resolve(CANCELLED));
+      pendingAnswers.clear();
+      for (const item of queue.drain()) {
+        if (item.kind === 'permission') item.respond(Promise.resolve(CANCELLED));
+        else queue.push(item);
+      }
+    };
+    /** Pending permissions are answered `cancelled` first; `session/cancel` follows once those answers are written. */
+    const stopTurn = (): void => {
+      answerPending();
+      cancelPrompt(settle());
+    };
     const onAbort = (): void => {
-      cancelPrompt();
+      stopTurn();
       wake();
     };
     ctx.signal.addEventListener('abort', onAbort, { once: true });
 
-    const askApproval = async (req: RequestPermissionRequest, signal: AbortSignal): Promise<RequestPermissionResponse> => {
-      if (bypass) return { outcome: chooseOption(req.options, { decision: 'allow' }) };
-      const request = approvalInput(req.toolCall, map.tool(req.toolCall.toolCallId), input.cwd);
+    const askApproval = async (request: NativeApprovalInput, req: RequestPermissionRequest, signal: AbortSignal): Promise<RequestPermissionResponse> => {
       let outcome: ApprovalOutcome | typeof ABORTED;
       try {
         outcome = await untilAborted(ctx.requestApproval(request), AbortSignal.any([settled, signal]));
@@ -278,9 +305,8 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
         outcome = { decision: 'deny' };
       }
       if (outcome === ABORTED) return CANCELLED;
-      const chosen = chooseOption(req.options, outcome);
       if (outcome.decision !== 'allow') map.markDeclined(req.toolCall.toolCallId);
-      return { outcome: chosen };
+      return toPermissionResponse(outcome, req.options);
     };
 
     /** The terminal event for a failed request. */
@@ -303,7 +329,20 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
       }
       const agent = conn.proc.conn.agent;
       const agentCaps = conn.proc.init.agentCapabilities ?? {};
-      const session = { cwd: input.cwd, mcpServers: [] };
+      const mcpServers: McpServer[] = [];
+      if (tools.length > 0 && mcp !== 'off') {
+        try {
+          site = await startSiteMcpServer(tools, { requestApproval: (i) => ctx.requestApproval(i), cwd: input.cwd, signal: settled });
+        } catch (err) {
+          return yield failed('internal_error', `Could not serve the site tools: ${errorMessage(err)}`);
+        }
+        mcpServers.push(siteMcpDeclaration(site, agentCaps.mcpCapabilities, mcp));
+      }
+      const session = { cwd: input.cwd, mcpServers };
+      /** The session's modes, to follow the Uncage permission mode with `session/set_mode`. */
+      let modes: SessionModeState | null | undefined;
+      /** A new ACP session (not resumed): its first prompt carries the skills preamble. */
+      let fresh = false;
       const ref = input.nativeSessionRef;
       const canResume = Boolean(agentCaps.sessionCapabilities?.resume);
       const canLoad = agentCaps.loadSession === true;
@@ -325,6 +364,7 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
           const timeout = canResume ? requestTimeoutMs : loadTimeoutMs;
           const r = await untilAborted(withTimeout(request, timeout, canResume ? 'session/resume' : 'session/load'), ctx.signal);
           if (r === ABORTED) return yield ABORTED_EVENT;
+          modes = r.modes;
           await settle();
           sink.replaying = false;
         } else {
@@ -348,6 +388,8 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
             return yield ABORTED_EVENT;
           }
           sessionId = r.sessionId;
+          modes = r.modes;
+          fresh = true;
           conn.sinks.set(r.sessionId, sink);
         }
       } catch (err) {
@@ -359,12 +401,28 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
       const sid = sessionId;
       yield { type: 'native.session', ref: sid };
 
+      // Follow the Uncage permission mode when the agent has a mode with the same id.
+      if (modes && modes.currentModeId !== permissionMode && modes.availableModes.some((m) => m.id === permissionMode)) {
+        try {
+          const r = await untilAborted(
+            withTimeout(agent.request(methods.agent.session.setMode, { sessionId: sid, modeId: permissionMode }), requestTimeoutMs, 'session/set_mode'),
+            ctx.signal,
+          );
+          if (r === ABORTED) return yield ABORTED_EVENT;
+        } catch (err) {
+          // Uncage still applies the mode to every permission request it is asked.
+          yield { type: 'warning', code: 'acp_set_mode_failed', message: `${o.displayName} did not switch to ${permissionMode}: ${errorMessage(err)}` };
+        }
+      }
+
       let blocks;
       try {
         blocks = await toPromptBlocks(input, { image: agentCaps.promptCapabilities?.image === true });
       } catch (err) {
         return yield failed('internal_error', `Could not read an attachment: ${errorMessage(err)}`);
       }
+      const preamble = fresh ? skillsPreamble(input.skills ?? []) : '';
+      if (preamble) blocks.unshift({ type: 'text', text: preamble });
       if (ctx.signal.aborted) return yield ABORTED_EVENT;
       if (conn.closed) return yield DISCONNECTED;
       const promptRequest: Promise<PromptResponse> = agent.request(methods.agent.session.prompt, { sessionId: sid, prompt: blocks });
@@ -388,10 +446,33 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
         switch (item.kind) {
           case 'wake':
             continue;
-          case 'permission':
+          case 'permission': {
             for (const e of map.ensureTool(item.req.toolCall)) yield e;
-            item.respond(askApproval(item.req, item.signal));
+            const d = permissionDecision(item.req, {
+              mode: permissionMode,
+              allowBypass,
+              siteToolNames,
+              cwd: input.cwd,
+              known: map.tool(item.req.toolCall.toolCallId),
+            });
+            if ('ask' in d) {
+              const respond = item.respond;
+              pendingAnswers.add(respond);
+              void askApproval(d.ask, item.req, item.signal).then((r) => {
+                pendingAnswers.delete(respond);
+                respond(Promise.resolve(r));
+              });
+            } else if (d.auto === 'allow') {
+              item.respond(Promise.resolve(toPermissionResponse('allow', item.req.options)));
+            } else {
+              item.respond(Promise.resolve(CANCELLED));
+              if (!warnedNoAllowOnce) {
+                warnedNoAllowOnce = true;
+                yield { type: 'warning', code: NO_ALLOW_ONCE_WARNING, message: d.warning };
+              }
+            }
             continue;
+          }
           case 'update':
             for (const e of map.update(item.update)) yield e;
             continue;
@@ -410,12 +491,13 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
       }
     } finally {
       ctx.signal.removeEventListener('abort', onAbort);
-      // Aborted, or the consumer stopped early: stop the turn so the agent does not keep working.
-      cancelPrompt();
+      // Aborted, or the consumer stopped early: answer what is pending, then stop the turn so the
+      // agent does not keep working.
+      stopTurn();
       done.abort();
-      // Permission requests that arrived but were never handled must still be answered.
-      for (const item of queue.drain()) if (item.kind === 'permission') item.respond(Promise.resolve(CANCELLED));
       if (conn && sessionId !== undefined && conn.sinks.get(sessionId) === sink) conn.sinks.delete(sessionId);
+      // The site tools live as long as the run.
+      void site?.close();
     }
   }
 

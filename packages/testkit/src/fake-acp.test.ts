@@ -23,7 +23,7 @@ const conns: ClientConnection[] = [];
 
 function connect(
   o: Partial<FakeAcpOptions> = {},
-  permission: (r: RequestPermissionRequest) => RequestPermissionResponse = () => ({ outcome: { outcome: 'selected', optionId: 'allow' } }),
+  permission: (r: RequestPermissionRequest) => RequestPermissionResponse = () => ({ outcome: { outcome: 'selected', optionId: 'allow-once' } }),
 ): ClientConnection {
   const app = createFakeAcpAgent({ crash: () => { throw new Error('crash'); }, ...o });
   const conn = client({ name: 'test' })
@@ -65,17 +65,42 @@ describe('fake ACP agent', () => {
     expect(texts(sessionId).join('')).toBe('Hello from fake ACP');
   });
 
-  it('approval asks permission with all four option kinds and fails the tool on reject', async () => {
+  it('approval asks for an execute tool (npm test)', async () => {
     const asked: RequestPermissionRequest[] = [];
     const conn = connect({}, (r) => {
       asked.push(r);
-      return { outcome: { outcome: 'selected', optionId: 'reject' } };
+      return { outcome: { outcome: 'selected', optionId: 'allow-once' } };
     });
     await init(conn);
     const { sessionId } = await conn.agent.request(methods.agent.session.new, { cwd: '/w', mcpServers: [] });
     await conn.agent.request(methods.agent.session.prompt, { sessionId, prompt: [{ type: 'text', text: 'approval' }] });
+    expect(asked[0]?.toolCall).toMatchObject({ toolCallId: 'call_ap', kind: 'execute', rawInput: { command: 'npm test' } });
+    expect(updates.map((u) => u.update)).toContainEqual(expect.objectContaining({ sessionUpdate: 'tool_call_update', status: 'completed' }));
+  });
+
+  it('modes: offered by session/new, switched by session/set_mode; the skills preamble does not pick the scenario', async () => {
+    const conn = connect({ modes: ['default', 'acceptEdits'] });
+    await init(conn);
+    const r = await conn.agent.request(methods.agent.session.new, { cwd: '/w', mcpServers: [] });
+    expect(r.modes).toEqual({ currentModeId: 'default', availableModes: [{ id: 'default', name: 'default' }, { id: 'acceptEdits', name: 'acceptEdits' }] });
+    await conn.agent.request(methods.agent.session.setMode, { sessionId: r.sessionId, modeId: 'acceptEdits' });
+    await expect(conn.agent.request(methods.agent.session.setMode, { sessionId: r.sessionId, modeId: 'plan' })).rejects.toThrow();
+    const prompt = [{ type: 'text' as const, text: '<uncage-skills>\nsimple\n</uncage-skills>' }, { type: 'text' as const, text: 'modes' }];
+    await conn.agent.request(methods.agent.session.prompt, { sessionId: r.sessionId, prompt });
+    expect(texts(r.sessionId).join('')).toBe('mode: acceptEdits');
+  });
+
+  it('edit asks permission with all four option kinds and fails the tool on reject', async () => {
+    const asked: RequestPermissionRequest[] = [];
+    const conn = connect({}, (r) => {
+      asked.push(r);
+      return { outcome: { outcome: 'selected', optionId: 'reject-once' } };
+    });
+    await init(conn);
+    const { sessionId } = await conn.agent.request(methods.agent.session.new, { cwd: '/w', mcpServers: [] });
+    await conn.agent.request(methods.agent.session.prompt, { sessionId, prompt: [{ type: 'text', text: 'edit' }] });
     expect(asked[0]?.options.map((x) => x.kind)).toEqual(['allow_once', 'allow_always', 'reject_once', 'reject_always']);
-    expect(asked[0]?.toolCall).toMatchObject({ toolCallId: 'call_ap', kind: 'edit', locations: [{ path: '/w/hello.txt' }] });
+    expect(asked[0]?.toolCall).toMatchObject({ toolCallId: 'call_edit', kind: 'edit', locations: [{ path: '/w/hello.txt' }] });
     expect(updates.map((u) => u.update)).toContainEqual(expect.objectContaining({ sessionUpdate: 'tool_call_update', status: 'failed' }));
   });
 

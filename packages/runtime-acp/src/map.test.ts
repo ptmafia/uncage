@@ -1,6 +1,6 @@
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
 import { describe, expect, it } from 'vitest';
-import { approvalInput, chooseOption, createAcpMapper, toolCategory } from './map.js';
+import { approvalInput, createAcpMapper, toolCategory } from './map.js';
 
 const mapper = () => {
   let n = 0;
@@ -140,22 +140,6 @@ describe('createAcpMapper', () => {
 });
 
 describe('approvals', () => {
-  const options = [
-    { optionId: 'a1', name: 'Allow', kind: 'allow_once' as const },
-    { optionId: 'aa', name: 'Always', kind: 'allow_always' as const },
-    { optionId: 'r1', name: 'Reject', kind: 'reject_once' as const },
-    { optionId: 'ra', name: 'Never', kind: 'reject_always' as const },
-  ];
-
-  it('chooses allow_once / reject_once and never an "always" option', () => {
-    expect(chooseOption(options, { decision: 'allow' })).toEqual({ outcome: 'selected', optionId: 'a1' });
-    expect(chooseOption(options, { decision: 'deny' })).toEqual({ outcome: 'selected', optionId: 'r1' });
-    expect(chooseOption(options, { decision: 'expired' })).toEqual({ outcome: 'selected', optionId: 'r1' });
-    expect(chooseOption(options, { decision: 'cancelled' })).toEqual({ outcome: 'cancelled' });
-    expect(chooseOption([options[1]!, options[3]!], { decision: 'allow' })).toEqual({ outcome: 'cancelled' });
-    expect(chooseOption([options[1]!, options[3]!], { decision: 'deny' })).toEqual({ outcome: 'cancelled' });
-  });
-
   it('builds the approval input from the tool call and what the mapper knows', () => {
     const m = mapper();
     m.update({ sessionUpdate: 'tool_call', toolCallId: 't1', title: 'git push', kind: 'execute', rawInput: { command: 'git push' } });

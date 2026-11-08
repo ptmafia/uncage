@@ -1,15 +1,13 @@
 import type {
   ContentBlock,
-  PermissionOption,
   PlanEntry,
-  RequestPermissionOutcome,
   SessionUpdate,
   StopReason,
   ToolCallContent,
   ToolCallUpdate,
   ToolKind,
 } from '@agentclientprotocol/sdk';
-import type { ApprovalCategory, ApprovalOutcome, ApprovalTarget, NativeApprovalInput, RuntimeEvent } from '@uncage/protocol';
+import type { ApprovalCategory, ApprovalTarget, NativeApprovalInput, RuntimeEvent } from '@uncage/protocol';
 
 /** execute → shell, read|edit|delete|move|search → file, fetch → network, else other. */
 export function toolCategory(kind: ToolKind | null | undefined): ApprovalCategory {
@@ -263,16 +261,4 @@ export function approvalInput(call: ToolCallUpdate, known: KnownTool | undefined
     availableDecisions: ['allow_once', 'deny'],
     target: targetOf(category, call, input, cwd),
   };
-}
-
-/**
- * The permission answer for an approval outcome. `allow_always` / `reject_always` are never
- * selected: the agent may persist them outside the session. Without a matching "once" option the
- * request is answered `cancelled`.
- */
-export function chooseOption(options: PermissionOption[], outcome: ApprovalOutcome): RequestPermissionOutcome {
-  if (outcome.decision === 'cancelled') return { outcome: 'cancelled' };
-  const kind = outcome.decision === 'allow' ? 'allow_once' : 'reject_once';
-  const option = options.find((o) => o.kind === kind);
-  return option ? { outcome: 'selected', optionId: option.optionId } : { outcome: 'cancelled' };
 }

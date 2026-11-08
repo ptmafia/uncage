@@ -8,10 +8,10 @@ import {
   type SdkMcpToolDefinition,
 } from '@anthropic-ai/claude-agent-sdk';
 import {
+  neutralizeSkillMarkdown,
   RelativePathSchema,
   SkillSpecSchema,
   ToolSpecSchema,
-  type NativeApprovalInput,
   type RunTool,
   type SkillSpec,
   type ToolCallResult,
@@ -25,10 +25,8 @@ export const siteToolFullName = (name: string): string => `mcp__${SITE_MCP_SERVE
 type CallToolResult = Awaited<ReturnType<SdkMcpToolDefinition['handler']>>;
 type ObjectSchema = z.ZodObject;
 
-const TITLE_MAX = 120;
-const ARGS_MAX = 200;
-
-const truncate = (s: string, max: number): string => (s.length <= max ? s : `${s.slice(0, max - 1)}…`);
+// Moved to @uncage/protocol (shared with runtime-acp); re-exported for existing importers.
+export { neutralizeSkillMarkdown, siteApprovalRequest } from '@uncage/protocol';
 
 /** Most JSON Schema nodes (objects + arrays) a site tool schema may have before it goes permissive. */
 export const SCHEMA_NODE_BUDGET = 2000;
@@ -138,25 +136,6 @@ export function siteMcpOptions(tools: RunTool[]): SiteMcpOptions {
   return { mcpServers: { [SITE_MCP_SERVER]: server }, definitions, byFullName };
 }
 
-function compactArgs(args: unknown): string {
-  let s: string;
-  try {
-    s = JSON.stringify(args) ?? '';
-  } catch {
-    s = String(args);
-  }
-  return truncate(s, ARGS_MAX);
-}
-
-export function siteApprovalRequest(t: RunTool, args: unknown, toolId: string, cwd: string): NativeApprovalInput {
-  return {
-    toolId,
-    category: 'mcp',
-    title: truncate(t.description.trim() || t.name, TITLE_MAX),
-    target: { command: `${t.name}(${compactArgs(args)})`, cwd },
-  };
-}
-
 const inside = (root: string, p: string): boolean => {
   const r = relative(root, p);
   return r !== '' && !r.startsWith('..') && !isAbsolute(r);
@@ -167,15 +146,6 @@ async function ensureDirInside(realCwd: string, path: string, label: string): Pr
   const real = await realpath(path);
   if (!inside(realCwd, real)) throw new Error(`${label} resolves outside the workspace`);
   return real;
-}
-
-/**
- * Claude Code runs `` !`cmd` `` and ```` ```! ```` blocks in skill bodies as shell, before the model
- * sees them and without asking. Hub skills are data, never code: escape the `!` of every inline
- * form (`\!` renders the same) and turn executable fences into plain `text` fences.
- */
-export function neutralizeSkillMarkdown(md: string): string {
-  return md.replace(/(`{3,}|~{3,})[ \t]*!/g, '$1text').replace(/!(?=`)/g, '\\!');
 }
 
 const isMarkdownPath = (p: string): boolean => /\.(md|markdown|mdx)$/i.test(p);

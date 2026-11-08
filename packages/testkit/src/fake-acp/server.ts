@@ -6,8 +6,10 @@
  *   FAKE_ACP_PROTOCOL        `protocolVersion` to answer `initialize` with (default 1)
  *   FAKE_ACP_IGNORE_CANCEL=1 ignore `session/cancel`
  *   FAKE_ACP_AUTH=required   `session/new` fails with -32000 (auth required)
+ *   FAKE_ACP_MODES           comma-separated session mode ids (current: the first); `session/set_mode` switches
  *   FAKE_ACP_RECORD          append every received JSON-RPC message (requests, notifications and the client's
- *                            responses) to this JSONL file; the first line is `{"fake":"start","pid":<pid>}`
+ *                            responses) to this JSONL file; the first line is `{"fake":"start","pid":<pid>}`; scenario notes
+ *                            are lines with a `fake` key (e.g. `{"fake":"mcp","listedTools":[…]}`)
  */
 import { appendFileSync, writeSync } from 'node:fs';
 import { Readable, Writable } from 'node:stream';
@@ -43,6 +45,10 @@ const app = createFakeAcpAgent({
   ...(env.FAKE_ACP_PROTOCOL ? { protocolVersion: Number(env.FAKE_ACP_PROTOCOL) } : {}),
   ignoreCancel: env.FAKE_ACP_IGNORE_CANCEL === '1',
   authRequired: env.FAKE_ACP_AUTH === 'required',
+  ...(env.FAKE_ACP_MODES ? { modes: env.FAKE_ACP_MODES.split(',') } : {}),
+  note: (entry) => {
+    if (record) appendFileSync(record, `${JSON.stringify(entry)}\n`);
+  },
   crash: () => process.exit(1),
   writeRaw: (messages) => void writeSync(1, `${messages.map((m) => JSON.stringify(m)).join('\n')}\n`),
 });
