@@ -12,7 +12,7 @@ Your website gives the instructions. Each user’s own Claude Code does the work
 - **Safe by construction.** Your site never sends code or shell to the user’s computer, only tool schemas, skill text and a fixed set of commands. Bypassing approvals can only be enabled by the user, locally. Everything a site does is logged on the user’s computer.
 - **Production shape.** Plug in your sign-in with `getUser(req)`. Keep a replica of every conversation on your site. Run the hub on several nodes with Postgres and Redis.
 
-**Help site (for developers and coding agents): https://uncage.vercel.app/docs/** · [llms.txt](https://uncage.vercel.app/docs/llms.txt) · [Skill for coding agents](skills/uncage/SKILL.md)
+**Help site (for developers and coding agents): https://uncage-dev.vercel.app/docs/** · [llms.txt](https://uncage-dev.vercel.app/docs/llms.txt) · [Skill for coding agents](skills/uncage/SKILL.md)
 
 > Status: Connected Mode is new in 0.2 (`@uncage/hub`, `@uncage/agent`, `uncage setup`). The user’s side runs on macOS with Node.js 22+. Claude Code is verified live, end to end ([compatibility](docs/compatibility.md)); Codex is implemented but not yet verified against a real binary and has no site-tool support. Local Mode (the 0.1 daemon + chat, with no hub) keeps working and is documented in the help site.
 
@@ -44,7 +44,7 @@ cd examples/connected-demo && pnpm start        # http://localhost:3200
 npm i @uncage/hub @uncage/react-ui zod
 ```
 
-An excerpt to show the shape (`./auth.ts` is your own sign-in). The complete, type-checked files are in the [Connected Mode quickstart](https://uncage.vercel.app/docs/start/quickstart-connected/) and [Mount the hub](https://uncage.vercel.app/docs/guides/mount-the-hub/).
+An excerpt to show the shape (`./auth.ts` is your own sign-in). The complete, type-checked files are in the [Connected Mode quickstart](https://uncage-dev.vercel.app/docs/start/quickstart-connected/) and [Mount the hub](https://uncage-dev.vercel.app/docs/guides/mount-the-hub/).
 
 ```ts
 // server.ts — mount the hub in your Node server (Express here; Fastify, Hono, Next.js custom servers work too)
@@ -91,23 +91,23 @@ export default function Page() {
 }
 ```
 
-You also need an approval page at `/device` (signed-in only, unframable, decided with a CSRF-protected POST). The [Connected Mode quickstart](https://uncage.vercel.app/docs/start/quickstart-connected/) has every file for a Next.js app, type-checked in CI; [Mount the hub](https://uncage.vercel.app/docs/guides/mount-the-hub/) covers Express, Fastify, Hono and Next.js custom servers.
+You also need an approval page at `/device` (signed-in only, unframable, decided with a CSRF-protected POST). The [Connected Mode quickstart](https://uncage-dev.vercel.app/docs/start/quickstart-connected/) has every file for a Next.js app, type-checked in CI; [Mount the hub](https://uncage-dev.vercel.app/docs/guides/mount-the-hub/) covers Express, Fastify, Hono and Next.js custom servers.
 
 ## Local Mode
 
-When the agent runs on the same machine as your app (an internal tool, a dev dashboard), skip the hub: run `npx uncage serve --workspace <dir>`, add a same-origin proxy route (`createUncageHandler()` from `@uncage/server/proxy`) and render `<AgentChat>`. See the [Local Mode quickstart](https://uncage.vercel.app/docs/start/quickstart-local/) (5 minutes) and [Local Mode in depth](https://uncage.vercel.app/docs/reference/local-mode/).
+When the agent runs on the same machine as your app (an internal tool, a dev dashboard), skip the hub: run `npx uncage serve --workspace <dir>`, add a same-origin proxy route (`createUncageHandler()` from `@uncage/server/proxy`) and render `<AgentChat>`. See the [Local Mode quickstart](https://uncage-dev.vercel.app/docs/start/quickstart-local/) (5 minutes) and [Local Mode in depth](https://uncage-dev.vercel.app/docs/reference/local-mode/).
 
 ## Documentation
 
 | | |
 | --- | --- |
-| [How it works](https://uncage.vercel.app/docs/start/how-it-works/) | Architecture and the connect → task → tool call → result sequence |
-| [Concepts](https://uncage.vercel.app/docs/concepts/) · [Trust model](https://uncage.vercel.app/docs/concepts/trust-model/) | The vocabulary, and what a website can and cannot do on a user’s computer |
-| [Guides](https://uncage.vercel.app/docs/guides/define-tools/) | Tools, skills, `selectManifest`, site storage, multi-node, auth and `/device`, custom UI, local policy |
-| [Reference](https://uncage.vercel.app/docs/reference/cli/) | CLI, HTTP API, error codes, security, troubleshooting, generated TypeScript API |
-| [For coding agents](https://uncage.vercel.app/docs/start/for-coding-agents/) | Every page as markdown (`.md`), `llms.txt`, `llms-full.txt`, the Uncage skill, copy-paste prompts |
+| [How it works](https://uncage-dev.vercel.app/docs/start/how-it-works/) | Architecture and the connect → task → tool call → result sequence |
+| [Concepts](https://uncage-dev.vercel.app/docs/concepts/) · [Trust model](https://uncage-dev.vercel.app/docs/concepts/trust-model/) | The vocabulary, and what a website can and cannot do on a user’s computer |
+| [Guides](https://uncage-dev.vercel.app/docs/guides/define-tools/) | Tools, skills, `selectManifest`, site storage, multi-node, auth and `/device`, custom UI, local policy |
+| [Reference](https://uncage-dev.vercel.app/docs/reference/cli/) | CLI, HTTP API, error codes, security, troubleshooting, generated TypeScript API |
+| [For coding agents](https://uncage-dev.vercel.app/docs/start/for-coding-agents/) | Every page as markdown (`.md`), `llms.txt`, `llms-full.txt`, the Uncage skill, copy-paste prompts |
 
-中文：[概览](https://uncage.vercel.app/docs/zh-cn/)、[快速上手](https://uncage.vercel.app/docs/zh-cn/start/quickstart-connected/)、[概念](https://uncage.vercel.app/docs/zh-cn/concepts/)。
+中文：[概览](https://uncage-dev.vercel.app/docs/zh-cn/)、[快速上手](https://uncage-dev.vercel.app/docs/zh-cn/start/quickstart-connected/)、[概念](https://uncage-dev.vercel.app/docs/zh-cn/concepts/)。
 
 ## Packages
 

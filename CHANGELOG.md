@@ -12,7 +12,7 @@ Connected Mode: let a website drive Claude Code on its users' own computers. All
 - `runtime-claude` hardening for site tools and skills (schema complexity guard, destructive-action confirmation, `.claude` symlink fence). Site skills can never run shell: inline `` !`cmd` `` / ```` ```! ```` blocks are neutralized and `disableSkillShellExecution` is set for runs with site skills.
 - Local Mode fixes: last session restored on reload, first-prompt session titles with newest-first sorting, clearer proxy 403 messages, `createUncageNodeHandler` for Express/Fastify, `uncage doctor` flags (`--port`, `UNCAGE_URL`), lighter browser client without zod.
 - Composer features from 0.1.x stay (model, reasoning effort, permission modes, attachments, voice input).
-- Reference site `examples/connected-demo` and a help site for developers and coding agents: https://uncage.vercel.app/docs/
+- Reference site `examples/connected-demo` and a help site for developers and coding agents: https://uncage-dev.vercel.app/docs/
 
 ## 0.1.1 — 2026-11-07
 

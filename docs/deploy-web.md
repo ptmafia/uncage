@@ -6,16 +6,16 @@
 
 推荐复用现在那个 `connected-demo` 项目（它的网址会从报错页变成官网）。也可以新建项目，设置相同。
 
-> **合并前先确认网址。** 确保 Vercel 项目名是 `uncage`，并且 https://uncage.vercel.app 能打开这个项目（这个分支的预览部署就够了）。如果这个名字已被占用，**先停下来定好最终域名**：每个 npm 包的 homepage、各个 README 和帮助站的默认地址（`apps/docs/src/nav.mjs` 的 `SITE_ORIGIN`）都指向它，要在合并前一次性改完。
+> **网址已定为 https://uncage-dev.vercel.app。** 每个 npm 包的 homepage、各个 README 和帮助站的默认地址（`apps/docs/src/nav.mjs` 的 `SITE_ORIGIN`）都指向它。以后换域名（例如绑定自定义域名）时，要把这些引用一次性改掉，并同步 `SITE_URL`。
 
 1. 打开项目 → **Settings → General**：
-   - **Project Name**：改成 `uncage`（网址变为 `uncage.vercel.app`；如果被占用，见上面的提示，不要直接用分配到的名字）。
+   - **Project Name**：`uncage-dev`（对应 `uncage-dev.vercel.app`）。
    - **Root Directory**：留空（仓库根目录 `./`）。
    - **Framework Preset**：`Other`。
    - **Build / Install / Output**：全部关掉 Override，由仓库根目录的 `vercel.json` 决定（`node scripts/build-web.mjs`，输出 `apps/site/dist`）。
    - **Node.js Version**：22.x 或更高。
 2. **Settings → Environment Variables**（Production 和 Preview 都加）：
-   - `SITE_URL` = 最终网址，例如 `https://uncage.vercel.app`（不带结尾 `/`）。用于 canonical、sitemap、OG 图、llms.txt。
+   - `SITE_URL` = 最终网址，`https://uncage-dev.vercel.app`（不带结尾 `/`）。用于 canonical、sitemap、OG 图、llms.txt。
    - `PUBLIC_DEMO_URL` = 第 2 步得到的 demo 地址（先不填也行，"在线体验"页会显示"本地运行 demo"的说明，不会出现死链）。
    - `ENABLE_EXPERIMENTAL_COREPACK` = `1`：让 Vercel 按根目录 `package.json` 的 `packageManager` 使用 pnpm 10（不设可能用别的 pnpm 版本）。第一次构建时在日志里确认 pnpm 版本。
 3. **Deployments → Redeploy**（或合并 PR 后自动部署）。

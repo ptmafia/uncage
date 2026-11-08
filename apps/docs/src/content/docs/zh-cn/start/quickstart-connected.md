@@ -17,8 +17,8 @@ description: 把 Uncage 接进一个 Next.js 应用，让已登录的用户连�
 如果你在用 Claude Code、Codex 或其他 coding agent，可以把下面这段直接贴给它，代替手动操作：
 
 ```text wrap
-Add Uncage Connected Mode to this Next.js (App Router) app, following https://uncage.vercel.app/docs/start/quickstart-connected.md exactly.
-Read https://uncage.vercel.app/docs/skills/uncage/SKILL.md first and follow its rules.
+Add Uncage Connected Mode to this Next.js (App Router) app, following https://uncage-dev.vercel.app/docs/start/quickstart-connected.md exactly.
+Read https://uncage-dev.vercel.app/docs/skills/uncage/SKILL.md first and follow its rules.
 1. Install @uncage/hub, @uncage/react-ui and zod.
 2. Create lib/auth.ts, lib/tools.ts, lib/uncage-hub.ts, lib/hub-registry.ts, server.ts, app/uncage/page.tsx, app/device/page.tsx, app/device/actions.ts, app/device/approve-page.tsx and the headers in next.config.ts, as on that page.
 3. Wire lib/auth.ts to this app's existing sign-in (find how the app reads the current user). Do not keep the development user unless the app has no sign-in at all.

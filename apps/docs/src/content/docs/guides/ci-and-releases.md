@@ -74,4 +74,4 @@ pnpm --filter docs check            # sample type-check + full build with link v
 - **Links** to other pages are absolute and include the base: `/docs/guides/define-tools/`. The build fails on a broken internal link or anchor (`starlight-links-validator`).
 - **API reference** (`/api/…`) is generated at build time from the packages’ TypeScript (TypeDoc + `typedoc-plugin-markdown`, via `starlight-typedoc`); improve it by improving the TSDoc comments in the source.
 - **For agents:** every page is also served as `/<page>.md`; `/llms.txt`, `/llms-full.txt` and `/skills/uncage/SKILL.md` are generated from the pages and from `skills/uncage/SKILL.md` at the repository root.
-- **Deploy:** `.github/workflows/docs.yml` builds the site and deploys it to GitHub Pages (`https://uncage.vercel.app/docs/`) on every push to `main`. One-time: repository Settings → Pages → Build and deployment → Source: **GitHub Actions**.
+- **Deploy:** `.github/workflows/docs.yml` builds the site and deploys it to GitHub Pages (`https://uncage-dev.vercel.app/docs/`) on every push to `main`. One-time: repository Settings → Pages → Build and deployment → Source: **GitHub Actions**.
