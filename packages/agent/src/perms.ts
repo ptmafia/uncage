@@ -2,12 +2,15 @@ import { execFile } from 'node:child_process';
 import { chmod, rename as fsRename, stat } from 'node:fs/promises';
 import { userInfo } from 'node:os';
 import { promisify } from 'node:util';
+import { execTarget } from './exe.js';
 
 /** Runs a command without a shell (same shape as the agent's `ExecFn`). */
 export type PermsExec = (file: string, args: string[]) => Promise<{ stdout: string; stderr: string }>;
 
 const execFileAsync = promisify(execFile);
-const defaultExec: PermsExec = async (file, args) => {
+const defaultExec: PermsExec = async (file0, args0) => {
+  // Windows: `icacls` from System32, never a planted one in the current directory.
+  const { file, args } = await execTarget(file0, args0);
   const r = await execFileAsync(file, args, { encoding: 'utf8', windowsHide: true });
   return { stdout: r.stdout, stderr: r.stderr };
 };

@@ -29,7 +29,7 @@ import { materializeSkills, type MaterializedSkill } from '@uncage/protocol/node
 import { NO_ALLOW_ONCE_WARNING, permissionDecision, toPermissionResponse } from './approvals.js';
 import { defaultCapabilities, mapCapabilities } from './capabilities.js';
 import { createAcpMapper } from './map.js';
-import { AcpProtocolError, startAcpProcess, type AcpProcess } from './process.js';
+import { AcpProtocolError, startAcpProcess, stopAcpProcess, type AcpProcess } from './process.js';
 import { toPromptBlocks } from './prompt.js';
 import { siteMcpDeclaration, startSiteMcpServer, type SiteMcpServer } from './site-mcp.js';
 import { ACP_SKILLS_ROOT, skillsPreamble } from './skills.js';
@@ -62,6 +62,8 @@ export interface AcpAdapterOptions {
   loadTimeoutMs?: number;
   /** After `session/cancel`, kill the agent if the prompt has not resolved within this many ms. Defaults to 10 s. */
   cancelGraceMs?: number;
+  /** `dispose()` waits this long for the agent to exit, then force-kills it and resolves. Defaults to 5 s. */
+  disposeTimeoutMs?: number;
 }
 
 const ID_PATTERN = /^acp-[a-z][a-z0-9-]{0,31}$/;
@@ -433,6 +435,15 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
           // Same or stricter: the agent asks at least as often; Uncage applies the mode to what it is asked.
           yield { type: 'warning', code: 'acp_set_mode_failed', message };
         }
+      } else if (
+        modes &&
+        modes.currentModeId !== permissionMode &&
+        MODE_LOOSENESS[modes.currentModeId] !== undefined &&
+        looseness(modes.currentModeId) > looseness(permissionMode)
+      ) {
+        // The agent (e.g. a resumed session) sits in a known looser mode and offers no way back to the
+        // website's mode: refuse, like a failed set_mode. Unknown agent modes keep the ruling above.
+        return yield failed('policy_denied', `${o.displayName} is in ${modes.currentModeId} mode and offers no ${permissionMode} mode to switch to.`);
       }
 
       let blocks;
@@ -558,8 +569,8 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
       if (!c) return;
       const conn = await c.catch(() => undefined);
       if (!conn) return;
-      conn.proc.kill();
-      await conn.proc.exited;
+      // Bounded: on Windows a grandchild holding the pipes could otherwise keep this waiting forever.
+      await stopAcpProcess(conn.proc, o.disposeTimeoutMs ?? 5_000);
     },
   };
 }

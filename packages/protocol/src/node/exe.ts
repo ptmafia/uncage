@@ -158,6 +158,58 @@ export function systemCmd(env: NodeJS.ProcessEnv): string | undefined {
   return undefined;
 }
 
+/** Windows tools that live in `System32` (PowerShell 5.1 in its own folder below it). */
+const SYSTEM_TOOLS: Record<string, string[]> = {
+  icacls: ['icacls.exe'],
+  schtasks: ['schtasks.exe'],
+  reg: ['reg.exe'],
+  taskkill: ['taskkill.exe'],
+  rundll32: ['rundll32.exe'],
+  whoami: ['whoami.exe'],
+  cmd: ['cmd.exe'],
+  powershell: ['WindowsPowerShell', 'v1.0', 'powershell.exe'],
+};
+
+/** A Windows system tool `systemTool` knows (`icacls`, `schtasks`, `reg`, `taskkill`, `rundll32`, `whoami`, `cmd`, `powershell`). */
+export type SystemToolName = 'icacls' | 'schtasks' | 'reg' | 'taskkill' | 'rundll32' | 'whoami' | 'cmd' | 'powershell';
+
+/** Whether `name` (with or without `.exe`) is a tool `systemTool` maps. */
+export function isSystemTool(name: string): name is SystemToolName {
+  return Object.hasOwn(SYSTEM_TOOLS, name.toLowerCase().replace(/\.exe$/, ''));
+}
+
+/**
+ * The absolute path of a Windows system tool: `%SystemRoot%\System32\<name>.exe` (PowerShell:
+ * `…\System32\WindowsPowerShell\v1.0\powershell.exe`), with `C:\Windows` when `SystemRoot` /
+ * `windir` is unset or not absolute. Started by bare name, Windows would look in the current
+ * directory first (a planted `schtasks.exe` in a checkout would run). Other platforms: `name` unchanged.
+ */
+export function systemTool(name: SystemToolName, o: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv } = {}): string {
+  if ((o.platform ?? process.platform) !== 'win32') return name;
+  const env = o.env ?? process.env;
+  const set = envGet(env, 'SystemRoot', true) ?? envGet(env, 'windir', true);
+  const root = set && win32.isAbsolute(set) && !CMD_UNSAFE.test(set) ? set : 'C:\\Windows';
+  return win32.join(root, 'System32', ...SYSTEM_TOOLS[name.toLowerCase().replace(/\.exe$/, '')]!);
+}
+
+/**
+ * What to hand `execFile` / `spawn` for `file` without ever searching the current directory. POSIX,
+ * or a path (absolute or with a separator): `file` unchanged. Windows bare names: a known system
+ * tool → `systemTool`; anything else → `resolveCommand` (PATH only; npm shims and `.cmd` files made
+ * startable without a shell). Null when a bare name is not found.
+ */
+export async function safeExecFile(
+  file: string,
+  args: string[],
+  o: ResolveOptions = {},
+): Promise<{ file: string; args: string[] } | null> {
+  const platform = o.platform ?? process.platform;
+  if (platform !== 'win32' || /[\\/]/.test(file)) return { file, args };
+  if (isSystemTool(file)) return { file: systemTool(file.toLowerCase().replace(/\.exe$/, '') as SystemToolName, { platform, ...(o.env ? { env: o.env } : {}) }), args };
+  const r = await resolveCommand(file, args, o);
+  return r ? { file: r.file, args: r.args } : null;
+}
+
 /** Shims are a few hundred bytes; anything bigger is not one. */
 const MAX_SHIM_BYTES = 16 * 1024;
 

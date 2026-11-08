@@ -135,7 +135,8 @@ describe('uncage setup', () => {
     for (const [platform, file, args] of [
       ['darwin', 'open', [expect.stringContaining('/device?code=')]],
       ['linux', 'xdg-open', [expect.stringContaining('/device?code=')]],
-      ['win32', 'rundll32', ['url.dll,FileProtocolHandler', expect.stringContaining('/device?code=')]],
+      // Absolute System32 path on Windows (never looked up in the current directory).
+      ['win32', expect.stringMatching(/\\System32\\rundll32\.exe$/i), ['url.dll,FileProtocolHandler', expect.stringContaining('/device?code=')]],
     ] as const) {
       const exec = okExec();
       await runSetup({ url: origin, home: await tmpHome(), fetch, exec, out: approver(hub).out, noDaemon: true, platform, sleep: fastSleep });

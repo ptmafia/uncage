@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { cmdLine, findCommand, isCmdLine, parseNpmCmdShim, resolveCommand, systemCmd, UnsafeCommandError } from './exe.js';
+import { cmdLine, findCommand, isCmdLine, isSystemTool, parseNpmCmdShim, resolveCommand, safeExecFile, systemCmd, systemTool, UnsafeCommandError } from './exe.js';
 
 // CI runs this file on ubuntu, macos and windows (the platform is injected where it matters).
 
@@ -153,5 +153,36 @@ describe('resolveCommand', () => {
     expect(await resolveCommand('plain', [], o)).toBeNull();
     expect(await resolveCommand('missing', [], o)).toBeNull();
   });
-});
 
+  describe('systemTool', () => {
+    const win = { platform: 'win32' as const };
+    it('maps system tools to absolute System32 paths on Windows', () => {
+      const env = { SystemRoot: 'D:\\Win' };
+      expect(systemTool('icacls', { ...win, env })).toBe('D:\\Win\\System32\\icacls.exe');
+      expect(systemTool('schtasks', { ...win, env })).toBe('D:\\Win\\System32\\schtasks.exe');
+      expect(systemTool('reg', { ...win, env })).toBe('D:\\Win\\System32\\reg.exe');
+      expect(systemTool('taskkill', { ...win, env })).toBe('D:\\Win\\System32\\taskkill.exe');
+      expect(systemTool('rundll32', { ...win, env })).toBe('D:\\Win\\System32\\rundll32.exe');
+      expect(systemTool('powershell', { ...win, env })).toBe('D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+      // windir when SystemRoot is unset (case-insensitive names); C:\Windows when neither is usable.
+      expect(systemTool('reg', { ...win, env: { WINDIR: 'E:\\W' } })).toBe('E:\\W\\System32\\reg.exe');
+      expect(systemTool('reg', { ...win, env: {} })).toBe('C:\\Windows\\System32\\reg.exe');
+      expect(systemTool('reg', { ...win, env: { SystemRoot: 'relative' } })).toBe('C:\\Windows\\System32\\reg.exe');
+    });
+    it('leaves names alone elsewhere', () => {
+      expect(systemTool('icacls', { platform: 'linux' })).toBe('icacls');
+      expect(isSystemTool('Schtasks.exe')).toBe(true);
+      expect(isSystemTool('claude')).toBe(false);
+    });
+    it('safeExecFile never hands a bare name to Windows', async () => {
+      const env = { SystemRoot: 'C:\\Windows', Path: '' };
+      expect(await safeExecFile('icacls', ['x'], { ...win, env })).toEqual({ file: 'C:\\Windows\\System32\\icacls.exe', args: ['x'] });
+      expect(await safeExecFile('powershell.exe', [], { ...win, env })).toEqual({ file: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', args: [] });
+      // Not a system tool and not on PATH: null (never the current directory).
+      expect(await safeExecFile('not-a-tool', [], { ...win, env })).toBeNull();
+      // POSIX and paths pass through.
+      expect(await safeExecFile('icacls', ['a'], { platform: 'darwin' })).toEqual({ file: 'icacls', args: ['a'] });
+      expect(await safeExecFile('C:\\x\\y.exe', [], { ...win, env })).toEqual({ file: 'C:\\x\\y.exe', args: [] });
+    });
+  });
+});

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { resolveCommand as sharedResolveCommand } from '@uncage/protocol/node';
-import { openUrlCommand, resolveCommand, selfUpgradeCommand } from './exe.js';
+import { execTarget, openUrlCommand, resolveCommand, selfUpgradeCommand } from './exe.js';
 
 const cleanups: string[] = [];
 afterEach(async () => {
@@ -58,6 +58,20 @@ describe('openUrlCommand', () => {
   it('uses open / xdg-open / rundll32', () => {
     expect(openUrlCommand('https://x.test/d?c=1', 'darwin')).toEqual(['open', ['https://x.test/d?c=1']]);
     expect(openUrlCommand('https://x.test/d?c=1', 'linux')).toEqual(['xdg-open', ['https://x.test/d?c=1']]);
-    expect(openUrlCommand('https://x.test/d?c=1', 'win32')).toEqual(['rundll32', ['url.dll,FileProtocolHandler', 'https://x.test/d?c=1']]);
+    const [file, args] = openUrlCommand('https://x.test/d?c=1', 'win32');
+    // Absolute (never looked up in the current directory).
+    expect(file).toMatch(/^[A-Za-z]:\\.*\\System32\\rundll32\.exe$/i);
+    expect(args).toEqual(['url.dll,FileProtocolHandler', 'https://x.test/d?c=1']);
+  });
+});
+
+describe('execTarget', () => {
+  it('maps Windows system tools to System32 and refuses unknown bare names', async () => {
+    const win = { platform: 'win32' as const, env: { SystemRoot: 'C:\\Windows', Path: '' } };
+    expect(await execTarget('icacls', ['f'], win)).toEqual({ file: 'C:\\Windows\\System32\\icacls.exe', args: ['f'] });
+    expect(await execTarget('schtasks', ['/query'], win)).toEqual({ file: 'C:\\Windows\\System32\\schtasks.exe', args: ['/query'] });
+    expect((await execTarget('powershell.exe', [], win)).file).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+    await expect(execTarget('git', [], win)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await execTarget('icacls', ['f'], { platform: 'linux' })).toEqual({ file: 'icacls', args: ['f'] });
   });
 });

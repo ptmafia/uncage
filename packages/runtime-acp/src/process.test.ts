@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { fakeAcpPath } from '@uncage/testkit';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CLIENT_INFO, stopAcpProcess, treeKillArgv } from './process.js';
+import pkg from '../package.json' with { type: 'json' };
 
 const run = promisify(execFile);
 const dirs: string[] = [];
@@ -55,3 +57,31 @@ process.exit(0);
     expect(alive(child)).toBe(false);
   });
 });
+
+describe('stopping an agent', () => {
+  it('Windows tree kill: the absolute taskkill on the pid, /t /f', () => {
+    expect(treeKillArgv(4242, { SystemRoot: 'C:\\Windows' })).toEqual(['C:\\Windows\\System32\\taskkill.exe', ['/pid', '4242', '/t', '/f']]);
+    expect(treeKillArgv(7, {})[0]).toBe('C:\\Windows\\System32\\taskkill.exe');
+  });
+
+  it('stopAcpProcess resolves once the agent exits', async () => {
+    const kill = vi.fn();
+    expect(await stopAcpProcess({ kill, exited: Promise.resolve({ code: 0, signal: null, stderrTail: '' }) }, 1_000)).toBe('exited');
+    expect(kill.mock.calls).toEqual([[]]);
+  });
+
+  it('stopAcpProcess never hangs: past the timeout it force-kills and resolves', async () => {
+    const kill = vi.fn();
+    const t0 = Date.now();
+    // `exited` never settles (a grandchild holds the pipes).
+    expect(await stopAcpProcess({ kill, exited: new Promise(() => undefined) }, 100)).toBe('timeout');
+    expect(Date.now() - t0).toBeLessThan(2_000);
+    expect(kill.mock.calls).toEqual([[], [true]]);
+  });
+
+  it('clientInfo carries the real package version', () => {
+    expect(CLIENT_INFO.version).toBe(pkg.version);
+    expect(CLIENT_INFO.version).not.toBe('0.0.0');
+  });
+});
+

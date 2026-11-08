@@ -582,5 +582,17 @@ describe('acpAdapter', () => {
       expect(messageText(stricter.events)).toBe('mode: default');
       expect(stricter.events.at(-1)).toEqual({ type: 'run.completed' });
     });
+
+    it('an agent in a known looser mode that offers no way to the website mode fails closed', async () => {
+      const run = (modes: string, permissionMode: 'default' | 'acceptEdits') =>
+        runFake('modes', { input: { settings: { permissionMode } }, adapter: { env: { FAKE_ACP_MODES: modes } } });
+      // In bypassPermissions, website wants default, which the agent does not offer.
+      const looser = await run('bypassPermissions,acceptEdits', 'default');
+      expect(looser.events.at(-1)).toEqual({ type: 'run.failed', error: expect.objectContaining({ code: 'policy_denied' }) });
+      expect(methodsIn(looser.file)).not.toContain('session/prompt');
+      // Unknown agent modes keep the current ruling (the run goes on).
+      const unknown = await run('yolo,plan', 'default');
+      expect(unknown.events.at(-1)).toEqual({ type: 'run.completed' });
+    });
   });
 });

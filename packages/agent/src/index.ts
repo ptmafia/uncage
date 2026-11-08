@@ -44,6 +44,7 @@ export { dialHttp, MAX_UPSTREAM_MESSAGE_BYTES } from './transport/http.js';
 export { dialWs } from './transport/ws.js';
 export { FrameTooLargeError, type AgentLink, type DialOptions, type LinkEnd } from './transport/types.js';
 export {
+  execTarget,
   openUrlCommand,
   parseNpmCmdShim,
   resolveCommand,

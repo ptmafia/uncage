@@ -1,5 +1,5 @@
-import { spawn } from 'node:child_process';
-import { isCmdLine, resolveCommand } from '@uncage/protocol/node';
+import { spawn, spawnSync } from 'node:child_process';
+import { isCmdLine, resolveCommand, systemTool } from '@uncage/protocol/node';
 import { Readable, Writable } from 'node:stream';
 import {
   client,
@@ -13,6 +13,7 @@ import {
   type RequestPermissionResponse,
   type SessionNotification,
 } from '@agentclientprotocol/sdk';
+import pkg from '../package.json' with { type: 'json' };
 
 /**
  * Uncage does not serve `fs/*` or `terminal/*` to agents: they use their own tools on the workspace,
@@ -20,7 +21,7 @@ import {
  */
 export const CLIENT_CAPABILITIES: ClientCapabilities = { fs: { readTextFile: false, writeTextFile: false }, terminal: false };
 
-export const CLIENT_INFO = { name: 'uncage', title: 'Uncage', version: '0.0.0' };
+export const CLIENT_INFO = { name: 'uncage', title: 'Uncage', version: pkg.version };
 
 const STDERR_TAIL_BYTES = 4096;
 const KILL_GRACE_MS = 2000;
@@ -37,7 +38,37 @@ export interface AcpProcess {
   readonly init: InitializeResponse;
   readonly pid: number | undefined;
   readonly exited: Promise<AcpExit>;
-  kill(): void;
+  /**
+   * Stops the agent and whatever it started. POSIX: SIGTERM to its process group, SIGKILL after a
+   * grace period. Windows: `taskkill /t /f` on its process tree (npx / cmd.exe agents run the real
+   * agent as a grandchild) and its stdin ended. `force`: SIGKILL / tree kill at once, and our ends of
+   * its stdio pipes closed, so `exited` settles even if a grandchild still holds them.
+   */
+  kill(force?: boolean): void;
+}
+
+/** Windows: the tree kill for `pid` (`%SystemRoot%\System32\taskkill.exe /pid <pid> /t /f`, never a bare name). */
+export function treeKillArgv(pid: number, env: NodeJS.ProcessEnv = process.env): [string, string[]] {
+  return [systemTool('taskkill', { platform: 'win32', env }), ['/pid', String(pid), '/t', '/f']];
+}
+
+/**
+ * `kill()`, then waits for `exited` at most `timeoutMs`; past that, force-kills and resolves anyway
+ * (`'timeout'`), so a caller (`dispose`, `uncage runtimes`, `uncage doctor`) never blocks forever.
+ */
+export async function stopAcpProcess(p: Pick<AcpProcess, 'kill' | 'exited'>, timeoutMs: number): Promise<'exited' | 'timeout'> {
+  p.kill();
+  let timer: NodeJS.Timeout | undefined;
+  const r = await Promise.race([
+    p.exited.then(() => 'exited' as const),
+    new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), timeoutMs);
+      timer.unref?.();
+    }),
+  ]);
+  clearTimeout(timer);
+  if (r === 'timeout') p.kill(true);
+  return r;
 }
 
 export interface AcpClientHandlers {
@@ -45,11 +76,15 @@ export interface AcpClientHandlers {
   onPermission(req: RequestPermissionRequest, signal: AbortSignal): Promise<RequestPermissionResponse>;
 }
 
-/** Process groups of agents still possibly alive (POSIX). */
+/** Process groups (POSIX) / process tree roots (Windows) of agents still possibly alive. */
 const liveGroups = new Set<number>();
+const liveWinPids = new Set<number>();
 let exitHooked = false;
 
-/** SIGKILLs every agent process group still known. Synchronous: runs from `process.on('exit')`. */
+/**
+ * SIGKILLs every agent process group still known (POSIX); tree-kills every agent still known with
+ * `taskkill /t /f` (Windows, best effort). Synchronous: runs from `process.on('exit')`.
+ */
 export function killAllAgentGroups(): void {
   for (const pgid of liveGroups) {
     try {
@@ -59,15 +94,26 @@ export function killAllAgentGroups(): void {
     }
   }
   liveGroups.clear();
+  for (const pid of liveWinPids) {
+    try {
+      const [file, args] = treeKillArgv(pid);
+      spawnSync(file, args, { stdio: 'ignore', windowsHide: true, timeout: 5_000 });
+    } catch {
+      // Best effort.
+    }
+  }
+  liveWinPids.clear();
 }
 
+function hookExit(): void {
+  if (exitHooked) return;
+  exitHooked = true;
+  // However this process ends (process.exit included), no agent or grandchild outlives it.
+  process.on('exit', killAllAgentGroups);
+}
 function trackGroup(pgid: number): void {
   liveGroups.add(pgid);
-  if (!exitHooked) {
-    exitHooked = true;
-    // However this process ends (process.exit included), no agent or grandchild outlives it.
-    process.on('exit', killAllAgentGroups);
-  }
+  hookExit();
 }
 const untrackGroup = (pgid: number): void => void liveGroups.delete(pgid);
 
@@ -162,6 +208,26 @@ export async function startAcpProcess(o: {
   // POSIX: the agent leads its own process group; remember it until the group has been killed.
   const pgid = !windows && proc.pid !== undefined ? proc.pid : undefined;
   if (pgid !== undefined) trackGroup(pgid);
+  // Windows: no process groups; remember the tree root for the exit hook.
+  const winPid = windows ? proc.pid : undefined;
+  if (winPid !== undefined) {
+    liveWinPids.add(winPid);
+    hookExit();
+  }
+  let treeKilled = false;
+  /** Windows: `taskkill /t /f` on the agent's tree (absolute path), once. */
+  const treeKill = (): void => {
+    if (winPid === undefined || treeKilled) return;
+    treeKilled = true;
+    liveWinPids.delete(winPid);
+    try {
+      const [file, args] = treeKillArgv(winPid, o.env);
+      const tk = spawn(file, args, { stdio: 'ignore', windowsHide: true });
+      tk.on('error', () => undefined);
+    } catch {
+      // Falls back to killing the direct child below.
+    }
+  };
   /** Signals the agent's whole process group (POSIX; even after the leader exited), else the agent. */
   const signalGroup = (sig: NodeJS.Signals): void => {
     if (pgid !== undefined) {
@@ -180,18 +246,33 @@ export async function startAcpProcess(o: {
    * when the leader exited meanwhile (its children may still run); a process exit before that is
    * covered by the exit hook.
    */
-  const kill = (): void => {
-    if (killTimer) return;
-    signalGroup('SIGTERM');
-    killTimer = setTimeout(() => {
+  const kill = (force = false): void => {
+    if (windows) {
+      proc.stdin.end();
+      treeKill();
+      if (!exitedFlag) proc.kill(force ? 'SIGKILL' : 'SIGTERM');
+    } else if (force) {
       signalGroup('SIGKILL');
       if (pgid !== undefined) untrackGroup(pgid);
-    }, KILL_GRACE_MS);
-    killTimer.unref();
+    } else if (!killTimer) {
+      signalGroup('SIGTERM');
+      killTimer = setTimeout(() => {
+        signalGroup('SIGKILL');
+        if (pgid !== undefined) untrackGroup(pgid);
+      }, KILL_GRACE_MS);
+      killTimer.unref();
+    }
+    if (force) {
+      // A grandchild may still hold the pipes: close our ends so `close` (and `exited`) can fire.
+      proc.stdout.destroy();
+      proc.stderr.destroy();
+      proc.stdin.destroy();
+    }
   };
-  // The agent exited by itself: whatever it left behind in its group goes too.
+  // The agent exited by itself: whatever it left behind in its group / tree goes too.
   void exited.then(() => {
     if (pgid !== undefined) kill();
+    else if (winPid !== undefined) treeKill();
   });
 
   const app = client({ name: 'uncage' })

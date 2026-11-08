@@ -4,7 +4,8 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { AGENT_VERSION, compareVersions, fetchAgentInfo, loadAgentConfig } from '@uncage/agent';
 import { redactForExport } from '@uncage/core';
-import { checkUserOnly, resolveCommand, type ExecFn } from '@uncage/agent';
+import { checkUserOnly, execTarget, resolveCommand, type ExecFn } from '@uncage/agent';
+import { isCmdLine } from '@uncage/protocol/node';
 import type { RuntimeAdapter } from '@uncage/protocol';
 import { DEFAULT_PORT, type UncageConfig } from './config.js';
 import { projectAcpCommands } from './acp.js';
@@ -147,12 +148,15 @@ export async function serviceChecks(o: {
   return checks;
 }
 
-const defaultDoctorExec: ExecFn = (file, args) =>
-  new Promise((done, fail) => {
+const defaultDoctorExec: ExecFn = async (file0, args0) => {
+  // Windows: system tools from System32, other bare names from PATH (never the current directory).
+  const { file, args } = await execTarget(file0, args0);
+  return new Promise((done, fail) => {
     execFile(file, args, { encoding: 'utf8', timeout: 10_000, windowsHide: true }, (err, stdout, stderr) =>
       err ? fail(Object.assign(err, { stdout, stderr })) : done({ stdout, stderr }),
     );
   });
+};
 
 export const DOCTOR_HELP = `uncage doctor - check the local Uncage setup
 
@@ -285,9 +289,13 @@ async function readToken(path: string): Promise<string | undefined> {
 }
 
 /** Exit code of `git <args>` run in `cwd`, or null when git cannot be started (e.g. not installed). */
-function gitExit(git: string, args: string[], cwd: string): Promise<number | null> {
+async function gitExit(git: string, args0: string[], cwd: string): Promise<number | null> {
+  // Windows: resolve git on PATH first (execFile would look in `cwd`, the workspace, before PATH).
+  const target = await execTarget(git, args0).catch(() => null);
+  if (!target) return null;
+  const { file, args } = target;
   return new Promise((done) => {
-    execFile(git, args, { cwd, timeout: 5000 }, (err) => {
+    execFile(file, args, { cwd, timeout: 5000, windowsHide: true, ...(process.platform === 'win32' && isCmdLine(file, args) ? { windowsVerbatimArguments: true } : {}) }, (err) => {
       if (!err) return done(0);
       const code = (err as NodeJS.ErrnoException & { code?: unknown }).code;
       done(typeof code === 'number' ? code : null);

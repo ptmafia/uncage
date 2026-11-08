@@ -7,7 +7,7 @@ import pino from 'pino';
 import pkg from '../package.json' with { type: 'json' };
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { selfUpgradeCommand } from './exe.js';
+import { execTarget, selfUpgradeCommand } from './exe.js';
 import { agentDir, ensureAgentDir, updateAgentSites, type AgentConfig } from './config.js';
 import { DEFAULT_TIMING, SiteAgent, type AgentLogger, type AgentTiming, type SiteState } from './site.js';
 
@@ -28,10 +28,13 @@ export function createAgentLogger(level = process.env.UNCAGE_LOG_LEVEL ?? 'info'
 export type ExecFn = (file: string, args: string[]) => Promise<{ stdout: string; stderr: string }>;
 const execFileAsync = promisify(execFile);
 /**
- * Runs a command without a shell. On Windows the console window is hidden, and a `cmd.exe /d /s /c
- * "<line>"` from `resolveCommand` is passed verbatim (Node would otherwise re-quote the line).
+ * Runs a command without a shell. On Windows the console window is hidden, a bare name never comes
+ * from the current directory (system tools run from `System32`, anything else is resolved on PATH),
+ * and a `cmd.exe /d /s /c "<line>"` from `resolveCommand` is passed verbatim (Node would otherwise
+ * re-quote the line).
  */
-export const defaultExec: ExecFn = async (file, args) => {
+export const defaultExec: ExecFn = async (file0, args0) => {
+  const { file, args } = await execTarget(file0, args0);
   const verbatim = process.platform === 'win32' && isCmdLine(file, args);
   const r = await execFileAsync(file, args, { encoding: 'utf8', windowsHide: true, ...(verbatim ? { windowsVerbatimArguments: true } : {}) });
   return { stdout: r.stdout, stderr: r.stderr };
