@@ -168,11 +168,17 @@ describe('uncage runtimes', () => {
     const bin = join(home, 'bin');
     await mkdir(bin);
     const log = join(home, 'npx.log');
-    // `goose` is a binary agent in the bundled registry snapshot.
-    await writeFile(join(bin, 'goose'), `#!/bin/sh\nexec "${process.execPath}" "${fakeAcpPath}" "$@"\n`);
-    await writeFile(join(bin, 'npx'), `#!/bin/sh\necho "$*" >> "${log}"\nexit 1\n`);
-    await chmod(join(bin, 'goose'), 0o755);
-    await chmod(join(bin, 'npx'), 0o755);
+    // `goose` is a binary agent in the bundled registry snapshot. On Windows only PATHEXT names are
+    // commands (never an extensionless file), so the fakes are `.cmd` files there.
+    if (process.platform === 'win32') {
+      await writeFile(join(bin, 'goose.cmd'), `@echo off\r\n"${process.execPath}" "${fakeAcpPath}" %*\r\n`);
+      await writeFile(join(bin, 'npx.cmd'), `@echo off\r\necho %* >> "${log}"\r\nexit /b 1\r\n`);
+    } else {
+      await writeFile(join(bin, 'goose'), `#!/bin/sh\nexec "${process.execPath}" "${fakeAcpPath}" "$@"\n`);
+      await writeFile(join(bin, 'npx'), `#!/bin/sh\necho "$*" >> "${log}"\nexit 1\n`);
+      await chmod(join(bin, 'goose'), 0o755);
+      await chmod(join(bin, 'npx'), 0o755);
+    }
     const acp = await setupAcp({ acp: DEFAULT_ACP_RUNTIMES, allowBypass: false, home, env: { PATH: bin } });
     expect(acp.adapters.map((a) => a.id)).toEqual(['acp-goose']);
     expect(acp.adapters[0]!.icon?.light).toMatch(/^data:image\/svg\+xml;base64,/);

@@ -162,7 +162,8 @@ describe('agent ↔ real hub', () => {
     const site = await t.pair('alice', { url: proxy.url });
     const agent = await agentFor(h, [site], [{ callTool: { name: 'slow_lookup', args: { id: 'B-2' } } }]);
     await online(t);
-    expect(agent.transports()[site.id]).toBe('ws');
+    // The hub lists the machine online on its hello, a moment before the agent reads the welcome.
+    expect(await until(() => agent.transports()[site.id], 8000, 'agent connected')).toBe('ws');
     const session = await createSession(t);
     expect((await startRun(t, session.id)).status).toBe(202);
     await until(() => started === 1, 8000, 'handler started');

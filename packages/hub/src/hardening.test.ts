@@ -2,7 +2,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { DeviceCodeResponse, Session } from '@uncage/protocol';
 import express from 'express';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CLOSE_GRACE_MS, CLOSE } from './node/ws.js';
 import { createHub, DEFAULT_HEARTBEAT } from './hub.js';
 import { attachWebSocket, pgliteHubStore, toNodeHandler } from './node/index.js';
@@ -274,7 +274,18 @@ describe('limits shared through the store (several hub instances)', () => {
   const poll = async (h: Hub, deviceCode: string) =>
     j(h.fetch(new Request('https://app.example/api/uncage/device/token', post({ deviceCode })), { clientIp: '7.7.7.7' }));
 
+  /**
+   * The limits are fixed windows aligned to multiples of the window length (by design: up to 2 × max
+   * hits can land around a boundary). Start the clock at a window start (Date only, advancing in real
+   * time) so a test's hits never straddle a boundary, whatever the wall clock says.
+   */
+  function startAtWindowStart(): void {
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.UTC(2026, 0, 1), shouldAdvanceTime: true });
+    cleanups.push(async () => void vi.useRealTimers());
+  }
+
   it('device-code limits are shared by two hub instances on one store', async () => {
+    startAtWindowStart();
     const [a, b] = await twoHubs({ rateLimits: { deviceCodesPerMinute: 2 } });
     expect((await code(a)).status).toBe(200);
     expect((await code(b)).status).toBe(200);
@@ -285,6 +296,7 @@ describe('limits shared through the store (several hub instances)', () => {
   });
 
   it('user-code guessing is shared across instances (userCodeFailures 3 over A,B,A then 429 on B)', async () => {
+    startAtWindowStart();
     const [a, b] = await twoHubs({ rateLimits: { userCodeFailures: 3 } });
     const mallory = { id: 'mallory' };
     expect(await a.approveDevice('ZZZZ-ZZZZ', mallory)).toBe('not_found');
