@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   ACP_REGISTRY_URL,
   bundledRegistry,
+  commandName,
+  fetchCapped,
   loadRegistry,
   parseRegistry,
   refreshRegistry,
@@ -46,6 +48,63 @@ describe('ACP registry', () => {
     expect(r.skipped.sort()).toEqual(['Bad Id', 'evilcmd', 'evilpkg', 'nodist']);
     expect(r.agents[0]!.distribution.binary?.['darwin-aarch64']).toEqual({ cmd: 'fakebin', args: ['acp'], env: {} });
     expect(() => parseRegistry({ agents: 'nope' })).toThrow();
+  });
+
+  it('refuses interpreter, shell and package-runner binaries and sensitive env names', () => {
+    const bin = (cmd: string, env: Record<string, string> = {}) => ({ binary: { 'linux-x86_64': { archive: 'x', cmd, args: ['acp'], env } } });
+    const entry = (id: string, distribution: unknown) => ({ id, name: id, version: '1.0.0', distribution });
+    const refused = ['node', './node.exe', 'bun', 'deno', 'python3', 'python3.12', 'ruby', 'perl', 'sh', 'bash', 'zsh', 'fish', 'env', 'cmd.exe', 'powershell', 'pwsh', 'npx', 'uvx', 'bunx', 'pnpm', 'npm', 'osascript', 'Bash'];
+    const envs = ['LD_PRELOAD', 'LD_LIBRARY_PATH', 'DYLD_INSERT_LIBRARIES', 'NODE_OPTIONS', 'NODE_PATH', 'PYTHONPATH', 'PYTHONSTARTUP', 'PATH', 'HOME', 'MY_PRELOAD'];
+    const r = parseRegistry({
+      version: '1',
+      agents: [
+        ...refused.map((c, i) => entry(`r${i}`, bin(c))),
+        ...envs.map((e, i) => entry(`e${i}`, bin('agent', { [e]: 'x' }))),
+        entry('npxenv', { npx: { package: 'a', env: { NODE_OPTIONS: '--require /tmp/x.js' } } }),
+        entry('ok', bin('agent', { AGENT_MODE: 'acp' })),
+      ],
+    });
+    expect(r.agents.map((a) => a.id)).toEqual(['ok']);
+    expect(commandName('.\\pkg\\gemini.cmd')).toBe('gemini');
+  });
+
+  it('rejects control characters in names, drops them from descriptions, keeps only https links', () => {
+    const r = parseRegistry({
+      version: '1',
+      agents: [
+        { id: 'esc', name: 'Evil\u001b[31m', version: '1', distribution: { npx: { package: 'a' } } },
+        { id: 'ver', name: 'Ver', version: '1\u0007', distribution: { npx: { package: 'a' } } },
+        { id: 'ok', name: 'Ok', version: '1', description: 'bad\u001b]8;;x', website: 'http://example.com', repository: 'https://github.com/x/y', distribution: { npx: { package: 'a' } } },
+      ],
+    });
+    expect(r.agents.map((a) => a.id)).toEqual(['ok']);
+    expect(r.agents[0]).not.toHaveProperty('description');
+    expect(r.agents[0]).not.toHaveProperty('website');
+    expect(r.agents[0]!.repository).toBe('https://github.com/x/y');
+  });
+
+  it('downloads are https only (also after redirects) and stop reading once over the cap', async () => {
+    let pulled = 0;
+    let cancelled = false;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(c) {
+        pulled++;
+        c.enqueue(new Uint8Array(64 * 1024));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const f = (async () => new Response(endless)) as unknown as typeof fetch;
+    expect(await fetchCapped('https://cdn.example.com/big', f, 100_000, 5000)).toBeUndefined();
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThan(10);
+    const plain = (async () => new Response('ok')) as unknown as typeof fetch;
+    expect(await fetchCapped('http://cdn.example.com/x', plain, 100, 5000)).toBeUndefined();
+    const redirected = (async () => Object.defineProperty(new Response('ok'), 'url', { value: 'http://evil.example.com/x' })) as unknown as typeof fetch;
+    expect(await fetchCapped('https://cdn.example.com/x', redirected, 100, 5000)).toBeUndefined();
+    expect(new TextDecoder().decode(await fetchCapped('https://cdn.example.com/x', plain, 100, 5000))).toBe('ok');
+    await expect(refreshRegistry({ cacheDir: await tmp(), fetch: plain, url: 'http://cdn.example.com/registry.json' })).rejects.toThrow(/https/);
   });
 
   it('the bundled snapshot is valid and carries official icons as data URIs (claude-acp and codex-acp too)', () => {

@@ -1,6 +1,19 @@
 import { updateAgentAcp } from '@uncage/agent';
 import type { RuntimeAdapter, RuntimeCapabilities, RuntimeProbe, RuntimeStatus } from '@uncage/protocol';
-import { ACP_PRESETS, acpName, bundledRegistry, registryRuntimeId, type AcpCatalogEntry, type AcpRegistry } from '@uncage/runtime-acp';
+import {
+  ACP_PRESETS,
+  acpName,
+  bundledRegistry,
+  consentRef,
+  createWhich,
+  hostPlatform,
+  localCommand,
+  packageName,
+  registryRuntimeId,
+  type AcpCatalogEntry,
+  type AcpRegistry,
+  type Which,
+} from '@uncage/runtime-acp';
 
 export const RUNTIMES_HELP = `uncage runtimes - the agents this computer offers to websites
 
@@ -16,8 +29,11 @@ Options:
   -h, --help  Show this help.
 
 Installed ACP agents are detected from the official ACP registry and checked with a handshake.
-Agents distributed through npx/uvx download code, so they only run after "uncage runtimes enable".
-Settings live in runtimes.acp of ~/.uncage/agent.yaml (agents, presets, autoDetect, enable, disable).`;
+After a registry refresh, an agent whose command changed waits for "uncage runtimes enable".
+Agents distributed through npx/uvx download code, so they only run after "uncage runtimes enable"
+(bound to that package: if the registry switches packages, enable it again).
+Settings live in runtimes.acp of ~/.uncage/agent.yaml: agents, presets, enable/consented, disable,
+and autoDetect (false: no detection or handshakes; only agents, presets and enabled agents run).`;
 
 const STATUS_TEXT: Record<RuntimeStatus, string> = {
   available: 'available',
@@ -69,7 +85,7 @@ function table(rows: string[][]): string[] {
 }
 
 /** Registry agents shown by default: the ones a user can act on. */
-const NOTEWORTHY = new Set<AcpCatalogEntry['status']>(['available', 'failed', 'disabled']);
+const NOTEWORTHY = new Set<AcpCatalogEntry['status']>(['available', 'failed', 'disabled', 'duplicate']);
 
 /**
  * Probes every runtime and prints id, name, status, version, site tools and resume (or JSON), then
@@ -124,10 +140,20 @@ export async function runRuntimes(o: {
 /**
  * `uncage runtimes enable|disable <id>`: records consent (or refusal) in `runtimes.acp` of
  * agent.yaml. Accepts a registry id (`claude-acp`), a preset id (`claude`) or a runtime id
- * (`acp-claude`); enable needs an agent known to the registry or a preset.
+ * (`acp-claude`); enable needs an agent known to the registry or a preset. What will run is printed
+ * before anything is written; a download consent is bound to the runner and package name.
  */
-export async function toggleRuntime(o: { home: string; id: string; enable: boolean; out: (s: string) => void; registry?: AcpRegistry }): Promise<void> {
+export async function toggleRuntime(o: {
+  home: string;
+  id: string;
+  enable: boolean;
+  out: (s: string) => void;
+  registry?: AcpRegistry;
+  /** Whether the agent is installed (defaults to PATH). */
+  which?: Which;
+}): Promise<void> {
   const registry = o.registry ?? bundledRegistry();
+  const which = o.which ?? createWhich();
   const name = acpName(o.id.trim().toLowerCase());
   const preset = ACP_PRESETS.find((p) => p.id === name || p.registryId === name);
   const agent = registry.agents.find((a) => a.id === name || a.id === preset?.registryId || registryRuntimeId(a.id) === `acp-${name}`);
@@ -136,18 +162,36 @@ export async function toggleRuntime(o: { home: string; id: string; enable: boole
   // Every spelling of this agent, so a stale entry in the other list never wins.
   const forms = new Set([name, ref, acpName(registryRuntimeId(ref)), ...(preset ? [preset.id, preset.registryId] : [])]);
   const drop = (list: string[]) => list.filter((x) => !forms.has(acpName(x)));
+  const dropConsent = (c: Record<string, string>) => Object.fromEntries(Object.entries(c).filter(([k]) => !forms.has(acpName(k))));
+  const undo = `Undo: uncage runtimes disable ${ref}.`;
+
+  let consent: string | undefined;
+  if (o.enable) {
+    const local = agent ? localCommand(agent, hostPlatform()) : undefined;
+    const installed = local ? await which(local.cmd) : preset ? await which(preset.command[0]!) : null;
+    consent = agent ? consentRef(agent) : undefined;
+    if (installed) {
+      const args = local?.args ?? preset?.command.slice(1) ?? [];
+      o.out(`Uncage will run ${[installed, ...args].join(' ')} whenever the agent starts. ${undo}`);
+      consent = undefined;
+    } else if (consent) {
+      const from = consent.startsWith('npx:') ? 'npm' : 'PyPI';
+      const pkg = packageName(agent!.distribution.npx?.package ?? agent!.distribution.uvx!.package);
+      o.out(`Uncage will download and run ${pkg} from ${from} now and whenever the agent starts. ${undo}`);
+    } else {
+      o.out(`Uncage will run ${agent?.name ?? preset?.displayName ?? ref} once it is installed. ${undo}`);
+    }
+  }
   await updateAgentAcp(o.home, (acp) =>
-    o.enable ? { ...acp, enable: [...drop(acp.enable), ref], disable: drop(acp.disable) } : { ...acp, enable: drop(acp.enable), disable: [...drop(acp.disable), ref] },
+    o.enable
+      ? {
+          ...acp,
+          enable: [...drop(acp.enable), ref],
+          consented: { ...dropConsent(acp.consented), ...(consent ? { [ref]: consent } : {}) },
+          disable: drop(acp.disable),
+        }
+      : { ...acp, enable: drop(acp.enable), consented: dropConsent(acp.consented), disable: [...drop(acp.disable), ref] },
   );
   const label = agent?.name ?? preset?.displayName ?? ref;
-  if (!o.enable) {
-    o.out(`✓ Disabled ${label} (${registryRuntimeId(ref)}).`);
-    return;
-  }
-  o.out(`✓ Enabled ${label} (${registryRuntimeId(ref)}).`);
-  const { npx, uvx } = agent?.distribution ?? {};
-  if (npx || uvx) {
-    const cmd = npx ? `npx -y ${npx.package} ${npx.args.join(' ')}` : `uvx ${uvx!.package} ${uvx!.args.join(' ')}`;
-    o.out(`  If it is not installed, Uncage runs "${cmd.trim()}", which downloads and runs code from ${npx ? 'npm' : 'PyPI'}.`);
-  }
+  o.out(`✓ ${o.enable ? 'Enabled' : 'Disabled'} ${label} (${registryRuntimeId(ref)}).`);
 }

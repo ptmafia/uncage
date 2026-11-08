@@ -64,21 +64,53 @@ const CMD = /^(?:\.[\\/])?(?:[\w.+-]+[\\/])*[\w.-]+$/;
 /** npm (`@scope/name@1.2.3`) and PyPI (`name==1.2.3`, `name[extra]`) specs; never option-like. */
 const PACKAGE = /^(?:@[a-z0-9][\w.-]*\/)?[A-Za-z0-9][\w.-]*(?:\[[\w,.-]+\])?(?:(?:@|==|>=|<=|~=)[\w.+-]+)?$/;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** C0/C1 control characters (terminal escapes): never in text shown to the user. */
+const CONTROL = /\p{Cc}/u;
+
+/**
+ * A registry binary must be the agent itself: interpreters, shells and package runners would let a
+ * registry entry run arbitrary code (`node -e …`, `sh -c …`, `npx <anything>`).
+ */
+const REFUSED_COMMANDS = new Set([
+  'node', 'nodejs', 'bun', 'deno', 'ruby', 'perl', 'php', 'lua', 'sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'csh', 'tcsh',
+  'env', 'cmd', 'powershell', 'pwsh', 'wscript', 'cscript', 'npx', 'uvx', 'bunx', 'pnpm', 'pnpx', 'npm', 'yarn', 'uv', 'pip', 'pipx',
+  'osascript', 'sudo', 'doas', 'xargs', 'exec', 'nohup', 'open', 'start',
+]);
+const isRefusedCommand = (name: string): boolean => REFUSED_COMMANDS.has(name.toLowerCase()) || /^python[\d.]*$/i.test(name);
+/** Env vars that change how a process loads code or finds programs. */
+const isSensitiveEnv = (name: string): boolean =>
+  /^(LD_|DYLD_|PYTHON)/i.test(name) || /_PRELOAD$/i.test(name) || ['NODE_OPTIONS', 'NODE_PATH', 'PATH', 'HOME', 'PATHEXT', 'COMSPEC'].includes(name.toUpperCase());
 
 const optionalText = (max: number) =>
   z
     .string()
+    .refine((s) => !CONTROL.test(s))
     .transform((s) => s.slice(0, max))
     .optional()
     .catch(undefined);
-const optionalUrl = z.string().url().max(500).optional().catch(undefined);
-const Env = z.record(z.string().regex(ENV_NAME), z.string().max(4096)).default({});
+/** https only: these links are shown and opened by websites. */
+const optionalUrl = z
+  .string()
+  .url()
+  .max(500)
+  .refine((u) => u.startsWith('https://'))
+  .optional()
+  .catch(undefined);
+const Env = z
+  .record(
+    z
+      .string()
+      .regex(ENV_NAME)
+      .refine((n) => !isSensitiveEnv(n), { message: 'sensitive environment variable' }),
+    z.string().max(4096),
+  )
+  .default({});
 const Args = z.array(z.string().max(1000)).max(50).default([]);
 
-/** `./opencode`, `.\\goose-package\\goose.exe` → `opencode`, `goose`. */
-function commandName(cmd: string): string {
+/** `./opencode`, `.\\goose-package\\goose.exe`, `gemini.cmd` → `opencode`, `goose`, `gemini`. */
+export function commandName(cmd: string): string {
   const last = cmd.split(/[\\/]/).pop() ?? cmd;
-  return last.replace(/\.exe$/i, '');
+  return last.replace(/\.(exe|cmd|bat|com)$/i, '');
 }
 
 const BinaryTarget = z.object({
@@ -86,7 +118,8 @@ const BinaryTarget = z.object({
     .string()
     .regex(CMD)
     .refine((c) => !c.split(/[\\/]/).includes('..'), { message: 'must not contain ".."' })
-    .transform(commandName),
+    .transform(commandName)
+    .refine((c) => !isRefusedCommand(c), { message: 'interpreters, shells and package runners are refused' }),
   args: Args,
   env: Env,
 });
@@ -94,8 +127,12 @@ const Package = z.object({ package: z.string().regex(PACKAGE).max(200), args: Ar
 
 const EntrySchema = z.object({
   id: z.string().regex(ID),
-  name: z.string().min(1).max(100),
-  version: z.string().min(1).max(64),
+  name: z
+    .string()
+    .min(1)
+    .max(100)
+    .refine((n) => !CONTROL.test(n), { message: 'control characters' }),
+  version: z.string().regex(/^[\w.+-]{1,64}$/),
   description: optionalText(300),
   website: optionalUrl,
   repository: optionalUrl,
@@ -212,28 +249,69 @@ export function registryIcon(agent: Pick<AcpRegistryAgent, 'icon'>): RuntimeIcon
 const MAX_ICON_DOWNLOAD = 12 * 1024;
 const MAX_REGISTRY_BYTES = 4 * 1024 * 1024;
 
-async function readCapped(res: Response, max: number): Promise<Uint8Array | undefined> {
-  const declared = Number(res.headers.get('content-length') ?? '0');
-  if (declared > max) return undefined;
-  const buf = new Uint8Array(await res.arrayBuffer());
-  return buf.byteLength > max ? undefined : buf;
+const isHttps = (u: string): boolean => {
+  try {
+    return new URL(u).protocol === 'https:';
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * GETs an https URL and reads at most `max` bytes: the body is streamed and the request aborted
+ * as soon as it grows past the cap. A redirect to anything but https is refused. Undefined on any
+ * failure.
+ */
+export async function fetchCapped(url: string, fetchFn: typeof fetch, max: number, timeoutMs: number): Promise<Uint8Array | undefined> {
+  if (!isHttps(url)) return undefined;
+  const abort = new AbortController();
+  const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(timeoutMs)]);
+  try {
+    const res = await fetchFn(url, { signal });
+    // A constructed Response (tests) has no url; a real fetch reports the final URL after redirects.
+    if (!res.ok || (res.url && !isHttps(res.url))) {
+      abort.abort();
+      return undefined;
+    }
+    if (Number(res.headers.get('content-length') ?? '0') > max || !res.body) {
+      abort.abort();
+      return undefined;
+    }
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > max) {
+        abort.abort();
+        await reader.cancel().catch(() => undefined);
+        return undefined;
+      }
+      chunks.push(value);
+    }
+    const out = new Uint8Array(size);
+    let at = 0;
+    for (const c of chunks) {
+      out.set(c, at);
+      at += c.byteLength;
+    }
+    return out;
+  } catch {
+    abort.abort();
+    return undefined;
+  }
 }
 
 /** An SVG icon download as a data URI, or undefined (not https, not an SVG, too large, unreachable). */
 export async function downloadIcon(url: string, fetchFn: typeof fetch, timeoutMs = 10_000): Promise<string | undefined> {
-  try {
-    if (new URL(url).protocol !== 'https:') return undefined;
-    const res = await fetchFn(url, { signal: AbortSignal.timeout(timeoutMs) });
-    if (!res.ok || (res.url && !res.url.startsWith('https:'))) return undefined;
-    const body = await readCapped(res, MAX_ICON_DOWNLOAD);
-    if (!body) return undefined;
-    const text = new TextDecoder().decode(body);
-    if (!/^\s*(?:<\?xml[^>]*>\s*)?(?:<!--[\s\S]*?-->\s*)*<svg[\s>]/i.test(text)) return undefined;
-    const uri = `data:image/svg+xml;base64,${Buffer.from(body).toString('base64')}`;
-    return isImageDataUri(uri) ? uri : undefined;
-  } catch {
-    return undefined;
-  }
+  const body = await fetchCapped(url, fetchFn, MAX_ICON_DOWNLOAD, timeoutMs);
+  if (!body) return undefined;
+  const text = new TextDecoder().decode(body);
+  if (!/^\s*(?:<\?xml[^>]*>\s*)?(?:<!--[\s\S]*?-->\s*)*<svg[\s>]/i.test(text)) return undefined;
+  const uri = `data:image/svg+xml;base64,${Buffer.from(body).toString('base64')}`;
+  return isImageDataUri(uri) ? uri : undefined;
 }
 
 /**
@@ -248,10 +326,10 @@ export async function downloadRegistrySnapshot(o: {
   previous?: AcpRegistry;
 }): Promise<{ version: string; fetchedAt: string; agents: AcpRegistryAgent[]; skipped: string[] }> {
   const timeoutMs = o.timeoutMs ?? 15_000;
-  const res = await o.fetch(o.url ?? ACP_REGISTRY_URL, { signal: AbortSignal.timeout(timeoutMs) });
-  if (!res.ok) throw new Error(`ACP registry download failed: HTTP ${res.status}`);
-  const body = await readCapped(res, MAX_REGISTRY_BYTES);
-  if (!body) throw new Error('ACP registry download is too large');
+  const url = o.url ?? ACP_REGISTRY_URL;
+  if (!isHttps(url)) throw new Error('The ACP registry URL must be https.');
+  const body = await fetchCapped(url, o.fetch, MAX_REGISTRY_BYTES, timeoutMs);
+  if (!body) throw new Error('ACP registry download failed (unreachable, not https, or larger than 4 MiB).');
   const { version, agents, skipped } = parseRegistry(JSON.parse(new TextDecoder().decode(body)));
   const previous = new Map((o.previous?.agents ?? []).map((a) => [a.id, a.icon]));
   const withIcons = await Promise.all(

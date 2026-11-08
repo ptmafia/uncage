@@ -16,7 +16,7 @@ describe('loadConfig', () => {
     expect(c.workspace).toEqual({ allowedRoots: [cwd], default: cwd });
     expect(c.runtimes.claude.enabled).toBe(true);
     expect(c.runtimes.codex.enabled).toBe(true);
-    expect(c.runtimes.acp).toEqual({ presets: 'auto', autoDetect: true, enable: [], disable: [], agents: [] });
+    expect(c.runtimes.acp).toEqual({ presets: 'auto', autoDetect: true, enable: [], consented: {}, disable: [], agents: [] });
   });
 
   it('runtimes.acp (Local Mode) uses the agent.yaml schema', async () => {
@@ -26,9 +26,17 @@ describe('loadConfig', () => {
       presets: 'off',
       autoDetect: false,
       enable: [],
+      consented: {},
       disable: [],
       agents: [{ id: 'mine', command: ['node', 'agent.js'], mcp: 'auto', enabled: true }],
     });
+    // A project file cannot consent to downloads: enable/consented are ignored, loudly.
+    await writeFile(join(cwd, 'uncage.config.yaml'), 'runtimes:\n  acp:\n    enable: [gemini]\n    consented: { gemini: "npx:@google/gemini-cli" }\n');
+    const warnings: string[] = [];
+    const c = await loadConfig(cwd, {}, (w) => warnings.push(w));
+    expect(c.runtimes.acp).toMatchObject({ enable: [], consented: {} });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/uncage\.config\.yaml: runtimes\.acp\.enable\/consented are ignored.*uncage runtimes enable gemini/);
     await writeFile(join(cwd, 'uncage.config.yaml'), 'runtimes:\n  acp:\n    agents:\n      - id: mine\n');
     await expect(loadConfig(cwd, {})).rejects.toThrow(/preset or a command/);
     await writeFile(join(cwd, 'uncage.config.yaml'), 'runtimes:\n  acp:\n    prests: off\n');

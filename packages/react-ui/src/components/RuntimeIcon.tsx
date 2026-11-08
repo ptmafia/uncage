@@ -5,6 +5,11 @@ import { cx } from '../context.js';
 export interface RuntimeIconProps {
   runtime: Pick<RuntimeInfo, 'displayName' | 'icon'>;
   className?: string;
+  /**
+   * Default true: shown next to the runtime's name, so `alt=""` (the name is not read twice).
+   * False for an icon standing alone: `alt` is the runtime's display name.
+   */
+  decorative?: boolean;
 }
 
 /**
@@ -13,21 +18,26 @@ export interface RuntimeIconProps {
  * With a `dark` variant both images render and CSS shows the one matching the theme. Without a
  * usable icon: a neutral badge with the name's initial.
  */
-export function RuntimeIcon({ runtime, className }: RuntimeIconProps): JSX.Element {
+export function RuntimeIcon({ runtime, className, decorative = true }: RuntimeIconProps): JSX.Element {
   const light = runtime.icon?.light;
   const dark = runtime.icon?.dark;
   if (!isImageDataUri(light)) {
     return (
-      <span className={cx('uc-runtime-icon', className)} data-fallback aria-hidden>
+      <span
+        className={cx('uc-runtime-icon', className)}
+        data-fallback
+        {...(decorative ? { 'aria-hidden': true } : { role: 'img', 'aria-label': runtime.displayName })}
+      >
         {runtime.displayName.trim().charAt(0).toUpperCase() || '?'}
       </span>
     );
   }
   const themed = isImageDataUri(dark);
+  const alt = decorative ? '' : runtime.displayName;
   return (
     <span className={cx('uc-runtime-icon', className)}>
-      <img src={light} alt={runtime.displayName} data-variant={themed ? 'light' : 'any'} width={16} height={16} draggable={false} />
-      {themed && <img src={dark} alt={runtime.displayName} data-variant="dark" width={16} height={16} draggable={false} />}
+      <img src={light} alt={alt} data-variant={themed ? 'light' : 'any'} width={16} height={16} draggable={false} />
+      {themed && <img src={dark} alt={alt} data-variant="dark" width={16} height={16} draggable={false} />}
     </span>
   );
 }

@@ -60,7 +60,7 @@ export function MachineStatus({ onSelect }: MachineStatusProps): JSX.Element | n
                   extra: (
                     <span className="uc-menu-icons">
                       {m.runtimes.map((r) => (
-                        <RuntimeIcon key={r.id} runtime={r} />
+                        <RuntimeIcon key={r.id} runtime={r} decorative={false} />
                       ))}
                     </span>
                   ),

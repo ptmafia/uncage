@@ -15,6 +15,14 @@ import {
 /** Registry cache and handshake results: `~/.uncage/acp/` (UNCAGE_HOME in tests). */
 export const acpCacheDir = (home: string): string => join(agentDir(home), 'acp');
 
+/**
+ * The commands that `runtimes.acp.agents` entries with an explicit `command` make Uncage run, for
+ * `uncage serve` / `uncage doctor` to show when they come from a project's uncage.config.yaml.
+ */
+export function projectAcpCommands(acp: AcpRuntimesConfig): string[] {
+  return acp.agents.filter((a) => a.enabled && a.command).map((a) => `acp-${a.id} runs: ${a.command!.join(' ')}`);
+}
+
 /** Official icons of the native runtimes, from their ACP registry entries. */
 export interface NativeIcons {
   claude?: RuntimeIcon;

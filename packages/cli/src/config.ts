@@ -68,9 +68,14 @@ function formatIssues(file: string, err: z.ZodError): string {
 
 /**
  * Loads `./uncage.config.yaml` (optional), applies defaults, then env overrides (`UNCAGE_PORT`;
- * `UNCAGE_ALLOW_BYPASS=1` turns `security.allowBypass` on).
+ * `UNCAGE_ALLOW_BYPASS=1` turns `security.allowBypass` on). A project file cannot consent to
+ * downloading agents: `runtimes.acp.enable` / `consented` are ignored with a warning (`warn`).
  */
-export async function loadConfig(cwd: string, env: NodeJS.ProcessEnv): Promise<UncageConfig> {
+export async function loadConfig(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  warn: (message: string) => void = (m) => console.error(`! ${m}`),
+): Promise<UncageConfig> {
   const path = join(cwd, CONFIG_FILE);
   let raw: unknown = {};
   try {
@@ -83,6 +88,14 @@ export async function loadConfig(cwd: string, env: NodeJS.ProcessEnv): Promise<U
   const parsed = ConfigSchema.safeParse(raw);
   if (!parsed.success) throw new Error(formatIssues(CONFIG_FILE, parsed.error));
   const c = parsed.data;
+  const { enable, consented } = c.runtimes.acp;
+  if (enable.length > 0 || Object.keys(consented).length > 0) {
+    const ids = [...new Set([...enable, ...Object.keys(consented)])];
+    warn(
+      `${CONFIG_FILE}: runtimes.acp.enable/consented are ignored (a project file cannot consent to running downloaded agents). ` +
+        `To allow them, run: ${ids.map((id) => `uncage runtimes enable ${id}`).join('; ')}`,
+    );
+  }
 
   let port = c.server.port;
   if (env.UNCAGE_PORT !== undefined && env.UNCAGE_PORT !== '') {
@@ -105,7 +118,7 @@ export async function loadConfig(cwd: string, env: NodeJS.ProcessEnv): Promise<U
         enabled: c.runtimes.codex.enabled,
         ...(c.runtimes.codex.command ? { command: c.runtimes.codex.command } : {}),
       },
-      acp: c.runtimes.acp,
+      acp: { ...c.runtimes.acp, enable: [], consented: {} },
     },
   };
 }

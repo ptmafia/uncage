@@ -62,10 +62,19 @@ export const AcpRuntimesSchema = z
   .object({
     /** `auto`: register the Claude Code / Gemini CLI / OpenCode presets whose command is on PATH. */
     presets: z.enum(['auto', 'off']).default('auto'),
-    /** Detect installed agents from the official ACP registry (handshake-checked). */
+    /**
+     * Detect installed agents from the official ACP registry (handshake-checked). `false`: no
+     * detection and no handshakes; only `agents`, presets and `enable`d registry agents register.
+     */
     autoDetect: z.boolean().default(true),
     /** Registry ids the user consented to run (`uncage runtimes enable <id>`), e.g. npx/uvx agents. */
     enable: z.array(z.string().regex(ACP_REF)).default([]),
+    /**
+     * What each download consent covers: `npx:<package>` or `uvx:<package>` (no version), written by
+     * `uncage runtimes enable`. If the registry later runs another package or runner, the agent
+     * needs `enable` again.
+     */
+    consented: z.record(z.string().regex(ACP_REF), z.string().regex(/^(npx|uvx):[@A-Za-z0-9][\w./@-]{0,199}$/)).default({}),
     /** Registry, preset or runtime ids never registered (`uncage runtimes disable <id>`). */
     disable: z.array(z.string().regex(ACP_REF)).default([]),
     agents: z.array(AcpAgentEntrySchema).default([]),
@@ -81,7 +90,7 @@ export const AcpRuntimesSchema = z
 export type AcpRuntimesConfig = z.infer<typeof AcpRuntimesSchema>;
 export type AcpAgentEntry = z.infer<typeof AcpAgentEntrySchema>;
 
-export const DEFAULT_ACP_RUNTIMES: AcpRuntimesConfig = { presets: 'auto', autoDetect: true, enable: [], disable: [], agents: [] };
+export const DEFAULT_ACP_RUNTIMES: AcpRuntimesConfig = { presets: 'auto', autoDetect: true, enable: [], consented: {}, disable: [], agents: [] };
 
 const AgentConfigSchema = z
   .object({
@@ -241,7 +250,7 @@ export function updateAgentSites(home: string, fn: (sites: AgentSite[]) => Agent
 }
 
 /**
- * Applies `fn` to `runtimes.acp` (e.g. `uncage runtimes enable|disable`) and writes it back like
+ * Applies `fn` to `runtimes.acp` (e.g. `uncage runtimes enable|disable`: `enable`, `consented`, `disable`) and writes it back like
  * `updateAgentSites`. Only the changed keys are rewritten, so comments elsewhere survive; `agents`
  * is hand-edited and never rewritten.
  */
@@ -250,7 +259,7 @@ export function updateAgentAcp(home: string, fn: (acp: AcpRuntimesConfig) => Acp
     const current = (await loadAgentConfig(home)).runtimes?.acp ?? DEFAULT_ACP_RUNTIMES;
     const next = AcpRuntimesSchema.parse(fn(structuredClone(current)));
     await editAgentYaml(home, (doc) => {
-      for (const key of ['presets', 'autoDetect', 'enable', 'disable'] as const) {
+      for (const key of ['presets', 'autoDetect', 'enable', 'consented', 'disable'] as const) {
         if (JSON.stringify(next[key]) !== JSON.stringify(current[key])) doc.setIn(['runtimes', 'acp', key], doc.createNode(next[key]));
       }
     });

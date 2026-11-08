@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,7 +7,7 @@ import type { RuntimeAdapter, RuntimeCapabilities, RuntimeProbe } from '@uncage/
 import { acpAdapter } from '@uncage/runtime-acp';
 import { fakeAcpPath } from '@uncage/testkit';
 import { afterEach, describe, expect, it } from 'vitest';
-import { setupAcp } from './acp.js';
+import { projectAcpCommands, setupAcp } from './acp.js';
 import { agentAdapters } from './agent-cmd.js';
 import { runRuntimes, toggleRuntime } from './runtimes-cmd.js';
 
@@ -106,16 +107,44 @@ describe('uncage runtimes', () => {
   it('enable/disable write runtimes.acp in agent.yaml (registry, preset and runtime ids); unknown ids are refused', async () => {
     const home = await tmp('uncage-rt-home-');
     await updateAgentSites(home, () => []);
-    const out: string[] = [];
-    await toggleRuntime({ home, id: 'gemini', enable: true, out: (s) => out.push(s) });
-    expect((await loadAgentConfig(home)).runtimes?.acp).toMatchObject({ enable: ['gemini'], disable: [] });
-    expect(out.join('\n')).toMatch(/npx -y @google\/gemini-cli/);
-    await toggleRuntime({ home, id: 'acp-gemini', enable: false, out: () => undefined });
-    expect((await loadAgentConfig(home)).runtimes?.acp).toMatchObject({ enable: [], disable: ['gemini'] });
-    await toggleRuntime({ home, id: 'acp-claude', enable: true, out: () => undefined });
-    expect((await loadAgentConfig(home)).runtimes?.acp.enable).toEqual(['claude-acp']);
-    await expect(toggleRuntime({ home, id: 'no-such-agent', enable: true, out: () => undefined })).rejects.toThrow(/Unknown ACP agent/);
+    const none = async () => null;
+    const events: string[] = [];
+    const yaml = join(home, '.uncage', 'agent.yaml');
+    await toggleRuntime({
+      home,
+      id: 'gemini',
+      enable: true,
+      which: none,
+      // The consent text is printed before anything is written.
+      out: (s) => events.push(`${s} [written: ${String(readFileSync(yaml, 'utf8').includes('gemini'))}]`),
+    });
+    expect(events[0]).toBe(
+      'Uncage will download and run @google/gemini-cli from npm now and whenever the agent starts. Undo: uncage runtimes disable gemini. [written: false]',
+    );
+    expect((await loadAgentConfig(home)).runtimes?.acp).toMatchObject({ enable: ['gemini'], consented: { gemini: 'npx:@google/gemini-cli' }, disable: [] });
+    await toggleRuntime({ home, id: 'acp-gemini', enable: false, which: none, out: () => undefined });
+    expect((await loadAgentConfig(home)).runtimes?.acp).toMatchObject({ enable: [], consented: {}, disable: ['gemini'] });
+    await toggleRuntime({ home, id: 'acp-claude', enable: true, which: none, out: () => undefined });
+    expect((await loadAgentConfig(home)).runtimes?.acp).toMatchObject({ enable: ['claude-acp'], consented: { 'claude-acp': 'npx:@agentclientprotocol/claude-agent-acp' } });
+    await expect(toggleRuntime({ home, id: 'no-such-agent', enable: true, which: none, out: () => undefined })).rejects.toThrow(/Unknown ACP agent/);
     expect((await loadAgentConfig(home)).runtimes?.acp.disable).toEqual(['gemini']);
+    // Installed locally: no download is mentioned, and nothing is recorded as a download consent.
+    const out: string[] = [];
+    await toggleRuntime({ home, id: 'goose', enable: true, which: async (c) => (c === 'goose' ? '/usr/local/bin/goose' : null), out: (s) => out.push(s) });
+    expect(out[0]).toBe('Uncage will run /usr/local/bin/goose acp whenever the agent starts. Undo: uncage runtimes disable goose.');
+    expect((await loadAgentConfig(home)).runtimes?.acp.consented).not.toHaveProperty('goose');
+  });
+
+  it('projectAcpCommands lists the commands uncage.config.yaml makes Uncage run', () => {
+    const acp = {
+      ...DEFAULT_ACP_RUNTIMES,
+      agents: [
+        { id: 'mine', command: ['node', 'agent.js'], mcp: 'auto' as const, enabled: true },
+        { id: 'off', command: ['x'], mcp: 'auto' as const, enabled: false },
+        { id: 'gem', preset: 'gemini' as const, mcp: 'auto' as const, enabled: true },
+      ],
+    };
+    expect(projectAcpCommands(acp)).toEqual(['acp-mine runs: node agent.js']);
   });
 
   it('setupAcp: fake binary on PATH is detected and registered with icons; npx entries are never run; agentAdapters builds them', async () => {

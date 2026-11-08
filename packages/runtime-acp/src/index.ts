@@ -19,7 +19,9 @@ export {
   ACP_PLATFORMS,
   ACP_REGISTRY_URL,
   bundledRegistry,
+  commandName,
   downloadIcon,
+  fetchCapped,
   downloadRegistrySnapshot,
   loadRegistry,
   parseRegistry,
@@ -36,11 +38,15 @@ export {
 export {
   acpHandshake,
   buildAcpAgents,
+  consentRef,
   discoverAcpAgents,
+  localCommand,
+  packageName,
   hostPlatform,
   registryRuntimeId,
   type AcpCatalogEntry,
   type AcpCatalogStatus,
   type DiscoverOptions,
+  type LocalCommand,
 } from './discover.js';
-export { createWhich, type Which } from './which.js';
+export { cmdLine, createWhich, spawnableCommand, type Which } from './which.js';

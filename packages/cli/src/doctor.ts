@@ -5,6 +5,7 @@ import { parseArgs } from 'node:util';
 import { redactForExport } from '@uncage/core';
 import type { RuntimeAdapter } from '@uncage/protocol';
 import { DEFAULT_PORT, type UncageConfig } from './config.js';
+import { projectAcpCommands } from './acp.js';
 import { tokenPath } from './token.js';
 
 export interface DoctorCheck {
@@ -304,6 +305,11 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
     });
   }
 
+  // Commands uncage.config.yaml makes Uncage run: shown, never silently trusted.
+  for (const a of config.runtimes.acp.agents.filter((x) => x.enabled && x.command)) {
+    const detail = projectAcpCommands({ ...config.runtimes.acp, agents: [a] })[0]!;
+    checks.push({ id: `acp.command.${a.id}`, label: 'ACP agent from uncage.config.yaml', ok: false, warn: true, detail });
+  }
   try {
     for (const a of adapters) checks.push(await runtimeCheck(a));
   } finally {

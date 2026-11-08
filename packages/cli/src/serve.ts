@@ -7,7 +7,7 @@ import { claudeAdapter } from '@uncage/runtime-claude';
 import { codexAdapter } from '@uncage/runtime-codex';
 import { createUncageServer } from '@uncage/server';
 import pino, { type Logger } from 'pino';
-import { setupAcp, withIcon, type NativeIcons } from './acp.js';
+import { projectAcpCommands, setupAcp, withIcon, type NativeIcons } from './acp.js';
 import type { UncageConfig } from './config.js';
 import { ensureToken, ensureTokenAt } from './token.js';
 
@@ -122,6 +122,8 @@ export async function serve(o: ServeOptions): Promise<void> {
   );
   out(formatBanner(url, config.workspace.default, runtimes, { allowBypass: config.security.allowBypass }));
   out(`Token file: ${path}`);
+  // Commands the project's uncage.config.yaml makes Uncage run.
+  for (const line of projectAcpCommands(config.runtimes.acp)) out(`! uncage.config.yaml: ${line}`);
 
   let stopping = false;
   const stop = (signal: string) => {

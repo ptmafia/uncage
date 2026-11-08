@@ -114,6 +114,14 @@ describe('runDoctor', () => {
     expect(disposed.sort()).toEqual(['acp-gemini', 'acp-mine', 'acp-ok']);
   });
 
+  it('doctor shows which command each uncage.config.yaml ACP agent runs (warning, not a failure)', async () => {
+    const { home, config } = await setup();
+    const acp = { ...config.runtimes.acp, agents: [{ id: 'mine', command: ['node', 'agent.js'], mcp: 'auto' as const, enabled: true }] };
+    const checks = await runDoctor({ config: { ...config, runtimes: { ...config.runtimes, acp } }, home, fetch: okFetch, adapters: [] });
+    expect(checks.find((c) => c.id === 'acp.command.mine')).toMatchObject({ ok: false, warn: true, detail: 'acp-mine runs: node agent.js' });
+    expect(doctorExitCode(checks)).toBe(0);
+  });
+
   it('fails when server unreachable with fix "uncage serve"', async () => {
     const { home, config } = await setup();
     const checks = await runDoctor({ config, home, fetch: downFetch, adapters: [] });

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { basename } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import {
   client,
@@ -74,7 +75,15 @@ export async function startAcpProcess(o: {
 }): Promise<AcpProcess> {
   const [executable, ...args] = o.command;
   if (!executable) throw new Error('The ACP agent command is empty.');
-  const proc = spawn(executable, args, { env: o.env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const windows = process.platform === 'win32';
+  const proc = spawn(executable, args, {
+    env: o.env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    // POSIX: its own process group, so stopping the agent also stops whatever it started.
+    detached: !windows,
+    // `cmd.exe /d /s /c "<line>"` (see spawnableCommand): the line is already quoted.
+    windowsVerbatimArguments: windows && /^cmd(\.exe)?$/i.test(basename(executable)),
+  });
 
   let stderrBuf = Buffer.alloc(0);
   proc.stderr.on('data', (chunk: Buffer) => {
@@ -105,12 +114,24 @@ export async function startAcpProcess(o: {
     });
   });
 
+  /** Signals the agent's whole process group (POSIX), else just the agent. */
+  const signal = (sig: NodeJS.Signals): void => {
+    if (!windows && proc.pid !== undefined) {
+      try {
+        process.kill(-proc.pid, sig);
+        return;
+      } catch {
+        // The group is gone (or was never created): fall back to the process itself.
+      }
+    }
+    proc.kill(sig);
+  };
   let killTimer: NodeJS.Timeout | undefined;
   const kill = (): void => {
     if (exitedFlag || killTimer) return;
-    proc.kill('SIGTERM');
+    signal('SIGTERM');
     killTimer = setTimeout(() => {
-      if (!exitedFlag) proc.kill('SIGKILL');
+      if (!exitedFlag) signal('SIGKILL');
     }, KILL_GRACE_MS);
     killTimer.unref();
   };

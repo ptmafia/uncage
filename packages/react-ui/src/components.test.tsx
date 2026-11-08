@@ -350,10 +350,12 @@ describe('runtime icons', () => {
     // Official icon: an <img> with the data URI for each theme, never inline SVG.
     const row = radio.closest('.uc-runtime') as HTMLElement;
     const imgs = [...row.querySelectorAll('img')];
+    // Next to the visible name the icon is decorative (alt=""), so the radio's name is not doubled.
     expect(imgs.map((i) => [i.getAttribute('src'), i.getAttribute('alt'), i.dataset.variant])).toEqual([
-      [svgIcon('#111'), 'Gemini CLI (ACP)', 'light'],
-      [svgIcon('#eee'), 'Gemini CLI (ACP)', 'dark'],
+      [svgIcon('#111'), '', 'light'],
+      [svgIcon('#eee'), '', 'dark'],
     ]);
+    expect(radio.getAttribute('aria-label') ?? row.querySelector('label')!.textContent).not.toMatch(/Gemini CLI \(ACP\).*Gemini CLI \(ACP\)/);
     expect(row.querySelector('svg.uc-runtime-icon, .uc-runtime-icon svg')).toBeNull();
     // A runtime without an icon gets the neutral fallback with its initial.
     const claude = screen.getByRole('radio', { name: /Claude Code/ }).closest('.uc-runtime') as HTMLElement;
@@ -367,13 +369,17 @@ describe('runtime icons', () => {
         <RuntimeIcon runtime={{ displayName: 'evil', icon: { light: 'javascript:alert(1)' } }} />
         <RuntimeIcon runtime={{ displayName: 'html', icon: { light: 'data:text/html;base64,PHNjcmlwdD4=' } }} />
         <RuntimeIcon runtime={{ displayName: 'huge', icon: { light: `data:image/png;base64,${'A'.repeat(20_000)}` } }} />
-        <RuntimeIcon runtime={{ displayName: 'ok', icon: { light: 'data:image/png;base64,iVBORw0KGgo=', dark: 'javascript:x' } }} />
+        <RuntimeIcon runtime={{ displayName: 'ok', icon: { light: 'data:image/png;base64,iVBORw0KGgo=', dark: 'javascript:x' } }} decorative={false} />
+        <RuntimeIcon runtime={{ displayName: 'Solo' }} decorative={false} />
       </>,
     );
     const imgs = [...container.querySelectorAll('img')];
-    expect(imgs.map((i) => i.getAttribute('src'))).toEqual(['data:image/png;base64,iVBORw0KGgo=']);
+    expect(imgs.map((i) => [i.getAttribute('src'), i.getAttribute('alt')])).toEqual([['data:image/png;base64,iVBORw0KGgo=', 'ok']]);
     expect(imgs[0]!.dataset.variant).toBe('any');
-    expect([...container.querySelectorAll('[data-fallback]')].map((e) => e.textContent)).toEqual(['E', 'H', 'H']);
+    expect([...container.querySelectorAll('[data-fallback]')].map((e) => e.textContent)).toEqual(['E', 'H', 'H', 'S']);
+    // A standalone fallback still has an accessible name; a decorative one is hidden.
+    expect(screen.getByRole('img', { name: 'Solo' }).textContent).toBe('S');
+    expect(container.querySelector('[data-fallback]')!.getAttribute('aria-hidden')).toBe('true');
   });
 
   it('the session header and the computer menu show runtime icons', async () => {
@@ -383,9 +389,11 @@ describe('runtime icons', () => {
     });
     await openSession(f);
     const header = document.querySelector('.uc-header') as HTMLElement;
-    await waitFor(() => expect(within(header).getAllByRole('img', { name: 'Gemini CLI (ACP)' }).length).toBeGreaterThan(0));
+    await waitFor(() => expect(header.querySelector('.uc-pill img')?.getAttribute('src')).toBe(svgIcon('#111')));
+    expect(header.querySelector('.uc-pill img')!.getAttribute('alt')).toBe('');
     fireEvent.click(within(header).getByRole('button', { name: /^Computer:/ }));
     const menu = screen.getByRole('menu', { name: 'Choose a computer' });
+    // In the computer menu the icons stand alone: alt is the runtime's name.
     expect(within(menu).getAllByRole('img', { name: 'Gemini CLI (ACP)' })[0]!.getAttribute('src')).toBe(svgIcon('#111'));
   });
 });
