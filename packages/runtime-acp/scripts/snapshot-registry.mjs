@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* global fetch, Response, URL, console */
+/* global fetch, Response */
 // Refreshes src/registry-snapshot.json from the official ACP Registry (run: pnpm registry:snapshot).
 // The registry and icons are downloaded into a fresh temporary directory, validated with the
 // package's zod schemas (invalid entries are dropped), and only data is kept: nothing downloaded is
