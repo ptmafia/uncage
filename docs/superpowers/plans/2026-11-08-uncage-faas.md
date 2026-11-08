@@ -32,6 +32,10 @@
 - The ACP track (Tasks A1–A4, at the end of this plan) runs in parallel in its own worktree (`feat/acp-runtime`, branched from the Task 1 commit) and merges into `feat/faas-mode` after Task 13, before Task 14, through the explicit merge step in that section. Later FaaS tasks keep what it added (ACP rows, nav entry, site card, e2e project, `runtime-acp` in Task 18's version check and changeset).
 - ACP: Uncage declares no ACP `fs`/`terminal` client capabilities, never selects `allow_always`/`reject_always`, uses only the stable v1 entry of `@agentclientprotocol/sdk`, and claims an ACP agent as verified only after a real run (today only `@agentclientprotocol/claude-agent-acp`); every other agent is "protocol-compatible, not verified live".
 - Between Task 2 and Task 15 the help-site snippet check (`check-snippets`) and i18n parity may be red (docs still show the 0.2 API); Task 14 makes `check-snippets` green, Task 15 makes `check-i18n` strict green. `pnpm build && pnpm test && pnpm typecheck && pnpm lint` stay green after every task.
+- The Platform track (spec §10; Tasks P1–P3 at the end of this plan) runs in its own worktree (`feat/platform`, branched from `2bdf39c`) and merges into `feat/faas-mode` right after the ACP merge (after Task 13, before Task 14). Task P4 (site, docs, demo copy) runs on `feat/faas-mode` after Task 16 and before Task 17. Task 17's PR description and Task 18's checks include the platform acceptance items.
+- Installers (`install.sh`, `install.ps1`) never run `sudo`, `apt`/`apt-get`/`dnf`/`yum`/`pacman`/`zypper`, never request elevation (no UAC, no `-Verb RunAs`), and never change the user's default Node without a `Y`. Every install step asks `[Y/n]`, except under `--yes`. Re-running is safe. Tests never touch the real `HOME`/`%USERPROFILE%` or the network: they use a sandbox home and fake binaries.
+- Windows and Linux are labelled "CI verified, awaiting real-device confirmation" everywhere (compatibility matrix, docs, site) until the user runs them on a real device. Only macOS is claimed as verified live.
+- On Windows, external commands (`claude`, `codex`, `npm`, ACP agents, `schtasks`, `icacls`) are spawned through `resolveCommand` (Task P3), never with `shell: true` (Node DEP0190; `.cmd` shims cannot be `execFile`d).
 
 ## Review Focus
 
@@ -42,6 +46,9 @@
 5. **The root entry silently pulls Node built-ins** (through the `@uncage/core` barrel, the `@uncage/server/wire` re-export of `toNodeHandler`, `Buffer`, `timer.unref()`), so a Workers build fails only at deploy time. Pinned in Task 2 (`check-web-entry` in the hub `build`) and Task 12 (`wrangler deploy --dry-run` of the Cloudflare example).
 6. **An ACP agent acts without the user's consent**: `allow_always` gets selected (and persists in the agent's own settings), a `requiresConfirmation` site tool runs without a card, `bypassPermissions`/`acceptEdits` auto-allow without `localPolicy`, or a pending `session/request_permission` is never answered on Stop (the agent hangs). Pinned in Task A2 (`allow_always is never chosen`, `site tools over http … declined confirmation`, `abort while a permission is pending answers it cancelled`).
 7. **ACP session crosstalk and orphan processes** in the shared agent process: `session/load` history replay or another session's updates leak into a run, or a killed run leaves the agent process alive. Pinned in Task A1 (`two concurrent runs share one process and get only their own updates`, `resumes with session/load without replaying history`, `dispose kills the agent process`).
+8. **An installer acts without the user's `Y`, or hangs.** In `curl | bash`, a `read` from stdin consumes the rest of the script as answers. A missing terminal is treated as "yes". A half-downloaded script runs a partial command. In `irm | iex`, an `exit` closes the user's PowerShell window. Pinned in Task P1 (`non-TTY without --yes: nothing installed, exit 2`, `answering n installs nothing`, `the script body is one main function called on the last line`) and Task P2 (`no exit outside the -File guard`, `non-interactive host: nothing installed`).
+9. **The background service runs the wrong Node or silently stops.** The service relies on PATH, or pins a temporary shim path (`fnm_multishells`, a `volta` shim). A pinned Node that was removed goes unreported. A Windows task needs admin or does not restart after a self-upgrade. Pinned in Task P3 (`serviceSpec pins realpath(process.execPath)`, `doctor: missing pinned Node → fix uncage agent install`, `schtasks XML: LeastPrivilege, InteractiveToken, RestartOnFailure`).
+10. **Shell or PowerShell injection through values embedded in the installers** (site URL, version range, developer extension text). Pinned in Task P1 (`a site URL with a quote, $, backtick or space is refused`) and Task P2 (`install.ps1 is ASCII-only and embeds the URL in a single-quoted literal`).
 
 ---
 
@@ -1073,3 +1080,327 @@ Content requirements: the guide covers what ACP is, `runtimes.acp` in `agent.yam
 - [ ] Step: implement the stack helper and the smoke script (`node packages/runtime-acp/scripts/smoke.ts` drives the real adapter once outside the browser: initialize → session/new → prompt → one approval → `run.completed`; prints `agentInfo` and capabilities for the matrix); write the docs (en, then zh-cn/ja per `i18n-glossary.md`, code blocks byte-identical) and the site card. Record the observed `agentCapabilities` of `claude-agent-acp`, and whether resume worked, in `docs/compatibility.md`; anything that differs from the plan goes into the commit body.
 - [ ] Step: run → PASS: `pnpm build && pnpm test && pnpm typecheck && pnpm lint && pnpm --filter docs check:i18n && pnpm --filter docs build && pnpm --filter site check && pnpm --filter site exec playwright test && pnpm e2e:mock && UNCAGE_LIVE=1 pnpm --filter @uncage/e2e exec playwright test --project=connected-acp-live --project=connected-live` (all green; logs in `e2e/connected/results/`)
 - [ ] Step: commit `feat(runtime-acp): Claude Code over ACP verified live, "Use any ACP agent" guide (en, zh-CN, ja) and site card` — then perform the **merge step** above when Task 13 is done.
+
+---
+
+## Platform track (Tasks P1–P4): one-command install and multi-OS agents (spec §10)
+
+**Goal:** A user whose computer is not set up yet runs one command (`curl -fsSL <site>/api/uncage/install.sh | bash` on macOS/Linux, `irm <site>/api/uncage/install.ps1 | iex` on Windows). The command checks the computer and installs what is missing after a `[Y/n]` for each step: Node 22 (through the user's own version manager first), then the CLI. It finds the agents already installed, then offers `uncage setup <site>`. The background agent runs as a per-user service on macOS (launchd), Linux (systemd user service) and Windows (scheduled task), with the Node path pinned in the service definition.
+
+**Verified facts (official docs / package manifests, 2026-11-08; re-check at implementation time):**
+- Node: current LTS lines are 22.23.4, 24.22.2 and 26.13.0 (nodejs.org/en/download). Homebrew: `node` is 26.13.0. `node@22` is 22.23.4 and **keg-only** (versioned formula: not linked, so it never replaces the user's `node`). Its stable path is `$(brew --prefix)/opt/node@22/bin` (formulae.brew.sh API).
+- nvm (README, latest tag v0.41.0): a sourced shell function, not a binary. Scripts must `export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"; . "$NVM_DIR/nvm.sh" --no-use`. "The first version installed becomes the default"; later installs do not change the `default` alias (`nvm alias default 22` does). `nvm which 22` prints the node path.
+- fnm (README, `.ci/install.sh`): the installer is `curl -fsSL https://fnm.vercel.app/install | bash`. Flags: `--install-dir <dir>`, `--skip-shell`, `--force-no-brew` (alias `--force-install`; without it the macOS installer runs `brew install fnm`) and `--release <v>`. It **requires `curl` and `unzip`**. The default dir is `~/.fnm` if it exists, else `$XDG_DATA_HOME/fnm`, else `~/Library/Application Support/fnm` (macOS) or `~/.local/share/fnm`. Commands: `fnm install 22`, `fnm default 22` (= `fnm alias 22 default`), `fnm exec --using=22 node …`. Shell setup: `eval "$(fnm env --use-on-cd --shell bash|zsh)"`, PowerShell `fnm env --use-on-cd --shell powershell | Out-String | Invoke-Expression`. Windows: `winget install Schniz.fnm` (winget-pkgs manifest 1.39.0: `InstallerType: zip`, `NestedInstallerType: portable`, so it installs per user with no admin), `scoop install fnm`, `choco install fnm`. Release asset `https://github.com/Schniz/fnm/releases/latest/download/fnm-windows.zip` (302 to v1.39.0).
+- volta (README): "**Volta is unmaintained**", and the README recommends mise. `volta install node@22` "will set your default version of a tool" (docs.volta.sh/reference/install). We support an existing volta but never install it.
+- mise (cli/install): `mise install node@22` installs without activating ("Installing does not add a tool to your config, so a tool you have not configured is not on PATH"). `mise use -g node@22` makes it the default. Installs live under `~/.local/share/mise/installs/node/<v>` (`mise where node@22`).
+- asdf (0.20 docs): `asdf install nodejs latest:22` (needs `asdf plugin add nodejs`). Install does not set a version; `asdf set -u nodejs <v>` does (0.16+; older versions use `asdf global`). `asdf where nodejs <v>` gives the install path.
+- n (README): `n <v>` installs into one prefix and overwrites the active node. `N_PREFIX` moves the prefix; the default `/usr/local` usually needs sudo. `n download 22` only caches the version, and `n which 22` prints its node path, so we use those two and never activate.
+- nvm-windows (README): `nvm install 22` downloads into `nvm root`. Switching (`nvm use`) "usually requires administrative rights (to create symlinks)". We pin `<nvm root>\v<version>\node.exe` and run `nvm use` only after an explicit `Y`, with a warning that Windows may ask for admin.
+- winget Node: `OpenJS.NodeJS.LTS` currently points to 26.13.0; per-major ids exist (`OpenJS.NodeJS.22`). Both are WiX MSIs with `Scope: machine` and `ElevationRequirement: elevatesSelf`, which **triggers UAC**. So on Windows we use winget to install fnm (portable, per user), not Node. See the spec conflicts in the hand-off.
+- Claude Code (code.claude.com/docs/en/setup): install with `curl -fsSL https://claude.ai/install.sh | bash` (macOS, Linux, WSL) or `irm https://claude.ai/install.ps1 | iex` (Windows PowerShell); no Administrator needed. The native Windows binary is `%USERPROFILE%\.local\bin\claude.exe`. Other options: `winget install Anthropic.ClaudeCode`, and `npm install -g @anthropic-ai/claude-code` (installs the same native binary; npm on Windows adds a `claude.cmd` shim). Git for Windows is optional. Passing arguments to a piped PowerShell installer: `& ([scriptblock]::Create((irm <url>))) <args>`.
+- Codex (openai/codex README): `npm install -g @openai/codex`, `brew install --cask codex`, and installers `chatgpt.com/codex/install.sh` / `install.ps1`. The binary is `codex`; npm on Windows adds `codex.cmd`.
+- Node `child_process` docs: on Windows, `.bat`/`.cmd` "cannot be launched using `execFile()`". `spawn` with `shell` is "not recommended, see DEP0190". The alternative is `cmd.exe /c <file>`. `windowsHide` hides the console window of a child.
+- systemd: user units live in `$XDG_CONFIG_HOME/systemd/user` (else `~/.config/systemd/user`; systemd.unit(5)). `WantedBy=default.target` + `systemctl --user enable` starts the unit with the user manager. `loginctl enable-linger` means "a user manager is spawned for the user at boot and kept around after logouts" (loginctl(1)). logind's polkit action `org.freedesktop.login1.set-self-linger` defaults to `allow_any/inactive/active: yes`, so users can usually enable linger for themselves without root (distros may override).
+- schtasks (learn.microsoft.com, schtasks create): `/sc onlogon` without `/ru` fires when "any user logs on". `/tr` is limited to 262 characters. `/rl LIMITED` is the default. `/xml <file>` imports a full definition, and a `LogonTrigger` `UserId` scopes the trigger to one user (LogonTrigger.UserId). The docs do not say whether a standard user may register an ONLOGON task. We use `/xml` with the current user's `UserId` and `LeastPrivilege`, and fall back to the `HKCU\…\Run` key on "Access is denied". GitHub's Windows runners are admin, so CI cannot prove the non-admin path, and real-device confirmation stays pending.
+- `curl | bash` prompts: stdin is the script itself, so answers must come from `/dev/tty`. rustup's installer does the same: it checks `[ ! -t 0 ]`, reads from `/dev/tty`, and with no terminal tells the user to pass `-y`. Flags reach a piped script through `bash -s -- --yes`. PowerShell installers that must accept `irm | iex` read options from environment variables (astral's `install.ps1` pattern: `param()` + `$env:…`).
+
+**Decisions (recommended options taken):**
+- Installer sources are real files (`packages/hub/assets/install.sh`, `install.ps1`), so `bash -n`, shellcheck and PowerShell parse them directly. A generator embeds them as strings in `src/install/embedded.ts` (committed). The root entry stays Web-only: no `fs` at run time. A test fails when `embedded.ts` is stale.
+- The scripts embed exactly three values, each validated: the CLI version range (`assertVersionRange`), the site URL passed to `uncage setup` (`assertScriptUrl`), and the developer's extension text. The old invariant "install.sh only varies by the range" becomes "only varies by range, site URL and `installScript` extension".
+- `HubOptions.installScript` is the extension point the spec names (none exists today; only `cliVersionRange` and the exported `installScript(range)` function). It accepts static text only, never request data.
+- Version manager order: macOS/Linux nvm → fnm → mise → asdf → volta → n; Windows nvm-windows → fnm → volta. The first one present is used. Node 22 is installed without changing the default, then a separate `[Y/n]` asks "Use Node 22 as your default?". On `n`, the script finishes with absolute paths and prints the CLI's absolute path. Fallbacks: macOS + Homebrew → `brew install node@22` (keg-only, PATH block on `Y`). Otherwise fnm in `$HOME/.local/share/fnm` (`--install-dir … --skip-shell --force-no-brew`) with our own PATH block. Windows: `winget install --id Schniz.fnm -e --source winget --accept-package-agreements --accept-source-agreements`, else the fnm zip into `%LOCALAPPDATA%\fnm` + user PATH. Linux without `unzip` cannot use the fnm installer: the script stops with a reason and the manual commands. It never runs a package manager.
+- PATH changes go into one marked block (`# >>> uncage >>>` … `# <<< uncage <<<`), rewritten in place, in the profile that matches `$SHELL`: zsh → `~/.zshrc`; bash → `~/.bashrc` (Linux) or `~/.bash_profile` (macOS); fish → print the line only; otherwise `~/.profile`. On Windows the user `Path` is set through `[Environment]::SetEnvironmentVariable(…, 'User')`, never `$PROFILE`: the default `Restricted` execution policy does not load profiles.
+- No agent found → the script prints the Claude Code install command and link, says "install it, then run this command again", and skips the setup prompt. ACP agents count once the CLI is installed (`uncage runtimes --json`, from A3, when that command exists).
+- Exit codes (both scripts): `0` done (including "setup declined"), `1` a step failed (reason + manual command on stderr), `2` confirmation needed with no terminal (missing items + manual commands listed, nothing changed), `3` unsupported OS/arch.
+- Service: launchd (unchanged plist, moved), systemd user unit `uncage-agent.service`, Windows task `UncageAgent`. A Linux machine without a user systemd falls back to `none`: the agent runs in the foreground, with a hint. Windows has no stdout redirect in tasks, so `uncage agent --log-file <path>` writes logs itself.
+
+**Parallelization and merge.**
+1. P1 → P3 run in order in a worktree, by a different subagent, concurrently with Tasks 3–13 and the ACP track: `git worktree add ../Uncage-platform -b feat/platform 2bdf39c`. The same Global Constraints apply. P2 needs P1 (shared render/messages). P3 is independent of P1/P2 except the CI job, which runs the installer tests. Push `feat/platform` after P2 and P3 so `.github/workflows/ci.yml` runs the Windows/Ubuntu/macOS matrix (CI triggers on `feat/**`). Fix what Windows CI reveals and record the run URL in the commit body.
+2. **Merge step (after the ACP merge, before Task 14):** on `feat/faas-mode`, `git merge --no-ff feat/platform -m "merge: platform track (one-command install, multi-OS agents)"` (body ends with the Co-Authored-By line). Then `pnpm install && pnpm build && pnpm test && pnpm typecheck && pnpm lint && UNCAGE_DOCKER_TESTS=1 pnpm --filter @uncage/cli exec vitest run --project docker`. Then one follow-up commit `fix(runtime-acp): resolve Windows npm shims for ACP agents`: `startAcpProcess` spawns through `resolveCommand`, and `resolveAcpAgents`' `which` is `resolveCommand`-based. A test runs on all three OSes in CI. Then `git worktree remove ../Uncage-platform`.
+3. Files more than one track touches, and how to resolve them:
+   - `packages/hub/src/{hub.ts,types.ts,index.ts,browser-api.ts,hub.test.ts}`: Tasks 3–7 and 10 rewrite large parts. P1/P2 add only: `HubOptions.installScript` (types), the `installScripts` ctx field + `install.windows` (hub.ts, one block), the `/install.ps1` route (browser-api), exports (index), and the rewritten install tests (hub.test). Keep both sides. Task 2's `web-entry.test.ts` assertion `toContain('@uncage/cli@^0.3')` must stay true (the script still contains `npm install -g "@uncage/cli@<range>"`).
+   - `packages/hub/src/install-script.ts`: P1 replaces it with `src/install/*`. Task 18's check "install.sh installs `@uncage/cli@^0.3`" refers to the rendered script.
+   - `packages/cli/src/doctor.ts`, `doctor.test.ts`: Task 8 (transports), A3 (`runtime.acp-*`), P3 (`node` detail, `service`, `service.node`, `service.linger`, Windows token check). Different checks: keep all, run all three test sets.
+   - `packages/cli/src/setup.ts`: Task 8 prints the transport; P3 swaps `installLaunchAgent` for `agentService` and `open` for `openUrlCommand`. Keep both.
+   - `packages/cli/src/bin.ts`, `agent-cmd.ts`: A3 adds `uncage runtimes` and the `agentAdapters(allowBypass, acp)` signature; P3 adds `agent install|status`, `--log-file`, the `--version` Node line, and resolved executables for the claude/codex adapters. Keep both. The final `agentAdapters` takes `(allowBypass, acp, exes)`.
+   - `packages/agent/src/{agent.ts,config.ts,index.ts}`: Task 8 (transport, agent.ts/index.ts), A3 (`runtimes.acp` schema, config.ts/index.ts), P3 (`selfUpgradeCommand`, `restrictToUser`/`replaceFile` in config writes, new exports). Keep all.
+   - `packages/agent/src/units.test.ts`, `agent.test.ts`: A3 and Task 8 add tests; P3 makes path/permission assertions platform-aware. Keep all.
+   - Later FaaS tasks keep the platform content: Task 14/15 rewrite `reference/cli.md`, `reference/troubleshooting.md`, `start/quickstart-connected.md`, `start/how-it-works.md` (P4 edits them after Task 16, so there is no conflict). Task 16 rewrites `apps/site/src/i18n/*` and `Features.astro` (P4 runs after it). `docs/compatibility.md`: A4 rows, P3 Linux/Windows CI rows, P4 OS table, Task 17 run records; keep all. Task 17 `e2e/connected/golden-path.ts` uses P4's ConnectMachine selectors.
+   - `pnpm-lock.yaml`: the platform track adds no dependency. If one appears, never hand-merge: take either side, then `pnpm install`.
+
+---
+
+### Task P1: `install.sh` rewrite — detection, version-manager-first Node, npm prefix, CLI, agents, setup prompt
+
+**Files:**
+- Create: `packages/hub/assets/install.sh`, `packages/hub/scripts/embed-installers.mjs`, `packages/hub/src/install/{render.ts,embedded.ts,messages.ts,index.ts}`, `packages/hub/src/install/sandbox.ts` (test helper, excluded from the build), `.gitattributes` (`* text=auto eol=lf`, `*.ps1 text eol=lf`, `*.png binary`)
+- Delete: `packages/hub/src/install-script.ts` (moved into `src/install/render.ts`)
+- Modify: `packages/hub/src/{hub.ts,types.ts,index.ts,browser-api.ts}`, `packages/hub/package.json` (`"embed:installers": "node scripts/embed-installers.mjs"`, `files` keeps `assets` out of the tarball)
+- Test: create `packages/hub/src/install/install-sh.test.ts`, `packages/hub/src/install/render.test.ts`; modify `packages/hub/src/hub.test.ts` (install tests), `packages/hub/src/web-entry.test.ts` (import path)
+
+**Interfaces — Produces:**
+```ts
+// install/render.ts
+export function assertVersionRange(range: string): string;            // unchanged rule
+export function defaultCliRange(version: string): string;             // unchanged
+/** https://host[:port][/path] with [A-Za-z0-9._~/-] only; http only for localhost / 127.0.0.1 / [::1]. Throws otherwise. */
+export function assertScriptUrl(url: string): string;
+export interface InstallScriptExtension {
+  /** Bash run after the CLI is installed, before the agent check (static text, ≤ 16 KiB, no NUL). */
+  shAfterCli?: string;
+  /** PowerShell for install.ps1 at the same point (ASCII only, ≤ 16 KiB). */
+  ps1AfterCli?: string;
+  /** Replaces the "no agent found" help (one line per locale; en required). */
+  agentHelp?: { en: string; zh?: string; ja?: string };
+}
+export interface InstallScriptOptions { cliRange: string; siteUrl: string; extend?: InstallScriptExtension }
+export function installScript(o: InstallScriptOptions): string;      // bash
+// install/messages.ts — one table, three locales, every key present in each (en / zh / ja)
+export const INSTALL_MESSAGES: Record<'en' | 'zh' | 'ja', Record<InstallMessageKey, string>>;
+// types.ts
+interface HubOptions { /* … */ installScript?: InstallScriptExtension }
+// browser-api ctx
+installScripts: { sh: string; ps1: string };  // rendered once in createHub (ps1 filled by P2; P1 serves sh only)
+```
+Script contract (`install.sh`): `#!/usr/bin/env bash`, `set -euo pipefail`. The whole body sits in functions, and the last line is `main "$@"`. Options: `--yes|-y`, `--no-setup`, `--lang en|zh|ja`, `--help`; env `UNCAGE_YES=1`, `UNCAGE_NO_SETUP=1`, `UNCAGE_LANG`. Dev/test hooks: `UNCAGE_TTY` (prompt input path, default `/dev/tty`) and `UNCAGE_CLI_SPEC` (npm spec replacing `@uncage/cli@<range>`, used by the Linux Docker chain). Language: `--lang` > `UNCAGE_LANG` > `LC_ALL`/`LC_MESSAGES`/`LANG` prefix `zh`/`ja` > `en`. Prompts read one line from `$UNCAGE_TTY`. When it cannot be opened (`{ : <"$tty"; } 2>/dev/null` fails) and `--yes` is not set, nothing is installed and the script exits `2`. Step 1 prints one line per check: OS/arch, Node (version or missing/too old), npm (version, global dir writable), and agents (Claude Code, Codex). The CLI is installed with `"$NPM" install -g "@uncage/cli@<range>"`, using the npm next to the chosen node. It is skipped when `uncage --version` already satisfies the major.minor of the range. Setup runs `"<abs uncage>" setup '<site>' </dev/tty` (no PATH lookup).
+
+- [ ] Step: failing tests (sandbox: tmp `HOME`; `PATH=<fakebin>:<sysbin>`, where `sysbin` symlinks only `bash env uname mkdir cat grep sed tr head tail printf chmod rm ln dirname basename id touch mktemp cut sort wc`; fake `uname`; every fake binary appends `"$0 $*"` to `$SANDBOX/calls.log`; the script is piped on stdin exactly like `curl | bash`; `describe.skipIf(process.platform === 'win32')`).
+  ```ts
+  it('all ready: lists the checks, installs the CLI and runs setup after two Y', async () => {
+    const r = await sb.run({ answers: 'y\ny\n', node: '22.23.4', agents: ['claude'] });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toMatch(/✓ Node\.js 22\.23\.4/); expect(r.stdout).toMatch(/✓ Claude Code/);
+    expect(sb.log()).toEqual([expect.stringMatching(/npm install -g @uncage\/cli@\^0\.3$/), expect.stringMatching(/uncage setup https:\/\/site\.test$/)]);
+  });
+  it('idempotent: a second run with the CLI installed makes no install call', …);   // log has only `uncage --version` + setup
+  it.each([
+    ['nvm', /nvm install 22$/, /nvm alias default 22$/], ['fnm', /fnm install 22$/, /fnm default 22$/],
+    ['mise', /mise install node@22$/, /mise use -g node@22$/], ['asdf', /asdf install nodejs latest:22$/, /asdf set -u nodejs /],
+    ['n', /n download 22$/, null], ['volta', /volta install node@22$/, null],
+  ])('missing Node with %s: installs 22 without touching the default on "n"', async (mgr, install, makeDefault) => {
+    const r = await sb.run({ manager: mgr, node: null, answers: 'y\nn\ny\nn\n', agents: ['claude'] });
+    expect(r.code).toBe(0); expect(sb.log().some((l) => install.test(l))).toBe(true);
+    if (makeDefault) expect(sb.log().some((l) => makeDefault.test(l))).toBe(false);
+    expect(sb.log().find((l) => /install -g @uncage\/cli/.test(l))).toMatch(/\/22\.23\.4\/.*npm |node-versions\/v22/); // the new Node's npm, not PATH's
+    expect(r.stdout).toContain(`${sb.home}/`); // prints the absolute uncage path
+  });
+  it('node 20 counts as missing (too old)', …);
+  it('no manager, macOS with Homebrew: brew install node@22 and one PATH block', …);  // ~/.zshrc contains '# >>> uncage >>>' once after two runs
+  it('no manager, macOS without Homebrew / Linux: fnm installer with --install-dir --skip-shell --force-no-brew; never apt, dnf or sudo', async () => {
+    const r = await sb.run({ uname: 'Linux', node: null, answers: 'y\ny\ny\nn\n', agents: ['claude'] });
+    expect(sb.log().join('\n')).toMatch(/fnm-installer --install-dir .*\/\.local\/share\/fnm --skip-shell --force-no-brew/);
+    expect(sb.log().join('\n')).not.toMatch(/\b(sudo|apt|apt-get|dnf|yum|pacman|zypper)\b/);
+  });
+  it('Linux without unzip: stops with exit 1, the reason and the manual commands', …);
+  it('npm global dir not writable: npm config set prefix ~/.npm-global and a PATH block (once after two runs)', …);
+  it('non-TTY without --yes: nothing installed, exit 2, missing items and manual commands listed, does not hang', async () => {
+    const r = await sb.run({ tty: false, node: null, timeoutMs: 10_000 }); // detached: no controlling terminal
+    expect(r.code).toBe(2); expect(sb.log().filter((l) => /install|setup/.test(l))).toEqual([]);
+    expect(r.stdout).toMatch(/Node\.js ≥ 22/); expect(r.stdout).toMatch(/nvm install 22|brew install node@22|fnm/);
+  });
+  it('answering n installs nothing', …);
+  it('--yes (bash -s -- --yes) without a terminal installs everything; --no-setup skips setup', …);
+  it('no agent: prints the Claude Code install command and link, skips the setup prompt', async () => {
+    const r = await sb.run({ agents: [], answers: 'y\n' });
+    expect(r.stdout).toContain('curl -fsSL https://claude.ai/install.sh | bash'); expect(r.stdout).toContain('https://code.claude.com/docs/en/setup');
+    expect(sb.log().some((l) => / setup /.test(l))).toBe(false);
+  });
+  it('a failing npm install exits 1 with the reason and the manual command on stderr', …);
+  it.each([['zh_CN.UTF-8', /检测/], ['ja_JP.UTF-8', /確認/], ['C', /Checking/]])('LANG=%s picks the language; --lang wins', …);
+  it('the developer extension runs after the CLI install', …); // installScript: { shAfterCli: 'echo EXTRA-STEP' }
+  it('the script body is one main function called on the last line; bash -n passes; shellcheck -s bash passes when installed', …);
+  // render.test.ts
+  it('every message key exists in en, zh and ja', …);
+  it('a site URL with a quote, $, backtick or space is refused; http only for loopback', () => {
+    for (const u of ["https://a.test/'x", 'https://a.test/$x', 'https://a.test/`x`', 'https://a.test/a b', 'http://a.test']) expect(() => assertScriptUrl(u)).toThrow();
+  });
+  it('embedded.ts matches the assets (run pnpm --filter @uncage/hub embed:installers)', …);
+  // hub.test.ts
+  it('install.sh varies only by range, site URL and extension; invalid ranges are refused', …);
+  ```
+- [ ] Step: run → FAIL: `pnpm --filter @uncage/hub exec vitest run src/install src/hub.test.ts`
+- [ ] Step: implement the asset, the generator, render/messages, the hub wiring, and `.gitattributes`. Run `git add --renormalize .` and check that the diff touches no content.
+- [ ] Step: run → PASS: `pnpm --filter @uncage/hub test && pnpm --filter @uncage/hub build && pnpm typecheck && pnpm lint` (all green; `shellcheck` result in the commit body, or "not installed locally, runs in CI")
+- [ ] Step: commit `feat(hub): one-command install.sh — checks, version-manager-first Node 22, npm prefix, CLI, agents, setup prompt (en, zh, ja)`
+
+---
+
+### Task P2: `install.ps1` for Windows (`GET <base>/install.ps1`)
+
+**Files:**
+- Create: `packages/hub/assets/install.ps1`, `packages/hub/test/install-ps1/{run.ps1,fakes.ps1}` (plain-PowerShell sandbox + assertions; no Pester)
+- Modify: `packages/hub/src/install/{render.ts,embedded.ts,messages.ts}`, `packages/hub/scripts/embed-installers.mjs`, `packages/hub/src/{hub.ts,browser-api.ts}`
+- Test: create `packages/hub/src/install/install-ps1.test.ts`; modify `packages/hub/src/hub.test.ts`, `packages/react-ui/src/test-fixtures.ts` and `packages/react/src/test-fixtures.ts` (`windows` command)
+
+**Interfaces — Produces:**
+```ts
+export function installScriptPs1(o: InstallScriptOptions): string; // Windows PowerShell 5.1 and pwsh 7; ASCII only
+// hub.ts install info
+install: { install: `curl -fsSL ${hubUrl}/install.sh | bash`, setup: `uncage setup ${setupUrl}`, windows: `irm ${hubUrl}/install.ps1 | iex` }
+// browser-api: GET /install.ps1 → text/plain; charset=utf-8, no-cache, nosniff (public)
+```
+Script contract (`install.ps1`): `param([switch]$Yes, [switch]$NoSetup, [string]$Lang)`, plus env `UNCAGE_YES`, `UNCAGE_NO_SETUP`, `UNCAGE_LANG`. Arguments through `& ([scriptblock]::Create((irm <url>))) -Yes`. Dev/test hooks: `UNCAGE_ANSWERS` (comma-separated answers replacing `Read-Host`), `UNCAGE_TEST_FNM_ZIP` (local zip instead of the GitHub download), `UNCAGE_CLI_SPEC`. Constraints:
+- ASCII only. zh/ja messages are base64 UTF-8 decoded at run time, because Windows PowerShell 5.1 may decode `irm` bodies as Latin-1. `[Console]::OutputEncoding` is set to UTF-8 and restored.
+- No PS7-only syntax (`??`, `?:`, `&&`, `||`, `ForEach-Object -Parallel`, `$PSStyle`), so the script runs on 5.1. TLS 1.2 is OR-ed into `[Net.ServicePointManager]::SecurityProtocol` before downloads.
+- **No `exit` except in the final guard** `if ($PSCommandPath) { exit $code } else { $global:LASTEXITCODE = $code }`: under `iex`, `exit` closes the user's window.
+- Non-interactive host: `[Console]::IsInputRedirected`, `-NonInteractive` in `[Environment]::GetCommandLineArgs()`, or `$env:CI`.
+- Language: `-Lang` > `UNCAGE_LANG` > `(Get-UICulture).Name` prefix.
+- Node: nvm-windows (`nvm install 22`; pin `<nvm root>\v<ver>\node.exe`; `nvm use` only on `Y`, with an admin warning). fnm (`fnm install 22`; path from `fnm exec --using=22 node -p process.execPath`; default on `Y`: `fnm default 22` and the `aliases\default` dir on the user Path). volta (`volta install node@22`, after a prompt that says it changes the default). None → winget installs `Schniz.fnm`, else the fnm zip into `%LOCALAPPDATA%\fnm`.
+- npm global dir: `npm prefix -g` with a write test, falling back to `npm config set prefix "$env:USERPROFILE\.npm-global"` + user Path.
+- The CLI is always invoked as `uncage.cmd` by absolute path: the `uncage.ps1` shim is blocked under the default `Restricted` policy.
+- Agents: `claude` (also `%USERPROFILE%\.local\bin\claude.exe`) and `codex`.
+
+- [ ] Step: failing tests.
+  ```ts
+  // install-ps1.test.ts — static checks, every OS
+  it('install.ps1 is ASCII-only and embeds the URL in a single-quoted literal', …);
+  it('install.ps1 uses no PowerShell 7-only syntax and no exit outside the -File guard', () => {
+    const s = installScriptPs1(opts); expect(s).not.toMatch(/\?\?|\s&&\s|\s\|\|\s|-Parallel|\$PSStyle/);
+    expect(s.match(/\bexit\b/g)).toHaveLength(1);
+  });
+  it('install.ps1 never installs Node with winget (UAC) and never elevates', () => { expect(s).not.toMatch(/OpenJS\.NodeJS|RunAs|Start-Process[^\n]*-Verb/); expect(s).toContain('Schniz.fnm'); });
+  it('install.ps1 calls uncage.cmd, not the uncage.ps1 shim', …);
+  it('both scripts carry the same message keys and the same exit codes', …);
+  // dynamic: describe.runIf(process.platform === 'win32' || hasPwsh) — spawns test/install-ps1/run.ps1 per scenario under
+  // `powershell.exe -NoProfile -ExecutionPolicy Bypass -File` (5.1, Windows only) and `pwsh -NoProfile -File`; run.ps1 throws on a failed assertion
+  it.each(['all-ready', 'idempotent', 'nvm-windows', 'fnm', 'volta', 'winget-fnm', 'zip-fnm', 'npm-prefix', 'non-interactive', 'answer-n', 'yes', 'no-agent', 'npm-fails', 'lang-zh', 'lang-ja', 'extension'])
+    ('install.ps1 scenario %s', async (name) => { const r = await runPs1Scenario(name); expect(r.code, r.output).toBe(0); });
+  // run.ps1 assertions (examples): non-interactive → script result code 2 and calls.log has no install line;
+  // nvm-windows → calls.log has 'nvm install 22' and no 'nvm use'; winget-fnm → 'winget install --id Schniz.fnm -e --source winget';
+  // the user Path (sandboxed through UNCAGE_TEST_USER_PATH_FILE) contains the fnm dir exactly once after two runs;
+  // under `powershell -ExecutionPolicy Restricted -Command uncage --version` the shim fails and `uncage.cmd --version` works (documents the P4 troubleshooting entry)
+  // hub.test.ts
+  it('install info has the Windows command and GET /install.ps1 serves the script', …);
+  ```
+- [ ] Step: run → FAIL: `pnpm --filter @uncage/hub exec vitest run src/install src/hub.test.ts`
+- [ ] Step: implement. Locally on macOS only the static checks run (no `pwsh`); the dynamic scenarios run on the Windows CI runner (P3 adds the job). Push `feat/platform` and read the run.
+- [ ] Step: run → PASS: local `pnpm --filter @uncage/hub test && pnpm --filter @uncage/react-ui test && pnpm --filter @uncage/react test`, plus the CI `platform (windows-latest)` job green with the 16 scenarios on both shells (run URL in the commit body)
+- [ ] Step: commit `feat(hub): install.ps1 — the same one-command flow on Windows, without admin`
+
+---
+
+### Task P3: Agent cross-platform — services, pinned Node, doctor, Windows details, CI matrix, Linux chain
+
+**Files:**
+- Create: `packages/cli/src/service/{index.ts,types.ts,spec.ts,launchd.ts,systemd.ts,schtasks.ts,none.ts}` (`launchd.ts` moved from `packages/cli/src/launchd.ts`), `packages/agent/src/{exe.ts,perms.ts}`, `packages/cli/docker/linux-chain/{Dockerfile,Dockerfile.systemd,hub.mjs,run.sh}`
+- Modify: `packages/cli/src/{setup.ts,bin.ts,agent-cmd.ts,doctor.ts,version.ts,token.ts}`, `packages/agent/src/{agent.ts,config.ts,device.ts,index.ts}`, `packages/runtime-claude/src/probe.ts` (Windows ENOENT/EINVAL → not_installed), `packages/runtime-codex/src/adapter.ts` (spawn the resolved command), `packages/cli/vitest.config.ts` (`docker` project, as in hub), `.github/workflows/ci.yml`
+- Test: create `packages/cli/src/service/{launchd.test.ts,systemd.test.ts,schtasks.test.ts,spec.test.ts,real.test.ts}`, `packages/agent/src/{exe.test.ts,perms.test.ts}`, `packages/cli/src/linux-chain.docker.test.ts`; modify `packages/cli/src/{doctor.test.ts,version.test.ts,connected.test.ts}`, `packages/agent/src/units.test.ts`
+
+**Interfaces — Produces:**
+```ts
+// cli/service/types.ts
+export type ServiceKind = 'launchd' | 'systemd' | 'schtasks' | 'run-key' | 'none';
+export interface ServiceSpec { nodePath: string; cliEntry: string; args: string[] /* ['agent', '--log-file', <path>] on win32, ['agent'] elsewhere */; env: { PATH: string; HOME: string }; workingDir: string; logsDir: string }
+export interface ServiceStatus { kind: ServiceKind; installed: boolean; running: boolean | null; spec: ServiceSpec | null; nodeExists: boolean | null; nodeVersion: string | null; definitionPath: string | null; detail?: string }
+export interface AgentService {
+  readonly kind: ServiceKind;
+  install(spec: ServiceSpec): Promise<{ definitionPath: string; notes: string[] }>; // notes: e.g. linger hint
+  uninstall(): Promise<{ removed: boolean }>;
+  restart(): Promise<boolean>;                    // no-op false when not installed
+  status(): Promise<ServiceStatus>;               // reads the pinned spec back from its own definition
+}
+export interface ServiceDeps { platform: NodeJS.Platform; home: string; env: NodeJS.ProcessEnv; exec: ExecFn; uid?: number; username?: string }
+export function detectServiceKind(d: ServiceDeps): Promise<ServiceKind>; // darwin launchd; linux systemd iff `systemctl --user show-environment` exits 0, else none; win32 schtasks
+export function agentService(d: ServiceDeps): Promise<AgentService>;
+// cli/service/spec.ts
+export function serviceSpec(o: { home: string; execPath: string; argv1: string; env: NodeJS.ProcessEnv; platform: NodeJS.Platform }): Promise<ServiceSpec>; // nodePath = realpath(execPath), cliEntry = realpath(argv1)
+// systemd.ts
+export const SYSTEMD_UNIT = 'uncage-agent.service';
+export function systemdUnitPath(home: string, env: NodeJS.ProcessEnv): string;
+export function systemdUnit(spec: ServiceSpec): string;  // ExecStart quoted ("…", \\ and \" escaped, % → %%), Restart=on-failure, RestartSec=10, StandardOutput/StandardError=append:<logs>/agent(.err).log, WantedBy=default.target
+export function parseSystemdUnit(text: string): ServiceSpec | null;
+// schtasks.ts
+export const TASK_NAME = 'UncageAgent';
+export function taskXml(spec: ServiceSpec, userId: string): string; // UTF-16 document: LogonTrigger UserId, Principal InteractiveToken + LeastPrivilege, MultipleInstancesPolicy IgnoreNew, ExecutionTimeLimit PT0S, RestartOnFailure PT1M × 999, battery stops off, Hidden; Exec conhost.exe --headless "<node>" "<entry>" agent --log-file "<log>" (direct node.exe when conhost has no --headless)
+export function parseTaskXml(xml: string): ServiceSpec | null;
+// commands: schtasks /create /tn UncageAgent /xml <file> /f · /run · /end · /delete /f · /query /tn UncageAgent /fo csv /v; "Access is denied" → run-key fallback (reg add HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v UncageAgent …, started now detached with windowsHide)
+// agent/exe.ts
+export interface ResolvedCommand { file: string; args: string[]; via: 'direct' | 'node-shim' | 'cmd' }
+export function resolveCommand(cmd: string, args?: string[], o?: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; execPath?: string }): Promise<ResolvedCommand | null>; // win32: PATH × PATHEXT, .exe first; npm .cmd shim → its node + JS target (or its .exe target); other .cmd/.bat → cmd.exe /d /s /c "<quoted>"
+export function parseNpmCmdShim(text: string): { target: string; viaNode: boolean } | null;
+export function openUrlCommand(url: string, platform: NodeJS.Platform): [string, string[]]; // open · xdg-open · rundll32 url.dll,FileProtocolHandler
+export function selfUpgradeCommand(o?: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv }): Promise<[string, string[]]>; // npm i -g @uncage/cli@latest via resolveCommand (replaces SELF_UPGRADE)
+// agent/perms.ts
+export function restrictToUser(path: string, o?: { platform?: NodeJS.Platform; exec?: ExecFn; user?: string; dir?: boolean }): Promise<void>; // posix chmod 600/700; win32 icacls "<path>" /inheritance:r /grant:r "<user>:F" (dirs "(OI)(CI)F")
+export function checkUserOnly(path: string, o?: { platform?: NodeJS.Platform; exec?: ExecFn; user?: string }): Promise<{ ok: boolean; detail: string; fix: string }>; // win32: icacls lists only the user, SYSTEM, Administrators
+export function replaceFile(tmp: string, dest: string, o?: { platform?: NodeJS.Platform }): Promise<void>; // rename; win32 retries EPERM/EBUSY/EACCES 10 × 50 ms
+// cli
+// bin: `uncage agent install` · `uncage agent uninstall` · `uncage agent status [--json]` · `uncage agent [--log-file <path>]`
+// version: `uncage --version` → line 1 `0.3.0`, line 2 `node v22.23.4 (<execPath>)`
+```
+Doctor rows: `node` (detail `v22.23.4 · <execPath>`; fix per platform: darwin with brew `brew install node@22`, otherwise the site's install command when a site is configured, else `https://nodejs.org`). `service` (kind, running; fails only when sites are configured and the service is missing; fix `uncage agent install`). `service.node` (pinned node exists and is ≥ 22, checked with `<node> --version`; fix `uncage agent install`). `service.linger` (systemd only, a warning: `loginctl show-user $USER -p Linger` = `no` → "stops when you log out"; fix `loginctl enable-linger $USER`). `token` uses `checkUserOnly` on win32.
+
+- [ ] Step: failing tests.
+  ```ts
+  it('serviceSpec pins realpath(process.execPath) and the real bin.js, never an fnm_multishells or volta shim path', …);
+  it('launchd / systemd / schtasks definitions round-trip their spec (paths with spaces, %, quotes)', () => {
+    for (const [render, parse] of [[launchdPlist, parsePlist], [systemdUnit, parseSystemdUnit], [(s) => taskXml(s, 'PC\\u'), parseTaskXml]]) expect(parse(render(spec))).toEqual(spec);
+  });
+  it('systemd install: writes the unit, daemon-reload, enable --now; uninstall: disable --now, rm, daemon-reload', …); // exact exec calls
+  it('schtasks XML: LeastPrivilege, InteractiveToken, RestartOnFailure, current user only; Access is denied → run-key fallback', …);
+  it('detectServiceKind: linux without a user systemd → none; setup then prints the foreground hint and exits 0', …);
+  it('agent status reports the pinned Node and whether it still exists', …);
+  it('doctor: missing pinned Node → fix uncage agent install', async () => {
+    const checks = await runDoctor({ ...deps, service: fakeService({ spec: { ...spec, nodePath: '/gone/node' } }) });
+    expect(checks.find((c) => c.id === 'service.node')).toMatchObject({ ok: false, fix: 'uncage agent install' });
+  });
+  it('doctor: linger off is a warning with loginctl enable-linger', …);
+  it('uncage --version prints the version, then the Node actually in use', …);
+  it('resolveCommand on win32 (fixture PATH): claude.exe first, an npm codex.cmd becomes node + codex.js, unknown → null', …);
+  it('selfUpgradeCommand on win32 runs npm through node npm-cli.js, not npm.cmd', …);
+  it('config writes: 0600 on POSIX; on win32 icacls /inheritance:r /grant:r <user>:F; replaceFile retries EPERM', …);
+  it('setup opens the browser with open / xdg-open / rundll32', …);
+  // real.test.ts — UNCAGE_SERVICE_TESTS=1 only (CI): registers the real service for the CI user with a fake entry that writes a heartbeat file
+  it('real service: install → running → kill with exit 75 → restarted within 90 s → uninstall leaves nothing', …); // windows-latest: schtasks; ubuntu-latest: systemd --user when available, else skipped with the reason logged
+  // linux-chain.docker.test.ts — UNCAGE_DOCKER_TESTS=1 only
+  it('Linux full chain: install.sh with real Node via fnm, setup with device approval, agent online, a codex run (testkit fake) completes, uncage agent install falls back to foreground without systemd', …);
+  it('Linux systemd user service in a systemd container: enable-linger, agent install, active, restarted after kill -9, doctor flags a removed pinned Node', …); // skipped with a logged reason if the container cannot boot systemd
+  ```
+  Linux chain: `node:22-bookworm-slim` is **not** used for the first test. It uses `debian:bookworm-slim` + `curl ca-certificates unzip` (no Node), so the installer really installs Node 22 with fnm (network allowed in this gated test). The workspace packages come from `pnpm pack` tarballs, and the CLI from `UNCAGE_CLI_SPEC=/pkgs/uncage-cli.tgz` with the other tarballs pre-installed globally. The real hub runs inside the container (`hub.mjs`: `createHub` + `pgliteHubStore` + `attachWebSocket`, `publicUrl` `http://127.0.0.1:3000`, a test user, `approveDevice` driven by the test through a published port), because a non-loopback `http` URL is refused by `normalizeHubUrl`. A `codex` shim on PATH runs `node <testkit>/fake-codex.js app-server`. The systemd variant runs `debian:bookworm` + `systemd dbus-user-session` with `/sbin/init`, `--privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw --tmpfs /run --tmpfs /run/lock`, a non-root user, and `systemctl --user -M u@` or `su - u` with `XDG_RUNTIME_DIR`. If systemd cannot boot under the local Docker, record that and write the manual check in `docs/compatibility.md`.
+- [ ] Step: run → FAIL: `pnpm --filter @uncage/agent exec vitest run src/exe.test.ts src/perms.test.ts src/units.test.ts && pnpm --filter @uncage/cli exec vitest run`
+- [ ] Step: implement. Then add to `.github/workflows/ci.yml` a `platform` job: `strategy.matrix.os: [ubuntu-latest, macos-latest, windows-latest]`, `fail-fast: false`. Before checkout on Windows, run `git config --global core.autocrlf false`. Steps: Node 22, `pnpm install --frozen-lockfile`, `pnpm exec turbo run build --filter=@uncage/cli... --filter=@uncage/hub...`, then `pnpm --filter @uncage/agent test`, `pnpm --filter @uncage/cli test` and `pnpm --filter @uncage/hub exec vitest run src/install`. Ubuntu also runs `shellcheck -s bash` on the rendered `install.sh` (`sudo apt-get install -y shellcheck` only if missing: this is CI, not the installer). Windows and Ubuntu set `UNCAGE_SERVICE_TESTS=1`. The existing `test`/`docs` jobs stay unchanged. Push `feat/platform`; fix what the three OSes reveal (path separators, 0600 assertions, `.cmd` spawning, CRLF).
+- [ ] Step: run → PASS: `pnpm build && pnpm test && pnpm typecheck && pnpm lint && UNCAGE_DOCKER_TESTS=1 pnpm --filter @uncage/cli exec vitest run --project docker`, plus the CI `platform` job green on all three OSes. Put the run URL and the Docker/systemd results in the commit body. Add Linux and Windows rows to `docs/compatibility.md` ("CI verified, awaiting real-device confirmation", with what ran and the date).
+- [ ] Step: commit `feat(agent,cli): per-user background service on macOS, Linux and Windows with a pinned Node; doctor checks; CI on three OSes`
+
+---
+
+### Task P4: Site, docs and demo copy — one command, every OS (3 languages)
+
+Runs on `feat/faas-mode` **after Task 16, before Task 17**. It is not folded into Tasks 14–16: those tasks rewrite the same pages and the same feature grid, so a separate task after them avoids a three-way merge and keeps their scopes intact.
+
+**Files:**
+- Create: `apps/site/src/components/InstallCommand.astro`, `apps/docs/src/content/docs/start/install-on-your-computer.md` + `zh-cn/` + `ja/` counterparts
+- Modify: `apps/site/src/components/{Hero.astro,HowItWorks.astro,Features.astro,Icon.astro (icon 'monitor' reused)}`, `apps/site/src/i18n/{schema.ts,en.ts,zh.ts,ja.ts}`, `apps/site/tests/{i18n.test.ts,e2e.spec.ts}`; `packages/react-ui/src/components/ConnectMachine.tsx`, `packages/react-ui/src/i18n.ts`, `packages/react-ui/src/connected.test.tsx`, `e2e/connected/golden-path.ts` (selectors); `apps/docs/src/nav.mjs` (Start here += `start/install-on-your-computer` after `start/try-the-demo`), `apps/docs/i18n-glossary.md` (version manager 版本管理器 / バージョンマネージャー; background service 后台服务 / バックグラウンドサービス; scheduled task 计划任务 / タスク スケジューラのタスク; lingering 驻留（linger） / linger（常駐）), `apps/docs/src/content/docs/{,zh-cn/,ja/}{index.md,start/how-it-works.md,start/quickstart-connected.md,start/try-the-demo.mdx,reference/cli.md,reference/troubleshooting.md}`, `apps/docs/scripts/markdown.test.ts`, `docs/compatibility.md`, `examples/connected-demo/{README.md,lib/skills.ts}`, `packages/cli/README.md`, `packages/agent/README.md`, `README.md`
+
+Content requirements:
+- **Site.** `InstallCommand` shows one command with tabs "macOS / Linux" and "Windows" (`curl -fsSL https://your.site/api/uncage/install.sh | bash` / `irm https://your.site/api/uncage/install.ps1 | iex`). The server renders macOS/Linux; an inline script picks Windows from `navigator.userAgentData?.platform ?? navigator.platform`, without layout shift. Tabs are keyboard-switchable (`role="tablist"`), with a copy button per command. Hero `installLabel`: en "One command, one approval" · zh "一条命令，一次批准" · ja "コマンド1つ、承認1回". The HowItWorks first step says one command, one approval in the browser; the code box shows the one command.
+- **Features.** "Windows and Linux agents" moves to `available` as "macOS, Windows and Linux" (icon `monitor`; en "One command installs everything on macOS, Windows or Linux. The agent runs as a per-user background service; no admin rights needed."). `available` becomes `Eight<Feature>` laid out as the 3×2 grid plus a two-column row (ACP card, OS card). `soon` becomes `Two<Feature>` (Codex verified, More entry points).
+- **ConnectMachine.** One step "Run this command on your computer" with OS tabs that default to the detected OS. It uses `install.windows` and keeps the "Coming soon" branch only for a `null` command from custom clients. Below it, a secondary line "Already have the CLI? `uncage setup …`". New i18n keys `connectOneCommand` and `connectAlreadyInstalled` (en, zh; ja falls back as today).
+- **`install-on-your-computer`** (3 languages). One section each for macOS, Linux and Windows: the command, what is checked and installed, the version-manager table (verified facts above; volta "unmaintained upstream"), the background service (launchd / systemd user + linger / scheduled task, `uncage agent status`), and Uninstall. A "Flags" section (`bash -s -- --yes`, `--no-setup`, `--lang`; PowerShell `& ([scriptblock]::Create((irm …))) -Yes`; env equivalents). A "Non-interactive and CI" section (exit code 2). A "Manual install" section (`npm i -g @uncage/cli`, then `uncage setup`).
+- **Troubleshooting** (3 languages): `uncage: command not found` after install (open a new terminal; the PATH block); the pinned Node was removed (`uncage agent install`); the Linux agent stops at logout (`loginctl enable-linger $USER`); Linux without systemd (foreground `uncage agent`); Windows "running scripts is disabled" (use `uncage.cmd`, or `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`); Linux without `unzip`.
+- **Other pages.** `reference/cli.md`: `uncage agent install|uninstall|status`, `--log-file`, the `--version` second line, the new doctor rows. `try-the-demo`: drop "A Mac"; one command for every OS (update the ConnectMachine screenshot and its alt text). `how-it-works`: describe install.sh/install.ps1 as the checking installer (no longer "macOS only").
+- **`docs/compatibility.md`.** An "Operating systems" table: macOS — real device, live E2E (date); Linux — CI (ubuntu-latest) + Docker full chain + systemd container result, "CI verified, awaiting real-device confirmation"; Windows — CI (windows-latest, `install.ps1` executed under Windows PowerShell 5.1 and pwsh 7, real scheduled task), "CI verified, awaiting real-device confirmation".
+
+- [ ] Step: failing tests.
+  ```ts
+  // apps/site/tests/i18n.test.ts
+  it('every locale says one command, one approval and lists Windows and Linux as available', () => {
+    for (const d of [en, zh, ja]) { expect(d.features.available).toHaveLength(8); expect(d.features.soon).toHaveLength(2);
+      expect(JSON.stringify(d.features.soon)).not.toMatch(/Windows|Linux/); }
+    expect(en.hero.installLabel).toBe('One command, one approval'); expect(zh.hero.installLabel).toBe('一条命令，一次批准'); expect(ja.hero.installLabel).toBe('コマンド1つ、承認1回');
+  });
+  // apps/site/tests/e2e.spec.ts (system Chrome)
+  test('install command follows the visitor OS and can be switched', async ({ browser }) => {
+    const win = await browser.newContext({ userAgent: WINDOWS_UA }); // + navigator.platform 'Win32' via addInitScript
+    await expect((await win.newPage().then(async (p) => (await p.goto('/'), p))).locator('[data-install-cmd]:visible')).toContainText('irm ');
+    // default context shows `curl -fsSL`; clicking the Windows tab shows `irm`; soon badges count 2, available cards 8
+  });
+  // packages/react-ui/src/connected.test.tsx
+  it('ConnectMachine shows one command, picks the Windows tab on Windows, and offers uncage setup for an installed CLI', …);
+  // apps/docs/scripts/markdown.test.ts
+  it('the install page covers every OS, the flags, the service and uninstall', …); // headings macOS, Linux, Windows, Flags, Non-interactive and CI, Background service, Uninstall
+  ```
+- [ ] Step: run → FAIL: `pnpm --filter site test && pnpm --filter @uncage/react-ui test && pnpm --filter docs exec vitest run`
+- [ ] Step: implement. Docs in en, then zh-cn/ja per `i18n-glossary.md` (code blocks byte-identical); demo copy; compatibility table.
+- [ ] Step: run → PASS: `pnpm build && pnpm test && pnpm typecheck && pnpm lint && pnpm --filter site check && pnpm --filter site exec playwright test && pnpm --filter docs check && pnpm e2e:mock` (all green)
+- [ ] Step: commit `feat(site,docs,react-ui): one command, one approval — install on macOS, Windows or Linux (en, zh, ja)`
