@@ -90,6 +90,30 @@ describe('runDoctor', () => {
     expect(formatChecks(checks)).toContain('fix: npm i -g @openai/codex && codex login');
   });
 
+  it('doctor lists ACP runtimes and never fails on them', async () => {
+    const { home, config } = await setup();
+    const disposed: string[] = [];
+    const acp = (id: string, probe: RuntimeProbe): RuntimeAdapter =>
+      ({ id, displayName: id, probe: async () => probe, dispose: async () => void disposed.push(id) }) as unknown as RuntimeAdapter;
+    const checks = await runDoctor({
+      config,
+      home,
+      fetch: okFetch,
+      adapters: [
+        adapter('claude', { status: 'available', version: '2.0.0' }),
+        acp('acp-gemini', { status: 'not_installed', hint: 'npm i -g @google/gemini-cli', installUrl: 'https://github.com/google-gemini/gemini-cli' }),
+        acp('acp-mine', { status: 'auth_required', message: 'Sign in first.', hint: 'Sign in to mine in a terminal, then retry.' }),
+        acp('acp-ok', { status: 'available', version: '1.0.0' }),
+      ],
+    });
+    expect(checks.find((c) => c.id === 'runtime.acp-gemini')).toMatchObject({ ok: false, fix: 'npm i -g @google/gemini-cli' });
+    expect(checks.find((c) => c.id === 'runtime.acp-mine')).toMatchObject({ ok: false, fix: 'Sign in to mine in a terminal, then retry.' });
+    expect(checks.find((c) => c.id === 'runtime.acp-ok')).toMatchObject({ ok: true, detail: '1.0.0' });
+    expect(doctorExitCode(checks)).toBe(0);
+    // Probing may start agent processes: doctor disposes every adapter afterwards.
+    expect(disposed.sort()).toEqual(['acp-gemini', 'acp-mine', 'acp-ok']);
+  });
+
   it('fails when server unreachable with fix "uncage serve"', async () => {
     const { home, config } = await setup();
     const checks = await runDoctor({ config, home, fetch: downFetch, adapters: [] });

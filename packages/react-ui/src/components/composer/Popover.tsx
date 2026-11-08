@@ -21,6 +21,8 @@ export interface PopoverItem {
   tone?: 'err';
   /** An action among choices (e.g. "Connect another computer…"): a plain `menuitem`. */
   action?: boolean;
+  /** Decoration after the text (e.g. a computer's runtime icons); not part of the item's name. */
+  extra?: ReactNode;
 }
 
 export interface PopoverProps {
@@ -238,6 +240,7 @@ export function Popover({
                       </span>
                     )}
                   </span>
+                  {item.extra}
                   {role === 'menuitemradio' && (
                     <span className="uc-menu-check" aria-hidden>
                       {item.checked && <Check />}

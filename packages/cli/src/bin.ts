@@ -12,10 +12,13 @@ import {
   parseDoctorArgs,
   runDoctor,
 } from './doctor.js';
-import { applyWorkspaceFlag, buildAdapters, serve } from './serve.js';
-import { defaultExec } from '@uncage/agent';
+import { applyWorkspaceFlag, buildAllAdapters, serve } from './serve.js';
+import { defaultExec, DEFAULT_ACP_RUNTIMES, loadAgentConfig } from '@uncage/agent';
+import { loadRegistry, refreshRegistry } from '@uncage/runtime-acp';
+import { acpCacheDir, setupAcp } from './acp.js';
 import { ACTIVITY_HELP, showActivity } from './activity-cmd.js';
-import { AGENT_HELP, runAgent } from './agent-cmd.js';
+import { AGENT_HELP, agentAdapters, runAgent } from './agent-cmd.js';
+import { RUNTIMES_HELP, runRuntimes, toggleRuntime } from './runtimes-cmd.js';
 import { restartLaunchAgent, uninstallLaunchAgent } from './launchd.js';
 import { connectedHome, daemonHomeConflict } from './home.js';
 import { runSetup, SETUP_HELP } from './setup.js';
@@ -35,6 +38,8 @@ Connected Mode (a website drives this computer):
   uncage agent uninstall                            Remove the background agent.
   uncage sites                                      List connected websites.
   uncage sites remove <id>                          Disconnect a website.
+  uncage runtimes [--json]                          Agents this computer offers (incl. ACP agents).
+  uncage runtimes enable|disable <id>               Turn an ACP agent on or off.
   uncage activity [--site <id>] [--follow]          What websites did on this computer.
 
   uncage <command> --help
@@ -127,7 +132,7 @@ async function main(argv: string[]): Promise<number> {
     }
     const checks = await runDoctor({
       config,
-      adapters: buildAdapters(config),
+      adapters: await buildAllAdapters(config, home),
       fetch,
       home,
       serverUrl: args.serverUrl,
@@ -232,6 +237,52 @@ async function main(argv: string[]): Promise<number> {
     }
     console.error(SITES_HELP);
     return 2;
+  }
+
+  if (cmd === 'runtimes') {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      allowPositionals: true,
+      options: {
+        json: { type: 'boolean', default: false },
+        all: { type: 'boolean', default: false },
+        refresh: { type: 'boolean', default: false },
+        help: { type: 'boolean', short: 'h', default: false },
+      },
+    });
+    if (values.help) {
+      console.log(RUNTIMES_HELP);
+      return 0;
+    }
+    const home = connectedHome();
+    if (positionals.length === 2 && (positionals[0] === 'enable' || positionals[0] === 'disable')) {
+      await toggleRuntime({ home, id: positionals[1]!, enable: positionals[0] === 'enable', out: (l) => console.log(l), registry: await loadRegistry(acpCacheDir(home)) });
+      // The background agent never runs with UNCAGE_HOME (setup refuses), so leave it alone then.
+      if (!process.env.UNCAGE_HOME) await restartLaunchAgent({ home: homedir(), uid: process.getuid?.() ?? 501, exec: defaultExec });
+      return 0;
+    }
+    if (positionals.length > 0) {
+      console.error(RUNTIMES_HELP);
+      return 2;
+    }
+    if (values.refresh) {
+      try {
+        const r = await refreshRegistry({ cacheDir: acpCacheDir(home), fetch });
+        if (!values.json) console.log(`ACP registry ${r.version}: ${r.agents.length} agents (refreshed).`);
+      } catch (e) {
+        console.error(`! Could not refresh the ACP registry (${e instanceof Error ? e.message : String(e)}); using the cached or bundled copy.`);
+      }
+    }
+    const config = await loadAgentConfig(home);
+    const { allowBypass } = config.localPolicy;
+    const acp = await setupAcp({ acp: config.runtimes?.acp ?? DEFAULT_ACP_RUNTIMES, allowBypass, home });
+    return runRuntimes({
+      adapters: agentAdapters(allowBypass, acp.adapters, acp.nativeIcons)(),
+      json: values.json,
+      all: values.all,
+      catalog: acp.catalog,
+      out: (l) => console.log(l),
+    });
   }
 
   if (cmd === 'activity') {

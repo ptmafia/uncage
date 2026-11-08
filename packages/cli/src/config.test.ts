@@ -16,6 +16,23 @@ describe('loadConfig', () => {
     expect(c.workspace).toEqual({ allowedRoots: [cwd], default: cwd });
     expect(c.runtimes.claude.enabled).toBe(true);
     expect(c.runtimes.codex.enabled).toBe(true);
+    expect(c.runtimes.acp).toEqual({ presets: 'auto', autoDetect: true, enable: [], disable: [], agents: [] });
+  });
+
+  it('runtimes.acp (Local Mode) uses the agent.yaml schema', async () => {
+    const cwd = await tmp();
+    await writeFile(join(cwd, 'uncage.config.yaml'), 'runtimes:\n  acp:\n    presets: off\n    autoDetect: false\n    agents:\n      - id: mine\n        command: [node, agent.js]\n');
+    expect((await loadConfig(cwd, {})).runtimes.acp).toEqual({
+      presets: 'off',
+      autoDetect: false,
+      enable: [],
+      disable: [],
+      agents: [{ id: 'mine', command: ['node', 'agent.js'], mcp: 'auto', enabled: true }],
+    });
+    await writeFile(join(cwd, 'uncage.config.yaml'), 'runtimes:\n  acp:\n    agents:\n      - id: mine\n');
+    await expect(loadConfig(cwd, {})).rejects.toThrow(/preset or a command/);
+    await writeFile(join(cwd, 'uncage.config.yaml'), 'runtimes:\n  acp:\n    prests: off\n');
+    await expect(loadConfig(cwd, {})).rejects.toThrow(/runtimes\.acp\.prests/);
   });
 
   it('reads yaml and merges with defaults', async () => {

@@ -14,3 +14,33 @@ export {
 export { toPromptBlocks } from './prompt.js';
 export { BRIDGE_TOKEN_ENV, bridgePath, SITE_MCP_SERVER, siteMcpDeclaration, startSiteMcpServer, type SiteMcpOptions, type SiteMcpServer } from './site-mcp.js';
 export { skillsPreamble } from './skills.js';
+export { ACP_PRESETS, acpName, isDisabled, resolveAcpAgents, type AcpAgentEntry, type AcpAgentsConfig, type AcpPreset } from './presets.js';
+export {
+  ACP_PLATFORMS,
+  ACP_REGISTRY_URL,
+  bundledRegistry,
+  downloadIcon,
+  downloadRegistrySnapshot,
+  loadRegistry,
+  parseRegistry,
+  refreshRegistry,
+  refreshRegistryIfStale,
+  registryCachePath,
+  registryIcon,
+  type AcpPlatform,
+  type AcpRegistry,
+  type AcpRegistryAgent,
+  type AcpRegistryCommand,
+  type AcpRegistryPackage,
+} from './registry.js';
+export {
+  acpHandshake,
+  buildAcpAgents,
+  discoverAcpAgents,
+  hostPlatform,
+  registryRuntimeId,
+  type AcpCatalogEntry,
+  type AcpCatalogStatus,
+  type DiscoverOptions,
+} from './discover.js';
+export { createWhich, type Which } from './which.js';

@@ -2081,3 +2081,61 @@
     box-shadow: 0 0 0 2px var(--uncage-accent-ring);
   }
 }
+
+/* Runtime icons: official icons as <img> data URIs (light/dark variants follow the theme), else an initial. */
+.uc-runtime-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+.uc-runtime-icon img {
+  display: block;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+.uc-runtime-icon img[data-variant="dark"],
+[data-theme="dark"] .uc-runtime-icon img[data-variant="light"] {
+  display: none;
+}
+[data-theme="dark"] .uc-runtime-icon img[data-variant="dark"] {
+  display: block;
+}
+@media (prefers-color-scheme: dark) {
+  [data-theme="auto"] .uc-runtime-icon img[data-variant="light"] {
+    display: none;
+  }
+  [data-theme="auto"] .uc-runtime-icon img[data-variant="dark"] {
+    display: block;
+  }
+}
+.uc-runtime-icon[data-fallback] {
+  border-radius: 4px;
+  background: var(--uncage-neutral-bg);
+  color: var(--uncage-neutral-fg);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+.uc-runtime[data-disabled] .uc-runtime-icon {
+  opacity: 0.6;
+}
+.uc-header .uc-pill .uc-runtime-icon {
+  width: 14px;
+  height: 14px;
+  margin-inline-end: 4px;
+}
+.uc-header .uc-pill .uc-runtime-icon img {
+  width: 14px;
+  height: 14px;
+}
+.uc-menu-icons {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 4px;
+  align-items: center;
+  margin-inline-start: auto;
+}

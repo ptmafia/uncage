@@ -1,4 +1,4 @@
-import type { RuntimeAdapter, RuntimeCapabilities, RuntimeInfo } from '@uncage/protocol';
+import { sanitizeRuntimeIcon, type RuntimeAdapter, type RuntimeCapabilities, type RuntimeInfo } from '@uncage/protocol';
 import { UncageError } from './errors.js';
 import { applyPolicy, type SecurityPolicy } from './settings.js';
 
@@ -77,7 +77,8 @@ async function refreshed(a: RuntimeAdapter): Promise<RuntimeCapabilities> {
 }
 
 async function probe(a: RuntimeAdapter, policy: SecurityPolicy): Promise<RuntimeInfo> {
-  const base = { id: a.id, displayName: a.displayName };
+  const icon = sanitizeRuntimeIcon(a.icon);
+  const base = { id: a.id, displayName: a.displayName, ...(icon ? { icon } : {}) };
   try {
     const p = await a.probe();
     return {

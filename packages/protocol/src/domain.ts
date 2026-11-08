@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ErrorBodySchema } from './errors.js';
+import { LenientRuntimeIconSchema } from './icon.js';
 
 export const RunStateSchema = z.enum([
   'queued',
@@ -112,6 +113,8 @@ export const RuntimeInfoSchema = z.object({
   message: z.string().optional(),
   hint: z.string().optional(),
   installUrl: z.string().optional(),
+  /** The runtime's official icon (data URIs only, at most 16 KiB each); an invalid one is dropped. */
+  icon: LenientRuntimeIconSchema,
 });
 export type RuntimeInfo = z.infer<typeof RuntimeInfoSchema>;
 

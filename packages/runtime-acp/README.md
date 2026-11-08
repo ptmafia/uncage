@@ -22,3 +22,13 @@ const adapter = acpAdapter({ id: 'acp-claude', displayName: 'Claude Code (ACP)',
 ---
 
 Part of **Uncage** — bring Claude Code (and Codex) into your own app with approvals, streaming and a ready-made UI. Start with [`@uncage/react-ui`](https://www.npmjs.com/package/@uncage/react-ui) for the 5-minute setup. MIT licensed.
+
+## Presets and the ACP registry
+
+`resolveAcpAgents` turns `runtimes.acp` entries and the Claude Code / Gemini CLI / OpenCode presets
+into adapter options. `buildAcpAgents` adds agents from the official
+[ACP Registry](https://github.com/agentclientprotocol/registry): an agent installed on PATH (a binary
+distribution for this OS, or a known npm bin) that answers the ACP `initialize` handshake is
+enabled (results cached per path and file version). npx/uvx distributions download code and are
+never run unless the user enables them. A registry snapshot with the official icons (as data URIs)
+is bundled (`pnpm registry:snapshot` refreshes it); `refreshRegistry` downloads a newer copy.

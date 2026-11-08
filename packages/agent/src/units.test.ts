@@ -4,7 +4,18 @@ import type { AgentFrame } from '@uncage/protocol';
 import { join } from 'node:path';
 import type { DeviceCodeResponse } from '@uncage/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
-import { agentConfigLockPath, agentConfigPath, agentDir, ensureAgentDir, loadAgentConfig, newMachineKey, updateAgentSites, withAgentConfigLock } from './config.js';
+import {
+  agentConfigLockPath,
+  agentConfigPath,
+  agentDir,
+  DEFAULT_ACP_RUNTIMES,
+  ensureAgentDir,
+  loadAgentConfig,
+  newMachineKey,
+  updateAgentAcp,
+  updateAgentSites,
+  withAgentConfigLock,
+} from './config.js';
 import { fitEvent, TRUNCATED_EXTENSION } from './fit.js';
 import { EventEnvelopeSchemas, UncageEventSchema, type UncageEvent } from '@uncage/protocol';
 import { utimes } from 'node:fs/promises';
@@ -67,7 +78,7 @@ describe('agent config', () => {
   const site = { id: 'app.example.com', name: 'App', url: 'https://app.example.com/api/uncage', machineId: 'mch_1', token: 'secret-token' };
 
   it('missing file → no sites, bypass off', async () => {
-    expect(await loadAgentConfig(await home())).toEqual({ sites: [], localPolicy: { allowBypass: false } });
+    expect(await loadAgentConfig(await home())).toEqual({ sites: [], localPolicy: { allowBypass: false }, runtimes: { acp: DEFAULT_ACP_RUNTIMES } });
   });
 
   it('round-trips sites, preserves hand-written localPolicy and comments, writes 0600', async () => {
@@ -83,7 +94,52 @@ describe('agent config', () => {
     expect(await loadAgentConfig(h)).toEqual({
       sites: [{ ...site, machineKey: key }],
       localPolicy: { allowBypass: true, allowedPermissionModes: ['default', 'acceptEdits'] },
+      runtimes: { acp: DEFAULT_ACP_RUNTIMES },
     });
+  });
+
+  it('agent.yaml runtimes.acp: defaults, unknown keys rejected, preset or command required, duplicate ids rejected', async () => {
+    expect(DEFAULT_ACP_RUNTIMES).toEqual({ presets: 'auto', autoDetect: true, enable: [], disable: [], agents: [] });
+    const h = await home();
+    await mkdir(join(h, '.uncage'), { recursive: true });
+    const load = async (yaml: string) => {
+      await writeFile(agentConfigPath(h), yaml);
+      return loadAgentConfig(h);
+    };
+    expect((await load('runtimes:\n  acp:\n    presets: off\n')).runtimes?.acp).toEqual({ ...DEFAULT_ACP_RUNTIMES, presets: 'off' });
+    const one = await load('runtimes:\n  acp:\n    agents:\n      - id: gemini\n        preset: gemini\n      - id: mine\n        command: [node, agent.js]\n        env: { A: "1" }\n        mcp: stdio\n');
+    expect(one.runtimes?.acp.agents).toEqual([
+      { id: 'gemini', preset: 'gemini', mcp: 'auto', enabled: true },
+      { id: 'mine', command: ['node', 'agent.js'], env: { A: '1' }, mcp: 'stdio', enabled: true },
+    ]);
+    await expect(load('runtimes:\n  acp:\n    presetz: off\n')).rejects.toThrow(/Invalid/);
+    await expect(load('runtimes:\n  acp:\n    agents:\n      - id: x\n        comand: [a]\n')).rejects.toThrow(/Invalid/);
+    await expect(load('runtimes:\n  acp:\n    agents:\n      - id: x\n')).rejects.toThrow(/preset or a command/);
+    await expect(load('runtimes:\n  acp:\n    agents:\n      - id: Bad_Id\n        command: [a]\n')).rejects.toThrow(/Invalid/);
+    await expect(load('runtimes:\n  acp:\n    agents:\n      - { id: x, command: [a] }\n      - { id: x, preset: claude }\n')).rejects.toThrow(/duplicate/i);
+    await expect(load('runtimes:\n  codex: {}\n')).rejects.toThrow(/Invalid/);
+  });
+
+  it('updateAgentSites keeps runtimes.acp', async () => {
+    const h = await home();
+    await mkdir(join(h, '.uncage'), { recursive: true });
+    await writeFile(agentConfigPath(h), 'runtimes:\n  acp:\n    presets: off # mine\n    agents:\n      - id: mine\n        command: [node, a.js]\n');
+    await updateAgentSites(h, () => [site]);
+    const c = await loadAgentConfig(h);
+    expect(c.sites).toEqual([site]);
+    expect(c.runtimes?.acp).toMatchObject({ presets: 'off', agents: [{ id: 'mine', command: ['node', 'a.js'] }] });
+    expect(await readFile(agentConfigPath(h), 'utf8')).toContain('# mine');
+  });
+
+  it('updateAgentAcp records enable/disable lists and keeps sites and comments', async () => {
+    const h = await home();
+    await updateAgentSites(h, () => [site]);
+    await updateAgentAcp(h, (acp) => ({ ...acp, enable: ['gemini'], disable: ['goose'] }));
+    const c = await loadAgentConfig(h);
+    expect(c.sites).toEqual([site]);
+    expect(c.runtimes?.acp).toMatchObject({ enable: ['gemini'], disable: ['goose'], presets: 'auto' });
+    expect(((await stat(agentConfigPath(h))).mode & 0o777).toString(8)).toBe('600');
+    await expect(updateAgentAcp(h, (acp) => ({ ...acp, enable: ['Not Valid'] }))).rejects.toThrow();
   });
 
   it('tightens a group/world-readable file to 0600 on load', async () => {

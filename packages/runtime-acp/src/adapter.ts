@@ -22,6 +22,7 @@ import {
   type RuntimeAdapter,
   type RuntimeCapabilities,
   type RuntimeEvent,
+  type RuntimeIcon,
   type RuntimeProbe,
 } from '@uncage/protocol';
 import { materializeSkills, type MaterializedSkill } from '@uncage/protocol/node';
@@ -37,6 +38,8 @@ export interface AcpAdapterOptions {
   /** Runtime id, `acp-<name>` (/^acp-[a-z][a-z0-9-]{0,31}$/). */
   id: string;
   displayName: string;
+  /** Official icon (data URIs), e.g. from the ACP registry. */
+  icon?: RuntimeIcon;
   /** The agent's argv; `command[0]` is resolved on PATH (or absolute). */
   command: string[];
   /** Merged over process.env. */
@@ -540,6 +543,7 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
   return {
     id: o.id,
     displayName: o.displayName,
+    ...(o.icon ? { icon: o.icon } : {}),
     capabilities,
     /** Starts the agent if needed and maps its `initialize` result; keeps the current capabilities on failure. */
     async refreshCapabilities() {

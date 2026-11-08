@@ -2,6 +2,7 @@ import { useMachines, useSession } from '@uncage/react';
 import type { JSX } from 'react';
 import { useChatController, useRuntimeInfo, useUi } from '../context.js';
 import { MachineStatus } from './MachineStatus.js';
+import { RuntimeIcon } from './RuntimeIcon.js';
 
 /**
  * Title row of an open session: title, runtime name, read-only tag. In connected mode it also
@@ -13,7 +14,7 @@ export function ConversationHeader(): JSX.Element | null {
   const { session } = useSession();
   const { draft, startNewSession } = useChatController();
   const { connected, currentId } = useMachines();
-  const { name } = useRuntimeInfo(session?.runtimeId);
+  const { info, name } = useRuntimeInfo(session?.runtimeId);
   const showSession = session !== undefined && !draft;
   if (!showSession && !connected) return null;
   return (
@@ -24,6 +25,7 @@ export function ConversationHeader(): JSX.Element | null {
             {session.title}
           </h2>
           <span className="uc-pill" data-tone="neutral">
+            <RuntimeIcon runtime={info ?? { displayName: name }} />
             {name}
           </span>
           {session.readOnly && (

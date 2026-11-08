@@ -356,6 +356,9 @@ importers:
       '@uncage/hub':
         specifier: workspace:*
         version: link:../hub
+      '@uncage/runtime-acp':
+        specifier: workspace:*
+        version: link:../runtime-acp
       '@uncage/testkit':
         specifier: workspace:*
         version: link:../testkit
@@ -377,6 +380,9 @@ importers:
       '@uncage/protocol':
         specifier: workspace:^
         version: link:../protocol
+      '@uncage/runtime-acp':
+        specifier: workspace:^
+        version: link:../runtime-acp
       '@uncage/runtime-claude':
         specifier: workspace:^
         version: link:../runtime-claude
@@ -399,6 +405,9 @@ importers:
       '@uncage/hub':
         specifier: workspace:*
         version: link:../hub
+      '@uncage/testkit':
+        specifier: workspace:*
+        version: link:../testkit
 
   packages/client:
     dependencies:

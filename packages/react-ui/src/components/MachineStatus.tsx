@@ -5,6 +5,7 @@ import { useRef, useState, type JSX } from 'react';
 import { useUi } from '../context.js';
 import { ConnectMachine } from './ConnectMachine.js';
 import { Popover } from './composer/Popover.js';
+import { RuntimeIcon } from './RuntimeIcon.js';
 
 const CONNECT_ID = '__connect__';
 
@@ -54,6 +55,17 @@ export function MachineStatus({ onSelect }: MachineStatusProps): JSX.Element | n
             label: m.name,
             description: `${t.osName(m.os)} · ${status(m)}`,
             checked: m.id === current?.id,
+            ...(m.runtimes.length > 0
+              ? {
+                  extra: (
+                    <span className="uc-menu-icons">
+                      {m.runtimes.map((r) => (
+                        <RuntimeIcon key={r.id} runtime={r} />
+                      ))}
+                    </span>
+                  ),
+                }
+              : {}),
           })),
           { id: CONNECT_ID, label: t.connectAnother, action: true },
         ]}

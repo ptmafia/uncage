@@ -17,6 +17,8 @@ export type { MachineStatusProps } from './components/MachineStatus.js';
 export { Markdown } from './components/Markdown.js';
 export { MessageList } from './components/MessageList.js';
 export { RunStatusBar } from './components/RunStatusBar.js';
+export { RuntimeIcon } from './components/RuntimeIcon.js';
+export type { RuntimeIconProps } from './components/RuntimeIcon.js';
 export { RuntimeSelector } from './components/RuntimeSelector.js';
 export type { RuntimeSelectorProps } from './components/RuntimeSelector.js';
 export { SessionSidebar } from './components/SessionSidebar.js';

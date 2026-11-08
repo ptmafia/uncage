@@ -15,6 +15,13 @@ export {
   upgradeStatePath,
 } from './agent.js';
 export {
+  ACP_AGENT_ID,
+  AcpAgentEntrySchema,
+  AcpRuntimesSchema,
+  DEFAULT_ACP_RUNTIMES,
+  updateAgentAcp,
+  type AcpAgentEntry,
+  type AcpRuntimesConfig,
   activityLogPath,
   agentConfigPath,
   agentConfigLockPath,

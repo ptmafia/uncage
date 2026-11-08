@@ -152,8 +152,9 @@ const RUNTIME_FIX: Record<string, string> = {
   claude: 'npm i -g @anthropic-ai/claude-code',
   codex: 'npm i -g @openai/codex && codex login',
 };
-/** A codex problem alone never fails doctor. */
+/** A codex or ACP agent problem alone never fails doctor. */
 const OPTIONAL_RUNTIMES = new Set(['codex']);
+const isOptionalRuntime = (id: string): boolean => OPTIONAL_RUNTIMES.has(id) || id.startsWith('acp-');
 
 async function readToken(path: string): Promise<string | undefined> {
   try {
@@ -202,6 +203,29 @@ async function uncageIgnoreChecks(workspaces: string[], git: string): Promise<Do
   return checks;
 }
 
+async function runtimeCheck(a: RuntimeAdapter): Promise<DoctorCheck> {
+  const label = `Runtime ${a.id}`;
+  const id = `runtime.${a.id}`;
+  const acp = a.id.startsWith('acp-');
+  try {
+    const p = await a.probe();
+    if (p.status === 'available') {
+      const detail = [p.version, p.message].filter(Boolean).join(' · ');
+      return { id, label, ok: true, ...(detail ? { detail } : {}) };
+    }
+    const detail = p.status === 'not_installed' ? 'not installed' : [p.status, p.message].filter(Boolean).join(': ');
+    let fix: string;
+    if (p.status === 'not_installed') fix = RUNTIME_FIX[a.id] ?? p.hint ?? `see ${p.installUrl ?? 'the runtime install docs'}`;
+    else if (acp) fix = p.hint ?? `uncage doctor   # re-run after resolving: ${p.message ?? p.status}`;
+    else if (p.status === 'auth_required' || /log ?in|auth/i.test(p.message ?? '')) fix = a.id === 'claude' ? 'claude   # then type /login' : `${a.id} login`;
+    else fix = p.hint ?? `uncage doctor   # re-run after resolving: ${p.message ?? p.status}`;
+    return { id, label, ok: false, detail, fix };
+  } catch (e) {
+    return { id, label, ok: false, detail: e instanceof Error ? e.message : String(e), fix: RUNTIME_FIX[a.id] ?? 'uncage doctor' };
+  }
+}
+
+/** Runs every check. Probed adapters are disposed before it returns. */
 export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
   const { config, adapters, home } = deps;
   const checks: DoctorCheck[] = [];
@@ -280,44 +304,20 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
     });
   }
 
-  for (const a of adapters) {
-    const label = `Runtime ${a.id}`;
-    const id = `runtime.${a.id}`;
-    try {
-      const p = await a.probe();
-      if (p.status === 'available') {
-        const detail = [p.version, p.message].filter(Boolean).join(' · ');
-        checks.push({ id, label, ok: true, ...(detail ? { detail } : {}) });
-        continue;
-      }
-      const detail = p.status === 'not_installed' ? 'not installed' : [p.status, p.message].filter(Boolean).join(': ');
-      const fix =
-        p.status === 'not_installed'
-          ? (RUNTIME_FIX[a.id] ?? `see ${p.installUrl ?? 'the runtime install docs'}`)
-          : p.status === 'auth_required' || /log ?in|auth/i.test(p.message ?? '')
-            ? a.id === 'claude'
-              ? 'claude   # then type /login'
-              : `${a.id} login`
-            : (p.hint ?? `uncage doctor   # re-run after resolving: ${p.message ?? p.status}`);
-      checks.push({ id, label, ok: false, detail, fix });
-    } catch (e) {
-      checks.push({
-        id,
-        label,
-        ok: false,
-        detail: e instanceof Error ? e.message : String(e),
-        fix: RUNTIME_FIX[a.id] ?? 'uncage doctor',
-      });
-    }
+  try {
+    for (const a of adapters) checks.push(await runtimeCheck(a));
+  } finally {
+    // Probing may have started agent processes (ACP agents keep theirs for runs): stop them.
+    await Promise.allSettled(adapters.map((a) => a.dispose?.()));
   }
   const workspaces = deps.workspaces ?? daemonWorkspaces ?? [config.workspace.default, ...config.workspace.allowedRoots];
   checks.push(...(await uncageIgnoreChecks(workspaces, deps.gitCommand ?? 'git')));
   return checks;
 }
 
-/** 1 if any required check failed; codex failures and warnings are not required. */
+/** 1 if any required check failed; codex and ACP agent failures and warnings are not required. */
 export function doctorExitCode(checks: DoctorCheck[]): number {
-  return checks.some((c) => !c.ok && !c.warn && !OPTIONAL_RUNTIMES.has(c.id.replace(/^runtime\./, ''))) ? 1 : 0;
+  return checks.some((c) => !c.ok && !c.warn && !(c.id.startsWith('runtime.') && isOptionalRuntime(c.id.slice('runtime.'.length)))) ? 1 : 0;
 }
 
 export function formatChecks(checks: DoctorCheck[]): string {

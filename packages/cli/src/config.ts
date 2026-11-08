@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { AcpRuntimesSchema, DEFAULT_ACP_RUNTIMES, type AcpRuntimesConfig } from '@uncage/agent';
 import { parse } from 'yaml';
 import { z } from 'zod';
 
@@ -7,7 +8,7 @@ export interface UncageConfig {
   server: { port: number; eventRetentionDays: number };
   security: { allowedOrigins: string[]; approvalTtlMs: number; allowBypass: boolean };
   workspace: { allowedRoots: string[]; default: string };
-  runtimes: { claude: { enabled: boolean }; codex: { enabled: boolean; command?: string[] } };
+  runtimes: { claude: { enabled: boolean }; codex: { enabled: boolean; command?: string[] }; acp: AcpRuntimesConfig };
 }
 
 export const CONFIG_FILE = 'uncage.config.yaml';
@@ -46,9 +47,11 @@ export const ConfigSchema = z
           .object({ enabled: z.boolean().default(true), command: z.array(z.string()).min(1).optional() })
           .strict()
           .default({ enabled: true }),
+        /** ACP agents: same schema as `runtimes.acp` in ~/.uncage/agent.yaml. */
+        acp: AcpRuntimesSchema.default(DEFAULT_ACP_RUNTIMES),
       })
       .strict()
-      .default({ claude: { enabled: true }, codex: { enabled: true } }),
+      .default({ claude: { enabled: true }, codex: { enabled: true }, acp: DEFAULT_ACP_RUNTIMES }),
   })
   .strict();
 
@@ -102,6 +105,7 @@ export async function loadConfig(cwd: string, env: NodeJS.ProcessEnv): Promise<U
         enabled: c.runtimes.codex.enabled,
         ...(c.runtimes.codex.command ? { command: c.runtimes.codex.command } : {}),
       },
+      acp: c.runtimes.acp,
     },
   };
 }

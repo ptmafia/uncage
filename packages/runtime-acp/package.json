@@ -24,7 +24,8 @@
     "build": "tsup",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "registry:snapshot": "tsup && node scripts/snapshot-registry.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "2.4.0",
