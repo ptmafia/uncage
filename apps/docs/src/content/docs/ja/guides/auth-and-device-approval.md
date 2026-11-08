@@ -52,7 +52,7 @@ export async function getUser(req: Request): Promise<HubUser | null> {
 
 ## 承認ページ（`/device`）
 
-`uncage setup https://your.site`は`https://your.site/device?code=ABCD-EFGH`を開きます。パスは`verificationPath`オプションで変更できます。このページで、サインイン中のユーザーがコードを承認または拒否します。**承認すると、そのコンピュータにユーザーのアカウントへのアクセス権が与えられる**ため、このページはクリックジャッキングやCSRFの標的になります。次の要件を満たす必要があります。
+`uncage setup https://your.site`は`https://your.site/device?code=ABCD-2345`を開きます。パスは`verificationPath`オプションで変更できます。このページで、サインイン中のユーザーがコードを承認または拒否します。**承認すると、そのコンピュータにユーザーのアカウントへのアクセス権が与えられる**ため、このページはクリックジャッキングやCSRFの標的になります。次の要件を満たす必要があります。
 
 1. **通常のサインイン済みセッションを必須にします**。ユーザーがサインインしていなければ、ログインページに送ってから戻します。
 2. **フレーム内での表示を拒否します**：`Content-Security-Policy: frame-ancestors 'none'`と`X-Frame-Options: DENY`。
@@ -67,7 +67,7 @@ export async function getUser(req: Request): Promise<HubUser | null> {
 | `hub.approveDevice(code, user)` | `'ok'`、`'not_found'`、`'expired'`のいずれか |
 | `hub.denyDevice(code, user)` | `'ok'`、`'not_found'`、`'expired'`のいずれか |
 
-コードは`ABCDEFGHJKMNPQRSTUVWXYZ23456789`から選ばれた8文字で、`ABCD-EFGH`の形式で表示され、10分間有効です。大文字・小文字、スペース、ハイフンは無視されます。未知のコードは推測の失敗として数えられ、10分間に10回失敗すると（`rateLimits.userCodeFailures`、`userCodeWindowMs`）、これらの呼び出しは`code: 'rate_limited'`（`details.retryAfterSec`）のエラーを投げます。
+コードは`ABCDEFGHJKMNPQRSTUVWXYZ23456789`から選ばれた8文字で、`ABCD-2345`の形式で表示され、10分間有効です。大文字・小文字、スペース、ハイフンは無視されます。未知のコードは推測の失敗として数えられ、10分間に10回失敗すると（`rateLimits.userCodeFailures`、`userCodeWindowMs`）、これらの呼び出しは`code: 'rate_limited'`（`details.retryAfterSec`）のエラーを投げます。
 
 `@uncage/react-ui`の`<ApproveDevice>`がこのページを描画します。コード、コンピュータ、再ペアリングの警告、**Approve**（承認）と**Deny**（拒否）のボタン、そして結果です。表示だけを担うコンポーネントなので、判定はサーバーで行います。失敗した呼び出しのエラーは`error`プロップに渡してください。ローカライズされたメッセージ（`rate_limited`なら「Too many requests. Wait a moment and try again.」）が表示されます。照会結果がある場合はボタンの上に、`lookupDevice`自体が失敗して`lookup`が`null`の場合は「This code is invalid or has expired」の代わりに表示されます。
 

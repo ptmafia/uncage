@@ -31,7 +31,7 @@ description: Uncage 的每个错误码及其 HTTP 状态、是否可重试、含
 | `event_replay_unavailable` | 410 | 否 | 请求的事件已经不在了。获取一份新的快照，从它的 `lastSequence` 继续。 |
 | `runtime_unavailable` | 503 | 否 | 那台电脑上没有安装该运行时（Claude Code、Codex）。 |
 | `auth_required` | 401 | 否 | 运行时没有登录。运行 `claude`，然后输入 `/login`。 |
-| `unsupported_capability` | 422 | 否 | 运行时做不到这件事，例如在 Codex 会话上使用网站工具。 |
+| `unsupported_capability` | 422 | 否 | 运行时做不到这件事，例如它不支持的附件类型、设置或审批选项。（在 Codex 会话上使用网站工具不会被拒绝：运行照常开始，只是不带工具，并显示 `site_tools_unsupported` 警告。） |
 | `runtime_disconnected` | 502 | 是 | 运行时进程在运行中途退出了。开始一次新的运行；历史会保留。 |
 | `invalid_workspace` | 400 | 否 | Local 模式：工作区不在 `workspace.allowedRoots` 之内。 |
 | `store_locked` | 423 | 是 | 另一个进程正在使用同一个数据目录（第二个 Uncage 服务，或者两个 hub 共用一个 PGlite 目录）。 |

@@ -16,7 +16,7 @@ The words on this site, in the UI and in the API mean the same thing everywhere.
 | **Agent** | The background process on the user’s computer that connects to hubs and runs Claude Code. | `uncage agent`, `@uncage/agent` | the agent / 守护进程 |
 | **Online** | The computer’s WebSocket is connected and answering heartbeats. Offline within about 30 s of going silent. | `MachineInfo.online` | online / 在线, offline / 离线 |
 | **Pairing / device login** | Linking a computer to a user: `uncage setup` gets a code, the user approves it on `/device`. | `approveDevice`, `lookupDevice`, `denyDevice` | |
-| **User code** | The 8-character code (`ABCD-EFGH`) the user compares and approves. Valid 10 minutes. | `?code=` | |
+| **User code** | The 8-character code (`ABCD-2345`) the user compares and approves. Valid 10 minutes. | `?code=` | |
 | **Approval page** | Your page at `/device` where a signed-in user approves a code. | `verificationPath`, `<ApproveDevice>` | |
 | **Machine token** | The secret a computer uses to connect to one website. Stored only in `~/.uncage/agent.yaml`. | | |
 | **Revoke** | Disconnect a computer from a website for good; its token stops working. | `revokeMachine`, `uncage sites remove` | |

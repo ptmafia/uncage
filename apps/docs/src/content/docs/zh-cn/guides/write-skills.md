@@ -87,4 +87,4 @@ const hub = await createHub({ publicUrl, getUser, tools, skills: [landingPage] }
 
 技能无效或重复时，`createHub` 会在启动时抛错。
 
-技能适用于 Claude Code。Codex 会话目前会忽略它们。
+技能会随每次运行一起发送，Codex 的运行也不例外。Claude Code 运行时会把它们装到会话目录里（`.claude/skills/`）。Codex 运行时会收到技能，但目前还不使用：它报告的技能支持为 `unknown`，所以技能在 Codex 上未经验证。

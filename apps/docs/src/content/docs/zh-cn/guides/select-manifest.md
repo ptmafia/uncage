@@ -59,7 +59,7 @@ export const hub = await createHub({
 - **保持快速。** 它在启动运行的那个请求上执行。如果它抛错，启动运行就会失败（`500 internal_error`），所以请自己处理查询失败的情况。
 - **限制：** 每次运行最多 64 个工具和 64 个技能。返回更多会让请求以 `internal_error` 失败（“selectManifest picked an invalid manifest”）。
 - 返回 `{ tools: [], skills: [] }` 会得到一次不带你任何工具和技能的普通 Claude Code 运行。
-- **不支持网站工具的运行时。** 只有报告了 `capabilities.siteTools` 的运行时（Claude Code）才能调用网站工具。对其他任何运行时（目前是 Codex），无论你返回什么，hub 都会丢弃工具、保留技能，并且运行开始时会产生一个 `system.warning` 事件（代码 `site_tools_unsupported`），由 `<AgentChat>` 显示。如果想为它挑选不同的技能，请检查 `runtime`。
+- **不支持网站工具的运行时。** 只有报告了 `capabilities.siteTools` 的运行时（Claude Code）才能调用网站工具。对其他任何运行时（目前是 Codex），无论你返回什么，hub 都会丢弃工具、保留技能（Codex 运行时会收到技能，但目前还不使用），并且运行开始时会产生一个 `system.warning` 事件（代码 `site_tools_unsupported`），由 `<AgentChat>` 显示。如果想为它挑选不同的技能，请检查 `runtime`。
 
 ## 什么时候用
 

@@ -59,7 +59,7 @@ export const hub = await createHub({
 - **高速に保ってください**。この関数は実行を開始するリクエストの中で動きます。例外を投げると実行の開始が失敗する（`500 internal_error`）ため、自前の参照処理の失敗は自分でハンドリングしてください。
 - **上限**：1回の実行につきツール64個、スキル64個までです。これを超えて返すと、リクエストは`internal_error`（「selectManifest picked an invalid manifest」）で失敗します。
 - `{ tools: [], skills: [] }`を返すと、ツールもスキルもない素のClaude Codeの実行になります。
-- **サイトツールに対応しないランタイム**。サイトツールを呼び出せるのは、`capabilities.siteTools`を報告するランタイム（Claude Code）だけです。それ以外のランタイム（現時点ではCodex）では、何を返してもハブはツールを外してスキルだけを残し、実行は`system.warning`イベント（コード`site_tools_unsupported`）から始まります。このイベントは`<AgentChat>`に表示されます。そのランタイムには別のスキルを選びたい場合は、`runtime`を確認してください。
+- **サイトツールに対応しないランタイム**。サイトツールを呼び出せるのは、`capabilities.siteTools`を報告するランタイム（Claude Code）だけです。それ以外のランタイム（現時点ではCodex）では、何を返してもハブはツールを外してスキルだけを残し（Codexのランタイムはスキルを受け取りますが、まだ使いません）、実行は`system.warning`イベント（コード`site_tools_unsupported`）から始まります。このイベントは`<AgentChat>`に表示されます。そのランタイムには別のスキルを選びたい場合は、`runtime`を確認してください。
 
 ## 使いどころ
 

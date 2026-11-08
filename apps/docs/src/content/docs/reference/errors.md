@@ -31,7 +31,7 @@ In React, `useUncageError()` returns it as `{ error: { code, message, hint, … 
 | `event_replay_unavailable` | 410 | no | The requested events are gone. Fetch a fresh snapshot and resume from its `lastSequence`. |
 | `runtime_unavailable` | 503 | no | The runtime (Claude Code, Codex) is not installed on that machine. |
 | `auth_required` | 401 | no | The runtime is not signed in. Run `claude`, then `/login`. |
-| `unsupported_capability` | 422 | no | The runtime cannot do this, e.g. site tools on a Codex session. |
+| `unsupported_capability` | 422 | no | The runtime cannot do this, e.g. an attachment type, a setting or an approval option it does not support. (Site tools on a Codex session are not refused: the run starts without them and shows a `site_tools_unsupported` warning.) |
 | `runtime_disconnected` | 502 | yes | The runtime process died mid-run. Start a new run; history is kept. |
 | `invalid_workspace` | 400 | no | Local Mode: the workspace is outside `workspace.allowedRoots`. |
 | `store_locked` | 423 | yes | Another process uses the same data directory (a second daemon, or two hubs on one PGlite folder). |

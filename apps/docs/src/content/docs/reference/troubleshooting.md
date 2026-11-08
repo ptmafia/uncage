@@ -48,7 +48,7 @@ That is `sessionStorage: 'machine'` (the default). Use `sessionStorage: 'site'` 
 - The session uses Codex (no site-tool support yet).
 - In the chat, the tool step’s error tells you more: `invalid_request` (arguments did not match `input`), `tool_failed` (your handler threw, timed out or `not_in_manifest`).
 
-### “Creating the session failed” / `machine_offline` when sending
+### “Your computer is offline. Make sure the agent (`uncage agent`) is running on it.” / `machine_offline` when sending
 
 The selected computer is offline. Pick another in the header’s computer menu, or start the agent.
 

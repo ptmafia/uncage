@@ -87,4 +87,4 @@ const hub = await createHub({ publicUrl, getUser, tools, skills: [landingPage] }
 
 スキルが無効または重複している場合、`createHub`は起動時に例外を投げます。
 
-スキルはClaude Codeで動作します。Codexのセッションは現在スキルを無視します。
+スキルは、Codexの実行も含めて、すべての実行に渡されます。Claude Codeのランタイムは、スキルをセッションフォルダ（`.claude/skills/`）に配置します。Codexのランタイムはスキルを受け取りますが、まだ使いません。スキル対応を`unknown`と報告しているため、Codexでのスキルは検証されていません。

@@ -96,7 +96,7 @@ sequenceDiagram
 ### 2. タスクを送る
 
 1. ユーザーが`<AgentChat>`に入力します。ブラウザはハブのブラウザ向けAPI（Local モードのデーモンの`/v1` APIと同じ形式）を呼び出します。
-2. ハブは実行（Run）ごとにあなたの`selectManifest({ user, prompt, sessionId, runtime })`を呼び出し、その実行で使えるツールとスキルを選びます。指定しなければ、登録済みのすべてのツールとスキルが提供されます。サイトツールに対応していないランタイム（Codex）にはスキルだけが渡され、セッションに`site_tools_unsupported`の警告が表示されます。
+2. ハブは実行（Run）ごとにあなたの`selectManifest({ user, prompt, sessionId, runtime })`を呼び出し、その実行で使えるツールとスキルを選びます。指定しなければ、登録済みのすべてのツールとスキルが提供されます。サイトツールに対応していないランタイム（Codex）にはスキルだけが渡され、セッションに`site_tools_unsupported`の警告が表示されます（Codexのランタイムはスキルを受け取りますが、まだ使いません）。
 3. ハブはプロンプトと**マニフェスト**（ツールの名前・説明・JSON Schema、およびスキルのテキスト）を付けて`startRun`をコンピュータに送ります。コードは含まれません。
 4. エージェントは`~/Uncage/<site host>/<session id>/`でClaude Codeを実行します。サイトツールはClaude Codeから`mcp__site__<name>`として見えます。スキルはそのフォルダ内の`.claude/skills/<name>/SKILL.md`に書き込まれます。
 5. すべてのイベント（テキスト、ツールステップ、承認、実行状態）には番号が振られ、まずローカルに保存されてから、ハブへ、さらにSSEでブラウザへ送られます。

@@ -48,7 +48,7 @@ description: Connected モード（コンピュータが接続しない、オフ
 - セッションがCodexを使っている（サイトツールにはまだ対応していません）。
 - チャットでは、ツールのステップのエラーからさらに詳しくわかります：`invalid_request`（引数が`input`に合致しない）、`tool_failed`（ハンドラーが例外を投げた、タイムアウトした、または`not_in_manifest`）。
 
-### 送信時に「Creating the session failed」 / `machine_offline`になる
+### 送信時に「Your computer is offline. Make sure the agent (`uncage agent`) is running on it.」（コンピュータがオフラインです） / `machine_offline`になる
 
 選択中のコンピュータがオフラインです。ヘッダーのコンピュータメニューで別のコンピュータを選ぶか、エージェントを起動してください。
 

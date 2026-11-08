@@ -100,7 +100,7 @@ export const sendInvoice = defineTool({
 });
 ```
 
-With `requiresConfirmation: true`, every call shows an approval card in your UI (category `mcp`, titled with the tool’s description, showing `send_invoice({"invoiceId":…,"to":…})`). The handler only runs after **Allow**. This happens in every permission mode, including `bypassPermissions` and `auto`. If the user denies, Claude Code is told and usually asks what to change.
+With `requiresConfirmation: true`, every call shows an approval card in your UI (category `mcp`, titled with the tool’s description, showing `send_invoice({"invoiceId":…,"to":…})`). The handler only runs after **Allow once**. This happens in every permission mode, including `bypassPermissions` and `auto`. If the user denies, Claude Code is told and usually asks what to change.
 
 Use it for anything that publishes, sends, pays, deletes or is visible to other people. Tools without it run without a card (Claude Code may still show the step).
 
@@ -230,4 +230,4 @@ describe('lookup_order', () => {
 | `ctx.files.pull` | 50 MiB total, 10 MiB per file |
 | `ctx.files.read` | 10 MiB |
 
-Codex sessions do not support site tools yet: a run with tools on a Codex session is refused with `unsupported_capability`.
+Codex sessions do not support site tools yet. A run on a Codex session is not refused: the hub drops the tools, the skills still go, and the session shows a `system.warning` with code `site_tools_unsupported`. See [Choose tools and skills per run](/docs/guides/select-manifest/).

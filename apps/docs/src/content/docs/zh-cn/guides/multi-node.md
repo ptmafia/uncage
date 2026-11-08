@@ -90,11 +90,11 @@ export const cluster = redisCluster({ client: redis, keyPrefix: 'myapp:' });
 - `<basePath>/agent` 上的 **WebSocket** 必须被转发（HTTP/1.1 `Upgrade`），空闲超时要大于 10 秒的心跳间隔。不需要粘性。
 - `<basePath>/sessions/:id/events` 上的 **SSE** 不能被缓冲，空闲超时要大于 15 秒（SSE 心跳间隔）。
 - 保留 **Host 请求头**，并传递**客户端 IP** 用于限流：见[反向代理或负载均衡之后](/docs/zh-cn/guides/mount-the-hub/#反向代理或负载均衡之后)。
+- **排空：** 部署时，先停止向某个节点发送新请求，再 `close()` 它。它上面的电脑会以指数退避（从 1 秒开始，最多 30 秒）重连到其他节点；期间它们的运行在本地照常进行，重连后事件会补齐。
 
 :::caution[负载均衡后面的客户端 IP]
 `POST <basePath>/device/code` 的限制是**每个客户端 IP** 每分钟 20 次，按节点计数。在负载均衡后面，所有请求都来自负载均衡的地址，除非你设置了 `app.set('trust proxy', <hops>)`（Express，配合 `toNodeHandler`）、`rateLimits.clientIp(req)` 或 `rateLimits.trustForwardedFor: true`。三者都不设置时，每个节点上所有用户共用一个桶，同一分钟内只要有大约 20 个人连接，`uncage setup` 就会开始以 `429 rate_limited` 失败。
 :::
-- **排空：** 部署时，先停止向某个节点发送新请求，再 `close()` 它。它上面的电脑会以指数退避（从 1 秒开始，最多 30 秒）重连到其他节点；期间它们的运行在本地照常进行，重连后事件会补齐。
 
 ## 需要知道的限制
 

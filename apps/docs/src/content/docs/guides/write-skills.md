@@ -87,4 +87,4 @@ Skills are data. The hub never sends code for the computer to execute: a templat
 
 `createHub` throws at startup on an invalid or duplicate skill.
 
-Skills work with Claude Code. Codex sessions currently ignore them.
+Skills are sent with every run, Codex runs included. The Claude Code runtime installs them in the session folder (`.claude/skills/`). The Codex runtime receives them but does not use them yet: it reports skill support as `unknown`, so skills on Codex are not verified.

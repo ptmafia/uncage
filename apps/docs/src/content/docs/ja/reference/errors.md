@@ -31,7 +31,7 @@ Reactでは、`useUncageError()`がこれを`{ error: { code, message, hint, …
 | `event_replay_unavailable` | 410 | 不可 | 要求されたイベントはもうありません。新しいスナップショットを取得し、その`lastSequence`から再開してください。 |
 | `runtime_unavailable` | 503 | 不可 | そのマシンにランタイム（Claude Code、Codex）がインストールされていません。 |
 | `auth_required` | 401 | 不可 | ランタイムがサインインしていません。`claude`を実行し、`/login`を入力してください。 |
-| `unsupported_capability` | 422 | 不可 | ランタイムがこの操作に対応していません。例：Codexのセッションでのサイトツール。 |
+| `unsupported_capability` | 422 | 不可 | ランタイムがこの操作に対応していません。例：対応していない添付ファイルの種類、設定、承認オプション。（Codexのセッションでのサイトツールは拒否されません。実行はツールなしで始まり、`site_tools_unsupported`の警告が表示されます。） |
 | `runtime_disconnected` | 502 | 可 | 実行の途中でランタイムのプロセスが終了しました。新しい実行を開始してください。履歴は保持されています。 |
 | `invalid_workspace` | 400 | 不可 | Local モード：ワークスペースが`workspace.allowedRoots`の外にあります。 |
 | `store_locked` | 423 | 可 | 別のプロセスが同じデータディレクトリを使っています（2つ目のデーモン、または1つのPGliteフォルダを使う2つのハブ）。 |

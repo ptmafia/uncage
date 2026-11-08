@@ -96,7 +96,7 @@ sequenceDiagram
 ### 2. 发任务
 
 1. 用户在 `<AgentChat>` 里输入。浏览器调用 hub 的浏览器 API（和 Local 模式 Uncage 服务的 `/v1` API 形状相同）。
-2. 每次运行开始时，hub 调用你的 `selectManifest({ user, prompt, sessionId, runtime })`，挑出这次运行可以用的工具和技能。不配置时，所有注册过的工具和技能都会提供。不支持网站工具的运行时（Codex）只拿到技能，会话里会显示 `site_tools_unsupported` 警告。
+2. 每次运行开始时，hub 调用你的 `selectManifest({ user, prompt, sessionId, runtime })`，挑出这次运行可以用的工具和技能。不配置时，所有注册过的工具和技能都会提供。不支持网站工具的运行时（Codex）只拿到技能，会话里会显示 `site_tools_unsupported` 警告。（Codex 运行时会收到技能，但目前还不使用。）
 3. hub 把提示词和**清单**一起通过 `startRun` 发给电脑：清单里是工具的名称、描述和 JSON Schema，以及技能的文本。没有代码。
 4. 守护进程在 `~/Uncage/<site host>/<session id>/` 里运行 Claude Code。网站工具在 Claude Code 里显示为 `mcp__site__<name>`。技能写到该目录下的 `.claude/skills/<name>/SKILL.md`。
 5. 每个事件（文本、工具步骤、审批、运行状态）都有序号，先写入本地，再发给 hub，然后经 SSE 推给浏览器。

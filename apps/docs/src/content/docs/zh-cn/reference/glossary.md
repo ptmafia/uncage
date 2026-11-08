@@ -16,7 +16,7 @@ description: Uncage 每个术语的一句话定义（守护进程、电脑、hub
 | **守护进程**（agent） | 用户电脑上的后台进程，负责连接 hub 并运行 Claude Code。 | `uncage agent`、`@uncage/agent` | the agent / 守护进程 |
 | **在线**（online） | 电脑的 WebSocket 已连接并响应心跳。失去响应后约 30 秒内变为离线。 | `MachineInfo.online` | online / 在线, offline / 离线 |
 | **配对 / 设备登录**（pairing / device login） | 把一台电脑关联到一个用户：`uncage setup` 拿到一个验证码，用户在 `/device` 上批准它。 | `approveDevice`、`lookupDevice`、`denyDevice` | |
-| **验证码**（user code） | 用户核对并批准的 8 位验证码（`ABCD-EFGH`），10 分钟内有效。 | `?code=` | |
+| **验证码**（user code） | 用户核对并批准的 8 位验证码（`ABCD-2345`），10 分钟内有效。 | `?code=` | |
 | **审批页**（approval page） | 你网站上的 `/device` 页面，已登录用户在这里批准一个验证码。 | `verificationPath`、`<ApproveDevice>` | |
 | **机器令牌**（machine token） | 电脑连接某个网站时使用的密钥，只保存在 `~/.uncage/agent.yaml` 里。 | | |
 | **吊销**（revoke） | 把一台电脑从网站上永久断开；它的令牌随即失效。 | `revokeMachine`、`uncage sites remove` | |

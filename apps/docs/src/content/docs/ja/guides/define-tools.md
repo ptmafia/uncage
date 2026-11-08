@@ -230,4 +230,4 @@ describe('lookup_order', () => {
 | `ctx.files.pull` | 合計50 MiB、1ファイルあたり10 MiB |
 | `ctx.files.read` | 10 MiB |
 
-Codexのセッションはまだサイトツールに対応していません。Codexのセッションでツール付きの実行を開始すると、`unsupported_capability`で拒否されます。
+Codexのセッションはまだサイトツールに対応していません。Codexのセッションでの実行は拒否されません。ハブがツールを外し、スキルはそのまま渡され、セッションにはコード`site_tools_unsupported`の`system.warning`が表示されます。[実行ごとにツールとスキルを選ぶ](/docs/ja/guides/select-manifest/)を参照してください。

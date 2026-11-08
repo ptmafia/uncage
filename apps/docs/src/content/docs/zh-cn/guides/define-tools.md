@@ -230,4 +230,4 @@ describe('lookup_order', () => {
 | `ctx.files.pull` | 总计 50 MiB，单个文件 10 MiB |
 | `ctx.files.read` | 10 MiB |
 
-Codex 会话暂不支持网站工具：在 Codex 会话上发起带工具的运行会以 `unsupported_capability` 被拒绝。
+Codex 会话暂不支持网站工具。在 Codex 会话上发起的运行不会被拒绝：hub 会丢弃工具，技能照常发送，会话里会显示一个代码为 `site_tools_unsupported` 的 `system.warning`。见[按运行选择工具和技能](/docs/zh-cn/guides/select-manifest/)。

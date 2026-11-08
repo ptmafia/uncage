@@ -48,7 +48,7 @@ description: 常见问题的解决方法：Connected 模式（电脑连不上、
 - 会话使用的是 Codex（暂不支持网站工具）。
 - 在对话里，工具步骤的错误会告诉你更多：`invalid_request`（参数不符合 `input`）、`tool_failed`（你的 handler 抛错、超时，或者 `not_in_manifest`）。
 
-### 发送时出现“Creating the session failed” / `machine_offline`
+### 发送时出现“你的电脑离线了。请确认那台电脑上的守护进程（`uncage agent`）正在运行。” / `machine_offline`
 
 选中的电脑离线了。在标题栏的电脑菜单里换一台，或者启动守护进程。
 

@@ -52,7 +52,7 @@ The browser API is authenticated by your cookies, so the hub protects it against
 
 ## The approval page (`/device`)
 
-`uncage setup https://your.site` opens `https://your.site/device?code=ABCD-EFGH`. Change the path with the `verificationPath` option. On that page the signed-in user approves or denies the code. **Approving gives that computer access to the user’s account**, so the page is a target for clickjacking and CSRF. It must:
+`uncage setup https://your.site` opens `https://your.site/device?code=ABCD-2345`. Change the path with the `verificationPath` option. On that page the signed-in user approves or denies the code. **Approving gives that computer access to the user’s account**, so the page is a target for clickjacking and CSRF. It must:
 
 1. **Require the normal signed-in session.** If the user is not signed in, send them to your login page and back.
 2. **Refuse framing:** `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`.
@@ -67,7 +67,7 @@ The hub gives you three calls, each taking the code and the signed-in user:
 | `hub.approveDevice(code, user)` | `'ok'`, `'not_found'` or `'expired'` |
 | `hub.denyDevice(code, user)` | `'ok'`, `'not_found'` or `'expired'` |
 
-Codes are 8 characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, shown as `ABCD-EFGH`, and valid for 10 minutes. Case, spaces and the dash are ignored. Unknown codes count as failed guesses: after 10 in 10 minutes (`rateLimits.userCodeFailures`, `userCodeWindowMs`) these calls throw an error with `code: 'rate_limited'` (`details.retryAfterSec`).
+Codes are 8 characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, shown as `ABCD-2345`, and valid for 10 minutes. Case, spaces and the dash are ignored. Unknown codes count as failed guesses: after 10 in 10 minutes (`rateLimits.userCodeFailures`, `userCodeWindowMs`) these calls throw an error with `code: 'rate_limited'` (`details.retryAfterSec`).
 
 `<ApproveDevice>` from `@uncage/react-ui` renders the page: the code, the computer, a re-pair warning, Approve and Deny, and the result. It is presentational; you make the decision on the server. Pass a failed call’s error to its `error` prop: it is shown localized (for `rate_limited`: “Too many requests. Wait a moment and try again.”), above the buttons when there is a lookup, or instead of “This code is invalid or has expired” when `lookupDevice` itself failed and `lookup` is `null`.
 
