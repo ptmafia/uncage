@@ -137,14 +137,15 @@ describe('connected mode: no computer yet', () => {
     }
   });
 
-  it('Windows tab says coming soon when the hub has no Windows command', async () => {
+  it('Windows tab says the site offers no Windows command when the hub has none', async () => {
     const f = fakeClient({ machines: [] });
     f.client.installInfo.mockResolvedValue({ ...INSTALL, windows: null });
     renderChat(f);
     const region = await screen.findByRole('region', { name: 'Connect your computer' });
     await within(region).findByText(INSTALL.install);
     fireEvent.click(within(region).getByRole('tab', { name: 'Windows' }));
-    expect(within(region).getByText('Coming soon')).toBeTruthy();
+    expect(within(region).getByText("This site doesn't offer a Windows command.")).toBeTruthy();
+    expect(within(region).queryByText('Coming soon')).toBeNull();
   });
 
   it('a failed copy says so and asks to select the text', async () => {
@@ -328,6 +329,10 @@ describe('connected mode: machine status and picker', () => {
     const menu = screen.getByRole('menu', { name: 'Choose a computer' });
     expect(within(menu).getByText('Linux · Agent update needed')).toBeTruthy();
     expect(within(menu).getByText('macOS · Online')).toBeTruthy();
+    // Screen readers hear the runtime names (the icons are decorative).
+    const item = within(menu).getByRole('menuitemradio', { name: 'MacBook Pro' });
+    const desc = document.getElementById(item.getAttribute('aria-describedby') ?? '');
+    expect(desc?.textContent).toBe(`macOS · Online · ${machine().runtimes[0]!.displayName}`);
     cleanup();
     const g = fakeClient({ machines: [machine({ online: false, agentOutdated: true })] });
     renderChat(g, { locale: 'zh-CN' });

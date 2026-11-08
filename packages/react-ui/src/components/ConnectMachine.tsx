@@ -220,12 +220,8 @@ export function ConnectMachine({ variant = 'dialog', onClose, onConnected, class
               ) : install.windows ? (
                 <CopyCommand command={install.windows} />
               ) : (
-                // A custom client without a Windows installer.
-                <p className="uc-connect-soon">
-                  <span className="uc-pill" data-tone="neutral">
-                    {t.comingSoon}
-                  </span>
-                </p>
+                // A custom client without a Windows installer: the site's choice, not a promise.
+                <p className="uc-connect-muted">{t.windowsNotOffered}</p>
               )}
             </div>
             <p className="uc-connect-note">{t.connectOneCommandNote}</p>

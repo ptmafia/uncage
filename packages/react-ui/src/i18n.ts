@@ -178,7 +178,9 @@ const en = {
   osTabs: 'Operating system',
   osUnix: 'macOS / Linux',
   osWindows: 'Windows',
+  /** @deprecated No longer shown (Windows without a command says `windowsNotOffered`). */
   comingSoon: 'Coming soon',
+  windowsNotOffered: "This site doesn't offer a Windows command.",
   copy: 'Copy',
   copied: 'Copied',
   copyFailed: 'Copy failed — select the text',
@@ -395,6 +397,7 @@ const zhCN: Strings = {
   osUnix: 'macOS / Linux',
   osWindows: 'Windows',
   comingSoon: '即将支持',
+  windowsNotOffered: '此网站未提供 Windows 命令。',
   copy: '复制',
   copied: '已复制',
   copyFailed: '复制失败，请手动选择文本',

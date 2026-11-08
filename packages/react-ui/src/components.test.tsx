@@ -393,8 +393,10 @@ describe('runtime icons', () => {
     expect(header.querySelector('.uc-pill img')!.getAttribute('alt')).toBe('');
     fireEvent.click(within(header).getByRole('button', { name: /^Computer:/ }));
     const menu = screen.getByRole('menu', { name: 'Choose a computer' });
-    // In the computer menu the icons stand alone: alt is the runtime's name.
-    expect(within(menu).getAllByRole('img', { name: 'Gemini CLI (ACP)' })[0]!.getAttribute('src')).toBe(svgIcon('#111'));
+    // In the computer menu the icons are decorative; the runtime names are in the item's description.
+    expect(menu.querySelector('.uc-menu-icons img')!.getAttribute('src')).toBe(svgIcon('#111'));
+    const item = within(menu).getByRole('menuitemradio', { name: 'MacBook Pro' });
+    expect(document.getElementById(item.getAttribute('aria-describedby') ?? '')?.textContent).toContain('Gemini CLI (ACP)');
   });
 });
 

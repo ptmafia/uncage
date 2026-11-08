@@ -58,10 +58,12 @@ export function MachineStatus({ onSelect }: MachineStatusProps): JSX.Element | n
             checked: m.id === current?.id,
             ...(m.runtimes.length > 0
               ? {
+                  // The icons are decoration; screen readers get the runtime names in the description.
+                  srDescription: m.runtimes.map((r) => r.displayName).join(', '),
                   extra: (
-                    <span className="uc-menu-icons">
+                    <span className="uc-menu-icons" aria-hidden>
                       {m.runtimes.map((r) => (
-                        <RuntimeIcon key={r.id} runtime={r} decorative={false} />
+                        <RuntimeIcon key={r.id} runtime={r} />
                       ))}
                     </span>
                   ),
