@@ -31,7 +31,6 @@ CREATE TABLE uncage_cluster_messages (
   msg text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX uncage_cluster_messages_channel_idx ON uncage_cluster_messages (channel, id);
 CREATE TABLE uncage_cluster_presence (
   machine_id text PRIMARY KEY,
   node_id text NOT NULL,
@@ -50,6 +49,8 @@ const PRUNE_INTERVAL_MS = 30_000;
 const POLL_LIMIT = 1_000;
 /** Messages per INSERT when publishes queue up. */
 const PUBLISH_BATCH = 100;
+/** Skipped ids remembered for the late-commit check (oldest dropped beyond this). */
+const MAX_SKIPPED = 1_000;
 
 /** Databases (client / pool objects, or connection strings) known to be migrated in this isolate. */
 const migratedObjects = new WeakSet<object>();
@@ -112,6 +113,8 @@ function createSqlCluster(
   const activeWindowMs = o.activeWindowMs ?? 30_000;
   const gapTimeoutMs = o.gapTimeoutMs ?? 2_000;
   const retentionMs = o.retentionMs ?? 60_000;
+  /** A skipped id is looked up once this long after it was skipped (10 s at the default gap timeout). */
+  const recheckAfterMs = 5 * gapTimeoutMs;
   const report = (e: unknown) => {
     try {
       (o.onError ?? ((err: Error) => console.error('[uncage] postgres cluster error:', err.message)))(toError(e));
@@ -152,6 +155,12 @@ function createSqlCluster(
   const seen = new Set<number>();
   /** Ids > low not seen yet, with when they were first found missing. */
   const missing = new Map<number, number>();
+  /** Ids given up on after `gapTimeoutMs`, re-checked once `recheckAfterMs` later to report late commits. */
+  const skipped: Array<{ id: number; at: number }> = [];
+  const skip = (id: number, at: number) => {
+    skipped.push({ id, at });
+    if (skipped.length > MAX_SKIPPED) skipped.shift();
+  };
   let lastActivity = -Infinity;
   let interval = activePollMs;
   let loopRunning = false;
@@ -196,6 +205,7 @@ function createSqlCluster(
         if (!blocked) {
           missing.delete(id);
           low = id;
+          skip(id, t);
         }
       } else blocked = true;
     }
@@ -231,7 +241,32 @@ function createSqlCluster(
     }
     if (delivered) activity();
     advance();
+    await recheckSkipped(db, channels);
     if (rows.length === POLL_LIMIT) pollAgain = true;
+  }
+
+  /**
+   * A skipped id that exists now committed after the reader gave up on it: its message was not
+   * delivered (at-most-once). Reported, once per id, when it was on one of our channels.
+   */
+  async function recheckSkipped(db: SqlClient, channels: string[]): Promise<void> {
+    const t = Date.now();
+    let due = 0;
+    while (due < skipped.length && t - skipped[due]!.at >= recheckAfterMs) due++;
+    if (due === 0) return;
+    const ids = skipped.slice(0, due).map((s) => String(s.id));
+    const { rows } = await db.query<{ id: string | number; channel: string }>(
+      'SELECT id::text AS id, channel FROM uncage_cluster_messages WHERE id = ANY($1::bigint[]) AND channel = ANY($2::text[])',
+      [ids, channels],
+    );
+    skipped.splice(0, due); // after the query: a failed check is retried on the next poll
+    for (const r of rows) {
+      report(
+        new Error(
+          `postgresCluster: late commit after gapTimeoutMs (${gapTimeoutMs} ms), message dropped (id ${String(r.id)}, channel "${r.channel}")`,
+        ),
+      );
+    }
   }
 
   function nextInterval(): number {
@@ -278,7 +313,8 @@ function createSqlCluster(
   }
 
   // --- retention -------------------------------------------------------------------------------
-  let lastPrune = -Infinity;
+  // Jittered first run (within one interval), so instances started together do not prune together.
+  let lastPrune = Date.now() - Math.random() * PRUNE_INTERVAL_MS;
   function maybePrune(): void {
     if (closed || Date.now() - lastPrune < PRUNE_INTERVAL_MS) return;
     lastPrune = Date.now();
@@ -352,6 +388,7 @@ function createSqlCluster(
       });
       activity();
       startLoop();
+      kick(); // a sleeping loop (up to idlePollMs) polls now, then at activePollMs
       return () => {
         if (!sub.active) return;
         sub.active = false;
@@ -363,6 +400,7 @@ function createSqlCluster(
     },
 
     async setPresence(machineId, nodeId, ttlSec) {
+      if (closed) throw closedError();
       const db = await ready();
       await db.query(
         `INSERT INTO uncage_cluster_presence (machine_id, node_id, expires_at)
@@ -373,6 +411,7 @@ function createSqlCluster(
     },
 
     async getPresence(machineId) {
+      if (closed) throw closedError();
       const db = await ready();
       const { rows } = await db.query<{ node_id: string }>(
         'SELECT node_id FROM uncage_cluster_presence WHERE machine_id = $1 AND expires_at > now()',
@@ -382,6 +421,7 @@ function createSqlCluster(
     },
 
     async clearPresence(machineId, nodeId) {
+      if (closed) throw closedError();
       const db = await ready();
       await db.query('DELETE FROM uncage_cluster_presence WHERE machine_id = $1 AND node_id = $2', [machineId, nodeId]);
     },
@@ -417,14 +457,21 @@ export function sqlCluster(db: SqlClient, o: PostgresClusterOptions & { close?: 
  * (adaptive: `activePollMs` while there is traffic, backing off to `idlePollMs` when quiet; a local
  * publish polls right away), presence is a row per machine with an expiry on the database clock.
  *
- * A message whose transaction commits after a higher id is still delivered: the reader waits up to
- * `gapTimeoutMs` for a missing id before moving past it. Each instance's publishes are delivered in
+ * Delivery is at-most-once with a bounded gap: a message whose transaction commits after a higher
+ * id is still delivered if it commits within `gapTimeoutMs` (2 s) of the reader first missing its
+ * id; after that the reader moves past it (normal for rolled-back publishes). A skipped id that does
+ * commit later is reported through `onError` ("late commit after gapTimeoutMs, message dropped"),
+ * checked once about 5 × `gapTimeoutMs` after the skip. Each instance's publishes are delivered in
  * publish order. Messages older than `retentionMs` are deleted by any instance every 30 s.
  *
  * - `{ connectionString }`: the adapter creates a `pg.Pool` (install the `pg` package) and ends it
  *   on `close()`; its errors go to `onError`.
  * - `{ pool }`: your own `pg.Pool` (or anything with its shape), left open on `close()`. Attach
  *   your own `pool.on('error', …)` listener.
+ *
+ * A node that keeps a subscription open (a long-running Node process with machine WebSockets
+ * subscribes to its node channel for its whole life) polls at least every `idlePollMs` (2 s), which
+ * keeps a serverless database (e.g. Neon) from auto-suspending; raise `idlePollMs` if that matters.
  *
  * Tables are created on first use under an advisory lock (once per pool / connection string per
  * process or isolate).

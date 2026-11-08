@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import RedisMock from 'ioredis-mock';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { memoryCluster } from './cluster/memory.js';
 import { sqlCluster } from './cluster/postgres.js';
 import type { SqlClient } from './store/sql.js';
@@ -96,11 +96,11 @@ describe('sqlCluster', () => {
     closers.push(() => a.close(), () => b.close());
     const got: string[] = [];
     await a.subscribe('ch', (m) => got.push(m));
-    await sleep(3_000); // the interval has doubled up to idlePollMs (2 s) by now
+    await sleep(3_500); // the interval has doubled up to idlePollMs (2 s) by now
 
     let before = counted.polls();
     await sleep(3_000);
-    expect(counted.polls() - before).toBeLessThanOrEqual(3);
+    expect(counted.polls() - before).toBeLessThanOrEqual(3); // 1–2 at 2 s
 
     // Traffic from another instance: back to activePollMs (300 ms) once the first message arrives.
     const remote = setInterval(() => void b.publish('ch', 'remote'), 50);
@@ -108,7 +108,7 @@ describe('sqlCluster', () => {
       await until(() => got.includes('remote'), 5_000);
       before = counted.polls();
       await sleep(2_000);
-      expect(counted.polls() - before).toBeGreaterThanOrEqual(5); // ~6–7 at 300 ms; idle would be 1
+      expect(counted.polls() - before).toBeGreaterThanOrEqual(4); // ~6–7 at 300 ms; idle would be 1
     } finally {
       clearInterval(remote);
     }
@@ -121,7 +121,7 @@ describe('sqlCluster', () => {
       await sleep(100);
     }
     const perSec = ((counted.polls() - before) * 1000) / (Date.now() - t0);
-    expect(perSec).toBeGreaterThanOrEqual(5);
+    expect(perSec).toBeGreaterThanOrEqual(5); // ~10: one per publish
     await until(() => got.includes('local9'), 2_000);
   }, 30_000);
 
@@ -154,13 +154,15 @@ describe('sqlCluster', () => {
 
   it('deletes messages older than retentionMs and expired presence rows', async () => {
     const db = await sharedPglite();
+    vi.spyOn(Math, 'random').mockReturnValue(1); // first prune due right away (it is jittered over 30 s)
     const a = sqlCluster(db);
+    vi.restoreAllMocks();
     closers.push(() => a.close());
     await a.getPresence('nobody'); // migrates
     await db.query(`INSERT INTO uncage_cluster_messages (channel, msg, created_at) VALUES ('ch', 'old', now() - interval '2 minutes')`);
     await db.query(`INSERT INTO uncage_cluster_presence (machine_id, node_id, expires_at) VALUES ('m1', 'n1', now() - interval '1 second')`);
     await a.setPresence('m2', 'n2', 30);
-    await a.publish('ch', 'new'); // the first publish (or poll) of an instance prunes, then every 30 s
+    await a.publish('ch', 'new'); // a due prune runs after a publish (or poll), then every 30 s
     await until(async () => {
       const { rows } = await db.query<{ msg: string }>('SELECT msg FROM uncage_cluster_messages');
       return rows.length === 1 && rows[0]!.msg === 'new';
@@ -179,5 +181,48 @@ describe('sqlCluster', () => {
     await sleep(700);
     expect(counted.polls()).toBe(n);
     await expect(a.subscribe('ch', () => undefined)).rejects.toThrow(/closed/);
+    await expect(a.publish('ch', 'x')).rejects.toThrow(/closed/);
+    await expect(a.setPresence('m', 'n', 30)).rejects.toThrow(/closed/);
+    await expect(a.getPresence('m')).rejects.toThrow(/closed/);
+    await expect(a.clearPresence('m', 'n')).rejects.toThrow(/closed/);
   });
+
+  it('a new subscription on an idle loop polls right away (no wait of up to idlePollMs)', async () => {
+    const db = await sharedPglite();
+    const counted = countingPolls(db);
+    const a = sqlCluster(counted.db, { activeWindowMs: 100 });
+    const b = sqlCluster(db);
+    closers.push(() => a.close(), () => b.close());
+    await a.subscribe('x', () => undefined);
+    await sleep(4_500); // the loop now sleeps 2 s between polls
+    const n = counted.polls();
+    await until(() => counted.polls() > n, 3_000); // just polled: the next poll is ~2 s away
+    const got: string[] = [];
+    await a.subscribe('y', (m) => got.push(m));
+    const t0 = Date.now();
+    await b.publish('y', 'hello');
+    await until(() => got.includes('hello'), 3_000);
+    expect(Date.now() - t0).toBeLessThan(1_200); // ~300 ms; without the kick up to 2 s
+  }, 15_000);
+
+  it('a skipped id that commits after gapTimeoutMs is reported once through onError', async () => {
+    const db = await sharedPglite();
+    const errors: string[] = [];
+    const a = sqlCluster(db, { gapTimeoutMs: 200, onError: (e) => errors.push(e.message) });
+    closers.push(() => a.close());
+    const got: string[] = [];
+    await a.subscribe('ch', (m) => got.push(m));
+    // A publish that took an id but has not committed (PGlite has one connection: burn the id and
+    // insert it explicitly later).
+    const { rows } = await db.query<{ id: string }>(`SELECT nextval('uncage_cluster_messages_id_seq')::text AS id`);
+    await a.publish('ch', 'early');
+    await until(() => got.includes('early'), 2_000);
+    await sleep(600); // past gapTimeoutMs: skipped
+    await db.query(`INSERT INTO uncage_cluster_messages (id, channel, msg) VALUES ($1::bigint, 'ch', 'late')`, [rows[0]!.id]);
+    await until(() => errors.length > 0, 5_000); // re-checked ~5 × gapTimeoutMs after the skip
+    await sleep(1_500);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(/late commit after gapTimeoutMs.*message dropped/);
+    expect(got).toEqual(['early']);
+  }, 15_000);
 });

@@ -232,6 +232,40 @@ describe('postgresCluster on Postgres 16', () => {
     }
   });
 
+  it('a message committing after gapTimeoutMs is dropped and reported once through onError', async () => {
+    const db = await freshDatabase();
+    const pool = new pg.Pool({ connectionString: db.url, max: 10 });
+    pool.on('error', () => undefined);
+    const errors: string[] = [];
+    const a = postgresCluster({ pool });
+    const b = postgresCluster({ pool, gapTimeoutMs: 300, onError: (e) => errors.push(e.message) });
+    try {
+      const got: string[] = [];
+      await b.subscribe('c', (m) => got.push(m));
+      const tx = await pool.connect();
+      try {
+        await tx.query('BEGIN');
+        await tx.query(`INSERT INTO uncage_cluster_messages (channel, msg) VALUES ('c', 'late')`);
+        await a.publish('c', 'early');
+        await until(() => got.includes('early'));
+        await new Promise((r) => setTimeout(r, 800)); // past gapTimeoutMs
+        await tx.query('COMMIT');
+      } finally {
+        tx.release();
+      }
+      await until(() => errors.length > 0, 5_000);
+      await new Promise((r) => setTimeout(r, 1_500));
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatch(/late commit after gapTimeoutMs.*message dropped/);
+      expect(got).toEqual(['early']);
+    } finally {
+      await a.close();
+      await b.close();
+      await pool.end();
+      await db.drop();
+    }
+  });
+
   it('50 concurrent publishers from 5 instances: each subscriber gets every message exactly once', async () => {
     const db = await freshDatabase();
     const nodes = Array.from({ length: 5 }, () => postgresCluster({ connectionString: db.url }));
