@@ -112,10 +112,13 @@ export interface HubOptions {
    * Keep it below your platform's function duration limit: a call whose instance is stopped mid-handler
    * fails with "Site tool "<name>" timed out on the website. Please try again." (it is never re-run).
    *
-   * Over HTTP a tool call runs inside the agent's upstream POST. On runtimes that cancel a request's
-   * work when the client disconnects (Cloudflare Workers), a dropped POST
-   * stops the handler: the call is then at-most-once (interrupted error) instead of exactly-once.
-   * Keep handlers short and idempotent there (help site: Deploy → Cloudflare Workers → FAQ).
+   * Over HTTP a tool call is handled during the agent's upstream POST. When `hub.fetch` gets
+   * `info.waitUntil`, the handler runs under it, so a dropped POST does not cancel it even on runtimes
+   * that cancel a request's work when the client disconnects (Cloudflare Workers): its result is stored
+   * and the agent's resend gets it (exactly-once). Pass it there (`ctx.waitUntil.bind(ctx)`; Next's
+   * `after`). Without `waitUntil` such a runtime may stop the handler with the POST, and the call is
+   * at-most-once (the interrupted error). The platform's own `waitUntil` limit still applies (help
+   * site: Deploy → Cloudflare Workers → FAQ).
    */
   toolTimeoutMs?: number;
   /**

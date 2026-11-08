@@ -425,7 +425,8 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
         }
         const path = url.pathname.slice(basePath.length) || '/';
         // Opportunistic maintenance (the cron endpoint runs it itself). Never throws.
-        if (path !== '/maintenance' && !shutdown.signal.aborted) await upkeep.maybeRun(info?.waitUntil?.bind(info));
+        const waitUntil = info?.waitUntil?.bind(info);
+        if (path !== '/maintenance' && !shutdown.signal.aborted) await upkeep.maybeRun(waitUntil);
         const key = clientKey(req, info);
         if (key === SHARED_CLIENT_KEY && path === '/device/code' && !warnedSharedKey) {
           warnedSharedKey = true;
@@ -435,7 +436,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
           );
         }
         // Machine routes (HTTP streaming transport) first, then the browser API.
-        return (await agentTransport.handle(req, url, path, key)) ?? (await api.handle(req, url, path, requestId, key));
+        return (await agentTransport.handle(req, url, path, key, waitUntil)) ?? (await api.handle(req, url, path, requestId, key));
       } catch (err) {
         const uerr = err instanceof UncageError ? err : new UncageError('internal_error');
         if (!(err instanceof UncageError)) logger.error({ err, requestId }, 'hub request failed');

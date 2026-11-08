@@ -60,7 +60,7 @@ async function httpSetup(
   const r = await hubs.as('u1', `/sessions/${s.id}/runs`, json({ prompt: 'go' }, { 'idempotency-key': `k-${Math.random()}` }));
   expect(r.status).toBe(202);
   const run = (await r.json()) as Run;
-  return { hubs, agent, fm, s, run, ctx: { sessionId: s.id, runId: run.id } };
+  return { hubs, agent, fm, s, run, token, ctx: { sessionId: s.id, runId: run.id } };
 }
 
 /** Routes the next `next` upstream POSTs to instance `to`, every other request round-robin over `others`. */
@@ -577,5 +577,87 @@ describe('resends of a running call are cheap', () => {
     expect(counts).toEqual({ getToolCall: N, getSession: 0, claimToolCall: 0, subscribe: 0 });
     release();
     expect(await a.waitFor((f) => f.t === 'tool_result' && f.id === 'tc_run')).toMatchObject({ ok: true });
+  });
+});
+
+describe('HTTP tool calls under waitUntil (platforms that cancel a dropped request)', () => {
+  type WaitUntilInfo = { waitUntil?(p: Promise<unknown>): void };
+  async function gatedSetup() {
+    let runs = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const tool = defineTool({ name: 'gated', description: 'x', input: z.object({}), handler: async () => (runs++, await gate, 'gated') });
+    const t = await httpSetup([tool], { hub: { n: 1 } });
+    const hub = t.hubs.hubs[0]!;
+    /** One `POST /agent/events` straight into `hub.fetch` (no node server), with `info`. */
+    const post = (msgs: unknown[], info: WaitUntilInfo, signal?: AbortSignal) =>
+      hub.fetch(
+        new Request(`${t.hubs.api}/agent/events`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${t.token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ linkId: t.agent.linkId, busy: false, msgs }),
+          ...(signal ? { signal } : {}),
+        }),
+        info,
+      );
+    const msg = (id: string) => ({ id, msg: { t: 'tool_call' as const, id: 'tc_wu', ...t.ctx, tool: 'gated', args: {} } });
+    return { ...t, post, msg, release, runs: () => runs };
+  }
+  const RESULT = { t: 'tool_result', id: 'tc_wu', ok: true, result: { content: [{ type: 'text', text: 'gated' }] } };
+
+  it('request dropped mid-handler: the handler, kept alive by waitUntil, finishes and stores; the resend gets it; ran once', async () => {
+    const t = await gatedSetup();
+    const waited: Array<Promise<unknown>> = [];
+    let settled = 0;
+    const waitUntil = (p: Promise<unknown>) => void waited.push(p.finally(() => settled++));
+    const ac = new AbortController();
+    void t.post([t.msg('up_wu_00000000000001')], { waitUntil }, ac.signal).catch(() => undefined); // abandoned, like a cancelled request
+    await until(() => t.runs() === 1);
+    ac.abort(); // the agent's POST drops
+    // The tool call was handed to the platform: a waitUntil promise is still pending on it.
+    await sleep(50);
+    expect(waited.length).toBeGreaterThan(settled);
+    t.release();
+    await Promise.all(waited);
+    expect(await t.hubs.store.listToolCalls(t.s.id)).toMatchObject([{ status: 'ok', result: RESULT }]);
+    // The agent resends (same message id): answered from the store, not run again.
+    const again = (await (await t.post([t.msg('up_wu_00000000000001')], {})).json()) as { processed: string[]; replies: HubFrame[] };
+    expect(again).toMatchObject({ processed: ['up_wu_00000000000001'], replies: [RESULT] });
+    expect(t.runs()).toBe(1);
+  });
+
+  it('a connected agent still gets the result in the response (no resend needed)', async () => {
+    const t = await gatedSetup();
+    const waited: Array<Promise<unknown>> = [];
+    const res = t.post([t.msg('up_wu_00000000000002')], { waitUntil: (p) => void waited.push(p) });
+    await until(() => t.runs() === 1);
+    t.release();
+    expect(await (await res).json()).toMatchObject({ processed: ['up_wu_00000000000002'], retry: [], replies: [RESULT] });
+    expect(waited.length).toBeGreaterThan(0);
+    await Promise.all(waited);
+  });
+
+  it('a throwing waitUntil (unbound ctx.waitUntil): the call runs inline and answers in replies', async () => {
+    const t = await gatedSetup();
+    const res = t.post([t.msg('up_wu_00000000000003')], {
+      waitUntil: () => {
+        throw new TypeError('Illegal invocation');
+      },
+    });
+    await until(() => t.runs() === 1);
+    t.release();
+    const r = await res;
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({ processed: ['up_wu_00000000000003'], replies: [RESULT] });
+    expect(t.runs()).toBe(1);
+  });
+
+  it('no waitUntil (Node): inline as before, the result in replies', async () => {
+    const t = await gatedSetup();
+    const res = t.post([t.msg('up_wu_00000000000004')], {});
+    await until(() => t.runs() === 1);
+    t.release();
+    expect(await (await res).json()).toMatchObject({ processed: ['up_wu_00000000000004'], replies: [RESULT] });
+    expect(await t.hubs.store.listToolCalls(t.s.id)).toMatchObject([{ status: 'ok' }]);
   });
 });

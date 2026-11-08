@@ -68,6 +68,8 @@ export interface HttpTransportContext {
   bodyTimeoutMs: number;
 }
 
+type WaitUntil = (p: Promise<unknown>) => void;
+
 const json = (data: unknown, status = 200): Response => Response.json(data, { status });
 const iso = (ms: number): string => new Date(ms).toISOString();
 const encoder = new TextEncoder();
@@ -355,7 +357,7 @@ export function httpTransport(ctx: HttpTransportContext) {
     }
   }
 
-  async function events(req: Request, clientKey: string): Promise<Response> {
+  async function events(req: Request, clientKey: string, waitUntil?: WaitUntil): Promise<Response> {
     const machine = await authenticate(req, clientKey);
     let body: HttpEventsRequest;
     try {
@@ -401,16 +403,37 @@ export function httpTransport(ctx: HttpTransportContext) {
         retry.push(...body.msgs.slice(i).map((x) => x.id));
         break;
       }
-      try {
-        await machines.handleUpstream(link, m.msg);
-        await store.completeInbox(machine.id, [m.id], iso(Date.now()));
-      } catch (err) {
-        // Not applied, or not recorded as applied (e.g. a transient store error), or a tool call
-        // running elsewhere (`UpstreamRetry`): give the claim back so the agent's retry runs at
-        // once instead of waiting out the lease. Tool-handler errors never land here (they are the
-        // call's result); a retried tool call is answered from the store, never re-run.
-        if (!(err instanceof UpstreamRetry)) logger.error({ err, machineId: machine.id, t: m.msg.t }, 'upstream message failed');
-        await store.releaseInbox(machine.id, [m.id]).catch((e: unknown) => logger.error({ err: e }, 'inbox release failed'));
+      /** Applies the message and records it; never rejects (false: the claim was given back). */
+      const apply = async (): Promise<boolean> => {
+        try {
+          await machines.handleUpstream(link, m.msg);
+          await store.completeInbox(machine.id, [m.id], iso(Date.now()));
+          return true;
+        } catch (err) {
+          // Not applied, or not recorded as applied (e.g. a transient store error), or a tool call
+          // running elsewhere (`UpstreamRetry`): give the claim back so the agent's retry runs at
+          // once instead of waiting out the lease. Tool-handler errors never land here (they are the
+          // call's result); a retried tool call is answered from the store, never re-run.
+          if (!(err instanceof UpstreamRetry)) logger.error({ err, machineId: machine.id, t: m.msg.t }, 'upstream message failed');
+          await store.releaseInbox(machine.id, [m.id]).catch((e: unknown) => logger.error({ err: e }, 'inbox release failed'));
+          return false;
+        }
+      };
+      const applying = apply();
+      if (m.msg.t === 'tool_call' && waitUntil) {
+        // Platforms that cancel a request's work when its client disconnects (Cloudflare Workers)
+        // would otherwise cut the handler off with the agent's POST, leaving the call at-most-once.
+        // Under `waitUntil` it runs to the end and its result is stored, so the agent's resend gets
+        // it (exactly-once). The response still waits for it: a connected agent gets the result at
+        // once, without resend round trips.
+        try {
+          waitUntil(applying);
+        } catch (err) {
+          // e.g. an unbound `ctx.waitUntil` ("Illegal invocation"): the call simply runs inline.
+          logger.warn({ err }, 'waitUntil threw; running the tool call inline');
+        }
+      }
+      if (!(await applying)) {
         retry.push(...body.msgs.slice(i).map((x) => x.id));
         break;
       }
@@ -436,8 +459,11 @@ export function httpTransport(ctx: HttpTransportContext) {
     return new Response(null, { status: 204 });
   }
 
-  /** Handles `path` (below `basePath`) if it is an agent route; `null` otherwise. */
-  async function handle(req: Request, url: URL, path: string, clientKey: string): Promise<Response | null> {
+  /**
+   * Handles `path` (below `basePath`) if it is an agent route; `null` otherwise. `waitUntil` (the
+   * platform's, from `hub.fetch`) keeps tool-call handlers alive when the agent's POST is dropped.
+   */
+  async function handle(req: Request, url: URL, path: string, clientKey: string, waitUntil?: WaitUntil): Promise<Response | null> {
     if (path !== '/agent' && !path.startsWith('/agent/')) return null;
     const method = req.method;
     if (path === '/agent') {
@@ -447,7 +473,7 @@ export function httpTransport(ctx: HttpTransportContext) {
     if (path === '/agent/info' && method === 'GET') return json(ctx.agentInfo());
     if (path === '/agent/connect' && method === 'POST') return connect(req, clientKey);
     if (path === '/agent/stream' && method === 'GET') return stream(req, url, clientKey);
-    if (path === '/agent/events' && method === 'POST') return events(req, clientKey);
+    if (path === '/agent/events' && method === 'POST') return events(req, clientKey, waitUntil);
     if (path === '/agent/disconnect' && method === 'POST') return disconnect(req, clientKey);
     if (['/agent/info', '/agent/connect', '/agent/stream', '/agent/events', '/agent/disconnect'].includes(path)) {
       throw new UncageError('invalid_request', { message: `Method ${method} is not allowed for ${path}.` });
