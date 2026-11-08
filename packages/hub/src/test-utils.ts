@@ -54,9 +54,23 @@ export interface TestHub {
   close(): Promise<void>;
 }
 
+/**
+ * A `node:http` server for an in-process hub whose idle keep-alive connections are closed by the
+ * client (fetch/undici's own idle timeout) or at teardown, never by the server. The test's fetch
+ * and the hub share one event loop: after a stall longer than Node's server keep-alive timeout
+ * (5 s + 1 s buffer; synchronous PGlite WASM or sync fs on a slow runner), the next request can go
+ * out on the pooled connection before the server's idle timer runs, and the server then closes the
+ * socket with that request unread: a connection reset (ECONNRESET) in the test.
+ */
+function inProcessServer(): Server {
+  const server = createServer();
+  server.keepAliveTimeout = 0;
+  return server;
+}
+
 export async function startTestHub(o: Partial<HubOptions> & HubInternals = {}): Promise<TestHub> {
   const store = o.store ?? (await pgliteHubStore({ dataDir: 'memory://' }));
-  const server = createServer();
+  const server = inProcessServer();
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const hub = await createHub({
@@ -515,7 +529,7 @@ export async function startFaasHubs(
   const cluster = rest.cluster ?? (makeCluster ? makeCluster() : memoryCluster());
   const extraStores: HubStore[] = [];
   const extraClusters: ClusterAdapter[] = [];
-  const server = createServer();
+  const server = inProcessServer();
   const sockets = new Set<Socket>();
   server.on('connection', (s) => {
     sockets.add(s);
