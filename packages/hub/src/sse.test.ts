@@ -1,4 +1,5 @@
 import type { UncageEvent } from '@uncage/protocol';
+import { createUncageClient } from '@uncage/client';
 import { describe, expect, it } from 'vitest';
 import { eventStreamResponse, type EventSource } from './sse.js';
 import { fakeSession, makeEvent, readSse, sleep } from './test-utils.js';
@@ -9,7 +10,8 @@ const ev = (n: number): UncageEvent =>
     : makeEvent('ses_1', n, 'message.delta', { messageId: 'm1', chunkIndex: n, text: `${n}` });
 
 /** A store whose history shows only what has been "committed"; live events are pushed by hand. */
-function laggingSource(committed: number[]) {
+function laggingSource(committed: number[], o: { occurredAt?: string } = {}) {
+  const make = (n: number): UncageEvent => (o.occurredAt ? { ...ev(n), occurredAt: o.occurredAt } : ev(n));
   const subs = new Set<(e: UncageEvent[]) => void>();
   const src: EventSource = {
     async history(after, limit) {
@@ -17,7 +19,7 @@ function laggingSource(committed: number[]) {
         .filter((n) => n > after)
         .sort((a, b) => a - b)
         .slice(0, limit)
-        .map(ev);
+        .map(make);
     },
     async subscribe(fn) {
       subs.add(fn);
@@ -25,7 +27,7 @@ function laggingSource(committed: number[]) {
     },
   };
   const live = (...ns: number[]) => {
-    for (const fn of subs) fn(ns.map(ev));
+    for (const fn of subs) fn(ns.map(make));
   };
   return { src, live, commit: (n: number) => committed.push(n), subscribed: () => subs.size > 0 };
 }
@@ -80,6 +82,43 @@ describe('eventStreamResponse: history lagging the live queue', () => {
     expect(frames.map((f) => f.event)).toEqual(['session.created', 'reconnect']);
     expect(Date.now() - t0).toBeGreaterThanOrEqual(180);
     expect(Date.now() - t0).toBeLessThan(2000);
+  });
+});
+
+describe('eventStreamResponse: history lagging during catch-up', () => {
+  it('a missing event in history (3, 4 readable, 2 not yet) is waited for: the client gets 1, 2, 3, 4', async () => {
+    const s = laggingSource([1, 3, 4]);
+    setTimeout(() => s.commit(2), 300);
+    const fetch = async () => open(s.src);
+    const seen: number[] = [];
+    const states: string[] = [];
+    const unsub = createUncageClient({ fetch }).subscribe('ses_1', {
+      after: 0,
+      onEvent: (e) => seen.push(e.sequence),
+      onState: (st) => states.push(st),
+    });
+    const t0 = Date.now();
+    while (seen.length < 4 && Date.now() - t0 < 3000) await sleep(10);
+    unsub();
+    expect(seen).toEqual([1, 2, 3, 4]);
+    expect(states).toEqual(['connecting', 'live']);
+  });
+
+  it('a young gap in history that does not fill ends the stream with reconnect, never emitting past it', async () => {
+    const s = laggingSource([1, 3]);
+    const res = open(s.src, { gapWaitMs: 200 });
+    const frames: Array<{ id?: string; event?: string }> = [];
+    await collect(res, frames);
+    expect(frames.map((f) => f.event)).toEqual(['session.created', 'reconnect']);
+  });
+
+  it('a gap whose next event is long past is a permanent hole: emitted past after the wait (no reconnect loop)', async () => {
+    const s = laggingSource([1, 3], { occurredAt: new Date(Date.now() - 3_600_000).toISOString() });
+    const res = open(s.src, { gapWaitMs: 100 });
+    const frames: Array<{ id?: string; event?: string }> = [];
+    await collect(res, frames, ev(3).eventId);
+    expect(frames.map((f) => f.id)).toEqual([ev(1).eventId, ev(3).eventId]);
+    await res.body?.cancel().catch(() => undefined);
   });
 });
 

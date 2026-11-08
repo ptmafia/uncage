@@ -365,7 +365,7 @@ describe('subscribe', () => {
     expect((fetch.mock.calls[1]![1]!.headers as Record<string, string>)['last-event-id']).toBe(evt(2).eventId);
   });
 
-  it('a live event past a gap reconnects at once from the last event instead of skipping', async () => {
+  it('a live event past a gap resumes from the last event after a short jitter instead of skipping', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const fetch = vi
       .fn<F>()
@@ -381,7 +381,10 @@ describe('subscribe', () => {
     const seen: number[] = [];
     const states: ConnectionState[] = [];
     const unsub = createUncageClient({ fetch }).subscribe('ses_1', { after: 0, onEvent: (e) => seen.push(e.sequence), onState: (s) => states.push(s) });
-    await vi.advanceTimersByTimeAsync(50);
+    // Resumes after a 100–500 ms jitter, not the reconnect backoff.
+    await vi.advanceTimersByTimeAsync(90);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(420);
     unsub();
     expect(seen).toEqual([1, 2, 3, 4]);
     expect(states).toEqual(['connecting', 'live']);
@@ -398,7 +401,7 @@ describe('subscribe', () => {
       .mockImplementation(() => new Promise<Response>(() => undefined));
     const seen: number[] = [];
     const unsub = createUncageClient({ fetch }).subscribe('ses_1', { after: 0, onEvent: (e) => seen.push(e.sequence) });
-    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(510);
     unsub();
     expect(seen).toEqual([1, 3, 4]);
     expect(fetch).toHaveBeenCalledTimes(2);
@@ -462,7 +465,8 @@ describe('structural guards (no zod in the browser path)', () => {
     const fetch = vi.fn(async () => sseResponse([bad(1), bad(2), frame(3)]));
     const events: number[] = [];
     const unsub = createUncageClient({ fetch }).subscribe('ses_1', { after: 0, onEvent: (ev) => events.push(ev.sequence) });
-    await vi.advanceTimersByTimeAsync(0);
+    // The dropped frames leave a gap before 3: one jittered resume, then the repeated gap is accepted.
+    await vi.advanceTimersByTimeAsync(510);
     unsub();
     expect(events).toEqual([3]);
     expect(warn).toHaveBeenCalledTimes(1);

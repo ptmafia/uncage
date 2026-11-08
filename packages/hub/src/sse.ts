@@ -17,6 +17,12 @@ const HISTORY_PAGE = 200;
  * the stream ends with `event: reconnect`, so the client resumes after the last event it got.
  */
 const DEFAULT_GAP_WAIT_MS = 2_000;
+/**
+ * A gap in history whose next event occurred longer ago than this is a permanent hole (no commit
+ * lags that long), crossed after one wait instead of ending every stream with `reconnect`. Generous
+ * so a machine clock that runs behind cannot make a lagging write look permanent.
+ */
+const PERMANENT_GAP_MS = 5 * 60_000;
 
 /** Reads history pages after `after` until caught up or `limit` events are collected. */
 export async function readHistory(src: EventSource, after: number, limit: number): Promise<UncageEvent[]> {
@@ -108,12 +114,42 @@ export function eventStreamResponse(
       last = e.sequence;
       write(formatEvent(e));
     };
+    const permanentHole = (e: UncageEvent) => Date.now() - Date.parse(e.occurredAt) >= PERMANENT_GAP_MS;
+    /**
+     * Emits history after `last` up to the first gap, never past it: a missing sequence is waited
+     * for (it may be committed after a later one) up to `gapWaitMs`, then the stream rotates so the
+     * client resumes after `last`. A long-past hole (see PERMANENT_GAP_MS) is crossed after the wait.
+     */
     const catchUp = async () => {
+      let deadline: number | undefined;
+      let delay = 25;
       for (;;) {
         const page = await src.history(last, HISTORY_PAGE);
         const fresh = page.filter((e) => e.sequence > last);
         if (fresh.length === 0) return;
-        for (const e of fresh) emit(e);
+        let gap: UncageEvent | undefined;
+        for (const e of fresh) {
+          if (e.sequence > last + 1) {
+            gap = e;
+            break;
+          }
+          emit(e);
+        }
+        if (stop()) return;
+        if (!gap) continue;
+        deadline ??= Date.now() + gapWaitMs;
+        if (Date.now() >= deadline) {
+          if (permanentHole(gap)) {
+            emit(gap);
+            deadline = undefined;
+            delay = 25;
+            continue;
+          }
+          rotate = true;
+          return;
+        }
+        await pause(Math.min(delay, deadline - Date.now()));
+        delay = Math.min(delay * 2, 400);
         if (stop()) return;
       }
     };

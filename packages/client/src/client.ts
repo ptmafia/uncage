@@ -282,7 +282,9 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
             guard(() => h.onEvent(event));
           }
           if (gap && !signal.aborted) {
+            // Short jitter so many browsers seeing the same gap do not resume in one burst.
             attempt = 0;
+            await sleep(100 + Math.random() * 400, signal);
             continue;
           }
           if (rotated && !signal.aborted) {
