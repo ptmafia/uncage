@@ -28,6 +28,8 @@ describe('stripMdx robustness', () => {
     const out = stripMdx(src);
     expect(out).not.toMatch(/^import/m);
     expect(out).not.toMatch(/<[A-Z]/);
+    expect(out).not.toContain("from '");
+    expect(out).not.toMatch(/^\s*[A-Z],/m);
     expect(out).toContain('*(Screenshot: Single)*');
     expect(out).toContain('*(Screenshot: Braced)*');
   });
@@ -37,6 +39,13 @@ describe('stripMdx robustness', () => {
     const out = stripMdx(mdx.replace(/^---[\s\S]*?---\n/, ''));
     expect(out).not.toMatch(/^import/m);
     expect(out).not.toMatch(/<[A-Z]/);
+  });
+});
+
+describe('stripMdx imports', () => {
+  it('removes multi-line and side-effect imports completely', () => {
+    expect(stripMdx("import {\n  A,\n  B,\n} from 'x';\n\nText\n")).toBe('Text\n');
+    expect(stripMdx("import './a.css';\nimport D, { E } from \"y\"\nText\n")).toBe('Text\n');
   });
 });
 
