@@ -14,7 +14,7 @@ Your website gives the instructions. Each user’s own Claude Code does the work
 
 **Help site (for developers and coding agents): https://uncage.vercel.app/docs/** · [llms.txt](https://uncage.vercel.app/docs/llms.txt) · [Skill for coding agents](skills/uncage/SKILL.md)
 
-> Status: Connected Mode is new in 0.2 (`@uncage/hub`, `@uncage/agent`, `uncage setup`). The user’s side runs on macOS with Node.js 22+. Claude Code is verified live, end to end ([compatibility](docs/compatibility.md)); Codex is implemented but not yet verified against a real binary and has no site-tool support. Local Mode (the 0.1 daemon + chat, with no hub) keeps working and is documented in the help site.
+> Status: Connected Mode is new in 0.2 (`@uncage/hub`, `@uncage/agent`, `uncage setup`). The user’s side runs on macOS with Node.js 22+. Claude Code is verified live, end to end ([compatibility](docs/compatibility.md)); Codex is implemented but not yet verified against a real binary and has no site-tool support. Any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (Gemini CLI, OpenCode, Claude Code’s ACP adapter, …) can be offered too, with `runtimes.acp` in `~/.uncage/agent.yaml`; Claude Code’s ACP adapter is verified live. Local Mode (the 0.1 daemon + chat, with no hub) keeps working and is documented in the help site.
 
 ## Try it in 5 minutes
 
@@ -115,7 +115,7 @@ When the agent runs on the same machine as your app (an internal tool, a dev das
 | --- | --- |
 | [`@uncage/hub`](packages/hub) | Connected Mode hub for your website’s Node backend |
 | [`@uncage/agent`](packages/agent) | The daemon on the user’s computer (run by `uncage agent`) |
-| [`@uncage/cli`](packages/cli) | `uncage setup` / `agent` / `sites` / `activity`, and `serve` / `doctor` for Local Mode |
+| [`@uncage/cli`](packages/cli) | `uncage setup` / `agent` / `sites` / `runtimes` / `activity`, and `serve` / `doctor` for Local Mode |
 | [`@uncage/react-ui`](packages/react-ui) | `<AgentChat>`, `<ConnectMachine>`, `<ApproveDevice>`, `<MachineStatus>` |
 | [`@uncage/react`](packages/react) | Headless store and hooks |
 | [`@uncage/client`](packages/client) | Browser transport with resumable SSE |
@@ -124,6 +124,7 @@ When the agent runs on the same machine as your app (an internal tool, a dev das
 | [`@uncage/protocol`](packages/protocol) | Wire types, Zod schemas, error catalog |
 | [`@uncage/runtime-claude`](packages/runtime-claude) | Claude Code adapter (Claude Agent SDK) |
 | [`@uncage/runtime-codex`](packages/runtime-codex) | Codex adapter (app-server JSON-RPC) |
+| [`@uncage/runtime-acp`](packages/runtime-acp) | Any Agent Client Protocol agent over stdio (Gemini CLI, OpenCode, Claude Code’s ACP adapter, …) |
 | [`@uncage/testkit`](packages/testkit) | Fake runtime adapter and adapter contract tests (private) |
 
 ## Development

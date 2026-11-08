@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ErrorBodySchema } from './errors.js';
+import { LenientRuntimeIconSchema } from './icon.js';
 
 export const RunStateSchema = z.enum([
   'queued',
@@ -84,7 +85,8 @@ export const RuntimeCapabilitiesSchema = z.object({
   nativeResume: z.boolean(),
   diffEvents: z.boolean(),
   mcp: z.boolean(),
-  skills: z.enum(['supported', 'partial', 'unknown']),
+  /** 'prompt': skills are given to the agent as text context (no native skill support). */
+  skills: z.enum(['supported', 'partial', 'prompt', 'unknown']),
   /** Whether runs can be given site tools (`AdapterRunInput.tools`, connected mode). */
   siteTools: z.boolean(),
   models: z.array(ModelOptionSchema),
@@ -111,6 +113,8 @@ export const RuntimeInfoSchema = z.object({
   message: z.string().optional(),
   hint: z.string().optional(),
   installUrl: z.string().optional(),
+  /** The runtime's official icon (data URIs only, at most 16 KiB each); an invalid one is dropped. */
+  icon: LenientRuntimeIconSchema,
 });
 export type RuntimeInfo = z.infer<typeof RuntimeInfoSchema>;
 

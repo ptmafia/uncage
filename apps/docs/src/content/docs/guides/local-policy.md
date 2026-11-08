@@ -37,7 +37,7 @@ localPolicy:
   allowBypass: false
 ```
 
-Only `localPolicy` is meant to be edited by hand. Your comments and `localPolicy` survive when `uncage setup` or `uncage sites remove` rewrite the `sites` list. Unknown keys are rejected with an error naming them.
+Only `localPolicy` and `runtimes` are meant to be edited by hand. Your comments, `localPolicy` and `runtimes` survive when `uncage setup` or `uncage sites remove` rewrite the `sites` list. Unknown keys are rejected with an error naming them.
 
 ### `localPolicy.allowBypass`
 
@@ -61,6 +61,10 @@ localPolicy:
 ```
 
 Modes: `default`, `acceptEdits`, `plan`, `auto`, `bypassPermissions` (the last also needs `allowBypass: true`). New sessions start in `default`, so keep `default` in the list unless you want every run refused until the user picks an allowed mode.
+
+### `runtimes.acp`
+
+Which agents this computer offers besides Claude Code and Codex: Gemini CLI, OpenCode, Claude Code’s ACP adapter or any other agent that speaks the Agent Client Protocol. Agents from the ACP registry that download code (`npx`, `uvx`) only run after `uncage runtimes enable <id>`; `uncage runtimes` lists what is offered. See [Use any ACP agent](/docs/guides/use-any-acp-agent/).
 
 ### Apply a change
 

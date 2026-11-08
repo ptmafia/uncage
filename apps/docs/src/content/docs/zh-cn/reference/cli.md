@@ -45,6 +45,24 @@ uncage sites remove <id>     # disconnect a website
 
 `remove` 会在网站上吊销这台电脑（用它自己的令牌调用 `POST <hub>/machine/revoke`），从 `agent.yaml` 里删除令牌，并重启后台守护进程。本地会话数据（`~/.uncage/sites/<id>`）和工作区（`~/Uncage/…`）会保留。
 
+### `uncage runtimes`
+
+```text
+uncage runtimes [--json] [--all] [--refresh]   # ID, NAME, STATUS, VERSION, SITE TOOLS, RESUME
+uncage runtimes enable <id>                    # register an ACP registry agent (consent for npx/uvx)
+uncage runtimes disable <id>                   # never register an ACP agent
+```
+
+列出 `uncage agent` 向网站提供的运行时：Claude Code、Codex，以及 `~/.uncage/agent.yaml` 中 `runtimes.acp` 配置的 ACP agent（预设、你自己写的条目，以及从 ACP registry 检测到的 agent），并显示它们的状态、是否支持网站工具和恢复会话。随后列出尚未注册的 ACP registry agent 及原因。
+
+| 参数 | |
+| --- | --- |
+| `--json` | 以 JSON 输出 `{ runtimes, registry }` |
+| `--all` | 同时列出这台电脑上没有安装的 registry agent |
+| `--refresh` | 先下载最新的 ACP registry（否则使用缓存或自带的副本） |
+
+`enable` 会打印将要运行的确切内容，并把你的同意记录到 `runtimes.acp.enable` / `consented`；通过 `npx` 或 `uvx` 分发的 agent 没有它就绝不会运行。`disable` 把 id 加入 `runtimes.acp.disable`。两者都会重启后台守护进程。详见[使用任意 ACP agent](/docs/zh-cn/guides/use-any-acp-agent/)。
+
 ### `uncage activity`
 
 ```text
@@ -85,7 +103,7 @@ uncage doctor [--port <n> | --url <url>] [--workspace <dir>] [--data-dir <dir>] 
 uncage doctor --export-events <sessionId> [--out <file>] [--include-content] [--port <n> | --url <url>]
 ```
 
-检查 Node、数据目录、令牌、正在运行的 Uncage 服务和运行时（Claude Code、Codex）。每一行是 ✓ 或 ✗，每个 ✗ 都会打印一条 `fix:` 命令。当服务的工作区是一个没有忽略 `.uncage/` 的 git 仓库时，以及在把令牌发往非回环 URL 之前，它会给出警告（`!`，不致命）。
+检查 Node、数据目录、令牌、正在运行的 Uncage 服务和运行时（Claude Code、Codex，以及每个 ACP agent 各一行 `runtime.acp-<id>`，来自 `uncage.config.yaml` 的 `runtimes.acp` 或自动检测）。每一行是 ✓ 或 ✗，每个 ✗ 都会打印一条 `fix:` 命令。ACP 的行是可选的：这些行出现 ✗（例如未安装，fix 为安装提示）不会改变退出码。`uncage.config.yaml` 用自己的 `command` 添加的每个 ACP agent，还会多一行警告，显示它运行的命令。当服务的工作区是一个没有忽略 `.uncage/` 的 git 仓库时，以及在把令牌发往非回环 URL 之前，它会给出警告（`!`，不致命）。
 
 `--export-events` 把一个会话的事件导出为 JSON，用于提交 bug 报告；除非加上 `--include-content`，内容会被脱敏。
 
@@ -97,6 +115,7 @@ uncage doctor --export-events <sessionId> [--out <file>] [--include-content] [--
 | --- | --- | --- |
 | `UNCAGE_HOME` | Connected 模式的命令 | 绝对路径，用来替换 `~/.uncage` 和 `~/Uncage` 中的 `~`（开发和测试用）。除非加 `--no-daemon`，`uncage setup` 会拒绝它。`HOME` 不变，所以 Claude Code 的登录状态保持不变。 |
 | `UNCAGE_LOG_LEVEL` | `serve`、`agent` | 日志级别，例如 `debug` |
+| `UNCAGE_ACP_REGISTRY_REFRESH=0` | `agent` | 不每天下载 ACP registry（使用缓存或自带的副本） |
 | `UNCAGE_PORT` | `serve`、`doctor` | Uncage 服务的端口 |
 | `UNCAGE_URL` | `doctor`、Local 模式的代理 | Uncage 服务的 URL（默认 `http://127.0.0.1:4783`） |
 | `UNCAGE_ALLOW_BYPASS=1` | `serve` | 在 Local 模式下提供 `bypassPermissions`（会打印警告） |

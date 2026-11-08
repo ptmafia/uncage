@@ -2,13 +2,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import type { ApprovalRequest, Session, SessionSettings } from '@uncage/protocol';
 import { UncageClientError } from '@uncage/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AgentChat, UncageProvider, type AgentChatProps } from './index.js';
+import { AgentChat, MachineStatus, RuntimeIcon, RuntimeSelector, UncageProvider, UncageUIProvider, type AgentChatProps } from './index.js';
 import {
   approval,
   attachment,
   clientError,
   eventFactory,
   fakeClient,
+  machine,
   richCaps,
   run,
   runtime,
@@ -323,6 +324,77 @@ describe('RuntimeSelector and EmptyState', () => {
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Explain this repo' })));
     await waitFor(() => expect(f.client.startRun).toHaveBeenCalledWith('ses_new', { prompt: 'Explain this repo' }));
     expect(f.client.createSession).toHaveBeenCalledWith({ runtime: 'claude' });
+  });
+});
+
+const svgIcon = (fill: string) => `data:image/svg+xml;base64,${btoa(`<svg xmlns="http://www.w3.org/2000/svg"><path fill="${fill}" d="M0 0h16v16z"/></svg>`)}`;
+const gemini = () =>
+  runtime({ id: 'acp-gemini', displayName: 'Gemini CLI (ACP)', version: '0.67.0', icon: { light: svgIcon('#111'), dark: svgIcon('#eee') } });
+
+describe('runtime icons', () => {
+  it('the runtime picker shows an ACP runtime from machine.runtimes and selects it', async () => {
+    const f = fakeClient({ machines: [machine({ runtimes: [runtime(), gemini()] })] });
+    const onChange = vi.fn();
+    render(
+      <UncageProvider client={f.client}>
+        <UncageUIProvider>
+          {/* MachineStatus loads the computers: in connected mode runtimes are the selected computer's. */}
+          <MachineStatus />
+          <RuntimeSelector onChange={onChange} />
+        </UncageUIProvider>
+      </UncageProvider>,
+    );
+    const radio = await screen.findByRole('radio', { name: /Gemini CLI \(ACP\)/ });
+    fireEvent.click(radio);
+    expect(onChange).toHaveBeenCalledWith('acp-gemini');
+    // Official icon: an <img> with the data URI for each theme, never inline SVG.
+    const row = radio.closest('.uc-runtime') as HTMLElement;
+    const imgs = [...row.querySelectorAll('img')];
+    // Next to the visible name the icon is decorative (alt=""), so the radio's name is not doubled.
+    expect(imgs.map((i) => [i.getAttribute('src'), i.getAttribute('alt'), i.dataset.variant])).toEqual([
+      [svgIcon('#111'), '', 'light'],
+      [svgIcon('#eee'), '', 'dark'],
+    ]);
+    expect(radio.getAttribute('aria-label') ?? row.querySelector('label')!.textContent).not.toMatch(/Gemini CLI \(ACP\).*Gemini CLI \(ACP\)/);
+    expect(row.querySelector('svg.uc-runtime-icon, .uc-runtime-icon svg')).toBeNull();
+    // A runtime without an icon gets the neutral fallback with its initial.
+    const claude = screen.getByRole('radio', { name: /Claude Code/ }).closest('.uc-runtime') as HTMLElement;
+    expect(claude.querySelector('img')).toBeNull();
+    expect(claude.querySelector('.uc-runtime-icon[data-fallback]')?.textContent).toBe('C');
+  });
+
+  it('never renders a non-image or oversized icon: falls back to the initial', () => {
+    const { container } = render(
+      <>
+        <RuntimeIcon runtime={{ displayName: 'evil', icon: { light: 'javascript:alert(1)' } }} />
+        <RuntimeIcon runtime={{ displayName: 'html', icon: { light: 'data:text/html;base64,PHNjcmlwdD4=' } }} />
+        <RuntimeIcon runtime={{ displayName: 'huge', icon: { light: `data:image/png;base64,${'A'.repeat(20_000)}` } }} />
+        <RuntimeIcon runtime={{ displayName: 'ok', icon: { light: 'data:image/png;base64,iVBORw0KGgo=', dark: 'javascript:x' } }} decorative={false} />
+        <RuntimeIcon runtime={{ displayName: 'Solo' }} decorative={false} />
+      </>,
+    );
+    const imgs = [...container.querySelectorAll('img')];
+    expect(imgs.map((i) => [i.getAttribute('src'), i.getAttribute('alt')])).toEqual([['data:image/png;base64,iVBORw0KGgo=', 'ok']]);
+    expect(imgs[0]!.dataset.variant).toBe('any');
+    expect([...container.querySelectorAll('[data-fallback]')].map((e) => e.textContent)).toEqual(['E', 'H', 'H', 'S']);
+    // A standalone fallback still has an accessible name; a decorative one is hidden.
+    expect(screen.getByRole('img', { name: 'Solo' }).textContent).toBe('S');
+    expect(container.querySelector('[data-fallback]')!.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('the session header and the computer menu show runtime icons', async () => {
+    const f = fakeClient({
+      machines: [machine({ runtimes: [gemini()] })],
+      snapshot: () => snapshot({ session: session({ runtimeId: 'acp-gemini' }) }),
+    });
+    await openSession(f);
+    const header = document.querySelector('.uc-header') as HTMLElement;
+    await waitFor(() => expect(header.querySelector('.uc-pill img')?.getAttribute('src')).toBe(svgIcon('#111')));
+    expect(header.querySelector('.uc-pill img')!.getAttribute('alt')).toBe('');
+    fireEvent.click(within(header).getByRole('button', { name: /^Computer:/ }));
+    const menu = screen.getByRole('menu', { name: 'Choose a computer' });
+    // In the computer menu the icons stand alone: alt is the runtime's name.
+    expect(within(menu).getAllByRole('img', { name: 'Gemini CLI (ACP)' })[0]!.getAttribute('src')).toBe(svgIcon('#111'));
   });
 });
 

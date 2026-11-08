@@ -37,7 +37,7 @@ localPolicy:
   allowBypass: false
 ```
 
-手で編集することを想定しているのは`localPolicy`だけです。`uncage setup`や`uncage sites remove`が`sites`の一覧を書き換えても、コメントと`localPolicy`は保持されます。未知のキーはエラーになり、そのキー名が表示されます。
+手で編集することを想定しているのは`localPolicy`と`runtimes`だけです。`uncage setup`や`uncage sites remove`が`sites`の一覧を書き換えても、コメント、`localPolicy`、`runtimes`は保持されます。未知のキーはエラーになり、そのキー名が表示されます。
 
 ### `localPolicy.allowBypass`
 
@@ -61,6 +61,10 @@ localPolicy:
 ```
 
 モードは`default`、`acceptEdits`、`plan`、`auto`、`bypassPermissions`です（最後のものは`allowBypass: true`も必要です）。新しいセッションは`default`で始まるため、ユーザーが許可されたモードを選ぶまですべての実行を拒否したいのでなければ、一覧に`default`を残してください。
+
+### `runtimes.acp`
+
+このコンピュータがClaude CodeとCodex以外に提供するエージェントを設定します。Gemini CLI、OpenCode、Claude CodeのACPアダプターなど、Agent Client Protocolに対応したエージェントです。ACPレジストリのエージェントのうちコードをダウンロードするもの（`npx`、`uvx`）は、`uncage runtimes enable <id>`を実行した後にだけ動きます。提供中のものは`uncage runtimes`で一覧できます。詳しくは[あらゆるACP エージェントを使う](/docs/ja/guides/use-any-acp-agent/)を参照してください。
 
 ### 変更を反映する
 

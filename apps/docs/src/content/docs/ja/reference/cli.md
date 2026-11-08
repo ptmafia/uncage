@@ -45,6 +45,24 @@ uncage sites remove <id>     # disconnect a website
 
 `remove`は、ウェブサイト上でこのコンピュータを取り消し（自身のトークンで`POST <hub>/machine/revoke`）、`agent.yaml`からトークンを削除して、バックグラウンドのエージェントを再起動します。ローカルのセッションデータ（`~/.uncage/sites/<id>`）とワークスペース（`~/Uncage/…`）は残ります。
 
+### `uncage runtimes`
+
+```text
+uncage runtimes [--json] [--all] [--refresh]   # ID, NAME, STATUS, VERSION, SITE TOOLS, RESUME
+uncage runtimes enable <id>                    # register an ACP registry agent (consent for npx/uvx)
+uncage runtimes disable <id>                   # never register an ACP agent
+```
+
+`uncage agent`がウェブサイトに提供するランタイムを一覧表示します。Claude Code、Codex、そして`~/.uncage/agent.yaml`の`runtimes.acp`によるACP エージェント（プリセット、自分で書いたエントリ、ACPレジストリから検出したエージェント）について、状態と、サイトツールや再開に対応しているかを表示します。続いて、登録されていないACPレジストリのエージェントとその理由を表示します。
+
+| フラグ | |
+| --- | --- |
+| `--json` | `{ runtimes, registry }`をJSONで出力 |
+| `--all` | このコンピュータにインストールされていないレジストリのエージェントも表示 |
+| `--refresh` | 先に最新のACPレジストリをダウンロード（指定しなければキャッシュか同梱のコピー） |
+
+`enable`は実行される内容をそのまま表示し、同意を`runtimes.acp.enable` / `consented`に記録します。`npx`や`uvx`で配布されるエージェントは、これがなければ決して実行されません。`disable`はIDを`runtimes.acp.disable`に追加します。どちらもバックグラウンドのエージェントを再起動します。詳しくは[あらゆるACP エージェントを使う](/docs/ja/guides/use-any-acp-agent/)を参照してください。
+
 ### `uncage activity`
 
 ```text
@@ -85,7 +103,7 @@ uncage doctor [--port <n> | --url <url>] [--workspace <dir>] [--data-dir <dir>] 
 uncage doctor --export-events <sessionId> [--out <file>] [--include-content] [--port <n> | --url <url>]
 ```
 
-Node、データディレクトリ、トークン、実行中のデーモン、ランタイム（Claude Code、Codex）をチェックします。各行は ✓ か ✗ で、✗ の行には必ず`fix:`コマンドが表示されます。デーモンのワークスペースが`.uncage/`を無視していないgitリポジトリである場合と、ループバック以外のURLにトークンを送る前には、警告（`!`、致命的ではない）を出します。
+Node、データディレクトリ、トークン、実行中のデーモン、ランタイム（Claude Code、Codex、そしてACP エージェントごとに1行の`runtime.acp-<id>`。`uncage.config.yaml`の`runtimes.acp`で設定したものか、自動検出したもの）をチェックします。各行は ✓ か ✗ で、✗ の行には必ず`fix:`コマンドが表示されます。ACPの行は任意扱いで、✗（たとえば未インストールで、fixはインストールのヒント）でも終了コードは変わりません。`uncage.config.yaml`が独自の`command`で追加したACP エージェントには、実行するコマンドを示す警告行も表示されます。デーモンのワークスペースが`.uncage/`を無視していないgitリポジトリである場合と、ループバック以外のURLにトークンを送る前には、警告（`!`、致命的ではない）を出します。
 
 `--export-events`は、バグ報告用にセッションのイベントをJSONで書き出します。`--include-content`を付けない限り、内容は秘匿化されます。
 
@@ -97,6 +115,7 @@ Node、データディレクトリ、トークン、実行中のデーモン、�
 | --- | --- | --- |
 | `UNCAGE_HOME` | Connected モードのコマンド | `~/.uncage`と`~/Uncage`の`~`を置き換える絶対パス（開発・テスト用）。`--no-daemon`を付けない限り、`uncage setup`はこれを拒否します。`HOME`は変わらないため、Claude Codeのログイン状態は保たれます。 |
 | `UNCAGE_LOG_LEVEL` | `serve`、`agent` | ログレベル。例：`debug` |
+| `UNCAGE_ACP_REGISTRY_REFRESH=0` | `agent` | ACPレジストリを毎日ダウンロードしない（キャッシュか同梱のコピーを使用） |
 | `UNCAGE_PORT` | `serve`、`doctor` | デーモンのポート |
 | `UNCAGE_URL` | `doctor`、Local モードのプロキシ | デーモンのURL（デフォルトは`http://127.0.0.1:4783`） |
 | `UNCAGE_ALLOW_BYPASS=1` | `serve` | Local モードで`bypassPermissions`を提供します（警告を表示します） |

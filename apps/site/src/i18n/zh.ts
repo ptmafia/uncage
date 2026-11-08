@@ -134,6 +134,10 @@ export const zh: Dict = {
         title: '横向扩展',
         body: '借助 Postgres 和 Redis 适配器，hub 可以在任意负载均衡器之后多节点运行。',
       },
+      {
+        title: '任意 ACP agent',
+        body: 'Gemini CLI、OpenCode、Claude Code 的 ACP 适配器：任何支持 Agent Client Protocol 的 agent 都会出现在运行时选择器里。',
+      },
     ],
     soon: [
       {

@@ -1,13 +1,24 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { RuntimeAdapter, RuntimeProbe } from '@uncage/protocol';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { updateAgentSites } from '@uncage/agent';
 import { loadConfig } from './config.js';
 import { DOCTOR_HELP, doctorExitCode, exportEvents, formatChecks, nonLoopbackWarning, parseDoctorArgs, runDoctor } from './doctor.js';
 import { ensureToken, ensureTokenAt } from './token.js';
+
+/** Tmp dirs created by this file's tests; removed after each test. */
+const madeDirs: string[] = [];
+const mkTmp = async (prefix: string): Promise<string> => {
+  const d = await mkdtemp(join(tmpdir(), prefix));
+  madeDirs.push(d);
+  return d;
+};
+afterEach(async () => {
+  await Promise.all(madeDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
+});
 
 const adapter = (id: string, probe: RuntimeProbe): RuntimeAdapter =>
   ({ id, displayName: id, probe: async () => probe }) as unknown as RuntimeAdapter;
@@ -18,14 +29,14 @@ const downFetch = (async () => {
 }) as typeof fetch;
 
 async function setup() {
-  const home = await mkdtemp(join(tmpdir(), 'uncage-doc-'));
+  const home = await mkTmp('uncage-doc-');
   await ensureToken(home);
   const config = await loadConfig(home, {});
   return { home, config };
 }
 
 async function gitRepo(): Promise<string> {
-  const repo = await realpath(await mkdtemp(join(tmpdir(), 'uncage-repo-')));
+  const repo = await realpath(await mkTmp('uncage-repo-'));
   execFileSync('git', ['init', '-q', repo]);
   return repo;
 }
@@ -63,7 +74,7 @@ describe('runDoctor: .uncage/ git ignore hint', () => {
   });
 
   it('is skipped when the workspace is not a git repo or git is missing', async () => {
-    const plain = await realpath(await mkdtemp(join(tmpdir(), 'uncage-plain-')));
+    const plain = await realpath(await mkTmp('uncage-plain-'));
     expect((await inWorkspace(plain)).some((x) => x.id.startsWith('gitignore.'))).toBe(false);
     const repo = await gitRepo();
     expect((await inWorkspace(repo, join(plain, 'no-such-git'))).some((x) => x.id.startsWith('gitignore.'))).toBe(false);
@@ -91,6 +102,38 @@ describe('runDoctor', () => {
     expect(formatChecks(checks)).toContain('fix: npm i -g @openai/codex && codex login');
   });
 
+  it('doctor lists ACP runtimes and never fails on them', async () => {
+    const { home, config } = await setup();
+    const disposed: string[] = [];
+    const acp = (id: string, probe: RuntimeProbe): RuntimeAdapter =>
+      ({ id, displayName: id, probe: async () => probe, dispose: async () => void disposed.push(id) }) as unknown as RuntimeAdapter;
+    const checks = await runDoctor({
+      config,
+      home,
+      fetch: okFetch,
+      adapters: [
+        adapter('claude', { status: 'available', version: '2.0.0' }),
+        acp('acp-gemini', { status: 'not_installed', hint: 'npm i -g @google/gemini-cli', installUrl: 'https://github.com/google-gemini/gemini-cli' }),
+        acp('acp-mine', { status: 'auth_required', message: 'Sign in first.', hint: 'Sign in to mine in a terminal, then retry.' }),
+        acp('acp-ok', { status: 'available', version: '1.0.0' }),
+      ],
+    });
+    expect(checks.find((c) => c.id === 'runtime.acp-gemini')).toMatchObject({ ok: false, fix: 'npm i -g @google/gemini-cli' });
+    expect(checks.find((c) => c.id === 'runtime.acp-mine')).toMatchObject({ ok: false, fix: 'Sign in to mine in a terminal, then retry.' });
+    expect(checks.find((c) => c.id === 'runtime.acp-ok')).toMatchObject({ ok: true, detail: '1.0.0' });
+    expect(doctorExitCode(checks)).toBe(0);
+    // Probing may start agent processes: doctor disposes every adapter afterwards.
+    expect(disposed.sort()).toEqual(['acp-gemini', 'acp-mine', 'acp-ok']);
+  });
+
+  it('doctor shows which command each uncage.config.yaml ACP agent runs (warning, not a failure)', async () => {
+    const { home, config } = await setup();
+    const acp = { ...config.runtimes.acp, agents: [{ id: 'mine', command: ['node', 'agent.js'], mcp: 'auto' as const, enabled: true }] };
+    const checks = await runDoctor({ config: { ...config, runtimes: { ...config.runtimes, acp } }, home, fetch: okFetch, adapters: [] });
+    expect(checks.find((c) => c.id === 'acp.command.mine')).toMatchObject({ ok: false, warn: true, detail: 'acp-mine runs: node agent.js' });
+    expect(doctorExitCode(checks)).toBe(0);
+  });
+
   it('fails when server unreachable with fix "uncage serve"', async () => {
     const { home, config } = await setup();
     const checks = await runDoctor({ config, home, fetch: downFetch, adapters: [] });
@@ -110,7 +153,7 @@ describe('runDoctor', () => {
 
   it('fails the token check with a fix when the token file is missing', async () => {
     const { config } = await setup();
-    const empty = await mkdtemp(join(tmpdir(), 'uncage-empty-'));
+    const empty = await mkTmp('uncage-empty-');
     const checks = await runDoctor({ config, home: empty, fetch: okFetch, adapters: [] });
     const t = checks.find((c) => c.id === 'token');
     expect(t?.ok).toBe(false);
@@ -119,14 +162,14 @@ describe('runDoctor', () => {
 
   it('checks and sends the token from tokenFile when given', async () => {
     const { config } = await setup();
-    const dir = await mkdtemp(join(tmpdir(), 'uncage-tf-'));
+    const dir = await mkTmp('uncage-tf-');
     const { path, token } = await ensureTokenAt(join(dir, 'my-token'));
     let auth = '';
     const f = (async (_u: string, init: RequestInit) => {
       auth = (init.headers as Record<string, string>).authorization ?? '';
       return new Response('{}');
     }) as unknown as typeof fetch;
-    const empty = await mkdtemp(join(tmpdir(), 'uncage-empty-'));
+    const empty = await mkTmp('uncage-empty-');
     const checks = await runDoctor({ config, home: empty, tokenFile: path, fetch: f, adapters: [] });
     expect(checks.find((c) => c.id === 'token')).toMatchObject({ ok: true });
     expect(checks.find((c) => c.id === 'token')?.detail).toContain(path);

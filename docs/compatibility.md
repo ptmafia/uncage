@@ -6,6 +6,10 @@ These are the versions each adapter has been verified against. Live checks run o
 | --- | --- | --- | --- | --- |
 | Claude Code | `@uncage/runtime-claude` | `@anthropic-ai/claude-agent-sdk` 0.3.318 (bundled CLI 2.1.318); `claude` CLI on PATH 2.1.318 | 2026-11-07 | **Live E2E passed** (20/20 on the latest run; see the run records below). The composer specs cover model, effort, the permission modes (including bypass), image and file attachments via the + button, and the running chip. Drag and drop and paste are covered by the mock E2E only. Voice is [pending manual verification](#voice-input-pending-manual-verification-by-the-user-requires-microphone). A `resume` of a session Claude Code no longer has was checked live: it yields `native.session_lost` (the session becomes read-only). Live smoke passed earlier: one approval request (Write, auto-allowed), `tool.completed`, `run.completed`, `hello.txt` created. |
 | Codex | `@uncage/runtime-codex` | none (not installed on the test machine) | 2026-11-06 (mock only) | **Implemented, verified only against a fake app-server** (`@uncage/testkit` fake codex). Protocol facts were checked against the official `openai/codex` app-server-protocol schema and two third-party clients. Unverified against a real binary: whether `codex app-server` needs `--stdio` (one client passes it), and real-binary process and auth behavior. When it isn't installed, the UI and `uncage doctor` show `not_installed` with `npm i -g @openai/codex && codex login`. This is asserted live. |
+| Claude Code over ACP | `@uncage/runtime-acp` | `@agentclientprotocol/claude-agent-acp` 0.101.0 (ACP v1, `@agentclientprotocol/sdk` 2.4.0, Claude Agent SDK 0.3.318); `claude` CLI 2.1.318 | 2026-11-08 | **Live E2E passed** (`connected-acp-live`, 2/2) and live smoke passed (`pnpm --filter @uncage/runtime-acp smoke`, 10/10 checks). Streaming, approval cards (once/deny), site tools over the per-run HTTP MCP server, exactly one card for a confirmation tool, publish, history after reload, `session/resume` with the re-declared MCP server, Stop → `cancelled` in < 1 s. See [ACP agents](#acp-agents-claude-code-via-claude-agent-acp) |
+| Gemini CLI over ACP | `@uncage/runtime-acp` (preset `gemini`: `gemini --acp`) | `@google/gemini-cli` (registry: 0.67.0) | — | **Protocol-compatible, not verified live.** The command matches the ACP registry entry. Not run. |
+| OpenCode over ACP | `@uncage/runtime-acp` (preset `opencode`: `opencode acp`) | `opencode-ai` (registry binary) | — | **Protocol-compatible, not verified live.** The command matches the ACP registry entry. Not run. |
+| Fake ACP agent | `@uncage/runtime-acp` | `@uncage/testkit` fake ACP agent (stdio, ACP v1) | 2026-11-08 | **Contract suite passes** (`pnpm --filter @uncage/runtime-acp test`): the adapter contract, approvals, site tools over HTTP and the stdio bridge, resume/load, cancel ordering, crashes, process groups. |
 
 ## Live E2E run record
 
@@ -136,9 +140,59 @@ Run record, 2026-11-07. Environment: macOS 26.6.2 (arm64), Node 24.15.0, pnpm 10
 
 Observed live (Claude Code 2.1.318, default model). Claude Code called `create_asset` with no card (a tool without confirmation). In the full run it then raised cards for its own Bash (`ls`/`find` to look at the workspace), WebSearch (about Uncage) and Write (`landing/index.html`). Last came the `publish_asset` card: `publish_asset({"assetId":"a_…","dir":"landing"})`, with the id `create_asset` had returned. After Allow the site stored the single `index.html`. It was an inline-CSS dark landing page with one `<h1>` ("打开笼子，让 AI 真正动手做事") and no external resources, and it rendered in the sandboxed iframe. On the first standalone run the cards were WebSearch, Write and `publish_asset`. The exact steps vary between runs; the spec allows every card. Screenshots and process logs go to `e2e/connected/results/` (gitignored).
 
+## ACP agents: Claude Code via claude-agent-acp
+
+`@uncage/runtime-acp` drives Claude Code's ACP adapter, `@agentclientprotocol/claude-agent-acp` **0.101.0**, pinned as a devDependency of `e2e/` and started as `node <pkg>/dist/index.js`. It uses the Claude Code login under the real `HOME`. Environment for both runs below: macOS 26.6.2 (arm64), Node 24.15.0, pnpm 10.33.0, Playwright 1.65.0, Google Chrome (system, headless), Claude Code CLI 2.1.318. Only this adapter ran: no other ACP agent, no npx/uvx registry agent, `UNCAGE_HOME` a fresh tmp dir.
+
+**Observed `initialize` (2026-11-08):** `protocolVersion: 1`, `agentInfo: { name: '@agentclientprotocol/claude-agent-acp', title: 'Claude Agent', version: '0.101.0' }`, `authMethods: []` (already signed in), and
+
+```json
+{
+  "_meta": { "claudeCode": { "promptQueueing": true }, "authStatus": {} },
+  "promptCapabilities": { "image": true, "embeddedContext": true },
+  "mcpCapabilities": { "http": true, "sse": true },
+  "auth": { "logout": {} },
+  "providers": {},
+  "loadSession": true,
+  "sessionCapabilities": { "additionalDirectories": {}, "close": {}, "delete": {}, "fork": {}, "list": {}, "resume": {}, "systemPrompt": { "mode": { "override": {} } } }
+}
+```
+
+Uncage maps that to `nativeResume: true`, `siteTools: true`, `attachments.images: true`, `skills: 'prompt'`, `approval: { once: true, session: false }`, `permissionModes: ['default', 'acceptEdits']`, `models: [default]`. `initialize` took 173 ms.
+
+### Smoke (`pnpm --filter @uncage/runtime-acp smoke`), 2026-11-08: 10/10 checks, 11.6 s
+
+| Step | Result |
+| --- | --- |
+| `session/new` with the site MCP server declared as `{ type: 'http', name: 'site', url: 'http://127.0.0.1:<port>/mcp', headers: [Authorization: Bearer …] }` (the agent has `mcpCapabilities.http`), then `session/set_mode default` | ✓ |
+| "Create hello.txt …, then call stamp_note": exactly **one native approval** (`Write hello.txt`, kind `edit`, category `file`), auto-allowed; `hello.txt` created | ✓ |
+| `stamp_note` (`requiresConfirmation: true`): exactly **one site approval** (category `mcp`, title = the tool description, `stamp_note({"note":"smoke"})`), from the site MCP handler. The agent's own `session/request_permission` for the same call was auto-allowed by the site-tool rule, so no second card. The result `STAMP-5150` was in the answer. Run 6.6 s | ✓ |
+| Second run with the native session ref: **`session/resume`** (the adapter prefers it over `session/load`) with the site MCP server **declared again** on a new port and token. The agent remembered `STAMP-5150` and called `echo_text` on the re-declared server (`ECHO-7731: again`). Run 4.5 s | ✓ |
+| Streaming: 29 `agent_message_chunk` updates over the two runs | ✓ |
+
+**How claude-agent-acp names MCP tool calls** (this is what the site-tool auto-allow matches): both the `tool_call` update and the `session/request_permission` tool call carry `name: "mcp__site__<tool>"` and `title: "mcp__site__<tool>"`, `kind: "other"`, and `_meta.claudeCode.toolName: "mcp__site__<tool>"`; the permission request adds `_meta.claudeCode.mcpServer: { name: "site", source: "dynamic" }`. The agent asks permission for **every** MCP tool, including ones without `requiresConfirmation` (`echo_text`); Uncage's exact `mcp__site__<name>` match allows those without a card. Claude Code first calls its own `ToolSearch` tool (`Tool: mcp__site__stamp_note`) to load the deferred MCP tool; it needs no approval. Native tools look like `name: "Write"`, `title: "Write hello.txt"` (the first `tool_call` title is "Preparing file…"), `kind: "edit"`.
+
+Other updates seen: `available_commands_update`, `config_option_update`, `usage_update`, `session_info_update` (all dropped by Uncage), and the agent's own `_auth/status_update` notification (an extension; ignored).
+
+### Live E2E (`connected-acp-live`), 2026-11-08: 2/2 passed in 1.7 min (twice)
+
+`agent.yaml` gets `runtimes.acp = { presets: 'off', autoDetect: false, agents: [{ id: 'claude', preset: 'claude', command: [node, <pkg>/dist/index.js] }] }`, the real `uncage agent` runs with `UNCAGE_ACP_REGISTRY_REFRESH=0`, and the website shows `Claude Code (ACP) 0.101.0` in the runtime picker next to the native runtimes.
+
+| # | Spec | Result |
+| --- | --- | --- |
+| 1 | Golden path on the connected demo: connect (real `uncage setup` + /device) → pick **Claude Code (ACP)** → "做一个介绍 Uncage 的落地页并发布" → streaming → cards: `Write landing/index.html` (Claude Code's own write) and exactly **one** `publish_asset({"assetId":"a_…","dir":"landing"})` card (the site MCP handler's); `create_asset` ran without a card → run `completed` → the asset is published and renders an `<h1>` in the sandboxed iframe → reload shows the history, the session header shows the ACP runtime → agent stopped, history still there | ✓ 1.2 min, and 1.3 min on the final run (the run itself: about 65 s) |
+| 2 | Stop: Bash `python3 -c "import time; time.sleep(61.5)"` → approval card → Allow → the process is running → Stop → run `cancelled` in 58 ms, the python process gone 76 ms after Stop (final run: 65 ms / 82 ms) | ✓ 13 s |
+
+### Notes
+
+- Permission options (from the adapter's source, `dist/permissions/options/`): `allow-once` ("Yes", `allow_once`), `reject` ("No", `reject_once`) and, for many tools, an `allow_always` option that adds a rule to Claude Code's **local settings** (outside the session). This confirms the design: Uncage only ever picks `allow_once` / `reject_once`.
+- No `agent_thought_chunk` arrived in these runs (the adapter can send them; Uncage drops them). `usage_update` arrives often (15 in the smoke) and is dropped.
+- Everything matched the plan; nothing in `@uncage/runtime-acp` had to change for this adapter.
+
 ## How to re-verify
 
 - Claude Code, full live E2E: `pnpm build && UNCAGE_LIVE=1 pnpm e2e:live`. It needs a logged-in `claude`, Google Chrome and Node ≥ 22.18, and it uses a little Claude usage (about 3 minutes of short runs). Codex must be absent for spec 1 as written. Ports 4795–4798 and 3102–3105 must be free. Facts the composer specs observe (model list, the picked model, plan-mode cards, the `auto` outcome) are written to `e2e/live/results/composer-live.json`.
 - Claude Code, single smoke run: `pnpm --filter @uncage/runtime-claude smoke`. It costs a few tokens and needs a logged-in `claude`. It runs in a fresh tmp dir and records the raw SDK messages to `sdk-messages.jsonl` there, so you can diff their shapes against `packages/runtime-claude/src/fixtures/`. Composer flags: `-- --image $PWD/e2e/fixtures/uncage-42.png` (image + resume with a file), `-- --permission-mode acceptEdits` (no approval expected), `--model <id>`, `--effort <level>`. Connected mode: `-- --site` (site tools via MCP, a confirmation tool, a skill).
 - Connected Mode: `pnpm build`, then from `e2e/`: `pnpm exec playwright test --project=connected-mock`, `UNCAGE_DOCKER_TESTS=1 pnpm exec playwright test --project=connected-multinode` (needs Docker and pulls nothing if the two images are present), `UNCAGE_LIVE=1 pnpm exec playwright test --project=connected-live` (a logged-in `claude`; about 2 minutes of model time). Ports 3210, 3220–3222 and 3230 must be free.
+- Claude Code over ACP: `pnpm build`, then `pnpm --filter @uncage/runtime-acp smoke` (a few tokens; it records the ACP traffic to `acp-traffic.jsonl` in its tmp dir with mode 0600, redacted as it is written: MCP bearer tokens, the agent's `_auth/status_update` account details and e-mail addresses are removed; the log is deleted when the script ends unless you pass `--keep-traffic`) and, from `e2e/`, `UNCAGE_LIVE=1 pnpm exec playwright test --project=connected-acp-live` (about 2 minutes of model time; port 3240 must be free). Both use the pinned `@agentclientprotocol/claude-agent-acp` in `e2e/node_modules`. Never point them at another agent without its own review.
 - Codex: there is no live check yet. `pnpm --filter @uncage/runtime-codex test` runs the adapter against the fake app-server.

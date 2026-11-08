@@ -7,7 +7,7 @@ interface Props {
 }
 
 const t = getDict(Astro.props.locale).features;
-const availableIcons: IconName[] = ['zap', 'wrench', 'book', 'database', 'layout', 'nodes'];
+const availableIcons: IconName[] = ['zap', 'wrench', 'book', 'database', 'layout', 'nodes', 'plug'];
 const soonIcons: IconName[] = ['terminal', 'monitor', 'phone', 'cloud'];
 ---
 
@@ -21,7 +21,7 @@ const soonIcons: IconName[] = ['terminal', 'monitor', 'phone', 'cloud'];
     <ul class="grid now" role="list">
       {
         t.available.map((f, i) => (
-          <li class="feat">
+          <li class:list={['feat', { wide: i === 6 }]}>
             <span class="ic">
               <Icon name={availableIcons[i]!} size={20} />
             </span>
@@ -108,6 +108,10 @@ const soonIcons: IconName[] = ['terminal', 'monitor', 'phone', 'cloud'];
     background: var(--surface);
     padding: 28px;
     transition: background-color 0.2s ease;
+  }
+  /* The 7th card (any ACP agent) is a full-width row under the 3×2 grid. */
+  .now .wide {
+    grid-column: 1 / -1;
   }
   .now .feat:hover {
     background: color-mix(in srgb, var(--surface) 70%, var(--uc-accent-soft));

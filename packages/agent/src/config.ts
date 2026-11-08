@@ -40,16 +40,91 @@ export const LocalPolicySchema = z
   })
   .strict();
 
+/** An ACP agent id: the runtime id is `acp-<id>`. */
+export const ACP_AGENT_ID = /^[a-z][a-z0-9-]{0,31}$/;
+/** A registry, preset or runtime id in `enable` / `disable` (registry ids may contain `.` and `_`). */
+const ACP_REF = /^[a-z0-9][a-z0-9._-]{0,67}$/;
+
+export const AcpAgentEntrySchema = z
+  .object({
+    id: z.string().regex(ACP_AGENT_ID),
+    preset: z.enum(['claude', 'gemini', 'opencode']).optional(),
+    displayName: z.string().min(1).max(60).optional(),
+    command: z.array(z.string().min(1)).min(1).optional(),
+    env: z.record(z.string(), z.string()).optional(),
+    mcp: z.enum(['auto', 'http', 'stdio', 'off']).default('auto'),
+    enabled: z.boolean().default(true),
+  })
+  .strict()
+  .refine((e) => e.preset !== undefined || e.command !== undefined, { message: 'needs a preset or a command' });
+
+export const AcpRuntimesSchema = z
+  .object({
+    /** `auto`: register the Claude Code / Gemini CLI / OpenCode presets whose command is on PATH. */
+    presets: z.enum(['auto', 'off']).default('auto'),
+    /**
+     * Detect installed agents from the official ACP registry (handshake-checked). `false`: no
+     * detection and no handshakes; only `agents`, presets and `enable`d registry agents register.
+     */
+    autoDetect: z.boolean().default(true),
+    /** Registry ids the user consented to run (`uncage runtimes enable <id>`), e.g. npx/uvx agents. */
+    enable: z.array(z.string().regex(ACP_REF)).default([]),
+    /**
+     * Exactly what each `uncage runtimes enable` consented to run: the runner (`local` command,
+     * `npx`, `uvx`), the command or package name (any version), args and env. If the registry later
+     * changes any of these, the agent needs `enable` again.
+     */
+    consented: z
+      .record(
+        z.string().regex(ACP_REF),
+        z
+          .object({
+            runner: z.enum(['local', 'npx', 'uvx']),
+            package: z
+              .string()
+              .regex(/^(@[a-z0-9][\w.-]*\/)?[A-Za-z0-9][\w.-]*$/)
+              .optional(),
+            cmd: z
+              .string()
+              .regex(/^[\w.-]+$/)
+              .optional(),
+            args: z.array(z.string()).default([]),
+            env: z.record(z.string(), z.string()).default({}),
+          })
+          .strict()
+          .refine((c) => (c.runner === 'local' ? c.cmd !== undefined : c.package !== undefined), { message: 'local needs cmd; npx/uvx need package' }),
+      )
+      .default({}),
+    /** Registry, preset or runtime ids never registered (`uncage runtimes disable <id>`). */
+    disable: z.array(z.string().regex(ACP_REF)).default([]),
+    agents: z.array(AcpAgentEntrySchema).default([]),
+  })
+  .strict()
+  .superRefine((c, ctx) => {
+    const seen = new Set<string>();
+    c.agents.forEach((a, i) => {
+      if (seen.has(a.id)) ctx.addIssue({ code: 'custom', path: ['agents', i, 'id'], message: `duplicate ACP agent id "${a.id}"` });
+      seen.add(a.id);
+    });
+  });
+export type AcpRuntimesConfig = z.infer<typeof AcpRuntimesSchema>;
+export type AcpAgentEntry = z.infer<typeof AcpAgentEntrySchema>;
+
+export const DEFAULT_ACP_RUNTIMES: AcpRuntimesConfig = { presets: 'auto', autoDetect: true, enable: [], consented: {}, disable: [], agents: [] };
+
 const AgentConfigSchema = z
   .object({
     sites: z.array(AgentSiteSchema).default([]),
     localPolicy: LocalPolicySchema.default({ allowBypass: false }),
+    runtimes: z.object({ acp: AcpRuntimesSchema.default(DEFAULT_ACP_RUNTIMES) }).strict().default({ acp: DEFAULT_ACP_RUNTIMES }),
   })
   .strict();
 
 export interface AgentConfig {
   sites: AgentSite[];
   localPolicy: { allowBypass: boolean; allowedPermissionModes?: PermissionMode[] };
+  /** Always set by `loadAgentConfig`; optional so hand-built configs (tests) may leave it out. */
+  runtimes?: { acp: AcpRuntimesConfig };
 }
 
 export const agentDir = (home: string = homedir()): string => join(home, '.uncage');
@@ -60,7 +135,7 @@ export const activityLogPath = (home: string, siteId: string): string => join(si
 /** A fresh `machineKey`: 32 random bytes, base64url (43 chars). */
 export const newMachineKey = (): string => randomBytes(32).toString('base64url');
 
-const EMPTY: AgentConfig = { sites: [], localPolicy: { allowBypass: false } };
+const EMPTY: AgentConfig = { sites: [], localPolicy: { allowBypass: false }, runtimes: { acp: DEFAULT_ACP_RUNTIMES } };
 
 async function readRaw(path: string): Promise<string | null> {
   try {
@@ -87,13 +162,14 @@ export async function loadAgentConfig(home: string = homedir()): Promise<AgentCo
     const i = parsed.error.issues[0]!;
     throw new Error(`Invalid ${path}: ${i.path.join('.') || '(root)'}: ${i.message}`);
   }
-  const { sites, localPolicy } = parsed.data;
+  const { sites, localPolicy, runtimes } = parsed.data;
   return {
     sites,
     localPolicy: {
       allowBypass: localPolicy.allowBypass,
       ...(localPolicy.allowedPermissionModes ? { allowedPermissionModes: localPolicy.allowedPermissionModes } : {}),
     },
+    runtimes,
   };
 }
 
@@ -159,29 +235,54 @@ export async function withAgentConfigLock<T>(home: string, fn: () => Promise<T>)
   }
 }
 
+const NEW_FILE_COMMENT =
+  ' Uncage agent config. Holds machine tokens: keep it private (0600).\n' +
+  ' localPolicy.allowBypass: true lets websites use bypassPermissions (only you can turn it on).\n' +
+  ' localPolicy.allowedPermissionModes: optional list capping the modes websites may use.';
+
+/** Under the lock: re-reads agent.yaml, lets `edit` change the document, writes it back atomically (0600). */
+async function editAgentYaml(home: string, edit: (doc: ReturnType<typeof parseDocument>) => void): Promise<void> {
+  const path = agentConfigPath(home);
+  const raw = await readRaw(path);
+  const doc = parseDocument(raw ?? '');
+  if (raw === null || doc.contents === null) {
+    doc.contents = doc.createNode({ sites: [], localPolicy: { allowBypass: false } }) as never;
+    doc.commentBefore = NEW_FILE_COMMENT;
+  }
+  edit(doc);
+  const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+  await writeFile(tmp, doc.toString(), { mode: 0o600 });
+  await chmod(tmp, 0o600);
+  await rename(tmp, path);
+}
+
 /**
  * Re-reads the file, applies `fn` to its `sites`, and writes it back atomically with mode 0600,
- * under the agent.yaml lock. Comments and `localPolicy` (hand-edited by the user) are preserved.
+ * under the agent.yaml lock. Comments, `localPolicy` and `runtimes` (hand-edited by the user) are preserved.
  */
 export function updateAgentSites(home: string, fn: (sites: AgentSite[]) => AgentSite[]): Promise<AgentSite[]> {
   return withAgentConfigLock(home, async () => {
-    const path = agentConfigPath(home);
     const current = await loadAgentConfig(home);
     const next = fn(current.sites.map((s) => ({ ...s }))).map((s) => AgentSiteSchema.parse(s));
-    const raw = await readRaw(path);
-    const doc = parseDocument(raw ?? '');
-    if (raw === null || doc.contents === null) {
-      doc.contents = doc.createNode({ sites: [], localPolicy: { allowBypass: false } }) as never;
-      doc.commentBefore =
-        ' Uncage agent config. Holds machine tokens: keep it private (0600).\n' +
-        ' localPolicy.allowBypass: true lets websites use bypassPermissions (only you can turn it on).\n' +
-        ' localPolicy.allowedPermissionModes: optional list capping the modes websites may use.';
-    }
-    doc.set('sites', doc.createNode(next));
-    const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
-    await writeFile(tmp, doc.toString(), { mode: 0o600 });
-    await chmod(tmp, 0o600);
-    await rename(tmp, path);
+    await editAgentYaml(home, (doc) => doc.set('sites', doc.createNode(next)));
+    return next;
+  });
+}
+
+/**
+ * Applies `fn` to `runtimes.acp` (e.g. `uncage runtimes enable|disable`: `enable`, `consented`, `disable`) and writes it back like
+ * `updateAgentSites`. Only the changed keys are rewritten, so comments elsewhere survive; `agents`
+ * is hand-edited and never rewritten.
+ */
+export function updateAgentAcp(home: string, fn: (acp: AcpRuntimesConfig) => AcpRuntimesConfig): Promise<AcpRuntimesConfig> {
+  return withAgentConfigLock(home, async () => {
+    const current = (await loadAgentConfig(home)).runtimes?.acp ?? DEFAULT_ACP_RUNTIMES;
+    const next = AcpRuntimesSchema.parse(fn(structuredClone(current)));
+    await editAgentYaml(home, (doc) => {
+      for (const key of ['presets', 'autoDetect', 'enable', 'consented', 'disable'] as const) {
+        if (JSON.stringify(next[key]) !== JSON.stringify(current[key])) doc.setIn(['runtimes', 'acp', key], doc.createNode(next[key]));
+      }
+    });
     return next;
   });
 }

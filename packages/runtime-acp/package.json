@@ -1,0 +1,61 @@
+{
+  "name": "@uncage/runtime-acp",
+  "version": "0.2.0",
+  "description": "Uncage runtime adapter for any Agent Client Protocol (ACP) agent over stdio",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "sideEffects": false,
+  "files": [
+    "LICENSE",
+    "README.md",
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "registry:snapshot": "tsup && node scripts/snapshot-registry.mjs",
+    "smoke": "tsup && node scripts/smoke.ts"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "2.4.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@uncage/protocol": "workspace:^",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@uncage/testkit": "workspace:*"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ptmafia/uncage.git",
+    "directory": "packages/runtime-acp"
+  },
+  "keywords": [
+    "uncage",
+    "agent",
+    "ai-agent",
+    "acp",
+    "agent-client-protocol"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "author": "Nathan Zhang",
+  "homepage": "https://uncage.vercel.app/docs/",
+  "bugs": {
+    "url": "https://github.com/ptmafia/uncage/issues"
+  }
+}

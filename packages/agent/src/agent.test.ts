@@ -2,7 +2,8 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { defineTool } from '@uncage/hub';
 import type { MachineInfo, Run, Session, UncageEvent } from '@uncage/protocol';
-import { createFakeAdapter, type FakeStep } from '@uncage/testkit';
+import { acpAdapter } from '@uncage/runtime-acp';
+import { createFakeAdapter, fakeAcpPath, type FakeStep } from '@uncage/testkit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { readActivity } from './activity.js';
@@ -583,5 +584,24 @@ describe('agent ↔ real hub', () => {
     const h = await home();
     await updateAgentSites(h, () => []);
     expect(((await stat(agentConfigPath(h))).mode & 0o777).toString(8)).toBe('600');
+  });
+  it('the agent reports ACP runtimes to the hub (machine.runtimes)', async () => {
+    const t = await hubFor();
+    const h = await home();
+    const site = await t.pair('alice');
+    await updateAgentSites(h, () => [site]);
+    const icon = { light: 'data:image/png;base64,iVBORw0KGgo=' };
+    const agent = await createAgent({
+      config: { sites: [site], localPolicy: { allowBypass: false } },
+      adapters: () => [fake([]), acpAdapter({ id: 'acp-fake', displayName: 'Fake ACP', command: [process.execPath, fakeAcpPath], icon })],
+      home: h,
+      logger: memoryLogger(),
+      timing: FAST,
+    });
+    cleanups.push(() => agent.close());
+    await online(t);
+    const m = (await machines(t))[0]!;
+    expect(m.runtimes.map((r) => r.id)).toEqual(['fake', 'acp-fake']);
+    expect(m.runtimes[1]).toMatchObject({ id: 'acp-fake', displayName: 'Fake ACP', status: 'available', icon, capabilities: { skills: 'prompt' } });
   });
 });

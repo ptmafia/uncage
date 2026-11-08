@@ -1,10 +1,21 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig } from './config.js';
 
-const tmp = () => mkdtemp(join(tmpdir(), 'uncage-cfg-'));
+/** Tmp dirs created by this file's tests; removed after each test. */
+const madeDirs: string[] = [];
+const mkTmp = async (prefix: string): Promise<string> => {
+  const d = await mkdtemp(join(tmpdir(), prefix));
+  madeDirs.push(d);
+  return d;
+};
+afterEach(async () => {
+  await Promise.all(madeDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
+});
+
+const tmp = () => mkTmp('uncage-cfg-');
 
 describe('loadConfig', () => {
   it('defaults with no file', async () => {
@@ -16,6 +27,31 @@ describe('loadConfig', () => {
     expect(c.workspace).toEqual({ allowedRoots: [cwd], default: cwd });
     expect(c.runtimes.claude.enabled).toBe(true);
     expect(c.runtimes.codex.enabled).toBe(true);
+    expect(c.runtimes.acp).toEqual({ presets: 'auto', autoDetect: true, enable: [], consented: {}, disable: [], agents: [] });
+  });
+
+  it('runtimes.acp (Local Mode) uses the agent.yaml schema', async () => {
+    const cwd = await tmp();
+    await writeFile(join(cwd, 'uncage.config.yaml'), 'runtimes:\n  acp:\n    presets: off\n    autoDetect: false\n    agents:\n      - id: mine\n        command: [node, agent.js]\n');
+    expect((await loadConfig(cwd, {})).runtimes.acp).toEqual({
+      presets: 'off',
+      autoDetect: false,
+      enable: [],
+      consented: {},
+      disable: [],
+      agents: [{ id: 'mine', command: ['node', 'agent.js'], mcp: 'auto', enabled: true }],
+    });
+    // A project file cannot consent to downloads: enable/consented are ignored, loudly.
+    await writeFile(join(cwd, 'uncage.config.yaml'), 'runtimes:\n  acp:\n    enable: [gemini]\n    consented: { gemini: { runner: npx, package: "@google/gemini-cli", args: [--acp] } }\n');
+    const warnings: string[] = [];
+    const c = await loadConfig(cwd, {}, (w) => warnings.push(w));
+    expect(c.runtimes.acp).toMatchObject({ enable: [], consented: {} });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/uncage\.config\.yaml: runtimes\.acp\.enable\/consented are ignored.*uncage runtimes enable gemini/);
+    await writeFile(join(cwd, 'uncage.config.yaml'), 'runtimes:\n  acp:\n    agents:\n      - id: mine\n');
+    await expect(loadConfig(cwd, {})).rejects.toThrow(/preset or a command/);
+    await writeFile(join(cwd, 'uncage.config.yaml'), 'runtimes:\n  acp:\n    prests: off\n');
+    await expect(loadConfig(cwd, {})).rejects.toThrow(/runtimes\.acp\.prests/);
   });
 
   it('reads yaml and merges with defaults', async () => {

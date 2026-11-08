@@ -26,6 +26,9 @@ Rules for translators:
 | activity log | 活动日志 | アクティビティログ | `uncage activity`. |
 | manifest | 清单 | マニフェスト | The tools and skills offered to one run. |
 | permission mode | 权限模式 | パーミッションモード | |
+| ACP agent | ACP agent（保持英文） | ACP エージェント | An agent that speaks the Agent Client Protocol (`runtimes.acp`). ja: no space before ACP after Japanese text (あらゆるACP エージェント). |
+| preset | 预设 | プリセット | The built-in ACP agent entries (`claude`, `gemini`, `opencode`). |
+| Agent Client Protocol | Agent Client Protocol（保持英文） | Agent Client Protocol（英語のまま） | The protocol name stays in English; the abbreviation ACP too. |
 | bypass (permissions) | 绕过权限（UI 显示为「完全放行」） | バイパス（権限確認の省略） | Mode `bypassPermissions`. |
 | agent (the background process) | 守护进程（agent） | エージェント（バックグラウンドプロセス） | Matches the existing zh UI word. |
 | website / site | 网站 | ウェブサイト | |

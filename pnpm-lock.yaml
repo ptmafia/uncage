@@ -102,6 +102,9 @@ importers:
       '@uncage/react-ui':
         specifier: workspace:*
         version: link:../../packages/react-ui
+      '@uncage/runtime-acp':
+        specifier: workspace:*
+        version: link:../../packages/runtime-acp
       '@uncage/runtime-claude':
         specifier: workspace:*
         version: link:../../packages/runtime-claude
@@ -187,6 +190,9 @@ importers:
 
   e2e:
     devDependencies:
+      '@agentclientprotocol/claude-agent-acp':
+        specifier: 0.101.0
+        version: 0.101.0(@anthropic-ai/sdk@1.6.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))
       '@playwright/test':
         specifier: ^1.65.0
         version: 1.65.0
@@ -393,6 +399,9 @@ importers:
       '@uncage/hub':
         specifier: workspace:*
         version: link:../hub
+      '@uncage/runtime-acp':
+        specifier: workspace:*
+        version: link:../runtime-acp
       '@uncage/testkit':
         specifier: workspace:*
         version: link:../testkit
@@ -414,6 +423,9 @@ importers:
       '@uncage/protocol':
         specifier: workspace:^
         version: link:../protocol
+      '@uncage/runtime-acp':
+        specifier: workspace:^
+        version: link:../runtime-acp
       '@uncage/runtime-claude':
         specifier: workspace:^
         version: link:../runtime-claude
@@ -436,6 +448,9 @@ importers:
       '@uncage/hub':
         specifier: workspace:*
         version: link:../hub
+      '@uncage/testkit':
+        specifier: workspace:*
+        version: link:../testkit
 
   packages/client:
     dependencies:
@@ -607,6 +622,25 @@ importers:
         specifier: ^5.1.0
         version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(jsdom@31.0.0)(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1))
 
+  packages/runtime-acp:
+    dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: 2.4.0
+        version: 2.4.0(zod@4.6.7)
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.32.2(zod@4.6.7)
+      '@uncage/protocol':
+        specifier: workspace:^
+        version: link:../protocol
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@uncage/testkit':
+        specifier: workspace:*
+        version: link:../testkit
+
   packages/runtime-claude:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
@@ -657,14 +691,37 @@ importers:
 
   packages/testkit:
     dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: 2.4.0
+        version: 2.4.0(zod@4.6.7)
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.32.2(zod@4.6.7)
       '@uncage/protocol':
         specifier: workspace:^
         version: link:../protocol
       vitest:
         specifier: ^5.1.0
         version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(jsdom@31.0.0)(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(yaml@2.9.1))
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
 
 packages:
+
+  '@agentclientprotocol/claude-agent-acp@0.101.0':
+    resolution: {integrity: sha512-c9YGBfdJrLcKiinRpXuDuibC+CRGqQpe9+ey/+TuuZ7ejHlVyEELbbvRkxHZN+Hf5XGecJD5i0kvP2opCseATA==}
+    engines: {node: '>=22'}
+    hasBin: true
+
+  '@agentclientprotocol/sdk@2.4.0':
+    resolution: {integrity: sha512-7qJ8nnyj7WesC5ve185ioTpB2/svQoeGV4HA4nLEhgDUrcmBe54/08VcXc/oL4p14tDbxxECZzdYmUYQ+4l+Wg==}
+    peerDependencies:
+      '@modelcontextprotocol/server': ^2.4.0
+      zod: ^3.25.76 || ^4.0.0
+    peerDependenciesMeta:
+      '@modelcontextprotocol/server':
+        optional: true
 
   '@antfu/install-pkg@2.1.0':
     resolution: {integrity: sha512-sdg9NxU3zR4Mnawfbc/x6GB5Wf17WYud5qOuEuxXjaKpYpMkISSJEjItGebXJ2bQ4DIcly4NYH23mtkGJjvKUw==}
@@ -5402,6 +5459,21 @@ packages:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
 
 snapshots:
+
+  '@agentclientprotocol/claude-agent-acp@0.101.0(@anthropic-ai/sdk@1.6.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))':
+    dependencies:
+      '@agentclientprotocol/sdk': 2.4.0(zod@4.6.7)
+      '@anthropic-ai/claude-agent-sdk': 0.3.318(@anthropic-ai/sdk@1.6.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(zod@4.6.7)
+      diff: 9.0.0
+      zod: 4.6.7
+    transitivePeerDependencies:
+      - '@anthropic-ai/sdk'
+      - '@modelcontextprotocol/sdk'
+      - '@modelcontextprotocol/server'
+
+  '@agentclientprotocol/sdk@2.4.0(zod@4.6.7)':
+    dependencies:
+      zod: 4.6.7
 
   '@antfu/install-pkg@2.1.0':
     dependencies:
