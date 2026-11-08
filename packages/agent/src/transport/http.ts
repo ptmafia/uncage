@@ -11,7 +11,7 @@ import {
   type StreamLine,
 } from '@uncage/protocol';
 import { agentHttpUrl } from '../device.js';
-import { backoffDelay, FrameTooLargeError, type AgentLink, type DialOptions, type LinkEnd } from './types.js';
+import { backoffDelay, FrameTooLargeError, isHubUnauthorized, type AgentLink, type DialOptions, type LinkEnd } from './types.js';
 
 /**
  * Room for the `POST /agent/events` envelope around the messages (`linkId`, `ack`, `busy`, the
@@ -67,16 +67,22 @@ async function classify(res: Response): Promise<
 > {
   type ErrorFields = { minAgentVersion?: unknown; message?: unknown; details?: { reason?: unknown } };
   let body: ErrorFields | null = null;
+  let raw: (ErrorFields & { error?: ErrorFields }) | null = null;
   try {
     // Hub errors are `{ error: ErrorBody }`; the connect 426 is `{ t: 'upgrade_required', minAgentVersion }`.
-    const raw = (await res.json()) as (ErrorFields & { error?: ErrorFields }) | null;
+    raw = (await res.json()) as (ErrorFields & { error?: ErrorFields }) | null;
     body = raw && typeof raw === 'object' ? { ...raw, ...(raw.error && typeof raw.error === 'object' ? raw.error : {}) } : null;
   } catch {
     // not JSON
   }
   const reason = typeof body?.details?.reason === 'string' ? body.details.reason : undefined;
   const why = `HTTP ${res.status}${typeof body?.message === 'string' ? `: ${body.message}` : ''}`;
-  if (res.status === 401) return { k: 'end', end: { stop: 'revoked' } };
+  if (res.status === 401) {
+    // Only the hub's own `unauthorized` means the token is gone. Any other 401 (a proxy, Vercel
+    // Deployment Protection, Cloudflare Access) is retried with backoff.
+    if (isHubUnauthorized(raw)) return { k: 'end', end: { stop: 'revoked' } };
+    return { k: 'transient', why: `HTTP 401 not from the Uncage hub (a proxy or deployment protection in front of the site?)` };
+  }
   if (res.status === 426) {
     return { k: 'end', end: { stop: 'upgrade', ...(typeof body?.minAgentVersion === 'string' ? { minAgentVersion: body.minAgentVersion } : {}) } };
   }
@@ -104,7 +110,10 @@ export function parseRetryAfter(v: string | null, now = Date.now()): number | un
 /** A stream that only carried control lines ends: wait at least this long before reopening. */
 const MIN_REOPEN_MS = 250;
 
-/** Lines of an NDJSON body. */
+/** Longest NDJSON line accepted (a frame is at most 1 MiB; 2 Mi characters leave room). */
+const MAX_LINE_CHARS = 2 * 1024 * 1024;
+
+/** Lines of an NDJSON body; throws on a line longer than `MAX_LINE_CHARS` (the stream is reopened). */
 async function* ndjson(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -114,6 +123,8 @@ async function* ndjson(body: ReadableStream<Uint8Array>): AsyncGenerator<string>
       const { done, value } = await reader.read();
       if (done) return;
       buf += decoder.decode(value, { stream: true });
+      // A hub (or a proxy in front of it) streaming without newlines must not grow this forever.
+      if (buf.length > MAX_LINE_CHARS && buf.indexOf('\n') < 0) throw new Error(`a stream line is longer than ${MAX_LINE_CHARS} characters`);
       let i: number;
       while ((i = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, i);
@@ -146,7 +157,7 @@ const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
  * - upstream: one serialized queue packed into bodies ≤ `MAX_HTTP_BODY_BYTES`; each `tool_call` in its
  *   own parallel POST. Every message keeps its `up_` id until the hub lists it as processed (the
  *   hub dedupes), `retry` ids are re-sent after backoff.
- * 401 → `revoked`, 400 `link_replaced` (or a `replaced` line) → `replaced`, 426 → `upgrade`, 400
+ * 401 with the hub's `unauthorized` error → `revoked` (any other 401 is retried), 400 `link_replaced` (or a `replaced` line) → `replaced`, 426 → `upgrade`, 400
  * `link_closed` → the link ends (the site connects again).
  */
 export function dialHttp(o: DialOptions): AgentLink {
@@ -416,7 +427,7 @@ export function dialHttp(o: DialOptions): AgentLink {
 
   async function run(): Promise<void> {
     try {
-      base = agentHttpUrl(o.hubUrl);
+      base = o.url ? o.url.replace(/\/+$/, '') : agentHttpUrl(o.hubUrl);
     } catch (err) {
       log.error({ err, site }, 'cannot connect');
       return finish({});
@@ -441,6 +452,7 @@ export function dialHttp(o: DialOptions): AgentLink {
         return finish(c.end);
       }
       if (c.k === 'fatal' && c.reason === 'hub_too_old') log.warn({ site }, 'this website runs an older hub than the agent supports');
+      else if (res.status === 401) log.warn({ site, why: c.why }, 'HTTP 401 that is not the hub refusing the token; retrying');
       else log.warn({ site, status: res.status }, 'hub refused the connection');
       return finish({});
     }

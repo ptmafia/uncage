@@ -21,7 +21,7 @@ function envPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string {
 
 /**
  * The service PATH: the pinned Node's folder first (so `#!/usr/bin/env node` scripts such as npm
- * agent shims run with it), then the installing shell's PATH without ephemeral entries or duplicates.
+ * agent shims run with it), then the installing shell's PATH without ephemeral, relative or duplicate entries.
  */
 export function servicePath(nodePath: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string {
   const p = pathFor(platform);
@@ -32,7 +32,8 @@ export function servicePath(nodePath: string, env: NodeJS.ProcessEnv, platform: 
   const out: string[] = [];
   for (const e of entries) {
     const key = platform === 'win32' ? e.toLowerCase() : e;
-    if (!e || EPHEMERAL.test(e) || seen.has(key)) continue;
+    // Relative entries would resolve against the service's working directory: dropped.
+    if (!e || EPHEMERAL.test(e) || seen.has(key) || !p.isAbsolute(e)) continue;
     seen.add(key);
     out.push(e);
   }

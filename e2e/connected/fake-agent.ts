@@ -59,6 +59,8 @@ const agent = await createAgent({
   config,
   home,
   logger: createAgentLogger(process.env.UNCAGE_LOG_LEVEL ?? 'warn'),
+  // A test agent never self-upgrades (no global `npm i -g`): the attempt fails and is logged.
+  upgradeCommand: [process.execPath, ['-e', 'process.exit(1)']],
   adapters: () => [createFakeAdapter({ id: 'fake', displayName: 'Fake Runtime', script })],
 });
 console.log(`fake agent ready (${config.sites.length} site(s))`);

@@ -18,7 +18,7 @@ import { createAgent, readUpgradeState, UPGRADE_EXIT_CODE, type Agent } from './
 import { selfUpgradeCommand } from './exe.js';
 import { agentConfigPath, loadAgentConfig, updateAgentSites, type AgentConfig, type AgentSite } from './config.js';
 import { siteHost } from './site.js';
-import { FAST, memoryLogger, sleep, startProxy, startTestHub, tmpHome, until, type TestHub } from './test-helpers.js';
+import { FAST, memoryLogger, noExec, sleep, startProxy, startTestHub, tmpHome, until, type TestHub } from './test-helpers.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -48,7 +48,7 @@ async function agentFor(
 ): Promise<Agent> {
   const config: AgentConfig = { sites, localPolicy: o.policy ?? { allowBypass: false } };
   await updateAgentSites(h, () => sites);
-  const agent = await createAgent({ config, adapters: () => [fake(script)], home: h, logger: memoryLogger(), timing: FAST, ...o.extra });
+  const agent = await createAgent({ config, adapters: () => [fake(script)], home: h, logger: memoryLogger(), timing: FAST, exec: noExec, exit: () => undefined, ...o.extra });
   cleanups.push(() => agent.close());
   return agent;
 }
@@ -77,6 +77,16 @@ async function history(t: TestHub, sessionId: string): Promise<UncageEvent[]> {
 const terminal = (evs: UncageEvent[]) => evs.find((e) => e.type === 'run.completed' || e.type === 'run.failed');
 
 describe('agent ↔ real hub', () => {
+  it('uses the WebSocket URL the hub offers (attachWebSocket with a custom path)', async () => {
+    const t = await hubFor({ wsPath: '/custom' });
+    const h = await home();
+    const site = await t.pair('alice');
+    const agent = await agentFor(h, [site], []);
+    await online(t);
+    expect(await until(() => agent.transports()[site.id], 8000, 'agent connected')).toBe('ws');
+    expect((await machines(t))[0]).toMatchObject({ online: true, transport: 'ws' });
+  });
+
   it('connects, creates a per-session workspace and runs a session end to end', async () => {
     const t = await hubFor();
     const h = await home();

@@ -52,12 +52,14 @@ export async function startTestHub(o: Partial<HubOptions> & Record<string, unkno
       return id ? { id } : null;
     },
     heartbeat: { pingIntervalMs: 200, missedPings: 3 },
+    // The workspace agent's own version (package.json) may trail MIN_AGENT_VERSION until the release bump.
+    minAgentVersion: '0.0.0',
     ...o,
     store,
   } as HubOptions);
   const node = toNodeHandler(hub);
   server.on('request', (req, res) => node(req, res));
-  attachWebSocket(hub, server);
+  attachWebSocket(hub, server, typeof o['wsPath'] === 'string' ? { path: o['wsPath'] } : {});
   const api = `${origin}/api/uncage`;
   const as = (user: string, path: string, init: RequestInit = {}) =>
     fetch(`${api}${path}`, { ...init, headers: { [USER_HEADER]: user, 'content-type': 'application/json', ...(init.headers as Record<string, string>) } });
@@ -139,6 +141,14 @@ export function memoryLogger(): MemoryLogger {
   const at = (level: string) => (obj: object, msg?: string) => void lines.push({ level, obj, ...(msg !== undefined ? { msg } : {}) });
   return { lines, info: at('info'), warn: at('warn'), error: at('error') };
 }
+
+/**
+ * The agent's `exec` for tests: refuses everything, so a test can never run a real command (above
+ * all the self-upgrade, `npm i -g @uncage/cli@latest`, when a hub asks for a newer agent).
+ */
+export const noExec = async (file: string): Promise<never> => {
+  throw new Error(`tests never run real commands (${file})`);
+};
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

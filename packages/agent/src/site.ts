@@ -21,6 +21,7 @@ import {
 } from '@uncage/protocol';
 import { ActivityLog } from './activity.js';
 import { siteDir, type AgentConfig, type AgentSite } from './config.js';
+import { offeredTransportUrl } from './device.js';
 import { planPull, sendPull } from './files.js';
 import { fitEvent } from './fit.js';
 import { chooseTransport, fetchAgentInfo } from './transport/choose.js';
@@ -323,8 +324,12 @@ export class SiteAgent {
       }
       const runtimes = await this.uncage.runtimes.list().catch(() => []);
       if (this.stopped) return;
+      // The URL the hub offers for this transport (e.g. a custom attachWebSocket path), when it is
+      // on the site's host with a safe scheme; else `<site.url>/agent`.
+      const offered = offeredTransportUrl(kind, info?.transports.find((x) => x.kind === kind)?.url, this.site.url);
       const opts: DialOptions = {
         hubUrl: this.site.url,
+        ...(offered ? { url: offered } : {}),
         token: this.site.token,
         hello: {
           t: 'hello',
@@ -611,12 +616,20 @@ export class SiteAgent {
   /**
    * One byte budget (`commandCacheBytes`, default 32 MiB) for the dedupe cache and the unsent results
    * together: the oldest dedupe entries go first, then the oldest unsent results. At most
-   * `COMMAND_CACHE` dedupe entries. The newest entry always stays.
+   * `COMMAND_CACHE` dedupe entries. The newest entry always stays, and so do commands still running
+   * (a redelivery of one must not start it twice).
    */
   private trimCache(): void {
     const budget = this.o.commandCacheBytes ?? COMMAND_CACHE_BYTES;
-    while (this.commands.size > COMMAND_CACHE) this.uncacheCommand(this.commands.keys().next().value!);
-    while (this.commandBytes + this.unsentBytes > budget && this.commands.size > 1) this.uncacheCommand(this.commands.keys().next().value!);
+    /** The oldest finished entry other than the newest one, if any. */
+    const evictable = (): string | undefined => {
+      let newest: string | undefined;
+      for (const id of this.commands.keys()) newest = id;
+      for (const [id, c] of this.commands) if (c.frame !== null && id !== newest) return id;
+      return undefined;
+    };
+    for (let id; this.commands.size > COMMAND_CACHE && (id = evictable()) !== undefined; ) this.uncacheCommand(id);
+    for (let id; this.commandBytes + this.unsentBytes > budget && (id = evictable()) !== undefined; ) this.uncacheCommand(id);
     while (this.commandBytes + this.unsentBytes > budget && this.unsentResults.size > 1) {
       this.dropUnsent(this.unsentResults.keys().next().value!, 'over the memory budget for unsent results');
     }

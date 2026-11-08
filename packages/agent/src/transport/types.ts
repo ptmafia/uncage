@@ -77,8 +77,32 @@ export interface AgentLink {
   close(): void;
 }
 
+/**
+ * Whether an error body (`{ error: { code } }`, JSON text or parsed) is the hub's own "unknown or
+ * revoked machine token". Only that 401 means revoked: a 401 from a proxy or a deployment
+ * protection page in front of the site (Vercel, Cloudflare Access) is retried.
+ */
+export function isHubUnauthorized(body: unknown): boolean {
+  let v = body;
+  if (typeof v === 'string') {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      return false;
+    }
+  }
+  const err = v && typeof v === 'object' ? (v as { error?: unknown }).error : undefined;
+  return !!err && typeof err === 'object' && (err as { code?: unknown }).code === 'unauthorized';
+}
+
 export interface DialOptions {
   hubUrl: string;
+  /**
+   * The transport URL the hub offered (`/agent/info` `transports[].url`), already checked to be on
+   * the site's host with a safe scheme (`offeredTransportUrl`). Default: derived from `hubUrl`
+   * (`<hubUrl>/agent`, ws(s) for WebSocket).
+   */
+  url?: string;
   token: string;
   hello: Omit<Extract<AgentFrame, { t: 'hello' }>, 'transport'>;
   /** The hub accepted the link. ws: `replies` is empty (follow-up frames arrive through `onFrame`). */
@@ -88,9 +112,8 @@ export interface DialOptions {
   /**
    * http: highest outbox seq dispatched, kept for the process lifetime.
    *
-   * TODO(Task 14 docs): crash semantics. A command dispatched but not yet acknowledged when the
-   * agent process dies is delivered again to the next process and runs again (dedupe is per
-   * process). A command acknowledged whose result never reached the hub before the crash is lost:
+   * Crash semantics: a command dispatched but not yet acknowledged when the agent process dies is
+   * delivered again to the next process and runs again (dedupe is per process). A command acknowledged whose result never reached the hub before the crash is lost:
    * the website request times out (`commandTimeoutMs`). Within one process, results not accepted
    * by the hub are re-sent after every welcome.
    */

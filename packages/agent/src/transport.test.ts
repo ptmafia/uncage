@@ -2,7 +2,11 @@ import { CONNECTED_PROTOCOL, type AgentFrame, type AgentInfo, type HubFrame, typ
 import { afterEach, describe, expect, it } from 'vitest';
 import { DEFAULT_TIMING, type AgentTiming } from './site.js';
 import { FAST, memoryLogger, startFaasHubs, until, type FaasHubs } from './test-helpers.js';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { offeredTransportUrl } from './device.js';
 import { chooseTransport, compareVersions, fetchAgentInfo } from './transport/choose.js';
+import { dialWs } from './transport/ws.js';
 import { dialHttp, parseRetryAfter } from './transport/http.js';
 import type { AgentLink, DialOptions } from './transport/types.js';
 
@@ -145,6 +149,34 @@ describe('dialHttp (scripted hub)', () => {
     expect(closed.stop).toBeUndefined(); // connect again
   });
 
+  it('a stream line without a newline past 2 Mi characters is cut off and the stream reopened', async () => {
+    const { fetch: inner, calls } = scriptedFetch([[cmd(1, 'c1')]]);
+    let first = true;
+    const f = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (first && String(input).includes('/agent/stream')) {
+        first = false;
+        calls.push({ path: '/agent/stream', search: '' });
+        return new Response('x'.repeat(3 * 1024 * 1024), { status: 200 }); // never a newline
+      }
+      return inner(input, init);
+    }) as typeof fetch;
+    const d = dial(f);
+    await until(() => d.frames.length === 1, 5000, 'command after the reopen');
+    expect(d.logger.lines.some((l) => /longer than/.test(String((l.obj as { err?: unknown }).err ?? '')))).toBe(true);
+    expect(calls.filter((c) => c.path === '/agent/stream').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('a 401 that is not the hub (proxy / deployment protection page) is retried, never revoked', async () => {
+    const html = (async () => new Response('<html>Authentication Required</html>', { status: 401, headers: { 'content-type': 'text/html' } })) as typeof fetch;
+    const d = dial(html);
+    const end = await d.link.ended;
+    expect(end.stop).toBeUndefined();
+    expect(d.logger.lines.some((l) => /not the hub/.test(l.msg ?? ''))).toBe(true);
+    // Some other JSON 401 is not the hub's either.
+    const other = (async () => Response.json({ error: { code: 'forbidden', message: 'no' } }, { status: 401 })) as typeof fetch;
+    expect((await dial(other).link.ended).stop).toBeUndefined();
+  });
+
   it('401 → revoked, 426 → upgrade with the minimum version, 400 link_replaced → replaced, 400 link_closed → ends to reconnect', async () => {
     expect(await dial(scriptedFetch([], { connectStatus: 401, connectBody: { error: { code: 'unauthorized', message: 'x', retryable: false } } }).fetch).link.ended).toMatchObject({
       welcomed: false,
@@ -266,3 +298,61 @@ describe('dialHttp (real hubs)', () => {
     expect(await a.link.ended).toMatchObject({ stop: 'replaced' });
   });
 });
+
+describe('offeredTransportUrl', () => {
+  it('accepts offers on the site host with a safe scheme only', () => {
+    const site = 'https://app.example/api/uncage';
+    expect(offeredTransportUrl('ws', 'wss://app.example/machines/ws', site)).toBe('wss://app.example/machines/ws');
+    expect(offeredTransportUrl('http', 'https://app.example/api/uncage/agent/', site)).toBe('https://app.example/api/uncage/agent');
+    // Another host, plain ws to a public host, a different port, credentials: refused.
+    expect(offeredTransportUrl('ws', 'wss://evil.example/agent', site)).toBeUndefined();
+    expect(offeredTransportUrl('ws', 'ws://app.example/agent', site)).toBeUndefined();
+    expect(offeredTransportUrl('http', 'https://app.example:8443/agent', site)).toBeUndefined();
+    expect(offeredTransportUrl('http', 'https://u:p@app.example/agent', site)).toBeUndefined();
+    expect(offeredTransportUrl('ws', undefined, site)).toBeUndefined();
+    expect(offeredTransportUrl('ws', 'not a url', site)).toBeUndefined();
+    // Loopback may be plain.
+    expect(offeredTransportUrl('ws', 'ws://127.0.0.1:3000/custom', 'http://127.0.0.1:3000/api/uncage')).toBe('ws://127.0.0.1:3000/custom');
+  });
+});
+
+describe('dialWs refused upgrades', () => {
+  async function refusing(status: number, body: string, type: string): Promise<string> {
+    const server = createServer((_req, res) => res.writeHead(404).end());
+    server.on('upgrade', (_req, socket) => {
+      socket.end(`HTTP/1.1 ${status} X\r\nContent-Type: ${type}\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`);
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    cleanups.push(() => new Promise<void>((r) => server.close(() => r())));
+    return `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/uncage`;
+  }
+  const wsDial = (hubUrl: string) => {
+    const logger = memoryLogger();
+    const link = dialWs({
+      hubUrl,
+      token: 'tok',
+      hello: { t: 'hello', protocol: CONNECTED_PROTOCOL, agentVersion: '0.3.0', machine: { name: 'm', os: 'darwin', runtimes: [] } },
+      onWelcome: () => undefined,
+      onFrame: () => undefined,
+      cursor: { get: () => 0, set: () => undefined },
+      busy: () => false,
+      timing: { ...DEFAULT_TIMING, ...FAST } as AgentTiming,
+      fetch,
+      logger,
+    });
+    cleanups.push(async () => link.close());
+    return { link, logger };
+  };
+
+  it("revoked only for the hub's own unauthorized error; another 401 is retried", async () => {
+    const hub = await refusing(401, JSON.stringify({ error: { code: 'unauthorized', message: 'Missing or invalid machine token.', retryable: false } }), 'application/json');
+    expect((await wsDial(hub).link.ended).stop).toBe('revoked');
+    const proxy = await refusing(401, '<html>Vercel Authentication</html>', 'text/html');
+    const d = wsDial(proxy);
+    expect((await d.link.ended).stop).toBeUndefined();
+    expect(d.logger.lines.some((l) => /not the hub/.test(l.msg ?? ''))).toBe(true);
+    // A closing hub's 503 is not a revocation either.
+    expect((await wsDial(await refusing(503, '{}', 'application/json')).link.ended).stop).toBeUndefined();
+  });
+});
+

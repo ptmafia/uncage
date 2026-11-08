@@ -2,19 +2,21 @@ import { MAX_FRAME_BYTES, parseHubFrame, type AgentFrame, type HubFrame } from '
 import { UncageError } from '@uncage/core';
 import { WebSocket } from 'ws';
 import { agentWsUrl } from '../device.js';
-import { FrameTooLargeError, type AgentLink, type DialOptions, type LinkEnd } from './types.js';
+import { FrameTooLargeError, isHubUnauthorized, type AgentLink, type DialOptions, type LinkEnd } from './types.js';
 
 /** Close codes the hub uses (see @uncage/hub machines.ts). */
 export const HUB_CLOSE = { revoked: 4401, replaced: 4409, upgrade: 4426, hubTooOld: 4505 } as const;
 
 const byteLength = (s: string): number => Buffer.byteLength(s, 'utf8');
 
-/** One WebSocket to `<hub>/agent` (traditional mode): hello → welcome → frames until it closes. */
+/** One WebSocket to the offered URL (default `<hub>/agent`; traditional mode): hello → welcome → frames until it closes. */
 export function dialWs(o: DialOptions): AgentLink {
   const site = o.siteId;
   let welcomedAt = 0;
   let upgradeMin: string | undefined;
   let httpStatus: number | undefined;
+  /** The refused upgrade's 401 carried the hub's own `unauthorized` error (the token is gone). */
+  let hubRevoked = false;
   let finished = false;
   let resolveEnded!: (e: LinkEnd) => void;
   const ended = new Promise<LinkEnd>((r) => (resolveEnded = r));
@@ -26,7 +28,7 @@ export function dialWs(o: DialOptions): AgentLink {
 
   let ws: WebSocket | undefined;
   try {
-    ws = new WebSocket(agentWsUrl(o.hubUrl), {
+    ws = new WebSocket(o.url ?? agentWsUrl(o.hubUrl), {
       headers: { authorization: `Bearer ${o.token}` },
       maxPayload: MAX_FRAME_BYTES,
       handshakeTimeout: 15_000,
@@ -58,9 +60,29 @@ export function dialWs(o: DialOptions): AgentLink {
     };
     sock.on('unexpected-response', (req, res) => {
       httpStatus = res.statusCode;
-      res.resume();
-      req.destroy();
-      sock.terminate();
+      let ended = false;
+      const end = () => {
+        if (ended) return;
+        ended = true;
+        req.destroy();
+        sock.terminate();
+      };
+      if (res.statusCode !== 401) {
+        res.resume();
+        return end();
+      }
+      // A 401 means revoked only when it is the hub's own error body (a proxy's 401 is retried).
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c: string) => {
+        if (body.length < 64 * 1024) body += c;
+      });
+      res.on('end', () => {
+        hubRevoked = isHubUnauthorized(body);
+        end();
+      });
+      res.on('error', end);
+      setTimeout(end, 5_000).unref();
     });
     sock.on('error', (err) => {
       if (httpStatus === undefined) o.logger.warn({ site, err: err.message }, 'connection error');
@@ -98,11 +120,12 @@ export function dialWs(o: DialOptions): AgentLink {
     });
     sock.on('close', (code, reason) => {
       clearTimeout(idle);
-      if (httpStatus === 401 || code === HUB_CLOSE.revoked) return finish({ stop: 'revoked' });
+      if ((httpStatus === 401 && hubRevoked) || code === HUB_CLOSE.revoked) return finish({ stop: 'revoked' });
+      if (httpStatus === 401) o.logger.warn({ site }, 'HTTP 401 that is not the hub refusing the token (a proxy or deployment protection in front of the site?); retrying');
       if (code === HUB_CLOSE.replaced) return finish({ stop: 'replaced' });
       if (code === HUB_CLOSE.upgrade || upgradeMin) return finish({ stop: 'upgrade', ...(upgradeMin ? { minAgentVersion: upgradeMin } : {}) });
       if (code === HUB_CLOSE.hubTooOld) o.logger.warn({ site }, 'this website runs an older hub than the agent supports');
-      else if (httpStatus !== undefined) o.logger.warn({ site, status: httpStatus }, 'hub refused the connection');
+      else if (httpStatus !== undefined && httpStatus !== 401) o.logger.warn({ site, status: httpStatus }, 'hub refused the connection');
       else o.logger.info({ site, code, reason: reason.toString().slice(0, 200) }, 'disconnected');
       finish({});
     });

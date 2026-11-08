@@ -68,6 +68,9 @@ describe('serviceSpec', () => {
     expect(win.logsDir).toBe('C:\\Users\\u\\.uncage\\logs');
     expect(win.env.PATH.split(';').slice(1)).toEqual(['C:\\Windows\\system32']);
     expect(servicePath('/n/bin/node', {}, 'linux')).toBe('/n/bin:/usr/bin:/bin');
+    // Relative entries (resolved against the service's working directory) are dropped.
+    expect(servicePath('/n/bin/node', { PATH: 'node_modules/.bin:.:/usr/bin:bin' }, 'linux')).toBe('/n/bin:/usr/bin');
+    expect(servicePath('C:\\n\\node.exe', { Path: '.;tools;C:\\Windows' }, 'win32')).toBe('C:\\n;C:\\Windows');
   });
 });
 

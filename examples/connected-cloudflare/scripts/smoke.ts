@@ -197,6 +197,8 @@ async function fakeAgent(uncageHome: string): Promise<() => Promise<void>> {
     config: await loadAgentConfig(uncageHome),
     home: uncageHome,
     logger: createAgentLogger(process.env.UNCAGE_LOG_LEVEL ?? 'info'),
+    // The smoke agent never self-upgrades (no global `npm i -g`): the attempt fails and is logged.
+    upgradeCommand: [process.execPath, ['-e', 'process.exit(1)']],
     adapters: () => [
       createFakeAdapter({
         id: 'fake',

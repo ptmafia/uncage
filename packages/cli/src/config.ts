@@ -93,7 +93,8 @@ export async function loadConfig(
     const ids = [...new Set([...enable, ...Object.keys(consented)])];
     warn(
       `${CONFIG_FILE}: runtimes.acp.enable/consented are ignored (a project file cannot consent to running downloaded agents). ` +
-        `To allow them, run: ${ids.map((id) => `uncage runtimes enable ${id}`).join('; ')}`,
+        `Local Mode (uncage serve) runs only agents installed on this computer: presets and agents found on PATH, and runtimes.acp.agents[] from this file. ` +
+        `Agents started through npx/uvx (${ids.join(', ')}) run only in Connected Mode, after: ${ids.map((id) => `uncage runtimes enable ${id}`).join('; ')}`,
     );
   }
 

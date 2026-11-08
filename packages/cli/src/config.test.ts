@@ -48,6 +48,8 @@ describe('loadConfig', () => {
     expect(c.runtimes.acp).toMatchObject({ enable: [], consented: {} });
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatch(/uncage\.config\.yaml: runtimes\.acp\.enable\/consented are ignored.*uncage runtimes enable gemini/);
+    // It says what applies in Local Mode instead of promising that `uncage runtimes enable` helps there.
+    expect(warnings[0]).toMatch(/only in Connected Mode/);
     await writeFile(join(cwd, 'uncage.config.yaml'), 'runtimes:\n  acp:\n    agents:\n      - id: mine\n');
     await expect(loadConfig(cwd, {})).rejects.toThrow(/preset or a command/);
     await writeFile(join(cwd, 'uncage.config.yaml'), 'runtimes:\n  acp:\n    prests: off\n');

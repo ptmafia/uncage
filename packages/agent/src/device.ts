@@ -51,6 +51,31 @@ export function agentHttpUrl(hubUrl: string): string {
   return `${url.origin}${url.pathname.replace(/\/+$/, '')}/agent`;
 }
 
+/**
+ * The transport URL a hub offered in `/agent/info` (`transports[].url`), if it is safe to send the
+ * machine token there: the same host (and port) as the site URL, and wss/https (plain ws/http only
+ * for loopback). Otherwise `undefined` (the caller derives `<site.url>/agent`), so a public
+ * `/agent/info` can never point the token at another host.
+ */
+export function offeredTransportUrl(kind: 'ws' | 'http', offered: string | undefined, siteUrl: string): string | undefined {
+  if (!offered) return undefined;
+  let url: URL;
+  let site: URL;
+  try {
+    url = new URL(offered);
+    site = new URL(siteUrl);
+  } catch {
+    return undefined;
+  }
+  if (url.host !== site.host || url.username || url.password) return undefined;
+  const secure = kind === 'ws' ? 'wss:' : 'https:';
+  const plain = kind === 'ws' ? 'ws:' : 'http:';
+  if (url.protocol !== secure && !(url.protocol === plain && isLoopback(url.hostname))) return undefined;
+  url.search = '';
+  url.hash = '';
+  return kind === 'http' ? `${url.origin}${url.pathname.replace(/\/+$/, '')}` : url.toString();
+}
+
 async function postJson(fetchFn: typeof fetch, url: string, body: unknown): Promise<unknown> {
   let res: Response;
   try {

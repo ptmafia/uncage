@@ -12,7 +12,7 @@ import { readActivity } from './activity.js';
 import { createAgent, type Agent } from './agent.js';
 import type { AgentSite } from './config.js';
 import { MAX_PULL_FILE_BYTES, PULL_CHUNK_BYTES } from './files.js';
-import { FAST, memoryLogger, sleep, tmpHome, until } from './test-helpers.js';
+import { FAST, memoryLogger, noExec, sleep, tmpHome, until } from './test-helpers.js';
 
 /** A scriptable stand-in for the hub: accepts agent sockets and records their frames. */
 async function fakeHub() {
@@ -80,6 +80,7 @@ async function setup(script: FakeStep[] = [{ text: 'ok' }], timing: Record<strin
     home,
     logger,
     timing: { ...FAST, ...timing },
+    exec: noExec,
   });
   cleanups.push(() => agent.close());
   await until(() => hub.framesOf('hello').length > 0);
@@ -107,6 +108,7 @@ describe('agent ↔ fake hub (protocol edges)', () => {
       home,
       logger: memoryLogger(),
       timing: FAST,
+      exec: noExec,
     });
     cleanups.push(() => agent.close());
     await until(() => hub.framesOf('hello').length > 0);
@@ -184,6 +186,7 @@ describe('agent ↔ fake hub (protocol edges)', () => {
       home,
       logger,
       timing: { backoffMinMs: 20, backoffMaxMs: 400, idleTimeoutMs: 3000, stableMs: 30_000 },
+      exec: noExec,
     });
     cleanups.push(() => agent.close());
     const delays = () => logger.lines.filter((l) => l.msg === 'reconnecting').map((l) => (l.obj as { delayMs: number }).delayMs);

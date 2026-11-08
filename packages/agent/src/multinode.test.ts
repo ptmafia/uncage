@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { createAgent } from './agent.js';
 import { updateAgentSites } from './config.js';
-import { FAST, memoryLogger, startTestHub, tmpHome, until, type TestHub } from './test-helpers.js';
+import { FAST, memoryLogger, noExec, startTestHub, tmpHome, until, type TestHub } from './test-helpers.js';
 
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
@@ -58,7 +58,7 @@ describe('real agent with two hub nodes (machine on A, browser on B)', () => {
       ],
       capabilities: { attachments: { images: true, files: true, maxBytes: 10 * 1024 * 1024 } },
     });
-    const agent = await createAgent({ config: { sites: [site], localPolicy: { allowBypass: false } }, adapters: () => [adapter], home, logger: memoryLogger(), timing: FAST });
+    const agent = await createAgent({ config: { sites: [site], localPolicy: { allowBypass: false } }, adapters: () => [adapter], home, logger: memoryLogger(), timing: FAST, exec: noExec });
     cleanups.push(() => agent.close());
 
     // Browser on B: the machine (on A) is online; create a session through B.
