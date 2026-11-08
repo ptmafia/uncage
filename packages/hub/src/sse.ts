@@ -18,11 +18,29 @@ const HISTORY_PAGE = 200;
  */
 const DEFAULT_GAP_WAIT_MS = 2_000;
 /**
- * A gap in history whose next event occurred longer ago than this is a permanent hole (no commit
- * lags that long), crossed after one wait instead of ending every stream with `reconnect`. Generous
- * so a machine clock that runs behind cannot make a lagging write look permanent.
+ * A gap in history this process first saw at least this long ago (hub clock) is a permanent hole:
+ * no commit lags that long. It is crossed after one wait instead of ending every stream with
+ * `reconnect`. Event timestamps are never used for this (they are stamped by the machine's clock).
  */
 const PERMANENT_GAP_MS = 5 * 60_000;
+const GAPS_SEEN_MAX = 10_000;
+/**
+ * `sessionId:missingSequence` → when this process first saw that gap, shared by every stream of
+ * the process; least recently seen first, capped, and pruned when the sequence is emitted. A fresh
+ * instance (FaaS) starts empty and keeps waiting: it fails safe, and the client accepts a gap
+ * still there after one resume, which bounds rotations on a real hole.
+ */
+const gapsSeen = new Map<string, number>();
+const gapKey = (sessionId: string, sequence: number) => `${sessionId}:${sequence}`;
+
+/** When the gap was first seen (records it now on first sight). */
+function gapFirstSeen(key: string, now: number): number {
+  const seen = gapsSeen.get(key) ?? now;
+  gapsSeen.delete(key);
+  gapsSeen.set(key, seen);
+  if (gapsSeen.size > GAPS_SEEN_MAX) gapsSeen.delete(gapsSeen.keys().next().value!);
+  return seen;
+}
 
 /** Reads history pages after `after` until caught up or `limit` events are collected. */
 export async function readHistory(src: EventSource, after: number, limit: number): Promise<UncageEvent[]> {
@@ -112,13 +130,20 @@ export function eventStreamResponse(
     const emit = (e: UncageEvent) => {
       if (e.sequence <= last) return;
       last = e.sequence;
+      if (gapsSeen.size > 0) gapsSeen.delete(gapKey(e.sessionId, e.sequence));
       write(formatEvent(e));
     };
-    const permanentHole = (e: UncageEvent) => Date.now() - Date.parse(e.occurredAt) >= PERMANENT_GAP_MS;
+    const permanentHole = (next: UncageEvent) => {
+      const key = gapKey(next.sessionId, last + 1);
+      const now = Date.now();
+      if (now - gapFirstSeen(key, now) < PERMANENT_GAP_MS) return false;
+      gapsSeen.delete(key);
+      return true;
+    };
     /**
      * Emits history after `last` up to the first gap, never past it: a missing sequence is waited
      * for (it may be committed after a later one) up to `gapWaitMs`, then the stream rotates so the
-     * client resumes after `last`. A long-past hole (see PERMANENT_GAP_MS) is crossed after the wait.
+     * client resumes after `last`. A hole this process has seen for PERMANENT_GAP_MS is crossed after the wait.
      */
     const catchUp = async () => {
       let deadline: number | undefined;
@@ -137,6 +162,8 @@ export function eventStreamResponse(
         }
         if (stop()) return;
         if (!gap) continue;
+        // Recorded on first sight, so a hole's age counts from the first stream that met it.
+        gapFirstSeen(gapKey(gap.sessionId, last + 1), Date.now());
         deadline ??= Date.now() + gapWaitMs;
         if (Date.now() >= deadline) {
           if (permanentHole(gap)) {

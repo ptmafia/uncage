@@ -1,8 +1,12 @@
 import type { UncageEvent } from '@uncage/protocol';
 import { createUncageClient } from '@uncage/client';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { eventStreamResponse, type EventSource } from './sse.js';
 import { fakeSession, makeEvent, readSse, sleep } from './test-utils.js';
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const ev = (n: number): UncageEvent =>
   n === 1
@@ -10,8 +14,12 @@ const ev = (n: number): UncageEvent =>
     : makeEvent('ses_1', n, 'message.delta', { messageId: 'm1', chunkIndex: n, text: `${n}` });
 
 /** A store whose history shows only what has been "committed"; live events are pushed by hand. */
-function laggingSource(committed: number[], o: { occurredAt?: string } = {}) {
-  const make = (n: number): UncageEvent => (o.occurredAt ? { ...ev(n), occurredAt: o.occurredAt } : ev(n));
+function laggingSource(committed: number[], o: { occurredAt?: string; sessionId?: string } = {}) {
+  const make = (n: number): UncageEvent => ({
+    ...ev(n),
+    ...(o.occurredAt ? { occurredAt: o.occurredAt } : {}),
+    ...(o.sessionId ? { sessionId: o.sessionId } : {}),
+  });
   const subs = new Set<(e: UncageEvent[]) => void>();
   const src: EventSource = {
     async history(after, limit) {
@@ -32,9 +40,9 @@ function laggingSource(committed: number[], o: { occurredAt?: string } = {}) {
   return { src, live, commit: (n: number) => committed.push(n), subscribed: () => subs.size > 0 };
 }
 
-const open = (src: EventSource, o: { gapWaitMs?: number; maxDurationMs?: number } = {}) =>
+const open = (src: EventSource, o: { gapWaitMs?: number; maxDurationMs?: number; after?: number } = {}) =>
   eventStreamResponse(src, {
-    after: 0,
+    after: o.after ?? 0,
     heartbeatMs: 10_000,
     maxDurationMs: o.maxDurationMs ?? 10_000,
     ...(o.gapWaitMs !== undefined ? { gapWaitMs: o.gapWaitMs } : {}),
@@ -112,12 +120,42 @@ describe('eventStreamResponse: history lagging during catch-up', () => {
     expect(frames.map((f) => f.event)).toEqual(['session.created', 'reconnect']);
   });
 
-  it('a gap whose next event is long past is a permanent hole: emitted past after the wait (no reconnect loop)', async () => {
-    const s = laggingSource([1, 3], { occurredAt: new Date(Date.now() - 3_600_000).toISOString() });
-    const res = open(s.src, { gapWaitMs: 100 });
+  it('a machine clock far behind (hour-old occurredAt) with a lagging commit skips nothing', async () => {
+    const s = laggingSource([1, 3], { occurredAt: new Date(Date.now() - 3_600_000).toISOString(), sessionId: 'ses_skew' });
+    setTimeout(() => s.commit(2), 300);
+    const res = open(s.src, { gapWaitMs: 2000 });
     const frames: Array<{ id?: string; event?: string }> = [];
     await collect(res, frames, ev(3).eventId);
-    expect(frames.map((f) => f.id)).toEqual([ev(1).eventId, ev(3).eventId]);
+    expect(frames.map((f) => f.id)).toEqual([ev(1).eventId, ev(2).eventId, ev(3).eventId]);
+    await res.body?.cancel().catch(() => undefined);
+    // Still missing after the wait, an old-stamped gap is not crossed either: the stream rotates.
+    const s2 = laggingSource([1, 3], { occurredAt: new Date(Date.now() - 3_600_000).toISOString(), sessionId: 'ses_skew2' });
+    const frames2: Array<{ id?: string; event?: string }> = [];
+    await collect(open(s2.src, { gapWaitMs: 100 }), frames2);
+    expect(frames2.map((f) => f.event)).toEqual(['session.created', 'reconnect']);
+  });
+
+  it('a hole this hub has seen for 5 minutes is permanent: the next stream crosses it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    const s = laggingSource([1, 3, 4], { sessionId: 'ses_hole' });
+    const read = async () => {
+      const frames: Array<{ id?: string; event?: string }> = [];
+      const done = collect(open(s.src, { gapWaitMs: 100, after: 1 }), frames);
+      await vi.advanceTimersByTimeAsync(500);
+      await done;
+      return frames.map((f) => f.event ?? f.id);
+    };
+    // Resumes while the hole is young: each ends with reconnect, never emitting 3.
+    expect(await read()).toEqual(['reconnect']);
+    await vi.advanceTimersByTimeAsync(4 * 60_000);
+    expect(await read()).toEqual(['reconnect']);
+    await vi.advanceTimersByTimeAsync(60_000);
+    const frames: Array<{ id?: string; event?: string }> = [];
+    const res = open(s.src, { gapWaitMs: 100, after: 1 });
+    const done = collect(res, frames, ev(4).eventId);
+    await vi.advanceTimersByTimeAsync(500);
+    await done;
+    expect(frames.map((f) => f.id)).toEqual([ev(3).eventId, ev(4).eventId]);
     await res.body?.cancel().catch(() => undefined);
   });
 });
