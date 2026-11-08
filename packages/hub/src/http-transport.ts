@@ -7,7 +7,8 @@
  * - `GET  /agent/stream?link=&cursor=`: NDJSON. Acknowledges `cursor`, then streams outbox items
  *   `> cursor` as `{seq,msg}` (polling the outbox adaptively; a `machineChannel` wake polls at
  *   once), `{ctl:'ping'}` every heartbeat, and ends with `{ctl:'rotate'}` at `stream.maxDurationMs`
- *   (or `replaced` / `revoked` when the link is no longer current).
+ *   (or `replaced` / `revoked` / `closed` when the link is no longer current; `revoked` only when the
+ *   machine itself is gone).
  * - `POST /agent/events`: a batch of upstream messages with idempotent ids, deduped through the
  *   store inbox and processed strictly in order.
  * - `POST /agent/disconnect`: closes the link (the machine goes offline at once).
@@ -259,9 +260,21 @@ export function httpTransport(ctx: HttpTransportContext) {
     write: (l: StreamLine) => void,
     drained: () => Promise<void>,
   ): Promise<void> {
-    const end: Record<Exclude<LinkState, 'current'>, StreamLine> = { replaced: { ctl: 'replaced' }, gone: { ctl: 'revoked' } };
+    /**
+     * Why the stream ends when the link is no longer current: `replaced` (a newer connect), `revoked`
+     * (the machine row is gone: revoked), or `closed` (the link was closed — a disconnect, a token
+     * rotated by re-pairing — but the machine still exists: the agent connects again).
+     */
+    const endLine = async (state: Exclude<LinkState, 'current'>): Promise<StreamLine> => {
+      if (state === 'replaced') return { ctl: 'replaced' };
+      const exists = await store.getMachine(machine.id).then(
+        (m) => m !== null,
+        () => true, // unsure: let the agent reconnect (a revoked token then gets 401)
+      );
+      return { ctl: exists ? 'closed' : 'revoked' };
+    };
     if (initial !== 'current') {
-      write(end[initial]);
+      write(await endLine(initial));
       return;
     }
     const { maxDurationMs } = ctx.stream;
@@ -292,7 +305,7 @@ export function httpTransport(ctx: HttpTransportContext) {
         woken = false;
         const r = await store.pollLink(machine.id, linkId, { after: last, limit: POLL_PAGE, now: iso(Date.now()) });
         if (r.state !== 'current') {
-          write(end[r.state]);
+          write(await endLine(r.state));
           return;
         }
         for (const it of r.items) {

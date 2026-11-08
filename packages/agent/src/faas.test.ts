@@ -35,7 +35,13 @@ interface Started {
 async function siteAgent(
   site: AgentSite,
   script: FakeStep[],
-  o: { timing?: Partial<AgentTiming>; fetch?: typeof fetch; onUpgradeRequired?: (min: string | undefined) => Promise<number>; agentVersion?: string } = {},
+  o: {
+    timing?: Partial<AgentTiming>;
+    fetch?: typeof fetch;
+    onUpgradeRequired?: (min: string | undefined) => Promise<number>;
+    agentVersion?: string;
+    commandCacheBytes?: number;
+  } = {},
 ): Promise<Started> {
   const { home, cleanup } = await tmpHome();
   cleanups.push(cleanup);
@@ -50,6 +56,7 @@ async function siteAgent(
     machine: { name: 'Test Mac', os: 'darwin' },
     agentVersion: o.agentVersion ?? '0.3.0',
     ...(o.fetch ? { fetch: o.fetch } : {}),
+    ...(o.commandCacheBytes !== undefined ? { commandCacheBytes: o.commandCacheBytes } : {}),
     onStop: () => undefined,
     onUpgradeRequired: o.onUpgradeRequired ?? (async () => 60_000),
   });
@@ -236,6 +243,50 @@ describe('real agent over HTTP streaming (FaaS hubs)', () => {
     expect(Number(cursors.at(-1))).toBeGreaterThan(0); // reopened past the processed command
   });
 
+  it('a command result the hub never accepted (the link closed right after the ack) is re-sent after reconnecting, once', async () => {
+    const hubs = await faas({ n: 3, commandTimeoutMs: 8000 });
+    const site = await hubs.pair('alice');
+    let closedOnce = false;
+    let forwardedResults = 0;
+    const f = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/agent/events') && typeof init?.body === 'string' && init.body.includes('"t":"result"') && init.body.includes('"workspace"')) {
+        if (!closedOnce) {
+          closedOnce = true;
+          // The command ran and was acknowledged on the stream; now the hub says the link is gone.
+          return Response.json({ error: { code: 'invalid_request', message: 'closed', retryable: false, details: { reason: 'link_closed' } } }, { status: 400 });
+        }
+        forwardedResults++;
+      }
+      return fetch(input, init);
+    }) as typeof fetch;
+    const { home, logger } = await siteAgent(site, [{ text: 'x' }], { fetch: f });
+    await online(hubs);
+    const t0 = Date.now();
+    const res = await hubs.as('alice', '/sessions', { method: 'POST', body: JSON.stringify({ runtime: 'fake' }) });
+    expect(res.status).toBe(201);
+    expect(Date.now() - t0).toBeLessThan(5000); // answered by the re-sent result, not a timeout
+    expect(closedOnce).toBe(true);
+    expect(forwardedResults).toBe(1);
+    expect(logger.lines.filter((l) => l.msg === 'connected').length).toBeGreaterThanOrEqual(2);
+    expect(await commandsRun(home, site, 'createSession')).toHaveLength(1);
+  });
+
+  it('an instance killed mid-run: the agent carries on through the others and the run completes', async () => {
+    const hubs = await faas({ n: 3 });
+    const site = await hubs.pair('alice');
+    await siteAgent(site, [{ text: 'k'.repeat(60), chunks: 30, delayMs: 50 }]);
+    await online(hubs);
+    const session = await createSession(hubs);
+    await startRun(hubs, session.id);
+    await sleep(400);
+    hubs.kill(0);
+    const evs = await finished(hubs, session.id, 20_000);
+    expect(terminal(evs)?.type).toBe('run.completed');
+    expect(evs.map((e) => e.sequence)).toEqual(evs.map((_, i) => i + 1));
+    expect(evs.filter((e) => e.type === 'message.delta')).toHaveLength(30);
+  });
+
   it('streams rotate every 300 ms for 5 s: events in the browser SSE are contiguous with no duplicates', async () => {
     const hubs = await faas({ n: 3, stream: { maxDurationMs: 300 } });
     const site = await hubs.pair('alice');
@@ -368,38 +419,71 @@ describe('real agent over HTTP streaming (FaaS hubs)', () => {
   });
 });
 
+/** A scripted hub: one stream delivering `lines` (then hanging); every result the agent posts is recorded. */
+function scriptedHub(lines: string[]) {
+  const posted: Array<{ id: string; ok: boolean; data?: unknown }> = [];
+  let streams = 0;
+  const f = (async (input: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(String(input)).pathname;
+    if (path.endsWith('/agent/info')) return Response.json({ protocol: CONNECTED_PROTOCOL, minAgentVersion: '0.3.0', transports: [{ kind: 'http', url: 'x' }] });
+    if (path.endsWith('/agent/connect')) {
+      return Response.json({ t: 'welcome', machineId: 'mch_1', protocol: CONNECTED_PROTOCOL, minAgentVersion: '0.3.0', linkId: `lnk_${'b'.repeat(24)}`, cursor: 0, replies: [] });
+    }
+    if (path.endsWith('/agent/stream')) {
+      if (streams++ === 0) {
+        // One line per chunk, a little apart, so each command finishes before the next arrives.
+        const enc = new TextEncoder();
+        let k = 0;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            async pull(c) {
+              if (k >= lines.length) return new Promise<void>(() => undefined);
+              if (k > 0) await until(() => posted.length >= k, 5000);
+              c.enqueue(enc.encode(`${lines[k++]}\n`));
+            },
+          }),
+        );
+      }
+      return new Promise<Response>(() => undefined);
+    }
+    if (path.endsWith('/agent/events')) {
+      const body = JSON.parse(init!.body as string) as { msgs: Array<{ id: string; msg: { t: string; id: string; ok: boolean; data?: unknown } }> };
+      for (const m of body.msgs) if (m.msg.t === 'result') posted.push(m.msg);
+      return Response.json({ processed: body.msgs.map((m) => m.id), retry: [], replies: [] });
+    }
+    return new Response(null, { status: 204 });
+  }) as typeof fetch;
+  return { fetch: f, posted };
+}
+
+const command = (seq: number, id: string, op: string, args: unknown) => JSON.stringify({ seq, msg: { t: 'command', id, op, args } });
+const scriptedSite: AgentSite = { id: 'scripted', name: 'S', url: 'http://127.0.0.1:9/api/uncage', machineId: 'mch_1', token: 't' };
+
 describe('command dedupe (scripted hub)', () => {
   it('a command redelivered under another seq runs once; its cached result is sent again', async () => {
-    const posted: Array<{ id: string; ok: boolean; data?: unknown }> = [];
-    const cmd = (seq: number) => JSON.stringify({ seq, msg: { t: 'command', id: 'cmd_same', op: 'createSession', args: { runtime: 'fake' } } });
-    let streams = 0;
-    const f = (async (input: string | URL | Request, init?: RequestInit) => {
-      const path = new URL(String(input)).pathname;
-      if (path.endsWith('/agent/info')) return Response.json({ protocol: CONNECTED_PROTOCOL, minAgentVersion: '0.3.0', transports: [{ kind: 'http', url: 'x' }] });
-      if (path.endsWith('/agent/connect')) {
-        return Response.json({ t: 'welcome', machineId: 'mch_1', protocol: CONNECTED_PROTOCOL, minAgentVersion: '0.3.0', linkId: `lnk_${'b'.repeat(24)}`, cursor: 0, replies: [] });
-      }
-      if (path.endsWith('/agent/stream')) {
-        streams++;
-        if (streams === 1) return new Response(`${cmd(1)}\n{"ctl":"rotate"}\n`);
-        if (streams === 2) {
-          await until(() => posted.length >= 1, 5000);
-          return new Response(`${cmd(2)}\n{"ctl":"rotate"}\n`);
-        }
-        return new Promise<Response>(() => undefined);
-      }
-      if (path.endsWith('/agent/events')) {
-        const body = JSON.parse(init!.body as string) as { msgs: Array<{ id: string; msg: { t: string; id: string; ok: boolean; data?: unknown } }> };
-        for (const m of body.msgs) if (m.msg.t === 'result') posted.push(m.msg);
-        return Response.json({ processed: body.msgs.map((m) => m.id), retry: [], replies: [] });
-      }
-      return new Response(null, { status: 204 });
-    }) as typeof fetch;
-    const site: AgentSite = { id: 'scripted', name: 'S', url: 'http://127.0.0.1:9/api/uncage', machineId: 'mch_1', token: 't' };
-    const { home } = await siteAgent(site, [], { fetch: f });
-    await until(() => posted.length >= 2, 5000, 'two results');
-    expect(posted[0]).toMatchObject({ id: 'cmd_same', ok: true });
-    expect(posted[1]).toEqual(posted[0]);
-    expect(await commandsRun(home, site, 'createSession')).toHaveLength(1);
+    const h = scriptedHub([command(1, 'cmd_same', 'createSession', { runtime: 'fake' }), command(2, 'cmd_same', 'createSession', { runtime: 'fake' })]);
+    const { home } = await siteAgent(scriptedSite, [], { fetch: h.fetch });
+    await until(() => h.posted.length >= 2, 5000, 'two results');
+    expect(h.posted[0]).toMatchObject({ id: 'cmd_same', ok: true });
+    expect(h.posted[1]).toEqual(h.posted[0]);
+    expect(await commandsRun(home, scriptedSite, 'createSession')).toHaveLength(1);
+  });
+
+  it('read-only commands are not cached (a redelivery runs again); the cache keeps to its byte budget', async () => {
+    const h = scriptedHub([
+      command(1, 'cmd_ro', 'listSessions', {}),
+      command(2, 'cmd_ro', 'listSessions', {}),
+      command(3, 'cmd_a', 'createSession', { runtime: 'fake' }),
+      command(4, 'cmd_b', 'createSession', { runtime: 'fake' }),
+      command(5, 'cmd_c', 'createSession', { runtime: 'fake' }),
+      command(6, 'cmd_c', 'createSession', { runtime: 'fake' }), // newest: still cached
+      command(7, 'cmd_a', 'createSession', { runtime: 'fake' }), // oldest: evicted by the budget, runs again
+    ]);
+    // Room for about two session results.
+    const { home } = await siteAgent(scriptedSite, [], { fetch: h.fetch, commandCacheBytes: 1500 });
+    await until(() => h.posted.length >= 7, 8000, 'seven results');
+    expect(await commandsRun(home, scriptedSite, 'listSessions')).toHaveLength(2);
+    expect(await commandsRun(home, scriptedSite, 'createSession')).toHaveLength(4);
+    expect(h.posted[5]).toEqual(h.posted[4]);
   });
 });

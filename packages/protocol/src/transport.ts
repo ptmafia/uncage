@@ -64,7 +64,12 @@ export type HttpEventsResponse = z.infer<typeof HttpEventsResponseSchema>;
 
 export const StreamLineSchema = z.union([
   z.object({ seq: z.number().int().positive(), msg: HubFrameSchema }),
-  z.object({ ctl: z.enum(['ping', 'rotate', 'replaced', 'revoked']), at: z.number().optional() }),
+  /**
+   * `rotate`: reconnect the stream with the cursor. `replaced`: a newer connect took over (stop).
+   * `revoked`: the machine was revoked (stop). `closed`: the link was closed but the machine still
+   * exists — connect again (`POST /agent/connect`). Agents skip control lines they do not know.
+   */
+  z.object({ ctl: z.enum(['ping', 'rotate', 'replaced', 'revoked', 'closed']), at: z.number().optional() }),
 ]);
 export type StreamLine = z.infer<typeof StreamLineSchema>;
 

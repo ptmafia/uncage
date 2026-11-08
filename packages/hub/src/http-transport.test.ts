@@ -26,6 +26,7 @@ import {
   fakeMachine,
   fakeSession,
   makeEvent,
+  NO_REPLY,
   readStreamLines,
   sleep,
   startFaasHubs,
@@ -310,6 +311,48 @@ describe('HTTP streaming transport', () => {
     await until(() => second.streams > 0);
     expect((await hubs.as('u1', `/machines/${machineId}`, { method: 'DELETE' })).status).toBe(200);
     expect(await second.ended).toBe('revoked');
+  });
+
+  it('a link closed while the machine still exists ends the stream with closed (connect again); revoked only for a deleted machine', async () => {
+    const hubs = await faas({ n: 2 });
+    const { token } = await hubs.pair('u1');
+    const a = await agentFor(hubs, token);
+    await until(() => a.streams > 0);
+    await a.close(); // POST /agent/disconnect closes the link; the machine row stays
+    const res = await hubs.fetch(`/agent/stream?link=${a.linkId}&cursor=0`, { headers: { authorization: `Bearer ${token}` } });
+    expect(res.status).toBe(200);
+    expect((await readStreamLines(res)).filter((l) => !('ctl' in l && l.ctl === 'ping'))).toEqual([{ ctl: 'closed' }]);
+
+    // A token rotated by re-pairing closes the old link too: closed, and the old token then gets 401.
+    const b = await agentFor(hubs, token);
+    await until(() => b.streams > 0);
+    await hubs.hubs[0]![HUB_INTERNALS].machines.kick(b.machineId, 'replaced');
+    expect(await b.ended).toBe('closed');
+  });
+
+  it('a late result for a command that already timed out is accepted and dropped quietly', async () => {
+    const errors: unknown[] = [];
+    const logger = { info: () => undefined, warn: () => undefined, error: (o: unknown) => void errors.push(o) };
+    const hubs = await faas({ n: 2, commandTimeoutMs: 300, logger } as Parameters<typeof startFaasHubs>[0]);
+    const { token } = await hubs.pair('u1');
+    const held: Array<{ id: string }> = [];
+    const a = await agentFor(hubs, token, {
+      onCommand: (cmd) => {
+        if (cmd.op === 'listSessions') {
+          held.push(cmd);
+          return NO_REPLY;
+        }
+        return [];
+      },
+    });
+    await until(async () => (await machinesOf(hubs, 'u1'))[0]?.online);
+    const r = await hubs.as('u1', '/sessions?scope=machine');
+    void r.body?.cancel();
+    await until(() => held.length > 0);
+    await sleep(400); // the hub gave up on the command
+    await a.send({ t: 'result', id: held[0]!.id, ok: true, data: [] }); // processed, not retried
+    await sleep(100);
+    expect(errors).toEqual([]);
   });
 
   it('a WebSocket-era hello over HTTP replaces a link the same way when the machine reconnects over HTTP', async () => {

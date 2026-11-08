@@ -853,6 +853,7 @@ export async function connectFakeHttpAgent(o: {
         // cut or aborted
       }
       if (ctl === 'replaced' || ctl === 'revoked') return endResolve(ctl);
+      if (ctl === 'closed') return endResolve('closed');
       if (ctl === 'rotate') rotations++;
       else if (!delivered && !ac.signal.aborted) await sleep(50);
     }

@@ -125,6 +125,10 @@ interface PendingTool {
 
 /** Commands remembered for dedupe (a redelivered command is answered from here, never run again). */
 const COMMAND_CACHE = 1000;
+/** Byte budget of the cached results (dedupe cache, and results not yet accepted by the hub). */
+const COMMAND_CACHE_BYTES = 32 * 1024 * 1024;
+/** Read-only commands: running one again is harmless, so their (possibly large) results are not cached. */
+const READ_ONLY_OPS = new Set<HubCommandOp>(['readEvents', 'snapshot', 'listSessions']);
 /** `GET /agent/info` is re-read at most this often. */
 const INFO_TTL_MS = 5 * 60_000;
 /** While busy, an HTTP link waits this long before checking again whether WebSocket can be retried. */
@@ -145,6 +149,8 @@ export interface SiteAgentOptions {
   agentVersion: string;
   /** HTTP client for `/agent/info` and the HTTP transport. Default: the global `fetch` (tests inject one). */
   fetch?: typeof fetch;
+  /** Byte budget of cached command results. Default 32 MiB (tests lower it). */
+  commandCacheBytes?: number;
   /** The site stopped for good (revoked or replaced). */
   onStop(reason: 'revoked' | 'replaced'): void;
   /**
@@ -191,8 +197,21 @@ export class SiteAgent {
   private readonly pendingTools = new Map<string, PendingTool>();
   private readonly pulls = new Set<AbortController>();
   private readonly uploads = new Map<string, Upload>();
-  /** Command id → its result frame (`null` while it runs). Insertion-ordered: the oldest is evicted. */
-  private readonly commands = new Map<string, AgentFrame | null>();
+  /**
+   * Command id → its result frame (`null` while it runs), for dedupe. Insertion-ordered: the oldest
+   * is evicted past `COMMAND_CACHE` entries or `COMMAND_CACHE_BYTES`. Read-only ops are not kept.
+   */
+  private readonly commands = new Map<string, { frame: AgentFrame | null; bytes: number }>();
+  private commandBytes = 0;
+  /**
+   * Results the hub has not accepted yet (the link ended first): re-sent after every welcome. The hub
+   * routes a late result to the waiting request, or drops it quietly if that request gave up.
+   */
+  private readonly unsentResults = new Map<string, { frame: AgentFrame; bytes: number }>();
+  private unsentBytes = 0;
+  private runningCommands = 0;
+  /** Frames handed to the link and not yet accepted (HTTP: not yet `processed`). */
+  private sending = 0;
   private readonly activeRuns = new Set<string>();
   /** HTTP transport: highest outbox seq dispatched (process lifetime). */
   private cursor = 0;
@@ -269,8 +288,21 @@ export class SiteAgent {
     return value ?? this.info?.value ?? null;
   }
 
+  /**
+   * Work in flight: a run, a site tool call, a command still running, a frame the hub has not
+   * accepted yet, a file pull or an upload. Keeps the hub polling fast; a WebSocket re-probe waits
+   * until this is false.
+   */
   private busy(): boolean {
-    return this.activeRuns.size > 0 || this.pendingTools.size > 0;
+    return (
+      this.activeRuns.size > 0 ||
+      this.pendingTools.size > 0 ||
+      this.runningCommands > 0 ||
+      this.sending > 0 ||
+      this.unsentResults.size > 0 ||
+      this.pulls.size > 0 ||
+      this.uploads.size > 0
+    );
   }
 
   private async loop(): Promise<void> {
@@ -362,6 +394,8 @@ export class SiteAgent {
     const t = this.o.timing;
     if (this.reprobing) return;
     const failed = !r.welcomed || r.upMs < t.stableMs;
+    // Nothing to fall back to: no bookkeeping.
+    if (kind === 'ws' && !info?.transports.some((x) => x.kind === 'http')) return;
     if (kind === 'ws') {
       if (!failed) {
         this.wsFailures = 0;
@@ -371,7 +405,7 @@ export class SiteAgent {
       this.wsFailures++;
       if (this.wsFailures >= t.wsFallbackAfter && this.fellBackAt === undefined) {
         this.fellBackAt = Date.now();
-        if (!info || info.transports.some((x) => x.kind === 'http')) {
+        {
           this.log.warn({ site: this.site.id, failures: this.wsFailures }, 'WebSocket keeps failing; falling back to HTTP streaming');
         }
       }
@@ -439,6 +473,8 @@ export class SiteAgent {
     for (const f of replies) this.onFrame(link, f);
     // Site tool calls still waiting for their result: ask again (same id; the hub never runs one twice).
     for (const p of this.pendingTools.values()) this.sendToolCall(p);
+    // Command results the previous link never got accepted (e.g. it died right after the ack).
+    for (const [id, u] of this.unsentResults) void this.deliverResult(id, u.frame);
     void this.backfillAll();
   }
 
@@ -459,7 +495,8 @@ export class SiteAgent {
   /** Sends on the current, welcomed link. */
   private send(f: AgentFrame): Promise<void> {
     if (!this.connected || !this.link) return Promise.reject(new UncageError('machine_offline'));
-    return this.link.send(f);
+    this.sending++;
+    return this.link.send(f).finally(() => this.sending--);
   }
 
   private onFrame(link: AgentLink, f: HubFrame): void {
@@ -506,17 +543,73 @@ export class SiteAgent {
   // ---- commands ---------------------------------------------------------------------------
 
   private async onCommand(id: string, op: HubCommandOp, rawArgs: unknown): Promise<void> {
-    if (this.commands.has(id)) {
+    const seen = this.commands.get(id);
+    if (seen) {
       // Redelivered (overlapping streams, a resend): answer from the cache, never run it again.
-      const cached = this.commands.get(id);
-      if (cached) await this.sendResult(cached).catch(() => undefined);
+      if (seen.frame && !this.unsentResults.has(id)) await this.sendResult(seen.frame).catch(() => undefined);
       return;
     }
-    this.commands.set(id, null);
-    while (this.commands.size > COMMAND_CACHE) this.commands.delete(this.commands.keys().next().value!);
-    const frame = await this.runCommand(id, op, rawArgs);
-    if (this.commands.has(id)) this.commands.set(id, frame);
-    await this.sendResult(frame).catch((err: unknown) => this.log.warn({ site: this.site.id, op, err: (err as Error).message }, 'could not send result'));
+    const readOnly = READ_ONLY_OPS.has(op);
+    this.cacheCommand(id, null);
+    this.runningCommands++;
+    let frame: AgentFrame;
+    try {
+      frame = await this.runCommand(id, op, rawArgs);
+    } finally {
+      this.runningCommands--;
+    }
+    if (readOnly) this.uncacheCommand(id);
+    else if (this.commands.has(id)) this.cacheCommand(id, frame);
+    await this.deliverResult(id, frame);
+  }
+
+  /** Sends a command result; until the hub accepts it, it waits in `unsentResults` (re-sent after the next welcome). */
+  private async deliverResult(id: string, frame: AgentFrame): Promise<void> {
+    if (!this.unsentResults.has(id)) {
+      const bytes = byteLength(JSON.stringify(frame));
+      this.unsentResults.set(id, { frame, bytes });
+      this.unsentBytes += bytes;
+      while (this.unsentBytes > (this.o.commandCacheBytes ?? COMMAND_CACHE_BYTES) && this.unsentResults.size > 1) {
+        const [oldId, old] = this.unsentResults.entries().next().value!;
+        this.unsentResults.delete(oldId);
+        this.unsentBytes -= old.bytes;
+      }
+    }
+    try {
+      await this.sendResult(frame);
+      const u = this.unsentResults.get(id);
+      if (u) {
+        this.unsentResults.delete(id);
+        this.unsentBytes -= u.bytes;
+      }
+    } catch (err) {
+      if (err instanceof FrameTooLargeError) {
+        const u = this.unsentResults.get(id);
+        if (u) {
+          this.unsentResults.delete(id);
+          this.unsentBytes -= u.bytes;
+        }
+      }
+      this.log.warn({ site: this.site.id, err: (err as Error).message }, 'could not send result; will retry after reconnecting');
+    }
+  }
+
+  private cacheCommand(id: string, frame: AgentFrame | null): void {
+    this.uncacheCommand(id);
+    const bytes = frame ? byteLength(JSON.stringify(frame)) : 0;
+    this.commands.set(id, { frame, bytes });
+    this.commandBytes += bytes;
+    while (this.commands.size > COMMAND_CACHE || (this.commandBytes > (this.o.commandCacheBytes ?? COMMAND_CACHE_BYTES) && this.commands.size > 1)) {
+      const [oldId] = this.commands.keys();
+      this.uncacheCommand(oldId!);
+    }
+  }
+
+  private uncacheCommand(id: string): void {
+    const c = this.commands.get(id);
+    if (!c) return;
+    this.commands.delete(id);
+    this.commandBytes -= c.bytes;
   }
 
   private async runCommand(id: string, op: HubCommandOp, rawArgs: unknown): Promise<AgentFrame> {

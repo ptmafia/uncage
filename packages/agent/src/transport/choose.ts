@@ -22,14 +22,15 @@ export async function fetchAgentInfo(fetchFn: typeof fetch, hubUrl: string): Pro
 /**
  * WebSocket when the hub offers it, unless `wsFallbackAfter` WebSocket attempts in a row failed:
  * then HTTP streaming (when offered) until `wsReprobeMs` after the fallback. Unknown offers (`info`
- * null) count as both.
+ * null: `/agent/info` was never read) count as WebSocket only.
  */
 export function chooseTransport(
   info: AgentInfo | null,
   s: { wsFailures: number; fellBackAt?: number; now: number },
   t: Pick<AgentTiming, 'wsFallbackAfter' | 'wsReprobeMs'>,
 ): TransportKind {
-  const kinds = info ? info.transports.map((x) => x.kind) : (['ws', 'http'] as TransportKind[]);
+  // Unknown offers: WebSocket only (the site passes its last good `info` when it has one).
+  const kinds = info ? info.transports.map((x) => x.kind) : (['ws'] as TransportKind[]);
   const ws = kinds.includes('ws');
   const http = kinds.includes('http');
   if (!ws) return http ? 'http' : 'ws';

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { DEFAULT_TIMING, type AgentTiming } from './site.js';
 import { FAST, memoryLogger, startFaasHubs, until, type FaasHubs } from './test-helpers.js';
 import { chooseTransport, compareVersions, fetchAgentInfo } from './transport/choose.js';
-import { dialHttp } from './transport/http.js';
+import { dialHttp, parseRetryAfter } from './transport/http.js';
 import type { AgentLink, DialOptions } from './transport/types.js';
 
 const cleanups: Array<() => Promise<unknown>> = [];
@@ -27,10 +27,10 @@ describe('chooseTransport', () => {
     expect(chooseTransport(info(['ws', 'http']), { wsFailures: 3, fellBackAt: now, now: now + 1_800_000 }, t)).toBe('ws');
   });
 
-  it('ws-only sites stay on ws whatever fails; unknown offers (no /agent/info) behave like ws+http', () => {
+  it('ws-only sites stay on ws whatever fails; unknown offers (no /agent/info) count as ws only', () => {
     expect(chooseTransport(info(['ws']), { wsFailures: 10, fellBackAt: now, now }, t)).toBe('ws');
     expect(chooseTransport(null, { wsFailures: 0, now }, t)).toBe('ws');
-    expect(chooseTransport(null, { wsFailures: 3, fellBackAt: now, now: now + 1000 }, t)).toBe('http');
+    expect(chooseTransport(null, { wsFailures: 3, fellBackAt: now, now: now + 1000 }, t)).toBe('ws');
     expect(chooseTransport(info(['ws', 'http']), { wsFailures: 2, now }, t)).toBe('ws');
   });
 
@@ -140,10 +140,13 @@ describe('dialHttp (scripted hub)', () => {
 
     const r = scriptedFetch([['{"ctl":"replaced"}']]);
     expect(await dial(r.fetch).link.ended).toMatchObject({ welcomed: true, stop: 'replaced' });
+    const closed = await dial(scriptedFetch([['{"ctl":"closed"}']]).fetch).link.ended;
+    expect(closed.welcomed).toBe(true);
+    expect(closed.stop).toBeUndefined(); // connect again
   });
 
   it('401 → revoked, 426 → upgrade with the minimum version, 400 link_replaced → replaced, 400 link_closed → ends to reconnect', async () => {
-    expect(await dial(scriptedFetch([], { connectStatus: 401, connectBody: { code: 'unauthorized', message: 'x' } }).fetch).link.ended).toMatchObject({
+    expect(await dial(scriptedFetch([], { connectStatus: 401, connectBody: { error: { code: 'unauthorized', message: 'x', retryable: false } } }).fetch).link.ended).toMatchObject({
       welcomed: false,
       stop: 'revoked',
     });
@@ -155,7 +158,7 @@ describe('dialHttp (scripted hub)', () => {
       ['link_replaced', 'replaced'],
       ['link_closed', undefined],
     ] as const) {
-      const d = dial(scriptedFetch([], { eventsStatus: 400, eventsBody: { code: 'invalid_request', message: 'x', details: { reason } } }).fetch);
+      const d = dial(scriptedFetch([], { eventsStatus: 400, eventsBody: { error: { code: 'invalid_request', message: 'x', retryable: false, details: { reason } } } }).fetch);
       await until(() => d.welcomed() === 1);
       const sent = d.link.send({ t: 'result', id: 'c', ok: true, data: 1 } as AgentFrame);
       await expect(sent).rejects.toMatchObject({ code: 'machine_offline' });
@@ -188,6 +191,34 @@ describe('dialHttp (scripted hub)', () => {
   });
 });
 
+describe('Retry-After', () => {
+  it('parses seconds and HTTP dates, capped at 60 s', () => {
+    const now = Date.parse('2026-11-08T12:00:00Z');
+    expect(parseRetryAfter('2', now)).toBe(2000);
+    expect(parseRetryAfter('Sun, 08 Nov 2026 12:00:05 GMT', now)).toBe(5000);
+    expect(parseRetryAfter('3600', now)).toBe(60_000);
+    expect(parseRetryAfter('soon', now)).toBeUndefined();
+    expect(parseRetryAfter(null, now)).toBeUndefined();
+  });
+
+  it('a 503 with Retry-After holds the upstream retry back that long', async () => {
+    const base = scriptedFetch([]);
+    const at: number[] = [];
+    const f = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith('/agent/events')) {
+        at.push(Date.now());
+        if (at.length === 1) return new Response('busy', { status: 503, headers: { 'retry-after': '1' } });
+      }
+      return base.fetch(input, init);
+    }) as typeof fetch;
+    const d = dial(f, { timing: { ...DEFAULT_TIMING, ...FAST, httpRetryMaxMs: 100 } });
+    await until(() => d.welcomed() === 1);
+    await d.link.send({ t: 'result', id: 'c', ok: true, data: 1 } as AgentFrame);
+    expect(at).toHaveLength(2);
+    expect(at[1]! - at[0]!).toBeGreaterThanOrEqual(950);
+  });
+});
+
 describe('dialHttp (real hubs)', () => {
   async function faas(o: Parameters<typeof startFaasHubs>[0]): Promise<FaasHubs> {
     const h = await startFaasHubs(o);
@@ -209,6 +240,20 @@ describe('dialHttp (real hubs)', () => {
     await until(() => again.welcomed() === 1);
     await hubs.hubs[1]!.revokeMachine(site.machineId, { id: 'alice' });
     expect(await again.link.ended).toMatchObject({ welcomed: true, stop: 'revoked' });
+  });
+
+  it('a POST on a replaced link gets 400 link_replaced from a real hub: the link stops as replaced', async () => {
+    const hubs = await faas({ n: 2 });
+    const site = await hubs.pair('alice');
+    // Streams hang, so only the upstream POST can tell the first link it was replaced.
+    const noStream = (async (input: string | URL | Request, init?: RequestInit) =>
+      String(input).includes('/agent/stream') ? new Promise<Response>(() => undefined) : fetch(input, init)) as typeof fetch;
+    const a = dial(noStream, { hubUrl: site.url, token: site.token, timing: { ...DEFAULT_TIMING, ...FAST, idleTimeoutMs: 60_000 } });
+    await until(() => a.welcomed() === 1);
+    const b = dial(fetch, { hubUrl: site.url, token: site.token });
+    await until(() => b.welcomed() === 1);
+    await expect(a.link.send({ t: 'events', sessionId: 'ses_x', events: [] } as AgentFrame)).rejects.toMatchObject({ code: 'machine_offline' });
+    expect(await a.link.ended).toMatchObject({ welcomed: true, stop: 'replaced' });
   });
 
   it('a second connect for the same machine replaces the first link', async () => {

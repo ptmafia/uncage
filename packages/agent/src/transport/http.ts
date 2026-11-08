@@ -47,20 +47,22 @@ interface Item {
 
 type PostResult =
   | { k: 'ok'; body: HttpEventsResponse }
-  | { k: 'transient'; why: string }
+  | { k: 'transient'; why: string; retryAfterMs?: number }
   | { k: 'drop'; error: Error }
   | { k: 'end'; end: Omit<LinkEnd, 'welcomed' | 'upMs'> };
 
 /** What a non-2xx answer means for the link. */
 async function classify(res: Response): Promise<
   | { k: 'end'; end: Omit<LinkEnd, 'welcomed' | 'upMs'>; reason?: string }
-  | { k: 'transient'; why: string }
+  | { k: 'transient'; why: string; retryAfterMs?: number }
   | { k: 'fatal'; why: string; reason?: string }
 > {
-  type ErrorJson = { minAgentVersion?: unknown; message?: unknown; details?: { reason?: unknown } } | null;
-  let body: ErrorJson = null;
+  type ErrorFields = { minAgentVersion?: unknown; message?: unknown; details?: { reason?: unknown } };
+  let body: ErrorFields | null = null;
   try {
-    body = (await res.json()) as ErrorJson;
+    // Hub errors are `{ error: ErrorBody }`; the connect 426 is `{ t: 'upgrade_required', minAgentVersion }`.
+    const raw = (await res.json()) as (ErrorFields & { error?: ErrorFields }) | null;
+    body = raw && typeof raw === 'object' ? { ...raw, ...(raw.error && typeof raw.error === 'object' ? raw.error : {}) } : null;
   } catch {
     // not JSON
   }
@@ -72,9 +74,27 @@ async function classify(res: Response): Promise<
   }
   if (res.status === 400 && reason === 'link_replaced') return { k: 'end', end: { stop: 'replaced' }, reason };
   if (res.status === 400 && reason === 'link_closed') return { k: 'end', end: {}, reason };
-  if (res.status === 408 || res.status === 425 || res.status === 429 || res.status >= 500) return { k: 'transient', why };
+  if (res.status === 408 || res.status === 425 || res.status === 429 || res.status >= 500) {
+    const retryAfterMs = parseRetryAfter(res.headers.get('retry-after'));
+    return { k: 'transient', why, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) };
+  }
   return { k: 'fatal', why, ...(reason ? { reason } : {}) };
 }
+
+/** Longest `Retry-After` honoured (a hub asking for more is retried after this). */
+const MAX_RETRY_AFTER_MS = 60_000;
+
+/** `Retry-After` (seconds or an HTTP date) in ms, capped at `MAX_RETRY_AFTER_MS`. */
+export function parseRetryAfter(v: string | null, now = Date.now()): number | undefined {
+  if (!v) return undefined;
+  const t = v.trim();
+  const ms = /^\d+$/.test(t) ? Number(t) * 1000 : Date.parse(t) - now;
+  if (!Number.isFinite(ms)) return undefined;
+  return Math.min(MAX_RETRY_AFTER_MS, Math.max(0, ms));
+}
+
+/** A stream that only carried control lines ends: wait at least this long before reopening. */
+const MIN_REOPEN_MS = 250;
 
 /** Lines of an NDJSON body. */
 async function* ndjson(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
@@ -251,7 +271,7 @@ export function dialHttp(o: DialOptions): AgentLink {
         }
       } else log.info({ site, why: r.why }, 'upstream POST failed; retrying');
       if (expire(batch)) continue;
-      await sleep(retryDelay(attempt++), ac.signal);
+      await sleep(Math.max(retryDelay(attempt++), r.k === 'transient' ? (r.retryAfterMs ?? 0) : 0), ac.signal);
     }
   }
 
@@ -276,7 +296,7 @@ export function dialHttp(o: DialOptions): AgentLink {
       }
       // `retry`: the call still runs on the hub (or the POST failed): ask again, slower each time.
       if (expire([it])) return;
-      await sleep(retryDelay(attempt++), ac.signal);
+      await sleep(Math.max(retryDelay(attempt++), r.k === 'transient' ? (r.retryAfterMs ?? 0) : 0), ac.signal);
     }
   }
 
@@ -284,6 +304,9 @@ export function dialHttp(o: DialOptions): AgentLink {
     let attempt = 0;
     while (!finished) {
       let lines = 0;
+      /** Outbox items (seq lines) seen on this stream: only those justify reopening at once. */
+      let items = 0;
+      let retryAfterMs = 0;
       let ctl: string | undefined;
       const sac = new AbortController();
       const abort = () => sac.abort();
@@ -303,6 +326,7 @@ export function dialHttp(o: DialOptions): AgentLink {
         if (res.status !== 200) {
           const c = await classify(res);
           if (c.k === 'end') return finish(c.end);
+          if (c.k === 'transient') retryAfterMs = c.retryAfterMs ?? 0;
           throw new Error(`stream ${c.why}`);
         }
         if (!res.body) throw new Error('stream without a body');
@@ -319,7 +343,7 @@ export function dialHttp(o: DialOptions): AgentLink {
           }
           if (raw !== null && typeof raw === 'object' && 'ctl' in raw) {
             const c = (raw as { ctl: unknown }).ctl;
-            if (c === 'rotate' || c === 'replaced' || c === 'revoked') {
+            if (c === 'rotate' || c === 'replaced' || c === 'revoked' || c === 'closed') {
               ctl = c;
               break;
             }
@@ -335,7 +359,9 @@ export function dialHttp(o: DialOptions): AgentLink {
             log.warn({ site, err: (err as Error).message }, 'unreadable frame on the website stream; skipped');
             continue;
           }
-          if (!('seq' in parsed) || parsed.seq <= o.cursor.get()) continue;
+          if (!('seq' in parsed)) continue;
+          items++;
+          if (parsed.seq <= o.cursor.get()) continue;
           try {
             o.onFrame(parsed.msg);
           } catch (err) {
@@ -354,13 +380,21 @@ export function dialHttp(o: DialOptions): AgentLink {
       if (finished) return;
       if (ctl === 'replaced') return finish({ stop: 'replaced' });
       if (ctl === 'revoked') return finish({ stop: 'revoked' });
+      // The link was closed but the machine still exists: connect again.
+      if (ctl === 'closed') return finish({});
       if (ctl === 'rotate') {
         log.info({ site, cursor: o.cursor.get() }, 'http stream rotated');
         attempt = 0;
         continue;
       }
-      if (lines > 0) {
+      if (items > 0) {
         attempt = 0;
+        continue;
+      }
+      if (lines > 0) {
+        // Only pings: the connection worked, but do not spin on a stream that ends at once.
+        attempt = 0;
+        await sleep(Math.max(MIN_REOPEN_MS, retryAfterMs), ac.signal);
         continue;
       }
       // Nothing arrived for too long: give the link up (the site connects again, maybe elsewhere).
@@ -368,7 +402,7 @@ export function dialHttp(o: DialOptions): AgentLink {
         log.warn({ site }, 'lost the website stream; reconnecting');
         return finish({});
       }
-      await sleep(backoffDelay(attempt++, o.timing), ac.signal);
+      await sleep(Math.max(backoffDelay(attempt++, o.timing), retryAfterMs), ac.signal);
     }
   }
 

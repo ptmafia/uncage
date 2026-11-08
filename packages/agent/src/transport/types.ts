@@ -85,7 +85,15 @@ export interface DialOptions {
   onWelcome(w: { machineId: string; replies: HubFrame[] }): void;
   /** A hub frame after the welcome (never `welcome`, `ping` or `upgrade_required`). */
   onFrame(f: HubFrame): void;
-  /** http: highest outbox seq dispatched, kept for the process lifetime. */
+  /**
+   * http: highest outbox seq dispatched, kept for the process lifetime.
+   *
+   * TODO(Task 14 docs): crash semantics. A command dispatched but not yet acknowledged when the
+   * agent process dies is delivered again to the next process and runs again (dedupe is per
+   * process). A command acknowledged whose result never reached the hub before the crash is lost:
+   * the website request times out (`commandTimeoutMs`). Within one process, results not accepted
+   * by the hub are re-sent after every welcome.
+   */
   cursor: { get(): number; set(seq: number): void };
   /** A run in progress or a tool call pending (keeps the hub in fast polling). */
   busy(): boolean;
