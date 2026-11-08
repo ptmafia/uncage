@@ -11,7 +11,8 @@ if (!entry) {
   console.error('usage: node scripts/production.ts <entry.ts> [args…]');
   process.exit(2);
 }
-process.env.NODE_ENV ??= 'production';
+// (Next's types mark NODE_ENV read-only; it is a plain env var here, before anything reads it.)
+(process.env as Record<string, string | undefined>).NODE_ENV ??= 'production';
 // The entry sees its own arguments where it expects them.
 process.argv.splice(1, 2, resolve(entry));
 await import(pathToFileURL(resolve(entry)).href);
