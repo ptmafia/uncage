@@ -7,7 +7,7 @@ import type { ClusterAdapter } from './cluster/cluster.js';
 import { memoryCluster } from './cluster/memory.js';
 import { deviceFlow, randomSecret } from './device.js';
 import { DEFAULT_PULL_MAX_BYTES, DEFAULT_READ_MAX_BYTES, filePull } from './files.js';
-import { assertVersionRange, defaultCliRange, installScript } from './install-script.js';
+import { assertInstallExtension, assertScriptUrl, assertVersionRange, defaultCliRange, installScript } from './install/index.js';
 import { newNodeId } from './ids.js';
 import { compareVersions, MachineHub, sessionChannel, type HubLogger } from './machines.js';
 import { applyEvent, emptySnapshot, indexPatch } from './replica.js';
@@ -100,6 +100,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   const minAgentVersion = o.minAgentVersion ?? HUB_VERSION;
   if (compareVersions(minAgentVersion, '0.0.0') < 0) throw new Error(`createHub: invalid minAgentVersion "${minAgentVersion}"`);
   const range = assertVersionRange(o.cliVersionRange ?? defaultCliRange(HUB_VERSION));
+  const installExtension = assertInstallExtension(o.installScript);
   const sessionStorage = o.sessionStorage ?? 'machine';
   const attachmentRetentionDays = o.attachmentRetentionDays ?? DEFAULT_ATTACHMENT_RETENTION_DAYS;
   if (!(attachmentRetentionDays > 0)) throw new Error(`createHub: attachmentRetentionDays must be > 0 (got ${attachmentRetentionDays})`);
@@ -425,7 +426,9 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     ]);
   };
 
-  const setupUrl = basePath === DEFAULT_BASE_PATH ? origin : hubUrl;
+  const setupUrl = assertScriptUrl(basePath === DEFAULT_BASE_PATH ? origin : hubUrl);
+  // Rendered once: the scripts only vary by the CLI range, the site URL and the static extension.
+  const installScripts = { sh: installScript({ cliRange: range, siteUrl: setupUrl, extend: installExtension }), ps1: '' };
   const api = browserApi({
     store,
     minAgentVersion,
@@ -439,7 +442,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     sessionStorage,
     publicOrigin: origin,
     install: { install: `curl -fsSL ${hubUrl}/install.sh | bash`, setup: `uncage setup ${setupUrl}`, windows: null },
-    installScript: installScript(range),
+    installScripts,
     version: HUB_VERSION,
     sseHeartbeatMs: o.sseHeartbeatMs ?? DEFAULT_SSE_HEARTBEAT_MS,
     shutdown: shutdown.signal,

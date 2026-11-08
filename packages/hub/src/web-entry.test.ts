@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createHub, HUB_VERSION, normalizeWorkspacePath } from './hub.js';
 import { newNodeId, routedId, routeOf } from './ids.js';
-import { defaultCliRange } from './install-script.js';
+import { defaultCliRange } from './install/render.js';
 import { pgliteHubStore } from './node/index.js';
 import type { HubStore } from './store/store.js';
 import type { Hub, HubOptions } from './types.js';

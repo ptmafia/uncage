@@ -61,7 +61,8 @@ export interface ApiContext {
   /** Agents older than this are reported as `agentOutdated` in `MachineInfo`. */
   minAgentVersion: string;
   install: { install: string; setup: string; windows: null };
-  installScript: string;
+  /** Rendered installers (`install.ps1` arrives with Task P2; empty until then). */
+  installScripts: { sh: string; ps1: string };
   version: string;
   sseHeartbeatMs: number;
   shutdown: AbortSignal;
@@ -309,7 +310,7 @@ export function browserApi(ctx: ApiContext) {
 
   // ---- Machine side (no website session) -------------------------------------------------------
   add('GET', '/install.sh', async () =>
-    new Response(ctx.installScript, {
+    new Response(ctx.installScripts.sh, {
       headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-cache', 'x-content-type-options': 'nosniff' },
     }),
   { public: true });

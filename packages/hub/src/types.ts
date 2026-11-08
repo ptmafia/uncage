@@ -1,5 +1,6 @@
 import type { SkillSpec } from '@uncage/protocol';
 import type { ClusterAdapter } from './cluster/cluster.js';
+import type { InstallScriptExtension } from './install/render.js';
 import type { HubLogger, MachineHub } from './machines.js';
 import type { HubStore } from './store/store.js';
 import type { SiteTool } from './tools.js';
@@ -58,6 +59,12 @@ export interface HubOptions {
   minAgentVersion?: string;
   /** `install.sh` installs `@uncage/cli@<range>`. Defaults to `^<major.minor>` of this package. */
   cliVersionRange?: string;
+  /**
+   * Extends the installers served at `install.sh` (and `install.ps1`): a step run after the CLI
+   * install and/or your own "no agent found" help. Static text only, fixed when the hub starts
+   * (never request data); validated by `createHub`.
+   */
+  installScript?: InstallScriptExtension;
   /** Site identity sent to machines at pairing. Default id/name are derived from `publicUrl`'s host. */
   site?: { id?: string; name?: string };
   /** Page on the website where users approve a device code. Defaults to `/device`. */

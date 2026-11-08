@@ -1,7 +1,8 @@
 import { DeviceTokenResponseSchema, MachineInfoSchema, type MachineInfo, type Session, type UncageEvent } from '@uncage/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createHub } from './hub.js';
+import { createHub, HUB_VERSION } from './hub.js';
+import { defaultCliRange } from './install/render.js';
 import { CLOSE } from './node/ws.js';
 import { pgliteHubStore } from './node/index.js';
 import { sha256Hex } from './web.js';
@@ -19,6 +20,7 @@ import {
   type TestHub,
 } from './test-utils.js';
 import { defineTool } from './tools.js';
+import type { HubOptions } from './types.js';
 
 let th: TestHub | undefined;
 const agents: FakeAgent[] = [];
@@ -542,23 +544,39 @@ describe('browser API → machine', () => {
     expect(res.headers.get('content-type')).toContain('text/plain');
     const sh = await res.text();
     expect(sh.startsWith('#!/usr/bin/env bash')).toBe(true);
-    expect(sh).toContain('uname -s');
-    expect(sh).toContain('-lt 22');
-    expect(sh).toContain('command -v claude');
-    expect(sh).toContain('npm install -g "@uncage/cli@^0.2"');
-    expect(sh).toContain('uncage setup');
+    expect(sh.trimEnd().endsWith('main "$@"')).toBe(true);
+    expect(sh).toContain(`npm install -g "@uncage/cli@${defaultCliRange(HUB_VERSION)}"`);
+    expect(sh).toContain(`SITE_URL='${t.origin}'`);
+    expect(sh).toContain('uncage_msg_zh()');
+    expect(sh).not.toContain('@@');
   });
 
-  it('install.sh only varies by the version range; invalid ranges are refused', async () => {
-    const t = await start({ cliVersionRange: '~0.2.1' });
-    const a = await (await fetch(`${t.api}/install.sh`)).text();
+  it('install.sh varies only by range, site URL and extension; invalid ranges are refused', async () => {
     const store = await pgliteHubStore({ dataDir: 'memory://' });
-    const other = await createHub({ publicUrl: 'https://other.example', getUser: async () => null, store, cliVersionRange: '~0.2.1' });
-    const b = await (await other.fetch(new Request('https://other.example/api/uncage/install.sh'))).text();
-    expect(a).toBe(b);
-    await other.close();
-    await store.close();
+    const sh = async (o: Partial<HubOptions> & { publicUrl: string }) => {
+      const hub = await createHub({ getUser: async () => null, store, ...o });
+      try {
+        return await (await hub.fetch(new Request(`${o.publicUrl}${o.basePath ?? '/api/uncage'}/install.sh`))).text();
+      } finally {
+        await hub.close();
+      }
+    };
+    const a = await sh({ publicUrl: 'https://one.example', cliVersionRange: '~0.2.1' });
+    expect(await sh({ publicUrl: 'https://one.example', cliVersionRange: '~0.2.1', site: { id: 'x', name: 'X' }, minAgentVersion: '0.2.0' })).toBe(a);
+    const b = await sh({ publicUrl: 'https://two.example:8443', cliVersionRange: '^0.3' });
+    expect(b.replaceAll('https://two.example:8443', 'https://one.example').replaceAll('^0.3', '~0.2.1')).toBe(a);
+    // A custom basePath puts it in the setup URL.
+    expect(await sh({ publicUrl: 'https://one.example', basePath: '/hub', cliVersionRange: '~0.2.1' })).toContain("SITE_URL='https://one.example/hub'");
+    const ext = await sh({ publicUrl: 'https://one.example', cliVersionRange: '~0.2.1', installScript: { shAfterCli: 'echo EXTRA-STEP' } });
+    expect(ext).toContain('echo EXTRA-STEP');
+    const withoutExtension = (x: string) => x.replace(/# The website's own install step[^\n]*\nuncage_extension\(\) \{[\s\S]*?\n\}\n/, '');
+    expect(withoutExtension(ext)).toBe(withoutExtension(a));
     await expect(createHub({ publicUrl: 'https://x.example', getUser: async () => null, store, cliVersionRange: '1; rm -rf /' })).rejects.toThrow(/cliVersionRange/);
+    // Review Focus 10: a site URL that is not inert in a shell never reaches the script.
+    await expect(createHub({ publicUrl: 'http://lan.example:3000', getUser: async () => null, store })).rejects.toThrow(/site URL/);
+    await expect(createHub({ publicUrl: 'https://x.example', basePath: "/a'b", getUser: async () => null, store })).rejects.toThrow(/site URL/);
+    await expect(createHub({ publicUrl: 'https://x.example', getUser: async () => null, store, installScript: { shAfterCli: 'a\0b' } })).rejects.toThrow(/installScript\.shAfterCli/);
+    await store.close();
   });
 });
 
