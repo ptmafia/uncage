@@ -23,7 +23,7 @@ export interface TrustPoint {
   body: string;
 }
 
-type Six<T> = [T, T, T, T, T, T];
+type Seven<T> = [T, T, T, T, T, T, T];
 type Four<T> = [T, T, T, T];
 type Three<T> = [T, T, T];
 
@@ -108,7 +108,8 @@ export interface Dict {
     availableLabel: string;
     soonLabel: string;
     soonBadge: string;
-    available: Six<Feature>;
+    /** Six cards in a 3×2 grid, then the full-width “Any ACP agent” row. */
+    available: Seven<Feature>;
     soon: Four<Feature>;
   };
   code: {

@@ -37,7 +37,7 @@ localPolicy:
   allowBypass: false
 ```
 
-只有 `localPolicy` 是供手动编辑的。`uncage setup` 或 `uncage sites remove` 重写 `sites` 列表时，你的注释和 `localPolicy` 会被保留。未知的键会被拒绝，错误信息里会写出它们的名称。
+只有 `localPolicy` 和 `runtimes` 是供手动编辑的。`uncage setup` 或 `uncage sites remove` 重写 `sites` 列表时，你的注释、`localPolicy` 和 `runtimes` 会被保留。未知的键会被拒绝，错误信息里会写出它们的名称。
 
 ### `localPolicy.allowBypass`
 
@@ -61,6 +61,10 @@ localPolicy:
 ```
 
 模式：`default`、`acceptEdits`、`plan`、`auto`、`bypassPermissions`（最后一个还需要 `allowBypass: true`）。新会话从 `default` 开始，所以请把 `default` 留在列表里，除非你希望在用户选中允许的模式之前，每次运行都被拒绝。
+
+### `runtimes.acp`
+
+这台电脑在 Claude Code 和 Codex 之外还提供哪些 agent：Gemini CLI、OpenCode、Claude Code 的 ACP 适配器，或任何支持 Agent Client Protocol 的 agent。ACP registry 里需要下载代码的 agent（`npx`、`uvx`）只有在执行 `uncage runtimes enable <id>` 之后才会运行；`uncage runtimes` 会列出提供了哪些运行时。详见[使用任意 ACP agent](/docs/zh-cn/guides/use-any-acp-agent/)。
 
 ### 让修改生效
 

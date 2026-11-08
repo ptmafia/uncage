@@ -14,6 +14,10 @@ describe('ACP presets', () => {
     ]);
     for (const p of ACP_PRESETS) expect(p.installUrl).toMatch(/^https:\/\//);
   });
+
+  it('only the Claude Code preset is verified live (connected-acp-live); the others are protocol-compatible', () => {
+    expect(ACP_PRESETS.filter((p) => p.verifiedLive).map((p) => p.id)).toEqual(['claude']);
+  });
 });
 
 describe('resolveAcpAgents', () => {

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { isTranslatedId, stripMdx, toMarkdownLinks } from '../src/lib/markdown.ts';
+import { ACP_PRESETS } from '@uncage/runtime-acp';
 import { SITE_URL } from '../src/nav.mjs';
 
 describe('toMarkdownLinks', () => {
@@ -53,5 +54,28 @@ describe('isTranslatedId', () => {
   it('covers zh-cn and ja, not English or api', () => {
     for (const id of ['zh-cn/index', 'ja/start/x', 'ja', 'zh-cn']) expect(isTranslatedId(id)).toBe(true);
     for (const id of ['index', 'start/x', 'api/hub/index', 'jaws/x']) expect(isTranslatedId(id)).toBe(false);
+  });
+});
+
+describe('the ACP guide', () => {
+  it('the ACP guide documents every preset and the capability differences', () => {
+    const page = (loc: string) => readFileSync(new URL(`../src/content/docs/${loc}guides/use-any-acp-agent.md`, import.meta.url), 'utf8');
+    const en = page('');
+    for (const h of ['Configure', 'Presets', 'Differences from the native runtimes', 'Troubleshooting', 'Verify']) {
+      expect(en, `heading ${h}`).toMatch(new RegExp(`^## ${h}$`, 'm'));
+    }
+    for (const text of [en, page('zh-cn/'), page('ja/')]) {
+      for (const p of ACP_PRESETS) {
+        expect(text).toContain(`\`${p.id}\``);
+        expect(text).toContain(p.displayName);
+        expect(text).toContain(`\`${p.command.join(' ')}\``);
+      }
+      for (const field of ['presets', 'autoDetect', 'enable', 'consented', 'disable', 'agents', 'preset', 'displayName', 'command', 'env', 'mcp', 'enabled']) {
+        expect(text, `field ${field}`).toMatch(new RegExp(`^\\s*-?\\s*${field}:`, 'm'));
+      }
+      for (const term of ['skills', 'fs', 'terminal', 'allow_once', 'session/load', 'session/resume', 'not_installed', 'auth_required', 'uncage runtimes']) {
+        expect(text, term).toContain(term);
+      }
+    }
   });
 });

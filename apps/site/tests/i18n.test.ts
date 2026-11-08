@@ -96,3 +96,13 @@ describe.each(locales.filter((l) => l !== 'en') as Exclude<Locale, 'en'>[])('%s 
     expect(untranslated).toEqual([]);
   });
 });
+
+describe('features', () => {
+  it('every locale has the ACP feature card', () => {
+    const [en, zh, ja] = (['en', 'zh', 'ja'] as const).map((l) => getDict(l));
+    for (const d of [en!, zh!, ja!]) {
+      expect(d.features.available).toHaveLength(7);
+      expect(d.features.available[6].title).toMatch(/ACP/);
+    }
+  });
+});

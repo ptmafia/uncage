@@ -17,7 +17,9 @@ const adapter = acpAdapter({ id: 'acp-claude', displayName: 'Claude Code (ACP)',
 - If the agent cannot switch to the website's permission mode and would stay in a looser one, the run fails with `policy_denied`.
 - Thoughts, usage, commands and mode updates are not shown; a plan appears as one "Plan" step with a checklist.
 
-**Status: experimental.** Verified with a fake ACP agent (in `@uncage/testkit`); see the compatibility matrix for real agents.
+**Status:** verified live with Claude Code’s ACP adapter, `@agentclientprotocol/claude-agent-acp` 0.101.0 (streaming, approvals, site tools over HTTP MCP, `session/resume`, stop), and with a fake ACP agent (in `@uncage/testkit`) for the protocol contract. Gemini CLI and OpenCode are protocol-compatible but not verified live; see the [compatibility matrix](https://github.com/ptmafia/uncage/blob/main/docs/compatibility.md). Users configure agents in `runtimes.acp` of `~/.uncage/agent.yaml`: see [Use any ACP agent](https://uncage.vercel.app/docs/guides/use-any-acp-agent/).
+
+`pnpm --filter @uncage/runtime-acp smoke` drives the real Claude Code ACP adapter once outside the browser (spends a few tokens; needs a logged-in `claude` and `pnpm install` for the pinned adapter in `e2e/`).
 
 ---
 

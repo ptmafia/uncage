@@ -131,6 +131,10 @@ export const en: Dict = {
         title: 'Scales out',
         body: 'Postgres and Redis adapters run the hub on many nodes behind any load balancer.',
       },
+      {
+        title: 'Any ACP agent',
+        body: 'Gemini CLI, OpenCode, Claude Code’s ACP adapter: any agent that speaks the Agent Client Protocol shows up in the runtime picker.',
+      },
     ],
     soon: [
       {

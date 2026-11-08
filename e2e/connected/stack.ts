@@ -8,7 +8,7 @@
  * live run's Claude Code keeps its login.
  */
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { mkdirSync, mkdtempSync, openSync, rmSync, writeSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -186,9 +186,24 @@ export class Stack {
     return this.spawn('fake-agent', [join(repo, 'e2e/connected/fake-agent.ts')], { env: { UNCAGE_HOME: home }, marker: 'fake agent ready' });
   }
 
-  /** The real `uncage agent` (Claude Code + Codex adapters), foreground. HOME stays real. */
+  /**
+   * The real `uncage agent` (Claude Code + Codex adapters, plus `runtimes.acp`), foreground. HOME
+   * stays real. No daily ACP registry download (`UNCAGE_ACP_REGISTRY_REFRESH=0`).
+   */
   realAgent(home: string): Promise<Proc> {
-    return this.spawn('agent', [cliBin, 'agent'], { env: { UNCAGE_HOME: home, UNCAGE_LOG_LEVEL: 'info' } });
+    return this.spawn('agent', [cliBin, 'agent'], { env: { UNCAGE_HOME: home, UNCAGE_LOG_LEVEL: 'info', UNCAGE_ACP_REGISTRY_REFRESH: '0' } });
+  }
+
+  /**
+   * Adds `runtimes.acp` to `<home>/.uncage/agent.yaml` (written by `uncage setup`): exactly
+   * `agents`, no presets from PATH and no registry detection, so the run starts only these agents.
+   */
+  writeAcpRuntimes(home: string, agents: AcpTestAgent[]): void {
+    const file = join(home, '.uncage', 'agent.yaml');
+    if (/^runtimes:/m.test(readFileSync(file, 'utf8'))) throw new Error(`${file} already has runtimes`);
+    // JSON is valid YAML (flow style).
+    appendFileSync(file, `\nruntimes: ${JSON.stringify({ acp: { presets: 'off', autoDetect: false, agents } })}\n`);
+    this.log(`agent.yaml runtimes.acp: ${JSON.stringify(agents)}`);
   }
 
   async cleanup(): Promise<void> {
@@ -196,6 +211,16 @@ export class Stack {
     if (this.containers.length > 0) await execFileP('docker', ['rm', '-f', ...this.containers.splice(0)]).catch(() => undefined);
     for (const d of this.dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   }
+}
+
+/** One `runtimes.acp.agents[]` entry. */
+export interface AcpTestAgent {
+  id: string;
+  preset?: 'claude' | 'gemini' | 'opencode';
+  displayName?: string;
+  command?: string[];
+  env?: Record<string, string>;
+  mcp?: 'auto' | 'http' | 'stdio' | 'off';
 }
 
 export async function until(fn: () => Promise<boolean>, timeoutMs: number, what: string): Promise<void> {

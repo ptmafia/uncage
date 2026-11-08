@@ -24,7 +24,8 @@ export const ACP_PRESETS: readonly AcpPreset[] = [
     command: ['claude-agent-acp'],
     installHint: 'npm i -g @agentclientprotocol/claude-agent-acp',
     installUrl: 'https://github.com/agentclientprotocol/claude-agent-acp',
-    verifiedLive: false,
+    // claude-agent-acp 0.101.0, 2026-11-08 (e2e project connected-acp-live, scripts/smoke.ts).
+    verifiedLive: true,
     registryId: 'claude-acp',
   },
   {

@@ -140,6 +140,10 @@ export const ja: Dict = {
         title: 'スケールアウト',
         body: 'PostgresとRedisのアダプターで、ハブを任意のロードバランサー配下の複数ノードで動かせます。',
       },
+      {
+        title: 'あらゆるACP エージェント',
+        body: 'Gemini CLI、OpenCode、Claude CodeのACPアダプターなど、Agent Client Protocolに対応したエージェントならどれでもランタイムの選択肢に表示されます。',
+      },
     ],
     soon: [
       {

@@ -45,6 +45,7 @@ export const sections = [
       'guides/multi-node',
       'guides/custom-ui',
       'guides/local-policy',
+      'guides/use-any-acp-agent',
       'guides/ci-and-releases',
     ],
   },

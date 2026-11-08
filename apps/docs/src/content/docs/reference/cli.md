@@ -45,6 +45,24 @@ uncage sites remove <id>     # disconnect a website
 
 `remove` revokes this computer on the website (`POST <hub>/machine/revoke` with its own token), removes the token from `agent.yaml` and restarts the background agent. Local session data (`~/.uncage/sites/<id>`) and workspaces (`~/Uncage/…`) are kept.
 
+### `uncage runtimes`
+
+```text
+uncage runtimes [--json] [--all] [--refresh]   # ID, NAME, STATUS, VERSION, SITE TOOLS, RESUME
+uncage runtimes enable <id>                    # register an ACP registry agent (consent for npx/uvx)
+uncage runtimes disable <id>                   # never register an ACP agent
+```
+
+Lists the runtimes `uncage agent` offers to websites: Claude Code, Codex and the ACP agents from `runtimes.acp` in `~/.uncage/agent.yaml` (presets, your own entries and agents detected from the ACP registry), with their status and whether they support site tools and resume. Then it lists ACP registry agents that are not registered and why.
+
+| Flag | |
+| --- | --- |
+| `--json` | `{ runtimes, registry }` as JSON |
+| `--all` | Also list registry agents that are not installed here |
+| `--refresh` | Download the latest ACP registry first (otherwise the cached or bundled copy) |
+
+`enable` prints exactly what will run and records your consent in `runtimes.acp.enable` / `consented`; agents distributed through `npx` or `uvx` never run without it. `disable` adds the id to `runtimes.acp.disable`. Both restart the background agent. See [Use any ACP agent](/docs/guides/use-any-acp-agent/).
+
 ### `uncage activity`
 
 ```text
@@ -85,7 +103,7 @@ uncage doctor [--port <n> | --url <url>] [--workspace <dir>] [--data-dir <dir>] 
 uncage doctor --export-events <sessionId> [--out <file>] [--include-content] [--port <n> | --url <url>]
 ```
 
-Checks Node, the data dir, the token, the running daemon and the runtimes (Claude Code, Codex). Every line is ✓ or ✗, and every ✗ prints a `fix:` command. It warns (`!`, non-fatal) when the daemon’s workspace is a git repository that does not ignore `.uncage/`, and before sending the token to a non-loopback URL.
+Checks Node, the data dir, the token, the running daemon and the runtimes (Claude Code, Codex, and one `runtime.acp-<id>` row per ACP agent, configured in `runtimes.acp` of `uncage.config.yaml` or detected). Every line is ✓ or ✗, and every ✗ prints a `fix:` command. ACP rows are optional: a ✗ there (for example not installed, with its install hint as the fix) does not change the exit code. Every ACP agent that `uncage.config.yaml` adds with its own `command` also gets a warning row showing the command it runs. It warns (`!`, non-fatal) when the daemon’s workspace is a git repository that does not ignore `.uncage/`, and before sending the token to a non-loopback URL.
 
 `--export-events` writes a session’s events as JSON for a bug report; content is redacted unless `--include-content`.
 
@@ -97,6 +115,7 @@ The daemon is found via `--url`, `--port`, `UNCAGE_URL`, `UNCAGE_PORT`, `uncage.
 | --- | --- | --- |
 | `UNCAGE_HOME` | Connected Mode commands | Absolute path that replaces `~` for `~/.uncage` and `~/Uncage` (development and tests). `uncage setup` refuses it unless `--no-daemon`. `HOME` is unchanged, so Claude Code keeps its login. |
 | `UNCAGE_LOG_LEVEL` | `serve`, `agent` | Log level, e.g. `debug` |
+| `UNCAGE_ACP_REGISTRY_REFRESH=0` | `agent` | No daily download of the ACP registry (the cached or bundled copy is used) |
 | `UNCAGE_PORT` | `serve`, `doctor` | Daemon port |
 | `UNCAGE_URL` | `doctor`, the Local Mode proxy | Daemon URL (default `http://127.0.0.1:4783`) |
 | `UNCAGE_ALLOW_BYPASS=1` | `serve` | Offer `bypassPermissions` in Local Mode (prints a warning) |

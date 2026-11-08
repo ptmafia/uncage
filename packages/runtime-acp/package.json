@@ -25,7 +25,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "registry:snapshot": "tsup && node scripts/snapshot-registry.mjs"
+    "registry:snapshot": "tsup && node scripts/snapshot-registry.mjs",
+    "smoke": "tsup && node scripts/smoke.ts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "2.4.0",
