@@ -4,7 +4,7 @@ import { defineConfig } from 'astro/config';
 import mermaid from 'astro-mermaid';
 import starlightLinksValidator from 'starlight-links-validator';
 import { createStarlightTypeDocPlugin } from 'starlight-typedoc';
-import { sections } from './src/nav.mjs';
+import { SITE_ORIGIN, sections } from './src/nav.mjs';
 
 /**
  * Public packages documented in the generated API reference (typedoc → markdown at build time,
@@ -53,7 +53,7 @@ const apiPlugins = apiPackages.map((p) => {
 });
 
 export default defineConfig({
-  site: process.env.SITE_URL ?? 'https://uncage.vercel.app',
+  site: SITE_ORIGIN,
   base: '/docs',
   trailingSlash: 'ignore',
   // Mermaid's renderer is one large client chunk, loaded only on pages with diagrams.

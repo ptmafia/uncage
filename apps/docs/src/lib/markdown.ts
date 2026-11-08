@@ -5,7 +5,7 @@
  * the `.md` version of the target page).
  */
 import type { CollectionEntry } from 'astro:content';
-import { SITE_URL } from '../nav.mjs';
+import { SITE_URL, translatedLocales } from '../nav.mjs';
 
 export type DocsEntry = CollectionEntry<'docs'>;
 
@@ -34,9 +34,9 @@ export function toMarkdownLinks(body: string): string {
 /** MDX pages (imports, `<Image>`, components) become plain markdown: screenshots turn into their alt text. */
 export function stripMdx(body: string): string {
   return body
-    .replace(/^import .*$\n?/gm, '')
-    .replace(/<Image\b[^>]*?\balt="([^"]*)"[^>]*?\/>/g, '*(Screenshot: $1)*')
-    .replace(/^<[A-Z]\w*\s*\/>\s*$\n?/gm, '')
+    .replace(/^import\s[^;]*?;?[ \t]*$\n?/gm, '') // single- and multi-line imports
+    .replace(/<Image\b[^>]*?\balt=(?:"([^"]*)"|'([^']*)'|\{\s*(?:"([^"]*)"|'([^']*)'|`([^`]*)`)\s*\})[^>]*?\/>/gs, (_m, ...g) => `*(Screenshot: ${g.slice(0, 5).find((x) => x) ?? ''})*`)
+    .replace(/^[ \t]*<[A-Z][\w.]*(?:\s[^>]*)?\/>[ \t]*$\n?/gms, '') // self-closing components, with props
     .replace(/\n{3,}/g, '\n\n')
     .replace(/^\n+/, '');
 }
@@ -50,4 +50,5 @@ export function toMarkdown(entry: DocsEntry): string {
 }
 
 export const isApiPage = (entry: DocsEntry): boolean => entry.id.startsWith('api/');
-export const isZhPage = (entry: DocsEntry): boolean => entry.id.startsWith('zh-cn/');
+export const isTranslatedId = (id: string): boolean => translatedLocales.some((l) => id === l || id.startsWith(`${l}/`));
+export const isTranslatedPage = (entry: DocsEntry): boolean => isTranslatedId(entry.id);

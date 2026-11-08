@@ -3,7 +3,11 @@
  * The site's reading order: the sidebar (astro.config.mjs) and /llms.txt + /llms-full.txt are built
  * from this one list, so agents read the pages in the same order people do.
  */
-export const SITE_URL = `${process.env.SITE_URL ?? 'https://uncage.vercel.app'}/docs`;
+export const SITE_ORIGIN = process.env.SITE_URL ?? 'https://uncage.vercel.app';
+export const SITE_URL = `${SITE_ORIGIN}/docs`;
+
+/** Locale directories of the translated pages (English is the root). */
+export const translatedLocales = ['zh-cn', 'ja'];
 
 /**
  * Pages that exist in English only (generated or release-process content). zh-cn and ja fall back to
