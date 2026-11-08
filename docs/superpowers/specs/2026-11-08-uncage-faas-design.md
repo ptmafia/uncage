@@ -55,7 +55,7 @@
 ## 5. 设计（我方判断，实现者可调整细节但不改方向）
 
 ### 5.1 核心：hub 只依赖 Web 标准
-- hub 核心只用 Web 标准 API（`Request`/`Response`/`ReadableStream`/`crypto.getRandomValues`/`crypto.subtle`/`TextEncoder`），去掉核心路径上的 `node:crypto`、`node:path`、`node:http`、`ws`。Node 专有部分（WebSocket 服务器、`toNodeHandler`、PGlite）移到可选子路径导出，例如 `@uncage/hub/node`、`@uncage/hub/pglite`，核心入口在 workerd/Edge 打包时不会引入 Node 内置模块。
+- hub 核心只用 Web 标准 API（`Request`/`Response`/`ReadableStream`/`crypto.getRandomValues`/`crypto.subtle`/`TextEncoder`），去掉核心路径上的 `node:crypto`、`node:path`、`node:http`、`ws`。Node 专有部分（WebSocket 服务器、`toNodeHandler`、PGlite）移到子路径 `@uncage/hub/node`（见 5.9），根入口在 workerd/Edge 打包时不会引入 Node 内置模块。
 - `hub.fetch(request): Promise<Response>` 是唯一必需的挂载点（已有的 browser API 本就是 Fetch 风格）；`toNodeHandler(hub)` + `hub.attach(server)` 保留给传统模式。
 
 ### 5.2 传输：两种，自动协商
