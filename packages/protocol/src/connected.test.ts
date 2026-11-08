@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CONNECTED_PROTOCOL, ERROR_CATALOG, MAX_FRAME_BYTES, ProtocolFrameError, SessionManifestSchema,
+  CONNECTED_PROTOCOL, MIN_AGENT_VERSION, AgentInfoSchema, MachineInfoSchema, TransportOfferSchema, ERROR_CATALOG, MAX_FRAME_BYTES, ProtocolFrameError, SessionManifestSchema,
   SkillSpecSchema, ToolSpecSchema, RelativePathSchema, DeviceCodeResponseSchema, parseAgentFrame, parseHubFrame,
   HubCommandArgsSchemas, HubCommandOpSchema, DeviceCodeRequestSchema, DeviceTokenResponseSchema, HubCommandResultSchemas, MAX_READ_EVENTS, FILE_CHUNK_BYTES, MAX_ATTACHMENT_TRANSFER_BYTES,
 } from './index.js';
 
 const err = { code: 'tool_failed', message: 'x', retryable: true };
 const agentFrames = [
-  { t: 'hello', protocol: 1, agentVersion: '0.2.0', machine: { name: 'mac', os: 'darwin', runtimes: [{ id: 'claude-code', displayName: 'CC', status: 'available' }] } },
+  { t: 'hello', protocol: 2, agentVersion: '0.3.0', transport: 'ws', machine: { name: 'mac', os: 'darwin', runtimes: [{ id: 'claude-code', displayName: 'CC', status: 'available' }] } },
   { t: 'result', id: '1', ok: true, data: { a: 1 } },
   { t: 'result', id: '1', ok: false, error: err },
   { t: 'events', sessionId: 's', events: [] },
@@ -18,8 +18,8 @@ const agentFrames = [
   { t: 'pong', at: 1 },
 ];
 const hubFrames = [
-  { t: 'welcome', machineId: 'm', protocol: 1, minAgentVersion: '0.2.0' },
-  { t: 'upgrade_required', minAgentVersion: '0.2.0' },
+  { t: 'welcome', machineId: 'm', protocol: 2, minAgentVersion: '0.3.0' },
+  { t: 'upgrade_required', minAgentVersion: '0.3.0' },
   { t: 'command', id: '1', op: 'startRun', args: {} },
   { t: 'ack', sessionId: 's', sequence: 3 },
   { t: 'tool_result', id: '1', ok: true, result: { content: [{ type: 'text', text: 'hi' }, { type: 'json', json: [1] }] } },
@@ -34,8 +34,16 @@ const hubFrames = [
 
 describe('connected frames', () => {
   it('has constants', () => {
-    expect(CONNECTED_PROTOCOL).toBe(1);
+    expect(CONNECTED_PROTOCOL).toBe(2);
+    expect(MIN_AGENT_VERSION).toBe('0.3.0');
     expect(MAX_FRAME_BYTES).toBe(1_048_576);
+  });
+  it('hello requires a transport', () => {
+    const noTransport: Record<string, unknown> = { ...agentFrames[0] };
+    delete noTransport.transport;
+    expect(() => parseAgentFrame(JSON.stringify(noTransport))).toThrow(ProtocolFrameError);
+    expect(() => parseAgentFrame(JSON.stringify({ ...agentFrames[0], transport: 'smoke' }))).toThrow(ProtocolFrameError);
+    expect(parseAgentFrame(JSON.stringify({ ...agentFrames[0], transport: 'http' }))).toMatchObject({ transport: 'http' });
   });
   it.each(agentFrames)('agent frame round-trips: $t', (f) => {
     expect(parseAgentFrame(JSON.stringify(f))).toEqual(f);
@@ -200,5 +208,30 @@ describe('device login bodies', () => {
   });
   it('token response has slow_down', () => {
     expect(DeviceTokenResponseSchema.parse({ status: 'slow_down' })).toEqual({ status: 'slow_down' });
+  });
+  it('ok token response requires at least one transport offer', () => {
+    const ok = { status: 'ok', machineId: 'm', machineToken: 't', site: { id: 's', name: 's', url: 'https://x/api/uncage' } };
+    expect(DeviceTokenResponseSchema.safeParse(ok).success).toBe(false);
+    expect(DeviceTokenResponseSchema.safeParse({ ...ok, transports: [] }).success).toBe(false);
+    expect(DeviceTokenResponseSchema.safeParse({ ...ok, transports: [{ kind: 'ws', url: 'wss://x/api/uncage/agent' }] }).success).toBe(true);
+  });
+});
+
+describe('transport negotiation', () => {
+  const ws = { kind: 'ws', url: 'wss://x/api/uncage/agent' };
+  const http = { kind: 'http', url: 'https://x/api/uncage/agent' };
+  it('transport offer kind is ws or http', () => {
+    expect(TransportOfferSchema.safeParse(http).success).toBe(true);
+    expect(TransportOfferSchema.safeParse({ kind: 'sse', url: 'https://x' }).success).toBe(false);
+  });
+  it('agent info needs at least one transport', () => {
+    expect(AgentInfoSchema.parse({ protocol: 2, minAgentVersion: '0.3.0', transports: [ws, http] }).transports).toHaveLength(2);
+    expect(AgentInfoSchema.safeParse({ protocol: 2, minAgentVersion: '0.3.0', transports: [] }).success).toBe(false);
+  });
+  it('machine info carries agentOutdated and a nullable transport', () => {
+    const m = { id: 'm', name: 'mac', os: 'darwin', agentVersion: '0.3.0', runtimes: [], online: false, lastSeenAt: '2026-11-08T00:00:00.000Z' };
+    expect(MachineInfoSchema.safeParse(m).success).toBe(false);
+    expect(MachineInfoSchema.safeParse({ ...m, agentOutdated: false, transport: null }).success).toBe(true);
+    expect(MachineInfoSchema.safeParse({ ...m, agentOutdated: true, transport: 'http' }).success).toBe(true);
   });
 });

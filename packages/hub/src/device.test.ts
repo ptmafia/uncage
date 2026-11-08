@@ -36,6 +36,7 @@ describe('deviceFlow', () => {
       store,
       verificationUri: 'https://app.example.com/device',
       site: { id: 'app.example.com', name: 'app.example.com', url: 'https://app.example.com/api/uncage' },
+      transports: [{ kind: 'ws', url: 'wss://app.example.com/api/uncage/agent' }],
       async createMachine(o) {
         created.push(o);
         return { machineId: `mch_${created.length}`, machineToken: `tok_${created.length}` };
@@ -68,7 +69,7 @@ describe('deviceFlow', () => {
     expect(await f.lookup(code.userCode, { id: 'alice' })).toBeNull();
     now += 2000;
     const ok = await f.poll(code.deviceCode);
-    expect(ok).toMatchObject({ status: 'ok', machineId: 'mch_1', machineToken: 'tok_1', site: { id: 'app.example.com' } });
+    expect(ok).toMatchObject({ status: 'ok', machineId: 'mch_1', machineToken: 'tok_1', site: { id: 'app.example.com' }, transports: [{ kind: 'ws', url: 'wss://app.example.com/api/uncage/agent' }] });
     expect(created).toEqual([{ userId: 'alice', name: 'Nathan’s MacBook', os: 'darwin' }]);
     // The token is issued exactly once.
     now += 2000;

@@ -19,7 +19,7 @@ async function fakeHub() {
   const wss = new WebSocketServer({ server, path: '/api/uncage/agent' });
   const conns: Array<{ ws: WebSocket; frames: AgentFrame[]; auth?: string }> = [];
   let onHello: (ws: WebSocket) => void = (ws) =>
-    ws.send(JSON.stringify({ t: 'welcome', machineId: 'mch_1', protocol: 1, minAgentVersion: '0.0.0' } satisfies HubFrame));
+    ws.send(JSON.stringify({ t: 'welcome', machineId: 'mch_1', protocol: 2, minAgentVersion: '0.0.0' } satisfies HubFrame));
   wss.on('connection', (ws, req) => {
     const c = { ws, frames: [] as AgentFrame[], ...(req.headers.authorization ? { auth: req.headers.authorization } : {}) };
     conns.push(c);
@@ -88,7 +88,7 @@ describe('agent ↔ fake hub (protocol edges)', () => {
   it('authenticates with the bearer token, says hello, and answers pings', async () => {
     const { hub } = await setup();
     expect(hub.last().auth).toBe('Bearer tok_secret');
-    expect(hub.framesOf('hello')[0]).toMatchObject({ protocol: 1, machine: { runtimes: [{ id: 'fake' }] } });
+    expect(hub.framesOf('hello')[0]).toMatchObject({ protocol: 2, transport: 'ws', machine: { runtimes: [{ id: 'fake' }] } });
     hub.send({ t: 'ping', at: 42 });
     await until(() => hub.framesOf('pong').find((f) => f.at === 42));
   });
@@ -170,7 +170,7 @@ describe('agent ↔ fake hub (protocol edges)', () => {
     const hub = await fakeHub();
     cleanups.push(hub.close);
     hub.setOnHello((ws) => {
-      ws.send(JSON.stringify({ t: 'welcome', machineId: 'm', protocol: 1, minAgentVersion: '0.0.0' } satisfies HubFrame));
+      ws.send(JSON.stringify({ t: 'welcome', machineId: 'm', protocol: 2, minAgentVersion: '0.0.0' } satisfies HubFrame));
       setTimeout(() => ws.close(1011, 'flaky'), 5);
     });
     const { home, cleanup } = await tmpHome();

@@ -196,14 +196,14 @@ describe('device flow client', () => {
 
   it('honours slow_down (+5 s) and keeps polling on pending', async () => {
     const waits: number[] = [];
-    const { f } = scripted([{ status: 'pending' }, { status: 'slow_down' }, { status: 'ok', machineId: 'm', machineToken: 't', site: { id: 's', name: 's', url: 'https://x/api/uncage' } }]);
+    const { f } = scripted([{ status: 'pending' }, { status: 'slow_down' }, { status: 'ok', machineId: 'm', machineToken: 't', site: { id: 's', name: 's', url: 'https://x/api/uncage' }, transports: [{ kind: 'ws', url: 'wss://x/api/uncage/agent' }] }]);
     const g = await pollDeviceToken({ fetch: f, hubUrl: 'https://x/api/uncage', code, sleep: async (ms) => void waits.push(ms) });
     expect(g.machineId).toBe('m');
     expect(waits).toEqual([2000, 2000, 7000]);
   });
 
   it('clamps the hub\'s timing: interval 1..60 s (slow_down included), expiry at most 30 min', async () => {
-    const ok = { status: 'ok', machineId: 'm', machineToken: 't', site: { id: 's', name: 's', url: 'https://x/api/uncage' } };
+    const ok = { status: 'ok', machineId: 'm', machineToken: 't', site: { id: 's', name: 's', url: 'https://x/api/uncage' }, transports: [{ kind: 'ws', url: 'wss://x/api/uncage/agent' }] };
     const run = async (c: Partial<DeviceCodeResponse>, statuses: unknown[]) => {
       const waits: number[] = [];
       let t = 0;

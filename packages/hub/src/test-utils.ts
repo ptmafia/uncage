@@ -213,6 +213,7 @@ export async function connectFakeAgent(o: {
     t: 'hello',
     protocol: o.protocol ?? CONNECTED_PROTOCOL,
     agentVersion: o.agentVersion ?? '99.0.0',
+    transport: 'ws',
     machine: { name: o.name ?? 'Test Mac', os: o.os ?? 'darwin', runtimes: o.runtimes ?? [FAKE_RUNTIME] },
   });
   if (o.waitWelcome ?? true) await agent.waitFor((f) => f.t === 'welcome');

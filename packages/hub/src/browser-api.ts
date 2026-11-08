@@ -27,7 +27,7 @@ import { downloadHeaders } from '@uncage/server/wire';
 import { z } from 'zod';
 import type { ClusterAdapter } from './cluster/cluster.js';
 import { sha256, type DeviceFlow } from './device.js';
-import { sessionChannel, type MachineHub } from './machines.js';
+import { compareVersions, sessionChannel, type MachineHub } from './machines.js';
 import { toSessionSnapshot } from './replica.js';
 import { eventStreamResponse, readHistory, type EventSource } from './sse.js';
 import type { HubStore, MachineRecord, ResourceKind, SessionRecord } from './store/store.js';
@@ -58,6 +58,8 @@ export interface ApiContext {
   skills: Map<string, SkillSpec>;
   sessionStorage: 'machine' | 'site';
   publicOrigin: string;
+  /** Agents older than this are reported as `agentOutdated` in `MachineInfo`. */
+  minAgentVersion: string;
   install: { install: string; setup: string; windows: null };
   installScript: string;
   version: string;
@@ -207,15 +209,22 @@ export function browserApi(ctx: ApiContext) {
     throw new UncageError('machine_offline');
   }
 
-  const toMachineInfo = async (m: MachineRecord): Promise<MachineInfo> => ({
-    id: m.id,
-    name: m.name,
-    os: m.os,
-    agentVersion: m.agentVersion,
-    runtimes: m.runtimes,
-    online: await machines.isOnline(m.id),
-    lastSeenAt: m.lastSeenAt,
-  });
+  const toMachineInfo = async (m: MachineRecord): Promise<MachineInfo> => {
+    const online = await machines.isOnline(m.id);
+    return {
+      id: m.id,
+      name: m.name,
+      os: m.os,
+      agentVersion: m.agentVersion,
+      runtimes: m.runtimes,
+      online,
+      lastSeenAt: m.lastSeenAt,
+      // '0.0.0' is the placeholder of a machine that paired but never said hello.
+      agentOutdated: m.agentVersion !== '0.0.0' && compareVersions(m.agentVersion, ctx.minAgentVersion) < 0,
+      // Only the WebSocket link exists so far; the HTTP link reports 'http' once it lands.
+      transport: online ? 'ws' : null,
+    };
+  };
 
   async function snapshotOf(rec: SessionRecord): Promise<SessionSnapshot> {
     const snap = (site ? toSessionSnapshot(rec.snapshot) : null) ?? (await machines.command(rec.machineId, 'snapshot', { sessionId: rec.id }));

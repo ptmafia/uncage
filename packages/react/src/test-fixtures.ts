@@ -98,10 +98,12 @@ export const machine = (over: Partial<MachineInfo> = {}): MachineInfo => ({
   id: 'mac_1',
   name: 'MacBook',
   os: 'darwin',
-  agentVersion: '0.2.0',
+  agentVersion: '0.3.0',
   runtimes: [],
   online: true,
   lastSeenAt: T0,
+  agentOutdated: false,
+  transport: 'ws',
   ...over,
 });
 

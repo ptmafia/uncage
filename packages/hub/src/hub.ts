@@ -129,6 +129,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     store,
     verificationUri: `${origin}/${trimSlashes(o.verificationPath ?? '/device')}`,
     site,
+    transports: [{ kind: 'ws', url: `${hubUrl.replace(/^http/, 'ws')}/agent` }],
     async createMachine({ userId, name, os, machineKeyHash }) {
       const machineToken = randomSecret();
       const now = new Date().toISOString();
@@ -414,6 +415,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   const setupUrl = basePath === DEFAULT_BASE_PATH ? origin : hubUrl;
   const api = browserApi({
     store,
+    minAgentVersion,
     cluster,
     machines,
     device,

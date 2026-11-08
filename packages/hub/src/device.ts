@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomInt } from 'node:crypto';
-import type { DeviceCodeRequest, DeviceCodeResponse, DeviceTokenResponse } from '@uncage/protocol';
+import type { DeviceCodeRequest, DeviceCodeResponse, DeviceTokenResponse, TransportOffer } from '@uncage/protocol';
 import type { SlidingWindow } from './rate-limit.js';
 import type { HubStore } from './store/store.js';
 import type { HubUser } from './types.js';
@@ -32,6 +32,8 @@ export interface DeviceFlowDeps {
   store: HubStore;
   verificationUri: string;
   site: { id: string; name: string; url: string };
+  /** Transports handed to the agent with its token (at least one). */
+  transports: [TransportOffer, ...TransportOffer[]];
   /**
    * Creates (or, for a known `machineKeyHash`, re-pairs) the machine for an approved code;
    * resolves its id and (one-time) token.
@@ -170,7 +172,7 @@ export function deviceFlow(d: DeviceFlowDeps) {
         ...(won.os ? { os: won.os } : {}),
         ...(won.machineKeyHash ? { machineKeyHash: won.machineKeyHash } : {}),
       });
-      return { status: 'ok', machineId: m.machineId, machineToken: m.machineToken, site: d.site };
+      return { status: 'ok', machineId: m.machineId, machineToken: m.machineToken, site: d.site, transports: d.transports };
     },
 
     approve: (userCode: string, user: HubUser) => decide(userCode, user, 'approved'),

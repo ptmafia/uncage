@@ -1,13 +1,32 @@
 import { z } from 'zod';
 import { SessionSnapshotSchema, StartRunBodySchema, UpdateSessionSettingsBodySchema } from './api.js';
 import { ApprovalDecisionSchema, ApprovalRequestSchema, AttachmentSchema, RunSchema, RuntimeInfoSchema, SessionSchema } from './domain.js';
-import { ErrorBodySchema, type ErrorCode } from './errors.js';
+import { ErrorBodySchema } from './errors.js';
+import { parseFrame } from './frame-parse.js';
 import { UncageEventSchema } from './events.js';
 
+export { MAX_FRAME_BYTES, ProtocolFrameError } from './frame-parse.js';
+
 /** Connected-mode wire protocol version. */
-export const CONNECTED_PROTOCOL = 1;
-/** Maximum size of a single hub/agent frame, in UTF-8 bytes. */
-export const MAX_FRAME_BYTES = 1_048_576;
+export const CONNECTED_PROTOCOL = 2;
+/** Oldest agent a hub accepts by default (`minAgentVersion`). */
+export const MIN_AGENT_VERSION = '0.3.0';
+
+/** How a machine is linked to the hub: WebSocket (traditional mode) or resumable HTTP streaming (FaaS mode). */
+export const TransportKindSchema = z.enum(['ws', 'http']);
+export type TransportKind = z.infer<typeof TransportKindSchema>;
+
+/** A transport the hub offers. `url` is `ws(s)://` for `ws` and `http(s)://` for `http`. */
+export const TransportOfferSchema = z.object({ kind: TransportKindSchema, url: z.string() });
+export type TransportOffer = z.infer<typeof TransportOfferSchema>;
+
+/** What the hub tells agents about itself: protocol, oldest accepted agent, and the transports it serves. */
+export const AgentInfoSchema = z.object({
+  protocol: z.number().int(),
+  minAgentVersion: z.string(),
+  transports: z.array(TransportOfferSchema).min(1),
+});
+export type AgentInfo = z.infer<typeof AgentInfoSchema>;
 
 export const MachineInfoSchema = z.object({
   id: z.string(),
@@ -17,6 +36,10 @@ export const MachineInfoSchema = z.object({
   runtimes: z.array(RuntimeInfoSchema),
   online: z.boolean(),
   lastSeenAt: z.string(),
+  /** The machine's agent is older than the hub's `minAgentVersion`: the website should ask the user to upgrade. */
+  agentOutdated: z.boolean(),
+  /** Transport of the live link, `null` while offline. */
+  transport: TransportKindSchema.nullable(),
 });
 export type MachineInfo = z.infer<typeof MachineInfoSchema>;
 
@@ -178,6 +201,7 @@ export const AgentFrameSchema = z.discriminatedUnion('t', [
     t: z.literal('hello'),
     protocol: z.number().int().positive(),
     agentVersion: z.string(),
+    transport: TransportKindSchema,
     machine: z.object({ name: z.string(), os: z.string(), runtimes: z.array(RuntimeInfoSchema) }),
   }),
   z.discriminatedUnion('ok', [
@@ -300,64 +324,11 @@ export const DeviceTokenResponseSchema = z.discriminatedUnion('status', [
     machineId: z.string(),
     machineToken: z.string(),
     site: z.object({ id: z.string(), name: z.string(), url: z.string() }),
+    /** Transports this hub serves; the agent prefers `ws` and falls back to `http`. */
+    transports: z.array(TransportOfferSchema).min(1),
   }),
 ]);
 export type DeviceTokenResponse = z.infer<typeof DeviceTokenResponseSchema>;
-
-/**
- * Thrown by `parseAgentFrame` / `parseHubFrame` on any malformed frame
- * (oversized, not JSON, unknown `t`, bad shape). `code` is always `invalid_request`.
- */
-export class ProtocolFrameError extends Error {
-  readonly code: ErrorCode = 'invalid_request';
-  constructor(message: string) {
-    super(message);
-    this.name = 'ProtocolFrameError';
-  }
-}
-
-const MAX_DEPTH = 64;
-const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-
-/** Bracket-depth scan (string-aware) so deep nesting is rejected before JSON.parse recurses. */
-function exceedsDepth(raw: string): boolean {
-  let depth = 0;
-  let inStr = false;
-  for (let i = 0; i < raw.length; i++) {
-    const c = raw[i];
-    if (inStr) {
-      if (c === '\\') i++;
-      else if (c === '"') inStr = false;
-    } else if (c === '"') inStr = true;
-    else if (c === '{' || c === '[') {
-      if (++depth > MAX_DEPTH) return true;
-    } else if (c === '}' || c === ']') depth--;
-  }
-  return false;
-}
-
-const clip = (v: string): string => (v.length > 64 ? `${v.slice(0, 64)}...` : v);
-
-function parseFrame<T>(raw: string, schema: z.ZodType<T>, kind: string): T {
-  if (typeof raw !== 'string') throw new ProtocolFrameError(`${kind} frame must be a string`);
-  // Cheap bound first (a UTF-8 char is at most 3 bytes per UTF-16 unit), exact count only if needed.
-  if (raw.length * 3 > MAX_FRAME_BYTES && new TextEncoder().encode(raw).byteLength > MAX_FRAME_BYTES) {
-    throw new ProtocolFrameError(`${kind} frame too large (max ${MAX_FRAME_BYTES} bytes)`);
-  }
-  if (exceedsDepth(raw)) throw new ProtocolFrameError(`${kind} frame nested too deeply (max ${MAX_DEPTH})`);
-  let json: unknown;
-  try {
-    json = JSON.parse(raw, (k, v: unknown) => (FORBIDDEN_KEYS.has(k) ? undefined : v));
-  } catch {
-    throw new ProtocolFrameError(`${kind} frame is not valid JSON`);
-  }
-  const res = schema.safeParse(json);
-  if (!res.success) {
-    const t = typeof json === 'object' && json !== null ? (json as { t?: unknown }).t : undefined;
-    throw new ProtocolFrameError(`invalid ${kind} frame${typeof t === 'string' ? ` "${clip(t)}"` : ''}: ${clip(res.error.issues[0]?.message ?? 'bad shape')}`);
-  }
-  return res.data;
-}
 
 /** Parse a raw agent→hub frame. Throws `ProtocolFrameError` (`code: 'invalid_request'`). */
 export function parseAgentFrame(raw: string): AgentFrame {

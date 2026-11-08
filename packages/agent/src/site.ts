@@ -403,6 +403,7 @@ export class SiteAgent {
       t: 'hello',
       protocol: CONNECTED_PROTOCOL,
       agentVersion: this.o.agentVersion,
+      transport: 'ws',
       machine: { name: this.o.machine.name, os: this.o.machine.os, runtimes },
     });
   }

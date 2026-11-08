@@ -59,6 +59,7 @@ describe('device login over HTTP', () => {
     if (ok.status !== 'ok') throw new Error('expected ok');
     expect(ok.machineToken).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 bytes base64url
     expect(ok.site).toEqual({ id: '127.0.0.1-' + new URL(t.origin).port, name: '127.0.0.1', url: t.api });
+    expect(ok.transports).toEqual([{ kind: 'ws', url: t.wsUrl }]);
     const m = await t.store.getMachine(ok.machineId);
     expect(m?.userId).toBe('alice');
     expect(m?.tokenHash).toBe(sha256(ok.machineToken));
@@ -96,21 +97,32 @@ describe('machine connections', () => {
     const { machineId, machineToken } = await t.pair('alice', { name: 'Pending name' });
     expect((await machinesOf(t, 'alice'))[0]).toMatchObject({ id: machineId, online: false });
     const a = await connect({ url: t.wsUrl, token: machineToken, name: 'Alice MBP', os: 'darwin 25.6', agentVersion: '99.1.0' });
-    expect(a.frames[0]).toMatchObject({ t: 'welcome', machineId, protocol: 1 });
+    expect(a.frames[0]).toMatchObject({ t: 'welcome', machineId, protocol: 2 });
     const [m] = await machinesOf(t, 'alice');
-    expect(MachineInfoSchema.parse(m)).toMatchObject({ online: true, name: 'Alice MBP', os: 'darwin 25.6', agentVersion: '99.1.0' });
+    expect(MachineInfoSchema.parse(m)).toMatchObject({ online: true, name: 'Alice MBP', os: 'darwin 25.6', agentVersion: '99.1.0', agentOutdated: false, transport: 'ws' });
     expect(m!.runtimes.map((r) => r.id)).toEqual(['fake']);
     await a.close();
     await until(async () => (await machinesOf(t, 'alice'))[0]?.online === false);
+    expect((await machinesOf(t, 'alice'))[0]).toMatchObject({ online: false, transport: null });
+  });
+
+  it('a protocol 1 (0.2) hello gets upgrade_required', async () => {
+    const t = await start();
+    const { machineToken } = await t.pair('alice');
+    const a = await connect({ url: t.wsUrl, token: machineToken, protocol: 1, waitWelcome: false });
+    expect(await a.waitFor((f) => f.t === 'upgrade_required')).toMatchObject({ t: 'upgrade_required' });
+    expect((await a.closed).code).toBe(CLOSE.upgrade);
   });
 
   it('sends upgrade_required to agents older than minAgentVersion', async () => {
     const t = await start({ minAgentVersion: '0.2.0' });
-    const { machineToken } = await t.pair('alice');
+    const { machineId, machineToken } = await t.pair('alice');
     const a = await connect({ url: t.wsUrl, token: machineToken, agentVersion: '0.1.9', waitWelcome: false });
     expect(await a.waitFor((f) => f.t === 'upgrade_required')).toEqual({ t: 'upgrade_required', minAgentVersion: '0.2.0' });
     expect((await a.closed).code).toBe(CLOSE.upgrade);
-    expect((await machinesOf(t, 'alice'))[0]?.online).toBe(false);
+    expect((await machinesOf(t, 'alice'))[0]).toMatchObject({ online: false, agentOutdated: false }); // never said hello
+    await t.store.updateMachine(machineId, { agentVersion: '0.1.9' });
+    expect((await machinesOf(t, 'alice'))[0]).toMatchObject({ agentVersion: '0.1.9', agentOutdated: true });
     // Exactly the minimum is fine.
     const b = await connect({ url: t.wsUrl, token: machineToken, agentVersion: '0.2.0' });
     expect(b.frames[0]?.t).toBe('welcome');
