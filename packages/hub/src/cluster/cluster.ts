@@ -9,6 +9,12 @@ export interface ClusterAdapter {
   subscribe(channel: string, fn: (msg: string) => void): Promise<() => void>;
   /** Records that `machineId` is connected to `nodeId`; expires after `ttlSec` unless refreshed. */
   setPresence(machineId: string, nodeId: string, ttlSec: number): Promise<void>;
+  /**
+   * Like `setPresence`, but only when the machine has no live presence or it already is `nodeId`;
+   * resolves whether it was set. Atomic. Optional (the hub falls back to a check-then-set):
+   * `memoryCluster`, `redisCluster` and `postgresCluster` implement it.
+   */
+  refreshPresence?(machineId: string, nodeId: string, ttlSec: number): Promise<boolean>;
   /** The node holding the machine's connection, or `null` when it is offline. */
   getPresence(machineId: string): Promise<string | null>;
   /** Removes the presence entry if (and only if) it still points at `nodeId`. */

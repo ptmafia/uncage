@@ -15,11 +15,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { sqlCluster } from './cluster/postgres.js';
 import { createHub } from './hub.js';
-import { machineChannel, sessionChannel } from './machines.js';
+import { HTTP_PRESENCE, machineChannel, sessionChannel } from './machines.js';
 import { pgliteHubStore } from './node/index.js';
 import type { SqlClient } from './store/sql.js';
 import type { HubStore } from './store/store.js';
+import { HUB_INTERNALS } from './types.js';
 import {
+  connectFakeAgent,
   connectFakeHttpAgent,
   fakeMachine,
   fakeSession,
@@ -474,5 +476,150 @@ describe('HTTP streaming transport', () => {
     expect(((await ev.json()) as HttpEventsResponse).processed).toHaveLength(1);
     expect((await listed).status).toBe(200);
     expect(await (await listed).json()).toEqual([]);
+  });
+});
+
+describe('HTTP transport — fix round 1', () => {
+  it('a WebSocket hello during an HTTP stream keeps the node id as presence; a stale stream cannot take it back', async () => {
+    const hubs = await faas({ n: 1, heartbeat: { pingIntervalMs: 50, missedPings: 2 } });
+    const t = await startTestHub({ store: hubs.store, cluster: hubs.cluster });
+    closers.push(() => t.close());
+    const { token, machineId } = await hubs.pair('u1');
+    const http = await agentFor(hubs, token);
+    await until(() => http.lines.some((l) => 'ctl' in l && l.ctl === 'ping'));
+    const ws = await connectFakeAgent({ url: t.wsUrl, token });
+    closers.push(() => ws.close());
+    expect(await http.ended).toBe('replaced');
+    const nodeId = t.hub[HUB_INTERNALS].machines.nodeId;
+    expect(await hubs.cluster.getPresence(machineId)).toBe(nodeId);
+    // The old stream's late ping (its link was current when it checked) must not overwrite it.
+    const machines = hubs.hubs[0]![HUB_INTERNALS].machines;
+    const machine = (await hubs.store.getMachine(machineId))!;
+    expect(await machines.touchHttp(machine, http.linkId)).toBe(false);
+    expect(await hubs.cluster.getPresence(machineId)).toBe(nodeId);
+    // Even with the link still current in the store (the race window), presence held by a node stays.
+    const lnk = `lnk_${'a'.repeat(24)}`;
+    await hubs.store.openLink(machineId, { linkId: lnk, transport: 'http', at: new Date().toISOString() });
+    expect(await machines.touchHttp(machine, lnk)).toBe(false);
+    expect(await hubs.cluster.getPresence(machineId)).toBe(nodeId);
+    await sleep(200);
+    expect((await machinesOf(hubs, 'u1'))[0]).toMatchObject({ online: true, transport: 'ws' });
+  });
+
+  it('after disconnect or revoke a late ping of the old stream does not bring the machine back online', async () => {
+    const hubs = await faas({ n: 2, heartbeat: { pingIntervalMs: 50, missedPings: 2 } });
+    const { token, machineId } = await hubs.pair('u1');
+    const machines = hubs.hubs[1]![HUB_INTERNALS].machines;
+    const a = await agentFor(hubs, token);
+    await until(async () => (await machinesOf(hubs, 'u1'))[0]?.online);
+    const machine = (await hubs.store.getMachine(machineId))!;
+    await a.close();
+    expect(await machines.touchHttp(machine, a.linkId)).toBe(false);
+    await sleep(300);
+    expect((await machinesOf(hubs, 'u1'))[0]!.online).toBe(false);
+
+    const b = await agentFor(hubs, token);
+    await until(async () => (await machinesOf(hubs, 'u1'))[0]?.online);
+    expect((await hubs.as('u1', `/machines/${machineId}`, { method: 'DELETE' })).status).toBe(200);
+    expect(await b.ended).toBe('revoked');
+    expect(await machines.touchHttp(machine, b.linkId)).toBe(false);
+    expect(await hubs.cluster.getPresence(machineId)).toBeNull();
+  });
+
+  it('a transient failure releases the claim: the retry runs at once and later result frames are not stalled', async () => {
+    let failNext = false;
+    const hubs = await faas({
+      n: 2,
+      makeStore: async () => {
+        const s = await pgliteHubStore({ dataDir: 'memory://' });
+        const orig = s.getSession.bind(s);
+        s.getSession = (id) => {
+          if (failNext && id === 'ses_flaky') {
+            failNext = false;
+            return Promise.reject(new Error('connection reset'));
+          }
+          return orig(id);
+        };
+        return s;
+      },
+    });
+    const { token } = await hubs.pair('u1');
+    const fm = fakeMachine();
+    const agent = await agentFor(hubs, token, { onCommand: fm.handler });
+    await until(async () => (await machinesOf(hubs, 'u1'))[0]?.online);
+    failNext = true;
+    const ev = { id: upId(), msg: { t: 'events' as const, sessionId: 'ses_flaky', events: [makeEvent('ses_flaky', 1, 'session.created', { session: fakeSession('ses_flaky') })] } };
+    const first = (await (await agent.post({ msgs: [ev] })).json()) as HttpEventsResponse;
+    expect(first).toMatchObject({ processed: [], retry: [ev.id] });
+    const t0 = Date.now();
+    const second = (await (await agent.post({ msgs: [ev] })).json()) as HttpEventsResponse;
+    expect(second).toMatchObject({ processed: [ev.id], retry: [] });
+    expect(Date.now() - t0).toBeLessThan(1000); // not the 30 s lease
+    // A command's result posted right after is handled normally.
+    expect((await hubs.as('u1', '/sessions', json({ runtime: 'fake' }))).status).toBe(201);
+  });
+
+  it('connection cuts while commands are in flight: each command is dispatched exactly once and the agent resumes from its cursor', async () => {
+    const hubs = await faas({ n: 3, stream: { maxDurationMs: 400 }, polling: { activeMs: 20, idleMs: 100 } });
+    const { token, machineId } = await hubs.pair('u1');
+    const agent = await agentFor(hubs, token, { onCommand: () => [] });
+    await until(() => agent.streams > 0);
+    const cutter = setInterval(() => hubs.cutAll(), 70);
+    const ids: string[] = [];
+    for (let i = 0; i < 40; i++) {
+      const id = `cmd_cut_${i}`;
+      ids.push(id);
+      await hubs.store.enqueueOutbox(machineId, [{ msgId: id, msg: { t: 'command', id, op: 'listSessions', args: {} }, expiresAt: new Date(Date.now() + 60_000).toISOString() }], new Date().toISOString());
+      await hubs.cluster.publish(machineChannel(machineId), 'wake');
+      await sleep(15);
+    }
+    await until(() => agent.commands.length >= 40, 10_000);
+    clearInterval(cutter);
+    await sleep(200);
+    expect(agent.commands.map((c) => c.id)).toEqual(ids); // in order, once each
+    expect(agent.streams).toBeGreaterThan(2);
+    // Redelivered lines (seq <= cursor after a cut) were skipped, never dispatched twice.
+    const delivered = agent.lines.filter((l) => 'seq' in l).length;
+    expect(delivered).toBeGreaterThanOrEqual(40);
+    // Once the agent's cursor is acknowledged nothing is left in the outbox.
+    expect((await agent.post({})).status).toBe(200);
+    expect((await hubs.store.pollLink(machineId, agent.linkId, { after: 0, limit: 100, now: new Date().toISOString() })).items).toEqual([]);
+  }, 30_000);
+
+  it('wrong machine tokens on agent routes are rate limited per client IP through the store', async () => {
+    const hubs = await faas({ n: 2, rateLimits: { agentAuthFailuresPerMinute: 3 } });
+    const { token } = await hubs.pair('u1');
+    const bad = { authorization: 'Bearer wrong-wrong-wrong-wrong' };
+    const statuses: number[] = [];
+    for (let i = 0; i < 5; i++) statuses.push((await hubs.fetch('/agent/connect', json(hello(), bad))).status);
+    expect(statuses).toEqual([401, 401, 401, 429, 429]); // counted across both instances
+    // A valid token is never limited.
+    expect((await hubs.fetch('/agent/connect', json(hello(), { authorization: `Bearer ${token}` }))).status).toBe(200);
+  });
+
+  it('a request body that does not arrive within bodyTimeoutMs is refused', async () => {
+    const hubs = await faas({ n: 1, bodyTimeoutMs: 200 });
+    const { token } = await hubs.pair('u1');
+    const w = await rawConnect(hubs, token);
+    let cancel!: () => void;
+    const slow = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode(`{"linkId":"${w.linkId}",`));
+        cancel = () => c.close();
+      },
+    });
+    const t0 = Date.now();
+    const res = await hubs.fetch('/agent/events', { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: slow, duplex: 'half' } as RequestInit);
+    cancel();
+    expect(res.status).toBe(400);
+    expect((await errorOf(res)).message).toMatch(/did not arrive/);
+    expect(Date.now() - t0).toBeLessThan(2000);
+  });
+
+  it('presence written for HTTP is the http marker', async () => {
+    const hubs = await faas({ n: 1 });
+    const { token, machineId } = await hubs.pair('u1');
+    await agentFor(hubs, token);
+    await until(async () => (await hubs.cluster.getPresence(machineId)) === HTTP_PRESENCE);
   });
 });

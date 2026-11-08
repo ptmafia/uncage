@@ -61,6 +61,10 @@ const DEFAULT_MAINTENANCE_INTERVAL_MS = 60_000;
 const INBOX_RETENTION_MS = 24 * 3_600_000;
 const DEFAULT_USER_CODE_WINDOW_MS = 600_000;
 const DEVICE_CODE_WINDOW_MS = 60_000;
+/** Window of `rateLimits.agentAuthFailuresPerMinute`. */
+const AGENT_AUTH_WINDOW_MS = 60_000;
+/** Default `bodyTimeoutMs`. */
+const DEFAULT_BODY_TIMEOUT_MS = 30_000;
 /** Rate-limit key when no client IP is known: one bucket for every caller. */
 const SHARED_CLIENT_KEY = 'shared';
 /** An unbound manifest (startRun never answered) is dropped after an hour. */
@@ -171,6 +175,8 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   if (o.transports !== undefined && (o.transports.length === 0 || o.transports.some((k) => k !== 'ws' && k !== 'http'))) {
     throw new Error(`createHub: transports must be a non-empty list of "ws" and "http" (got ${JSON.stringify(o.transports)})`);
   }
+  const bodyTimeoutMs = o.bodyTimeoutMs ?? DEFAULT_BODY_TIMEOUT_MS;
+  if (!(bodyTimeoutMs > 0)) throw new Error(`createHub: bodyTimeoutMs must be > 0 (got ${bodyTimeoutMs})`);
   const streamMaxMs = o.stream?.maxDurationMs ?? DEFAULT_STREAM_MAX_DURATION_MS;
   if (!(streamMaxMs > 0)) throw new Error(`createHub: stream.maxDurationMs must be > 0 (got ${streamMaxMs})`);
   const polling = {
@@ -470,7 +476,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   const maintenanceIntervalMs = o.maintenance?.intervalMs ?? DEFAULT_MAINTENANCE_INTERVAL_MS;
   if (!(maintenanceIntervalMs > 0)) throw new Error(`createHub: maintenance.intervalMs must be > 0 (got ${maintenanceIntervalMs})`);
   /** Rate-limit windows older than the longest window are dead. */
-  const longestWindowMs = Math.max(DEVICE_CODE_WINDOW_MS, userCodeWindowMs);
+  const longestWindowMs = Math.max(DEVICE_CODE_WINDOW_MS, AGENT_AUTH_WINDOW_MS, userCodeWindowMs);
   /** No timer here (FaaS instances must not keep background work): requests, `attachWebSocket` or a cron run it. */
   const upkeep = maintenance({
     store,
@@ -515,6 +521,8 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     pingIntervalMs: machines.heartbeat.pingIntervalMs,
     toolLeaseMs: toolTimeoutMs + TOOL_LEASE_GRACE_MS,
     shutdown: shutdown.signal,
+    authFailures: storeRateLimiter(store, { name: 'agent_auth', max: o.rateLimits?.agentAuthFailuresPerMinute ?? 60, windowMs: AGENT_AUTH_WINDOW_MS }),
+    bodyTimeoutMs,
   });
 
   const setupUrl = basePath === DEFAULT_BASE_PATH ? origin : hubUrl;
@@ -535,6 +543,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     maintenance: { secret: o.maintenance?.secret, run: () => upkeep.runNow() },
     version: HUB_VERSION,
     sseHeartbeatMs: o.sseHeartbeatMs ?? DEFAULT_SSE_HEARTBEAT_MS,
+    bodyTimeoutMs,
     shutdown: shutdown.signal,
   });
 
@@ -560,7 +569,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
           );
         }
         // Machine routes (HTTP streaming transport) first, then the browser API.
-        return (await agentTransport.handle(req, url, path)) ?? (await api.handle(req, url, path, requestId, key));
+        return (await agentTransport.handle(req, url, path, key)) ?? (await api.handle(req, url, path, requestId, key));
       } catch (err) {
         const uerr = err instanceof UncageError ? err : new UncageError('internal_error');
         if (!(err instanceof UncageError)) logger.error({ err, requestId }, 'hub request failed');

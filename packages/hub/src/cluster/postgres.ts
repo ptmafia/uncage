@@ -410,6 +410,20 @@ function createSqlCluster(
       );
     },
 
+    async refreshPresence(machineId, nodeId, ttlSec) {
+      if (closed) throw closedError();
+      const db = await ready();
+      const { rows } = await db.query(
+        `INSERT INTO uncage_cluster_presence AS p (machine_id, node_id, expires_at)
+         VALUES ($1, $2, now() + ($3::double precision * interval '1 second'))
+         ON CONFLICT (machine_id) DO UPDATE SET node_id = EXCLUDED.node_id, expires_at = EXCLUDED.expires_at
+         WHERE p.node_id = EXCLUDED.node_id OR p.expires_at <= now()
+         RETURNING 1`,
+        [machineId, nodeId, ttlSec],
+      );
+      return rows.length > 0;
+    },
+
     async getPresence(machineId) {
       if (closed) throw closedError();
       const db = await ready();

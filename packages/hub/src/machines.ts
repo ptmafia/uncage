@@ -240,11 +240,38 @@ export class MachineHub {
     return this.d.cluster.getPresence(machineId);
   }
 
-  /** Refreshes the HTTP presence of a streaming machine (and its `lastSeenAt`). */
-  async touchHttp(machine: MachineRecord): Promise<void> {
-    const lastSeenAt = new Date().toISOString();
-    machine.lastSeenAt = lastSeenAt;
-    await Promise.all([this.d.cluster.setPresence(machine.id, HTTP_PRESENCE, this.httpPresenceTtlSec), this.d.store.updateMachine(machine.id, { lastSeenAt })]);
+  /**
+   * Refreshes the HTTP presence (and `lastSeenAt`) of a machine streaming on `linkId`. A stale
+   * stream must never bring presence back or take it from a newer connection, so:
+   * 1. the link must still be current (else nothing is written);
+   * 2. presence is written only if it is free or already `HTTP_PRESENCE` (`refreshPresence`,
+   *    atomic in the bundled adapters; a check-then-set for adapters without it), so a WebSocket
+   *    node id that took over is never overwritten;
+   * 3. if the link was closed (disconnect, revoke, token rotation) between 1 and 2, the write is
+   *    undone. (Replaced by a newer HTTP link: the `http` presence is right for that link, kept.)
+   * Resolves whether presence is held for this link.
+   */
+  async touchHttp(machine: MachineRecord, linkId: string): Promise<boolean> {
+    const at = new Date().toISOString();
+    if ((await this.d.store.updateLink(machine.id, linkId, { at })) !== 'current') return false;
+    const { cluster } = this.d;
+    const set = cluster.refreshPresence
+      ? await cluster.refreshPresence(machine.id, HTTP_PRESENCE, this.httpPresenceTtlSec)
+      : await (async () => {
+          const cur = await cluster.getPresence(machine.id);
+          if (cur !== null && cur !== HTTP_PRESENCE) return false;
+          await cluster.setPresence(machine.id, HTTP_PRESENCE, this.httpPresenceTtlSec);
+          return true;
+        })();
+    if (!set) return false; // a WebSocket took over; the next poll sees the link replaced
+    const after = await this.d.store.updateLink(machine.id, linkId, { at });
+    if (after === 'gone') {
+      await cluster.clearPresence(machine.id, HTTP_PRESENCE);
+      return false;
+    }
+    machine.lastSeenAt = at;
+    await this.d.store.updateMachine(machine.id, { lastSeenAt: at });
+    return after === 'current';
   }
 
   /** Clears the HTTP presence of a machine (it disconnected). */
@@ -437,7 +464,11 @@ export class MachineHub {
       link.cursor = await this.openHttpLink(link.machine.id, link.linkId);
     }
     await link.send({ t: 'welcome', machineId: link.machine.id, protocol: CONNECTED_PROTOCOL, minAgentVersion: this.d.minAgentVersion });
-    await this.d.onConnected(link.machine, (f) => void link.send(f));
+    // Every frame onConnected sends (site-mode acks) is in the link before hello resolves: an HTTP
+    // connect returns them as its replies.
+    const sent: Array<Promise<void>> = [];
+    await this.d.onConnected(link.machine, (f) => void sent.push(link.send(f)));
+    await Promise.all(sent);
     return 'ok';
   }
 
@@ -537,7 +568,17 @@ export class MachineHub {
    * sent into the link's replies); rejects when handling failed, so the message is retried.
    */
   async handleUpstream(link: MachineLink, frame: AgentFrame): Promise<void> {
-    const send = (f: HubFrame) => void link.send(f);
+    // Sends are awaited before this resolves, so the response's replies are complete.
+    const sent: Array<Promise<void>> = [];
+    const send = (f: HubFrame) => void sent.push(link.send(f));
+    try {
+      await this.upstream(link, frame, send);
+    } finally {
+      await Promise.all(sent);
+    }
+  }
+
+  private async upstream(link: MachineLink, frame: AgentFrame, send: (f: HubFrame) => void): Promise<void> {
     const machineId = link.machine.id;
     /** A pull sent through the outbox by this instance for this machine. */
     const pullOf = (id: string) => {
@@ -570,6 +611,10 @@ export class MachineHub {
         return;
       }
       case 'tool_call': {
+        // Handler errors become an error `tool_result` here (never a retry): a tool that ran is
+        // not re-run because it failed. Until Task 7's tool-call state, a call whose instance dies
+        // mid-handler is claimed for toolTimeoutMs + grace and then re-run by the agent's retry
+        // (at-least-once after an instance kill; Task 7 makes it at-most-once with an error).
         const running = this.httpToolCalls.get(machineId) ?? 0;
         if (running >= this.d.maxConcurrentToolCalls) {
           const err = new UncageError('tool_failed', {

@@ -66,6 +66,8 @@ export interface ApiContext {
   maintenance: { secret: string | undefined; run(): Promise<unknown> };
   version: string;
   sseHeartbeatMs: number;
+  /** A request body not received within this long is refused. */
+  bodyTimeoutMs: number;
   shutdown: AbortSignal;
 }
 
@@ -100,8 +102,8 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   return r.data;
 }
 
-async function readJson(req: Request): Promise<unknown> {
-  const bytes = await readBody(req, MAX_JSON_BODY);
+async function readJson(req: Request, timeoutMs: number): Promise<unknown> {
+  const bytes = await readBody(req, MAX_JSON_BODY, timeoutMs);
   if (bytes === null) throw new UncageError('invalid_request', { message: 'The request body is too large.' });
   const text = new TextDecoder().decode(bytes);
   if (text.trim() === '') return undefined;
@@ -312,12 +314,12 @@ export function browserApi(ctx: ApiContext) {
   }
 
   add('POST', '/device/code', async ({ req, clientKey }) => {
-    const body = parse(DeviceCodeRequestSchema, (await readJson(req)) ?? {});
+    const body = parse(DeviceCodeRequestSchema, (await readJson(req, ctx.bodyTimeoutMs)) ?? {});
     return json(await ctx.device.createCode(body, clientKey));
   }, { public: true });
 
   add('POST', '/device/token', async ({ req }) => {
-    const { deviceCode } = parse(z.object({ deviceCode: z.string().min(1).max(256) }), await readJson(req));
+    const { deviceCode } = parse(z.object({ deviceCode: z.string().min(1).max(256) }), await readJson(req, ctx.bodyTimeoutMs));
     const r = await ctx.device.poll(deviceCode);
     if (!r) throw new UncageError('not_found', { message: 'Unknown device code.', hint: 'Start the connection flow again.' });
     return json(r);
@@ -372,7 +374,7 @@ export function browserApi(ctx: ApiContext) {
   });
 
   add('POST', '/sessions', async ({ req, user }) => {
-    const body = parse(CreateSessionBodySchema.extend({ machineId: z.string().optional() }), await readJson(req));
+    const body = parse(CreateSessionBodySchema.extend({ machineId: z.string().optional() }), await readJson(req, ctx.bodyTimeoutMs));
     const machine = await pickMachine(user, body.machineId);
     // The hub picks the id and records the session before the machine creates it, so the
     // session's first events (which may arrive before the command result) are recognised.
@@ -416,13 +418,13 @@ export function browserApi(ctx: ApiContext) {
 
   add('PATCH', '/sessions/:id/settings', async ({ req, params, user }) => {
     const rec = await ownedSession(user, params.id!);
-    const patch = parse(UpdateSessionSettingsBodySchema, await readJson(req));
+    const patch = parse(UpdateSessionSettingsBodySchema, await readJson(req, ctx.bodyTimeoutMs));
     return json(stamp(await machines.command(rec.machineId, 'updateSettings', { sessionId: rec.id, patch }), rec.machineId));
   });
 
   add('POST', '/sessions/:id/runs', async ({ req, params, user }) => {
     const key = idempotencyKey(req);
-    const body = parse(StartRunBodySchema, await readJson(req));
+    const body = parse(StartRunBodySchema, await readJson(req, ctx.bodyTimeoutMs));
     const rec = await ownedSession(user, params.id!);
     const { manifest, warnings } = await manifestFor(user, body.prompt, rec);
     // Record the offered tools before the machine can start the run: tool calls are accepted only
@@ -494,7 +496,7 @@ export function browserApi(ctx: ApiContext) {
         details: { maxBytes: HUB_ATTACHMENT_MAX_BYTES },
       });
     if (Number(req.headers.get('content-length')) > HUB_ATTACHMENT_MAX_BYTES) throw tooLarge();
-    const data = await readBody(req, HUB_ATTACHMENT_MAX_BYTES);
+    const data = await readBody(req, HUB_ATTACHMENT_MAX_BYTES, ctx.bodyTimeoutMs);
     if (data === null) throw tooLarge();
     const attachment =
       data.byteLength <= SINGLE_FRAME_ATTACHMENT_BYTES
@@ -546,7 +548,7 @@ export function browserApi(ctx: ApiContext) {
 
   add('POST', '/approvals/:id/decision', async ({ req, params, user }) => {
     const key = idempotencyKey(req);
-    const decision = parse(ApprovalDecisionSchema, await readJson(req));
+    const decision = parse(ApprovalDecisionSchema, await readJson(req, ctx.bodyTimeoutMs));
     const rec = await ownedResource(user, 'approval', params.id!);
     return json(await machines.command(rec.machineId, 'decide', { approvalId: params.id!, decision, idempotencyKey: key }));
   });

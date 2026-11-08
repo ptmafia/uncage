@@ -2,6 +2,7 @@
  * Web-standard replacements for the Node APIs the hub core used (`node:crypto`, `Buffer`,
  * `timer.unref()`), so the root entry runs on any Fetch platform (workerd, Edge, Deno, Bun, Node).
  */
+import { UncageError } from '@uncage/core/errors';
 
 const encoder = new TextEncoder();
 
@@ -129,7 +130,7 @@ export function concatBytes(parts: Uint8Array[], size = parts.reduce((n, p) => n
  * Reads at most `limit` bytes of the body; `null` when it is longer (a `Content-Length` over the
  * limit is refused before reading; otherwise reading stops as soon as the limit is passed).
  */
-export async function readBody(req: Request, limit: number): Promise<Uint8Array | null> {
+export async function readBody(req: Request, limit: number, timeoutMs?: number): Promise<Uint8Array | null> {
   if (Number(req.headers.get('content-length')) > limit) {
     await req.body?.cancel().catch(() => undefined);
     return null;
@@ -138,15 +139,35 @@ export async function readBody(req: Request, limit: number): Promise<Uint8Array 
   const reader = req.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > limit) {
-      await reader.cancel().catch(() => undefined);
-      return null;
+  // One deadline for the whole body: a client trickling bytes must not hold the request forever.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline =
+    timeoutMs === undefined
+      ? undefined
+      : new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new UncageError('invalid_request', { message: `The request body did not arrive within ${Math.round(timeoutMs / 1000)} s.` })),
+            timeoutMs,
+          );
+          unrefTimer(timer);
+        });
+  deadline?.catch(() => undefined);
+  try {
+    for (;;) {
+      const { done, value } = await (deadline ? Promise.race([reader.read(), deadline]) : reader.read());
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) {
+        await reader.cancel().catch(() => undefined);
+        return null;
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+  } catch (err) {
+    await reader.cancel().catch(() => undefined);
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
   return concatBytes(chunks);
 }

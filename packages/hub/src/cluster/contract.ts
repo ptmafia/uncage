@@ -42,6 +42,17 @@ export async function clusterContract(make: () => ClusterAdapter, hooks: Cluster
     expect(await a.getPresence('mch_1')).toBe('node_a');
     await b.clearPresence('mch_1', 'node_a');
     expect(await a.getPresence('mch_1')).toBeNull();
+    if (a.refreshPresence) {
+      // Only when free or already held by the same value.
+      expect(await a.refreshPresence('mch_3', 'http', 30)).toBe(true);
+      expect(await b.refreshPresence!('mch_3', 'http', 30)).toBe(true);
+      await b.setPresence('mch_3', 'node_b', 30);
+      expect(await a.refreshPresence('mch_3', 'http', 30)).toBe(false);
+      expect(await a.getPresence('mch_3')).toBe('node_b');
+      await b.clearPresence('mch_3', 'node_b');
+      expect(await a.refreshPresence('mch_3', 'http', 30)).toBe(true);
+      expect(await b.getPresence('mch_3')).toBe('http');
+    }
     await a.setPresence('mch_2', 'node_a', 1);
     await new Promise((r) => setTimeout(r, 1200));
     expect(await b.getPresence('mch_2')).toBeNull();

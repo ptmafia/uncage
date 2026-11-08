@@ -823,6 +823,11 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
       );
     },
 
+    async releaseInbox(machineId, msgIds) {
+      if (msgIds.length === 0) return;
+      await db.query(`DELETE FROM uncage_hub_inbox WHERE machine_id = $1 AND msg_id = ANY($2::text[]) AND state = 'processing'`, [machineId, [...new Set(msgIds)]]);
+    },
+
     async hitRateLimit(key, o) {
       const windowStart = Math.floor(o.nowMs / o.windowMs) * o.windowMs;
       const { rows } = await db.query<{ count: number }>(

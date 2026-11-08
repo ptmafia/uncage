@@ -88,6 +88,8 @@ export interface HubOptions {
    * wakes the stream at once through the cluster.
    */
   polling?: { activeMs?: number; idleMs?: number; activeWindowMs?: number };
+  /** A request body not fully received within this long is refused with 400. Defaults to 30 000 ms. */
+  bodyTimeoutMs?: number;
   /** SSE comment heartbeat for browser event streams. Defaults to 15 000 ms. */
   sseHeartbeatMs?: number;
   /** How long a browser request waits for the machine. Defaults to 30 000 ms. */
@@ -113,6 +115,11 @@ export interface HubOptions {
     deviceCodesPerMinute?: number;
     /** Failed `approveDevice` / `denyDevice` / `lookupDevice` attempts (unknown codes) per user per window. Default 10. */
     userCodeFailures?: number;
+    /**
+     * Requests to the agent routes (`<basePath>/agent/*`) with a missing or wrong machine token,
+     * per client IP per minute. Default 60. Valid tokens are never limited.
+     */
+    agentAuthFailuresPerMinute?: number;
     /** Window for `userCodeFailures`. Default 600 000 ms (10 min). */
     userCodeWindowMs?: number;
     /**

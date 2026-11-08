@@ -338,6 +338,19 @@ export function hubStoreContract(make: () => Promise<{ store: HubStore; cleanup?
     }),
   );
 
+  it(
+    'inbox: a released claim is new again at once; release never undoes done',
+    withStore(async (store) => {
+      expect(await store.claimInbox('m1', ['a', 'b'], { leaseUntil: t(60), now: t(0) })).toEqual({ a: 'new', b: 'new' });
+      await store.completeInbox('m1', ['b'], t(1));
+      await store.releaseInbox('m1', ['a', 'b']);
+      await store.releaseInbox('m1', []);
+      expect(await store.claimInbox('m1', ['a', 'b'], { leaseUntil: t(60), now: t(2) })).toEqual({ a: 'new', b: 'done' });
+      await store.releaseInbox('m2', ['a']); // other machine: no effect
+      expect(await store.claimInbox('m1', ['a'], { leaseUntil: t(60), now: t(3) })).toEqual({ a: 'busy' });
+    }),
+  );
+
   const rec: ToolCallRecord = {
     id: 'tcl_1',
     callId: 'tc_1',

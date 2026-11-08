@@ -34,6 +34,7 @@ import {
 } from '@uncage/protocol';
 import type { ClusterAdapter } from './cluster/cluster.js';
 import { compareVersions, machineChannel, type HubLogger, type MachineHub, type MachineLink } from './machines.js';
+import type { RateLimiter } from './rate-limit.js';
 import type { HubStore, LinkState, MachineRecord } from './store/store.js';
 import { randomHex, readBody, unrefTimer } from './web.js';
 
@@ -60,6 +61,10 @@ export interface HttpTransportContext {
   toolLeaseMs: number;
   /** Aborts when the hub closes: open streams end with `rotate` (the agent reconnects elsewhere). */
   shutdown: AbortSignal;
+  /** Failed machine-token checks per client IP (token guessing): over the limit → 429. */
+  authFailures: RateLimiter;
+  /** A request body not received within this long is refused (slow-body clients). */
+  bodyTimeoutMs: number;
 }
 
 const json = (data: unknown, status = 200): Response => Response.json(data, { status });
@@ -74,12 +79,6 @@ const STREAM_HEADERS = {
 
 const tooLarge = () => new UncageError('invalid_request', { message: `The request body is larger than ${MAX_HTTP_BODY_BYTES} bytes.` });
 
-/** The body as text, at most `MAX_HTTP_BODY_BYTES` (checked before and while reading). */
-async function readText(req: Request): Promise<string> {
-  const bytes = await readBody(req, MAX_HTTP_BODY_BYTES);
-  if (bytes === null) throw tooLarge();
-  return new TextDecoder().decode(bytes);
-}
 
 function cursorParam(value: string | null): number {
   if (value === null || value === '') return 0;
@@ -89,6 +88,13 @@ function cursorParam(value: string | null): number {
 
 export function httpTransport(ctx: HttpTransportContext) {
   const { store, machines, logger } = ctx;
+
+  /** The body as text, at most `MAX_HTTP_BODY_BYTES` (checked before and while reading), within `bodyTimeoutMs`. */
+  async function readText(req: Request): Promise<string> {
+    const bytes = await readBody(req, MAX_HTTP_BODY_BYTES, ctx.bodyTimeoutMs);
+    if (bytes === null) throw tooLarge();
+    return new TextDecoder().decode(bytes);
+  }
   /** The HTTP transport needs agent 0.3 (the first with it), whatever `minAgentVersion` says. */
   const requiredVersion = compareVersions(ctx.minAgentVersion, MIN_AGENT_VERSION) > 0 ? ctx.minAgentVersion : MIN_AGENT_VERSION;
 
@@ -97,9 +103,11 @@ export function httpTransport(ctx: HttpTransportContext) {
     return m?.[1] ? machines.authenticate(m[1]) : null;
   }
 
-  async function authenticate(req: Request): Promise<MachineRecord> {
+  /** Valid tokens are never limited; each failure counts against the caller's IP (shared store). */
+  async function authenticate(req: Request, clientKey: string): Promise<MachineRecord> {
     const machine = await machineOf(req);
     if (!machine) {
+      await ctx.authFailures.take(clientKey); // throws rate_limited (429) once over the limit
       throw new UncageError('unauthorized', { message: 'Missing or invalid machine token.', hint: 'Run `uncage setup <site>` again to pair this machine.' });
     }
     return machine;
@@ -130,8 +138,8 @@ export function httpTransport(ctx: HttpTransportContext) {
     });
   }
 
-  async function connect(req: Request): Promise<Response> {
-    const machine = await authenticate(req);
+  async function connect(req: Request, clientKey: string): Promise<Response> {
+    const machine = await authenticate(req, clientKey);
     const text = await readText(req);
     let raw: unknown;
     try {
@@ -178,8 +186,8 @@ export function httpTransport(ctx: HttpTransportContext) {
     } satisfies HttpConnectResponse);
   }
 
-  async function stream(req: Request, url: URL): Promise<Response> {
-    const machine = await authenticate(req);
+  async function stream(req: Request, url: URL, clientKey: string): Promise<Response> {
+    const machine = await authenticate(req, clientKey);
     const linkId = url.searchParams.get('link') ?? '';
     if (!LINK_ID.test(linkId)) throw new UncageError('invalid_request', { message: 'link must be a link id from POST /agent/connect.' });
     const cursor = cursorParam(url.searchParams.get('cursor'));
@@ -220,8 +228,13 @@ export function httpTransport(ctx: HttpTransportContext) {
       (controller.desiredSize ?? 1) > 0 || ac.signal.aborted
         ? Promise.resolve()
         : new Promise<void>((resolve) => {
-            pulled = resolve;
-            ac.signal.addEventListener('abort', () => resolve(), { once: true });
+            const done = () => {
+              ac.signal.removeEventListener('abort', done);
+              pulled = undefined;
+              resolve();
+            };
+            pulled = done;
+            ac.signal.addEventListener('abort', done, { once: true });
           });
 
     void pump(machine, linkId, cursor, state, ac.signal, write, drained)
@@ -274,7 +287,7 @@ export function httpTransport(ctx: HttpTransportContext) {
         // Polling still delivers everything, only later.
         logger.error({ err, machineId: machine.id }, 'machine channel subscribe failed');
       }
-      await machines.touchHttp(machine);
+      await machines.touchHttp(machine, linkId);
       while (!signal.aborted) {
         woken = false;
         const r = await store.pollLink(machine.id, linkId, { after: last, limit: POLL_PAGE, now: iso(Date.now()) });
@@ -297,7 +310,7 @@ export function httpTransport(ctx: HttpTransportContext) {
         if (now >= nextPing) {
           write({ ctl: 'ping', at: now });
           nextPing = now + ctx.pingIntervalMs;
-          await machines.touchHttp(machine).catch((err: unknown) => logger.error({ err }, 'heartbeat bookkeeping failed'));
+          await machines.touchHttp(machine, linkId).catch((err: unknown) => logger.error({ err }, 'heartbeat bookkeeping failed'));
         }
         // Fast while there is traffic or the machine has work in flight; otherwise back off.
         let delay: number;
@@ -329,8 +342,8 @@ export function httpTransport(ctx: HttpTransportContext) {
     }
   }
 
-  async function events(req: Request): Promise<Response> {
-    const machine = await authenticate(req);
+  async function events(req: Request, clientKey: string): Promise<Response> {
+    const machine = await authenticate(req, clientKey);
     let body: HttpEventsRequest;
     try {
       body = parseHttpEventsRequest(await readText(req));
@@ -367,8 +380,11 @@ export function httpTransport(ctx: HttpTransportContext) {
       try {
         await machines.handleUpstream(link, m.msg);
       } catch (err) {
-        // Left claimed: retried by the agent once the lease is over.
+        // Not applied (e.g. a transient store error): give the claim back so the agent's retry
+        // runs at once instead of waiting out the lease. Tool-handler errors never land here
+        // (they are the call's result).
         logger.error({ err, machineId: machine.id, t: m.msg.t }, 'upstream message failed');
+        await store.releaseInbox(machine.id, [m.id]).catch((e: unknown) => logger.error({ err: e }, 'inbox release failed'));
         retry.push(...body.msgs.slice(i).map((x) => x.id));
         break;
       }
@@ -378,8 +394,8 @@ export function httpTransport(ctx: HttpTransportContext) {
     return json({ processed, retry, replies } satisfies HttpEventsResponse);
   }
 
-  async function disconnect(req: Request): Promise<Response> {
-    const machine = await authenticate(req);
+  async function disconnect(req: Request, clientKey: string): Promise<Response> {
+    const machine = await authenticate(req, clientKey);
     let linkId: unknown;
     try {
       linkId = (JSON.parse(await readText(req)) as { linkId?: unknown } | null)?.linkId;
@@ -396,7 +412,7 @@ export function httpTransport(ctx: HttpTransportContext) {
   }
 
   /** Handles `path` (below `basePath`) if it is an agent route; `null` otherwise. */
-  async function handle(req: Request, url: URL, path: string): Promise<Response | null> {
+  async function handle(req: Request, url: URL, path: string, clientKey: string): Promise<Response | null> {
     if (path !== '/agent' && !path.startsWith('/agent/')) return null;
     const method = req.method;
     if (path === '/agent') {
@@ -404,10 +420,10 @@ export function httpTransport(ctx: HttpTransportContext) {
       return null;
     }
     if (path === '/agent/info' && method === 'GET') return json(ctx.agentInfo());
-    if (path === '/agent/connect' && method === 'POST') return connect(req);
-    if (path === '/agent/stream' && method === 'GET') return stream(req, url);
-    if (path === '/agent/events' && method === 'POST') return events(req);
-    if (path === '/agent/disconnect' && method === 'POST') return disconnect(req);
+    if (path === '/agent/connect' && method === 'POST') return connect(req, clientKey);
+    if (path === '/agent/stream' && method === 'GET') return stream(req, url, clientKey);
+    if (path === '/agent/events' && method === 'POST') return events(req, clientKey);
+    if (path === '/agent/disconnect' && method === 'POST') return disconnect(req, clientKey);
     if (['/agent/info', '/agent/connect', '/agent/stream', '/agent/events', '/agent/disconnect'].includes(path)) {
       throw new UncageError('invalid_request', { message: `Method ${method} is not allowed for ${path}.` });
     }

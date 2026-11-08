@@ -282,6 +282,11 @@ export interface HubStore {
    */
   claimInbox(machineId: string, msgIds: string[], o: { leaseUntil: string; now: string }): Promise<Record<string, 'new' | 'done' | 'busy'>>;
   completeInbox(machineId: string, msgIds: string[], at: string): Promise<void>;
+  /**
+   * Gives up claims that are still `processing` (handling failed): the next claim of those ids is
+   * `new` at once instead of waiting for the lease. `done` rows stay.
+   */
+  releaseInbox(machineId: string, msgIds: string[]): Promise<void>;
 
   /** Fixed-window counter shared by every instance; atomic. `retryAfterMs` is 0 when allowed. */
   hitRateLimit(key: string, o: { max: number; windowMs: number; nowMs: number }): Promise<{ allowed: boolean; retryAfterMs: number }>;

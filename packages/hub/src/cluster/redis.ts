@@ -19,6 +19,8 @@ export interface RedisLike {
 }
 
 /** Deletes the presence key only if it still names this node. */
+const REFRESH_IF_FREE_OR_OWNER =
+  "local v = redis.call('get', KEYS[1]) if v == false or v == ARGV[1] then redis.call('set', KEYS[1], ARGV[1], 'EX', ARGV[2]) return 1 else return 0 end";
 const CLEAR_IF_OWNER = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
 
 /**
@@ -121,6 +123,9 @@ export function redisCluster(
     },
     async setPresence(machineId, nodeId, ttlSec) {
       await (await pub).set(key(machineId), nodeId, 'EX', Math.max(1, Math.ceil(ttlSec)));
+    },
+    async refreshPresence(machineId, nodeId, ttlSec) {
+      return Number(await (await pub).eval(REFRESH_IF_FREE_OR_OWNER, 1, key(machineId), nodeId, Math.max(1, Math.ceil(ttlSec)))) === 1;
     },
     async getPresence(machineId) {
       return (await pub).get(key(machineId));
