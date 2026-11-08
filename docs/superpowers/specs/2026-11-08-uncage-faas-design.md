@@ -126,3 +126,18 @@ HTTP 流的具体帧格式（SSE vs NDJSON）、发件箱表结构、轮询与�
 - 平台限制会变（Vercel WebSocket、时长）：传输设计不依赖具体数值，重连时长可配置。
 - workerd 兼容性（Node 依赖残留、驱动差异）：用构建检查 + `wrangler dev` 实跑兜底。
 - 工作量大：按任务拆分，逐个审查；协议层先行。
+
+## 9. 追加：通用 ACP 运行时（用户 2026-11-08：“ACP 也放在 0.3，用不同的 subagent 来实现”）
+
+**意图**：用户电脑上装了什么 coding agent，网站就能驱动什么。新增通用 `@uncage/runtime-acp`，Uncage 作为 ACP（Agent Client Protocol）客户端，通过 stdio JSON-RPC 启动并驱动任何支持 ACP 的 agent（Gemini CLI、OpenCode、Claude Code 的 ACP 版本等）。原生 `runtime-claude` / `runtime-codex` 保留（深度能力），ACP 提供广度。
+
+**设计要点（我方判断）**
+- 使用官方 SDK `@agentclientprotocol/sdk`（npm 当前 2.4.0）。实现 `RuntimeAdapter`：`probe()`（命令存在 + `initialize` 握手成功）、`capabilities()`（由 ACP initialize 返回的 agent 能力映射：图片/附件、MCP 支持 → `siteTools`、会话加载 → 续聊）、`run()`（`session/new` 或 `session/load` + `session/prompt`，`session/update` 映射为 Uncage 统一事件：消息块、思考、工具调用及其更新、计划、用量）。
+- **审批**：ACP `session/request_permission` → Uncage 审批卡（允许一次/拒绝；若 agent 提供“总是允许”选项，映射为会话内允许），遵守本地策略（`localPolicy`）与网站权限模式。
+- **网站工具**：若 agent 声明支持 MCP（http/sse 或 stdio），在 `session/new` 的 `mcpServers` 中注入 Uncage 的站点工具桥（与 Claude 原生路径同一套工具清单与确认语义）；不支持则如实上报 `siteTools: false`，hub 按现有逻辑降级并警告。
+- **技能**：ACP 无技能概念——以文本形式作为会话首条上下文注入（与安全规则同 Claude 路径：不执行技能里的 shell）；能力上报 `skills: 'prompt'`，文档写清差异。
+- **文件系统/终端请求**（ACP `fs/*`、`terminal/*` 客户端能力）：0.3 不向 agent 声明这些客户端能力（agent 用自己的工具读写工作区），避免 Uncage 成为执行面；文档说明。
+- **配置**：用户在 `~/.uncage/agent.yaml` 的 `runtimes.acp` 里登记 agent（`id`、`displayName`、`command`、`args`、`env`）；内置几个预设（以各 agent 官方文档为准核实命令行），`uncage doctor` / `uncage runtimes` 显示探测结果。网站端运行时选择器自动出现这些 agent。
+- **验证（诚实原则）**：本机只装有 Claude Code，因此：(1) 用一个**假 ACP agent**（testkit）做完整契约测试（流式、工具调用、审批、取消、错误、MCP 注入）；(2) 用 **Claude Code 的 ACP 适配器**（官方/Zed 维护的 `claude-code-acp` 类包，以 npm 实际包名为准）做真实端到端（连接 → 运行 → 审批 → 站点工具）。其他 agent 在兼容矩阵里标注“协议兼容，未实机验证”，直到实测。
+- **文档（三语）**：新增 “Use any ACP agent / 接入任意 ACP agent / 任意の ACP エージェント”指南 + 兼容矩阵更新；官网 Features 增加 “Any ACP agent” 卡片（三语）。
+- **并行实现**：ACP 轨道与 FaaS 轨道相互独立（ACP 只依赖 `RuntimeAdapter` 接口和 agent 的运行时注册），由不同 subagent 在独立 worktree 并行实现，最后合并到 `feat/faas-mode`。
