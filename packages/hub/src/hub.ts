@@ -38,7 +38,7 @@ const DEFAULT_MISSED_PINGS = DEFAULT_HEARTBEAT.missedPings;
 const DEFAULT_SSE_HEARTBEAT_MS = 15_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
-/** Server-initiated rotation of the agent's HTTP stream (and, later, browser SSE). */
+/** Server-initiated rotation of the agent's HTTP stream and of browser event streams (SSE). */
 export const DEFAULT_STREAM_MAX_DURATION_MS = 250_000;
 /** Adaptive outbox polling of an HTTP stream. */
 export const DEFAULT_POLLING = { activeMs: 300, idleMs: 2_000, activeWindowMs: 30_000 } as const;
@@ -404,6 +404,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     maintenance: { secret: o.maintenance?.secret, run: () => upkeep.runNow() },
     version: HUB_VERSION,
     sseHeartbeatMs: o.sseHeartbeatMs ?? DEFAULT_SSE_HEARTBEAT_MS,
+    streamMaxDurationMs: streamMaxMs,
     bodyTimeoutMs,
     shutdown: shutdown.signal,
   });

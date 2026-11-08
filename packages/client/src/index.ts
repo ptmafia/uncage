@@ -1,4 +1,4 @@
-export { createUncageClient, uploadContentType } from './client.js';
+export { createUncageClient, STREAM_RECONNECT_EVENT, uploadContentType } from './client.js';
 export type {
   ConnectionState,
   CreateSessionRequest,

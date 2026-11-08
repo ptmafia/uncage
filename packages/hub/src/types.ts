@@ -77,8 +77,10 @@ export interface HubOptions {
   transports?: TransportKind[];
   /**
    * Long-lived responses end on the server's initiative after `maxDurationMs` (default 250 000)
-   * and the client reconnects at once: the agent's HTTP stream (a `rotate` line). Keep it below
-   * your platform's function duration limit (e.g. Vercel `maxDuration`).
+   * and the client reconnects at once: the agent's HTTP stream (a `rotate` line) and browser event
+   * streams (an `event: reconnect` frame; `@uncage/client` resumes with Last-Event-ID, without a
+   * gap, a duplicate or a state change). Keep it below your platform's function duration limit
+   * (e.g. Vercel `maxDuration`).
    */
   stream?: { maxDurationMs?: number };
   /**

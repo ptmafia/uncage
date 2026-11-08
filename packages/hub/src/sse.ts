@@ -1,6 +1,6 @@
 import { UncageError } from '@uncage/core/errors';
 import type { UncageEvent } from '@uncage/protocol';
-import { formatErrorFrame, formatEvent, SSE_HEADERS, SSE_HEARTBEAT } from '@uncage/server/wire';
+import { formatErrorFrame, formatEvent, formatReconnectFrame, SSE_HEADERS, SSE_HEARTBEAT } from '@uncage/server/wire';
 import { unrefTimer } from './web.js';
 
 export interface EventSource {
@@ -29,11 +29,13 @@ export async function readHistory(src: EventSource, after: number, limit: number
 /**
  * An SSE response with the daemon's framing (`id` / `event` / `data`, `: ping` heartbeats,
  * `event: error` then close on replay failure): history after `after`, then live events, each
- * sequence at most once and in order.
+ * sequence at most once and in order. After `maxDurationMs` it writes `event: reconnect` between
+ * two event frames and ends, so a platform never cuts it mid-frame; the client resumes at once
+ * with Last-Event-ID (on any instance: the new stream starts from history).
  */
 export function eventStreamResponse(
   src: EventSource,
-  o: { after: number; heartbeatMs: number; signals: AbortSignal[]; requestId: string },
+  o: { after: number; heartbeatMs: number; maxDurationMs: number; signals: AbortSignal[]; requestId: string },
 ): Response {
   const encoder = new TextEncoder();
   const ac = new AbortController();
@@ -73,6 +75,13 @@ export function eventStreamResponse(
     ac.signal.addEventListener('abort', notify, { once: true });
     const heartbeat = setInterval(() => write(SSE_HEARTBEAT), o.heartbeatMs);
     unrefTimer(heartbeat);
+    let rotate = false;
+    const rotation = setTimeout(() => {
+      rotate = true;
+      notify();
+    }, o.maxDurationMs);
+    unrefTimer(rotation);
+    const stop = () => ac.signal.aborted || rotate;
     let unsubscribe: (() => void) | undefined;
 
     const emit = (e: UncageEvent) => {
@@ -86,7 +95,7 @@ export function eventStreamResponse(
         const fresh = page.filter((e) => e.sequence > last);
         if (fresh.length === 0) return;
         for (const e of fresh) emit(e);
-        if (ac.signal.aborted) return;
+        if (stop()) return;
       }
     };
 
@@ -97,7 +106,7 @@ export function eventStreamResponse(
         notify();
       });
       await catchUp();
-      while (!ac.signal.aborted) {
+      while (!stop()) {
         if (queue.length === 0) {
           await new Promise<void>((resolve) => (wake = resolve));
           continue;
@@ -106,9 +115,15 @@ export function eventStreamResponse(
         const e = queue.shift()!;
         if (e.sequence <= last) continue;
         // A gap: fetch what is missing from history first.
-        if (e.sequence > last + 1) await catchUp();
+        if (e.sequence > last + 1) {
+          await catchUp();
+          // Rotating mid catch-up: what is still missing comes from history on the next stream.
+          if (stop()) break;
+        }
         emit(e);
       }
+      // Rotation: everything up to `last` was written whole; the client resumes after it.
+      if (!ac.signal.aborted) write(formatReconnectFrame());
     } catch (err) {
       if (!ac.signal.aborted) {
         const uerr = err instanceof UncageError ? err : new UncageError('internal_error');
@@ -116,6 +131,7 @@ export function eventStreamResponse(
       }
     } finally {
       clearInterval(heartbeat);
+      clearTimeout(rotation);
       unsubscribe?.();
       ac.signal.removeEventListener('abort', notify);
     }

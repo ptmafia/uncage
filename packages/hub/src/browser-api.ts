@@ -66,6 +66,8 @@ export interface ApiContext {
   maintenance: { secret: string | undefined; run(): Promise<unknown> };
   version: string;
   sseHeartbeatMs: number;
+  /** Browser event streams end with `event: reconnect` after this long (`stream.maxDurationMs`). */
+  streamMaxDurationMs: number;
   /** A request body not received within this long is refused. */
   bodyTimeoutMs: number;
   shutdown: AbortSignal;
@@ -470,7 +472,7 @@ export function browserApi(ctx: ApiContext) {
       const limit = Math.min(nonNegativeInt(url.searchParams.get('limit'), 'limit') ?? JSON_EVENTS_LIMIT, JSON_EVENTS_LIMIT);
       return json(limit === 0 ? [] : await readHistory(src, after, limit));
     }
-    return eventStreamResponse(src, { after, heartbeatMs: ctx.sseHeartbeatMs, signals: [req.signal, ctx.shutdown], requestId });
+    return eventStreamResponse(src, { after, heartbeatMs: ctx.sseHeartbeatMs, maxDurationMs: ctx.streamMaxDurationMs, signals: [req.signal, ctx.shutdown], requestId });
   });
 
   add('POST', '/sessions/:id/attachments', async ({ req, params, user }) => {

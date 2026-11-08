@@ -19,6 +19,15 @@ export const formatEvent = (e: UncageEvent): string =>
 /** The `event: error` frame that ends a stream whose replay failed. */
 export const formatErrorFrame = (body: ErrorBody): string => `event: error\ndata: ${JSON.stringify(body)}\n\n`;
 
+/**
+ * Event type of the frame that ends a browser event stream on the server's initiative (rotation
+ * below a platform's response duration limit): the client reconnects at once with Last-Event-ID.
+ */
+export const STREAM_RECONNECT_EVENT = 'reconnect';
+
+/** The `event: reconnect` frame written right before the server ends a rotating event stream. */
+export const formatReconnectFrame = (): string => 'event: reconnect\ndata: {}\n\n';
+
 /** SSE comment line sent every heartbeat interval so proxies keep the stream open. */
 export const SSE_HEARTBEAT = ': ping\n\n';
 

@@ -7,12 +7,14 @@ import { pgliteHubStore } from './node/index.js';
 import { sha256Hex } from './web.js';
 import {
   connectFakeAgent,
+  connectFakeHttpAgent,
   fakeMachine,
   fakeSession,
   makeEvent,
   NO_REPLY,
   readSse,
   sleep,
+  startFaasHubs,
   startTestHub,
   until,
   type FakeAgent,
@@ -441,6 +443,76 @@ describe('browser API → machine', () => {
     // JSON mode for exports.
     const all = (await (await t.as('alice', `/sessions/${s.id}/events?after=1&limit=2`, { headers: { accept: 'application/json' } })).json()) as UncageEvent[];
     expect(all.map((e) => e.sequence)).toEqual([2, 3]);
+  });
+
+  it('browser SSE ends with event: reconnect at stream.maxDurationMs', async () => {
+    const t = await start({ stream: { maxDurationMs: 300 }, sseHeartbeatMs: 50 });
+    const fm = fakeMachine();
+    const { machineToken } = await t.pair('alice');
+    await connect({ url: t.wsUrl, token: machineToken, onCommand: fm.handler });
+    const s = (await (await t.as('alice', '/sessions', post({ runtime: 'fake' }))).json()) as Session;
+    const t0 = Date.now();
+    const res = await t.as('alice', `/sessions/${s.id}/events?after=0`, { headers: { accept: 'text/event-stream' } });
+    const frames: Array<{ id?: string; event?: string; data: string }> = [];
+    // The body ends by itself (the loop finishes), right after the reconnect frame.
+    for await (const f of readSse(res)) if (!f.comment) frames.push(f);
+    const elapsed = Date.now() - t0;
+    expect(frames.map((f) => f.event)).toEqual(['session.created', 'reconnect']);
+    expect(frames.at(-1)).toEqual({ event: 'reconnect', data: '{}' });
+    expect(elapsed).toBeGreaterThanOrEqual(280);
+    expect(elapsed).toBeLessThan(2000);
+  });
+
+  it('browser SSE rotation across two instances: resuming with Last-Event-ID loses and repeats nothing', async () => {
+    const hubs = await startFaasHubs({ n: 2, sessionStorage: 'site', stream: { maxDurationMs: 120 }, sseHeartbeatMs: 40 });
+    try {
+      const { token } = await hubs.pair('alice');
+      const fm = fakeMachine();
+      const agent = await connectFakeHttpAgent({ hubs, token, onCommand: fm.handler });
+      try {
+        const s = (await (await hubs.as('alice', '/sessions', post({ runtime: 'fake' }))).json()) as Session;
+        await agent.events(s.id, fm.sessions.get(s.id)!.events);
+        const TOTAL = 40;
+        // The machine produces events 2..TOTAL while the browser stream rotates several times.
+        const producer = (async () => {
+          for (let i = 2; i <= TOTAL; i++) {
+            await agent.events(s.id, [fm.append(s.id, 'message.delta', { messageId: 'm1', chunkIndex: i, text: `${i}` })]);
+            await sleep(15);
+          }
+        })();
+        const seen: number[] = [];
+        const servedBy = new Set<number>();
+        let lastId: string | undefined;
+        let rotations = 0;
+        while (seen.at(-1) !== TOTAL) {
+          const before = hubs.requests.length;
+          const res = await hubs.as('alice', `/sessions/${s.id}/events?after=0`, {
+            headers: { accept: 'text/event-stream', ...(lastId ? { 'last-event-id': lastId } : {}) },
+          });
+          servedBy.add(hubs.requests.slice(before).find((r) => r.path.endsWith('/events'))!.i);
+          let rotated = false;
+          for await (const f of readSse(res)) {
+            if (f.comment) continue;
+            if (f.event === 'reconnect') {
+              rotated = true;
+              continue;
+            }
+            seen.push((JSON.parse(f.data) as UncageEvent).sequence);
+            lastId = f.id;
+            if (seen.at(-1) === TOTAL) break;
+          }
+          if (rotated) rotations++;
+        }
+        await producer;
+        expect(seen).toEqual(Array.from({ length: TOTAL }, (_, k) => k + 1));
+        expect(rotations).toBeGreaterThanOrEqual(2);
+        expect([...servedBy].sort()).toEqual([0, 1]);
+      } finally {
+        await agent.close();
+      }
+    } finally {
+      await hubs.close();
+    }
   });
 
   it('machine storage: history needs the machine (offline → error frame, snapshot 409)', async () => {
