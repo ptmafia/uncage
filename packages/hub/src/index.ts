@@ -13,6 +13,7 @@ export { DEFAULT_PULL_MAX_BYTES, DEFAULT_READ_MAX_BYTES, type FilePull, type Pul
 export type { ClusterAdapter } from './cluster/cluster.js';
 export { memoryCluster } from './cluster/memory.js';
 export { redisCluster, type RedisLike } from './cluster/redis.js';
+export { CLUSTER_MIGRATIONS, postgresCluster, sqlCluster, type PostgresClusterOptions } from './cluster/postgres.js';
 export type {
   ActiveRunRecord,
   AttachmentRecord,

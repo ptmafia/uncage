@@ -74,7 +74,8 @@ async function inTransaction<T>(client: PgClientLike, fn: (tx: SqlQueryable) => 
   }
 }
 
-function poolClient(pool: PgPoolLike): SqlClient {
+/** A `SqlClient` over a pool: plain queries on any connection, transactions on one checked out. */
+export function poolClient(pool: PgPoolLike): SqlClient {
   return {
     ...asQueryable(pool),
     async transaction(fn) {

@@ -3,10 +3,12 @@ import { randomBytes } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, describe, expect, inject, it } from 'vitest';
 import { clusterContract } from './cluster/contract.js';
+import { postgresCluster } from './cluster/postgres.js';
 import { redisCluster } from './cluster/redis.js';
 import { runMultiNodeScenario } from './multinode-scenario.js';
 import { hubStoreContract } from './store/contract.js';
 import { postgresHubStore } from './store/postgres.js';
+import { until } from './test-utils.js';
 
 const admin = new pg.Pool({ connectionString: inject('postgresUrl') });
 afterAll(() => admin.end());
@@ -146,4 +148,125 @@ describe('two hub nodes on real Redis + Postgres', () => {
       await db.drop();
     }
   });
+});
+
+describe('postgresCluster on Postgres 16', () => {
+  it('meets the ClusterAdapter contract (with the out-of-order commit case)', async () => {
+    const db = await freshDatabase();
+    const pool = new pg.Pool({ connectionString: db.url });
+    pool.on('error', () => undefined);
+    try {
+      await clusterContract(() => postgresCluster({ connectionString: db.url }), {
+        async insertUncommitted(channel, msg) {
+          const tx = await pool.connect();
+          await tx.query('BEGIN');
+          await tx.query('INSERT INTO uncage_cluster_messages (channel, msg) VALUES ($1, $2)', [channel, msg]);
+          return {
+            async commit() {
+              await tx.query('COMMIT');
+              tx.release();
+            },
+          };
+        },
+      });
+    } finally {
+      await pool.end();
+      await db.drop();
+    }
+  });
+
+  it('delivers a message whose lower id commits after a higher id (Review Focus #1)', async () => {
+    const db = await freshDatabase();
+    const pool = new pg.Pool({ connectionString: db.url, max: 10 });
+    pool.on('error', () => undefined);
+    const a = postgresCluster({ pool });
+    const b = postgresCluster({ pool });
+    try {
+      const got: string[] = [];
+      await b.subscribe('c', (m) => got.push(m)); // creates the tables
+      const tx = await pool.connect();
+      try {
+        await tx.query('BEGIN');
+        await tx.query(`INSERT INTO uncage_cluster_messages (channel, msg) VALUES ('c', 'late')`);
+        await a.publish('c', 'early');
+        await until(() => got.includes('early'));
+        await tx.query('COMMIT');
+      } finally {
+        tx.release();
+      }
+      await until(() => got.includes('late'), 2_000);
+      expect(got).toEqual(['early', 'late']);
+    } finally {
+      await a.close();
+      await b.close();
+      await pool.end();
+      await db.drop();
+    }
+  });
+
+  it('a rolled-back id is skipped after gapTimeoutMs; later messages keep flowing', async () => {
+    const db = await freshDatabase();
+    const a = postgresCluster({ connectionString: db.url, gapTimeoutMs: 500 });
+    const b = postgresCluster({ connectionString: db.url, gapTimeoutMs: 500 });
+    const admin2 = new pg.Pool({ connectionString: db.url });
+    admin2.on('error', () => undefined);
+    try {
+      const got: string[] = [];
+      await b.subscribe('c', (m) => got.push(m));
+      const tx = await admin2.connect();
+      await tx.query('BEGIN');
+      await tx.query(`INSERT INTO uncage_cluster_messages (channel, msg) VALUES ('c', 'never')`);
+      await a.publish('c', 'one');
+      await until(() => got.includes('one'));
+      await tx.query('ROLLBACK');
+      tx.release();
+      await new Promise((r) => setTimeout(r, 1_000));
+      for (let i = 0; i < 5; i++) await a.publish('c', `n${i}`);
+      await until(() => got.length === 6, 3_000);
+      expect(got).toEqual(['one', 'n0', 'n1', 'n2', 'n3', 'n4']);
+    } finally {
+      await a.close();
+      await b.close();
+      await admin2.end();
+      await db.drop();
+    }
+  });
+
+  it('50 concurrent publishers from 5 instances: each subscriber gets every message exactly once', async () => {
+    const db = await freshDatabase();
+    const nodes = Array.from({ length: 5 }, () => postgresCluster({ connectionString: db.url }));
+    try {
+      const got = nodes.map(() => [] as string[]);
+      await Promise.all(nodes.map((n, i) => n.subscribe('c', (m) => got[i]!.push(m))));
+      await Promise.all(
+        Array.from({ length: 50 }, async (_, i) => {
+          await new Promise((r) => setTimeout(r, Math.random() * 30));
+          await nodes[i % 5]!.publish('c', `m${i}`);
+        }),
+      );
+      await until(() => got.every((g) => g.length >= 50), 5_000);
+      await new Promise((r) => setTimeout(r, 500));
+      for (const g of got) expect([...g].sort()).toEqual(Array.from({ length: 50 }, (_, i) => `m${i}`).sort());
+    } finally {
+      await Promise.all(nodes.map((n) => n.close()));
+      await db.drop();
+    }
+  });
+});
+
+describe('two hub nodes sharing one Postgres (postgresHubStore + postgresCluster, no Redis)', () => {
+  it('machine on A, browser on B: presence across nodes, commands, events, one approval, file pull, 8 MB upload', async () => {
+    const db = await freshDatabase();
+    const store = await postgresHubStore({ connectionString: db.url });
+    const clusterA = postgresCluster({ connectionString: db.url });
+    const clusterB = postgresCluster({ connectionString: db.url });
+    try {
+      await runMultiNodeScenario({ clusterA, clusterB, store });
+    } finally {
+      await clusterA.close();
+      await clusterB.close();
+      await store.close();
+      await db.drop();
+    }
+  }, 60_000);
 });
