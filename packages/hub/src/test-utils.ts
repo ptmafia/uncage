@@ -645,7 +645,7 @@ export async function startFaasHubs(
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await Promise.all(extraClusters.map((c) => c.close().catch(() => undefined)));
-      await Promise.all(extraStores.map((st) => st.close().catch(() => undefined)));
+      await Promise.all([...new Set(extraStores)].filter((st) => st !== store).map((st) => st.close().catch(() => undefined)));
       if (ownCluster) await cluster.close();
       if (ownStore) await store.close();
     },

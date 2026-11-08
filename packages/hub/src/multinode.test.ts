@@ -48,7 +48,6 @@ describe('FaaS mode, three instances', () => {
     // PGlite has one connection: every instance shares the one database through the same client.
     const db = await sharedPglite();
     const store = await pgliteHubStore({ dataDir: 'memory://' });
-    closers.push(() => store.close());
     await runFaasScenario({ makeStore: async () => store, makeCluster: () => sqlCluster(db, { activePollMs: 30, idlePollMs: 150 }), streamMaxMs: 400 });
   }, 90_000);
 });

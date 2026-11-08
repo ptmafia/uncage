@@ -28,7 +28,7 @@ import { defineTool } from './tools.js';
 const X = 0; // machine stream
 const Y = 1; // browser API + SSE
 const Z = 2; // tool calls, upstream POSTs, approval decisions
-const MAINTENANCE_INTERVAL_MS = 1_500;
+const MAINTENANCE_INTERVAL_MS = 5_000;
 const PING_MS = 150;
 const MISSED_PINGS = 2;
 const sha = (d: Uint8Array | Buffer): string => createHash('sha256').update(d).digest('hex');
@@ -81,7 +81,7 @@ function browserStream(hubs: FaasHubs, user: string, sessionId: string) {
 
 export async function runFaasScenario(o: { makeStore(): Promise<HubStore>; makeCluster(): ClusterAdapter; streamMaxMs: number }): Promise<void> {
   const pulled: Array<{ path: string; size: number; sha: string }> = [];
-  const started = { publish: 0, hang: 0 };
+  const started = { publish: 0, hang: 0, echo: 0 };
   const publishSite = defineTool({
     name: 'publish_site',
     description: 'Publish the site folder',
@@ -101,30 +101,43 @@ export async function runFaasScenario(o: { makeStore(): Promise<HubStore>; makeC
       return new Promise<string>(() => undefined);
     },
   });
+  const echo = defineTool({
+    name: 'echo_site',
+    description: 'Returns at once',
+    input: z.object({}),
+    handler: async () => {
+      started.echo++;
+      return 'echoed';
+    },
+  });
   const maintenanceRuns: number[] = [];
+  /** Runs started by requests (not by an explicit `maintain()` call of this scenario). */
+  const opportunisticRuns: number[] = [];
+  let explicitCalls = 0;
   const hubs = await startFaasHubs({
-    n: 3,
+    n: 4, // X, Y, Z and a spare: three of them are killed during the run
     perInstance: true,
     makeStore: o.makeStore,
     makeCluster: o.makeCluster,
-    tools: [publishSite, hang],
+    tools: [publishSite, hang, echo],
     stream: { maxDurationMs: o.streamMaxMs },
     heartbeat: { pingIntervalMs: PING_MS, missedPings: MISSED_PINGS },
-    maintenance: { intervalMs: MAINTENANCE_INTERVAL_MS, onRun: async () => void maintenanceRuns.push(Date.now()) },
+    maintenance: { intervalMs: MAINTENANCE_INTERVAL_MS, onRun: async () => void (maintenanceRuns.push(Date.now()), explicitCalls === 0 && opportunisticRuns.push(Date.now())) },
     toolTimeoutMs: 3_000,
     toolLeaseGraceMs: 500,
     commandTimeoutMs: 15_000,
   } as Parameters<typeof startFaasHubs>[0]);
   const scenarioStart = Date.now();
   const killed = new Set<number>();
-  const alive = (i: number): number => (killed.has(i) ? [0, 1, 2].find((k) => !killed.has(k))! : i);
+  const alive = (i: number): number => (killed.has(i) ? [0, 1, 2, 3].find((k) => !killed.has(k))! : i);
   let rr = 0;
+  let approvalHits = 0;
   hubs.route((req) => {
     const path = new URL(req.url).pathname.replace(/^\/api\/uncage/, '');
     if (path === '/agent/events') return alive(Z);
     if (path.startsWith('/agent/')) return alive(X);
-    if (path.startsWith('/approvals/')) return alive(Z);
-    if (path === '/machines' && rr++ % 3 !== 0) return alive(rr % 3); // spread presence reads over every instance
+    if (path.startsWith('/approvals/')) return alive(approvalHits++ % 2 === 0 ? Z : Y); // duplicate decisions land on two instances
+    if (path === '/machines' && rr++ % 4 !== 0) return alive(rr % 4); // spread presence reads over every instance
     return alive(Y);
   });
   const kill = (i: number): void => {
@@ -133,7 +146,10 @@ export async function runFaasScenario(o: { makeStore(): Promise<HubStore>; makeC
   };
 
   const fm = fakeMachine();
+  /** Every `decide` command the hub forwarded (a retry of the same decision is forwarded again: the hub does not dedupe) and the ones the agent applied (it dedupes by idempotency key, like the real agent). */
+  const forwarded: Array<{ idempotencyKey: string }> = [];
   const decisions: unknown[] = [];
+  const appliedKeys = new Set<string>();
   const approval: ApprovalRequest = {
     id: 'apr_1',
     sessionId: '',
@@ -151,7 +167,12 @@ export async function runFaasScenario(o: { makeStore(): Promise<HubStore>; makeC
   };
   const onCommand: CommandHandler = (cmd) => {
     if (cmd.op === 'decide') {
-      decisions.push(cmd.args);
+      const a = cmd.args as { idempotencyKey: string };
+      forwarded.push({ idempotencyKey: a.idempotencyKey });
+      if (!appliedKeys.has(a.idempotencyKey)) {
+        appliedKeys.add(a.idempotencyKey);
+        decisions.push(cmd.args);
+      }
       return { ...approval, state: 'approved', decision: (cmd.args as { decision: { decision: 'allow' | 'deny' } }).decision.decision, version: 2 };
     }
     return fm.handler(cmd);
@@ -211,12 +232,16 @@ export async function runFaasScenario(o: { makeStore(): Promise<HubStore>; makeC
     expect(browser.state.reconnects).toBeGreaterThanOrEqual(2); // server-initiated rotations
     expect(hubs.requests.filter((r) => r.path.endsWith('/events') && r.path.startsWith('/sessions')).every((r) => r.i === Y)).toBe(true);
 
-    // ---- one approval decided on Z reaches the machine once ----
+    // ---- one approval decided twice at once (two instances, one idempotency key): the hub forwards the key, the agent applies it once ----
     await until(() => hubs.store.getResource(approval.id, 'approval'), 5_000);
     const decide = () => hubs.as('alice', `/approvals/${approval.id}/decision`, json({ decision: 'allow', scope: 'once' }, { 'idempotency-key': 'k1' }));
-    expect((await decide()).status).toBe(200);
+    const [d1, d2] = await Promise.all([decide(), decide()]);
+    expect([d1.status, d2.status]).toEqual([200, 200]);
+    expect(await d1.json()).toEqual(await d2.json());
+    expect(forwarded.length).toBeGreaterThanOrEqual(1);
+    expect(forwarded.every((f) => f.idempotencyKey === 'k1')).toBe(true);
     expect(decisions).toEqual([{ approvalId: approval.id, decision: { decision: 'allow', scope: 'once' }, idempotencyKey: 'k1' }]);
-    expect(hubs.requests.filter((r) => r.path.startsWith('/approvals/')).every((r) => r.i === Z)).toBe(true);
+    expect(new Set(hubs.requests.filter((r) => r.path.startsWith('/approvals/')).map((r) => r.i))).toEqual(new Set([Y, Z]));
 
     // ---- a tool call POSTed to Z pulls a 3-file directory (one 2 MB) while the stream is on X ----
     const started1 = await hubs.as('alice', `/sessions/${session.id}/runs`, json({ prompt: 'publish' }, { 'idempotency-key': 'run-1' }));
@@ -257,6 +282,11 @@ export async function runFaasScenario(o: { makeStore(): Promise<HubStore>; makeC
     const rows = async () =>
       (await hubs.store.pollLink(machineId, agent.linkId, { after: 0, limit: 100, now: '1970-01-01T00:00:00.000Z' })).items.filter((i) => i.msgId.startsWith('stale_')).length;
     expect(await rows()).toBe(3);
+    // Acknowledged rows are deleted as the agent acks them: nothing at or below its cursor is left.
+    expect((await agent.post({})).status).toBe(200);
+    const left = (await hubs.store.pollLink(machineId, agent.linkId, { after: 0, limit: 1_000, now: '1970-01-01T00:00:00.000Z' })).items;
+    expect(left.filter((i) => !i.msgId.startsWith('stale_') && i.seq <= agent.cursor)).toEqual([]);
+    explicitCalls++;
     const reports = await Promise.all(hubs.hubs.map((h) => h.maintain()));
     const winners = reports.flatMap((r, i) => (r.ran ? [i] : []));
     expect(winners).toHaveLength(1); // a call on the lease holder runs; the others find the lease taken
@@ -264,6 +294,7 @@ export async function runFaasScenario(o: { makeStore(): Promise<HubStore>; makeC
     // Within the interval no other instance runs it again.
     const again = await Promise.all(hubs.hubs.map((h, i) => (i === winners[0] ? Promise.resolve({ ran: false }) : h.maintain())));
     expect(again.every((r) => !r.ran)).toBe(true);
+    explicitCalls--;
 
     // ---- Y is killed while the browser reads: it resumes on another instance, nothing lost or repeated ----
     const TOTAL_B = 20;
@@ -288,6 +319,20 @@ export async function runFaasScenario(o: { makeStore(): Promise<HubStore>; makeC
     expect(audit.filter((r) => r.tool === 'publish_site').map((r) => r.status)).toEqual(['ok']);
     expect(audit.filter((r) => r.tool === 'hang_site').map((r) => r.status)).toEqual(['interrupted']);
 
+    // ---- X (the machine's stream host) is killed: the agent reconnects through another instance, events flow, a tool call still completes ----
+    const TOTAL_C = 15;
+    for (let i = 0; i < TOTAL_C; i++) {
+      await agent.events(session.id, [fm.append(session.id, 'run.updated', { runId: 'run_1', state: 'running' }, 'run_1')]);
+      if (i === 4) kill(X);
+      await sleep(40);
+    }
+    const total = TOTAL_A + TOTAL_B + TOTAL_C + 1;
+    await until(() => browser.state.last >= total, 15_000);
+    expect(browser.got.map((e) => e.sequence)).toEqual(Array.from({ length: total }, (_, i) => i + 1));
+    expect(await agent.callTool('echo_site', {})).toMatchObject({ ok: true, result: { content: [{ type: 'text', text: 'echoed' }] } });
+    expect(started.echo).toBe(1);
+    expect(hubs.requests.filter((r) => r.path === '/agent/stream').some((r) => r.i === 3)).toBe(true);
+
     // ---- the agent disconnects without a goodbye: offline on a live instance within the presence TTL ----
     expect(await online()).toBe(true);
     const ttlMs = PING_MS * (MISSED_PINGS + 1);
@@ -299,10 +344,12 @@ export async function runFaasScenario(o: { makeStore(): Promise<HubStore>; makeC
     // Maintenance ran about once per interval for the whole scenario, not once per instance.
     const elapsedMs = Date.now() - scenarioStart;
     expect(maintenanceRuns.length).toBeLessThanOrEqual(Math.floor(elapsedMs / MAINTENANCE_INTERVAL_MS) + 3);
+    // Runs started by requests on any instance are at least an interval apart (the timestamp is a run's end: allow its duration).
+    for (let i = 1; i < opportunisticRuns.length; i++) expect(opportunisticRuns[i]! - opportunisticRuns[i - 1]!).toBeGreaterThan(MAINTENANCE_INTERVAL_MS - 1_000);
 
     // Every command reached the machine once.
     const ops = agent.commands.map((c) => c.op);
-    expect(ops.filter((op) => op === 'decide')).toHaveLength(1);
+    expect(ops.filter((op) => op === 'decide')).toHaveLength(forwarded.length); // each forwarded decision dispatched once; applied once (above)
     expect(ops.filter((op) => op === 'startRun')).toHaveLength(1);
     expect(new Set(agent.commands.map((c) => c.id)).size).toBe(agent.commands.length);
   } finally {

@@ -399,7 +399,7 @@ describe('three hub instances sharing one Postgres (FaaS mode, no Redis)', () =>
         streamMaxMs: 800,
       });
       const elapsedS = (Date.now() - t0) / 1000;
-      console.info(`[faas-scenario] cluster poll queries: ${clusterPolls} in ${elapsedS.toFixed(1)} s across 3 instances while active (${(clusterPolls / elapsedS / 3).toFixed(1)}/s per instance)`);
+      console.info(`[faas-scenario] cluster poll queries: ${clusterPolls} in ${elapsedS.toFixed(1)} s across 3 instances over the whole scenario, busy and quiet phases (${(clusterPolls / elapsedS / 3).toFixed(1)}/s per instance)`);
     } finally {
       await Promise.all(pools.map((p) => p.end().catch(() => undefined)));
       await db.drop();
