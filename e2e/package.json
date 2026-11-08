@@ -8,8 +8,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "e2e:mock": "playwright test --project=mock-default --project=mock-headless --project=connected-mock --project=connected-multinode --project=connected-faas-mock",
-    "e2e:live": "playwright test --project=live-claude --project=connected-live --project=connected-acp-live --pass-with-no-tests",
+    "e2e:mock": "playwright test --project=mock-default --project=mock-headless --project=connected-mock --project=connected-multinode --project=connected-faas-mock --project=connected-container",
+    "e2e:live": "playwright test --project=live-claude --project=connected-live --project=connected-acp-live --project=connected-faas-live --project=connected-cloudflare-live --pass-with-no-tests",
     "typecheck": "tsc --noEmit",
     "lint": "eslint ."
   },

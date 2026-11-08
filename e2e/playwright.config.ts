@@ -7,7 +7,7 @@ export const PORTS = { daemon: 4793, control: 4794, defaultChat: 3100, headlessC
 export const LIVE_PORTS = { daemon: 4795, control: 4796, app: 3102, headlessApp: 3103, bypassDaemon: 4798, bypassApp: 3105 } as const;
 
 /** Connected Mode (e2e/connected): the connected-demo website, started by the specs themselves. */
-export const CONNECTED_PORTS = { mock: 3210, multinode: 3220, live: 3230, faas: 3240, acpLive: 3250 } as const;
+export const CONNECTED_PORTS = { mock: 3210, multinode: 3220, live: 3230, faas: 3240, acpLive: 3250, faasLive: 3260, cloudflareLive: 3270, container: 3280 } as const;
 
 const live = process.env.UNCAGE_LIVE === '1';
 const exampleEnv = (daemonPort: number) => ({ UNCAGE_URL: `http://127.0.0.1:${daemonPort}`, UNCAGE_TOKEN: 'test-token' });
@@ -92,6 +92,31 @@ export default defineConfig<ExampleOptions>({
       testMatch: 'acp-live.spec.ts',
       timeout: 900_000,
       ...(live ? {} : { testIgnore: '**' }),
+    },
+    {
+      // The Vercel shape with REAL Claude Code: `next start` (no custom server), docker Postgres,
+      // 15 s stream rotation, public mode. UNCAGE_LIVE=1 only (and Docker).
+      name: 'connected-faas-live',
+      testDir: './connected',
+      testMatch: 'faas-live.spec.ts',
+      timeout: 900_000,
+      ...(live ? {} : { testIgnore: '**' }),
+    },
+    {
+      // The Cloudflare shape with REAL Claude Code: examples/connected-cloudflare under `wrangler dev`
+      // (workerd) + docker Postgres through Hyperdrive's local connection string. UNCAGE_LIVE=1 only.
+      name: 'connected-cloudflare-live',
+      testDir: './connected',
+      testMatch: 'cloudflare-live.spec.ts',
+      timeout: 900_000,
+      ...(live ? {} : { testIgnore: '**' }),
+    },
+    {
+      // The Railway shape: the demo's container image (WebSocket + PGlite) with the fake runtime.
+      // Skips itself (with the reason) unless UNCAGE_DOCKER_TESTS=1.
+      name: 'connected-container',
+      testDir: './connected',
+      testMatch: 'container.spec.ts',
     },
   ],
   webServer: live

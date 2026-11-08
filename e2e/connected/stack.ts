@@ -8,6 +8,7 @@
  * live run's Claude Code keeps its login.
  */
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { appendFileSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -132,6 +133,47 @@ export class Stack {
     return { url, proc, dataDir };
   }
 
+  /**
+   * examples/connected-cloudflare under `wrangler dev` (workerd, local mode). `databaseUrl` replaces
+   * the Hyperdrive binding's localConnectionString; DEMO_SECRET is a throwaway `--var`.
+   */
+  async wrangler(port: number, o: { databaseUrl: string; env?: NodeJS.ProcessEnv }): Promise<{ url: string; proc: Proc }> {
+    const url = `http://localhost:${port}`;
+    const dir = join(repo, 'examples/connected-cloudflare');
+    const secret = randomBytes(32).toString('hex');
+    const proc = await this.spawn(
+      'wrangler',
+      [join(dir, 'node_modules/wrangler/bin/wrangler.js'), 'dev', '--port', String(port), '--ip', '127.0.0.1', '--var', `PUBLIC_URL:${url}`, '--var', `DEMO_SECRET:${secret}`, '--persist-to', this.tmp('wrangler-state')],
+      {
+        cwd: dir,
+        env: {
+          CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE: o.databaseUrl,
+          WRANGLER_SEND_METRICS: 'false',
+          // Local mode only: no Cloudflare account, no login prompt.
+          CI: '1',
+          ...o.env,
+        },
+        marker: 'Ready on',
+        timeoutMs: 120_000,
+      },
+    );
+    return { url, proc };
+  }
+
+  /**
+   * The Railway shape: the demo's container image (examples/connected-demo/Dockerfile, built as
+   * `image`) — Next.js + hub + WebSocket on one port, PGlite in the container's /data.
+   */
+  async demoContainer(port: number, image = 'uncage-connected-demo:e2e'): Promise<{ url: string }> {
+    const docker = async (...args: string[]) => (await execFileP('docker', args, { timeout: 180_000 })).stdout.trim();
+    const url = `http://localhost:${port}`;
+    const id = await docker('run', '-d', '--rm', '-p', `127.0.0.1:${port}:3200`, '-e', `PUBLIC_URL=${url}`, image);
+    this.containers.push(id);
+    await until(async () => (await fetch(`${url}/api/uncage/agent/info`)).ok, 120_000, 'demo container ready');
+    this.log(`docker: demo container ${id.slice(0, 12)} on ${url}`);
+    return { url };
+  }
+
   /** How many times `re` matches in `proc`'s output (stdout + stderr). */
   count(proc: Proc, re: RegExp): number {
     return proc.output().match(new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`))?.length ?? 0;
@@ -225,6 +267,16 @@ export class Stack {
    */
   realAgent(home: string): Promise<Proc> {
     return this.spawn('agent', [cliBin, 'agent'], { env: { UNCAGE_HOME: home, UNCAGE_LOG_LEVEL: 'info', UNCAGE_ACP_REGISTRY_REFRESH: '0' } });
+  }
+
+  /**
+   * The real `uncage agent` with Claude Code only: `runtimes.acp` gets no presets, no registry
+   * detection and no agents, so no other local agent is probed (the native Codex adapter only
+   * checks for a `codex` binary).
+   */
+  claudeAgent(home: string): Promise<Proc> {
+    this.writeAcpRuntimes(home, []);
+    return this.realAgent(home);
   }
 
   /**

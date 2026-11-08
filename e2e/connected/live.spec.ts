@@ -26,7 +26,7 @@ test('real Claude Code builds and publishes a landing page through the websiteâ€
     page,
     stack,
     url: demo.url,
-    agent: (home) => stack.realAgent(home),
+    agent: (home) => stack.claudeAgent(home),
     runTimeoutMs: 600_000,
     beforeSend: async (p) => {
       // The real agent offers Claude Code (and Codex if installed): run on Claude Code.
