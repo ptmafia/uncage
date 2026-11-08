@@ -194,6 +194,8 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
     const { signal } = controller;
     let lastSequence = h.after;
     let lastEventId: string | undefined;
+    /** `lastSequence` at which a gap last made us resume (a gap seen again there is accepted). */
+    let gapAt: number | undefined;
     let state: ConnectionState | undefined;
     let warned = false;
     const setState = (s: ConnectionState) => {
@@ -242,6 +244,7 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
           const opened = Date.now();
           let delivered = false;
           let rotated = false;
+          let gap = false;
           for await (const frame of parseSSE(res.body)) {
             if (frame.event === STREAM_RECONNECT_EVENT) {
               // The server ends this response between two whole frames: resume after the last
@@ -267,10 +270,20 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
               continue;
             }
             if (event.sequence <= lastSequence) continue;
+            if (event.sequence > lastSequence + 1 && gapAt !== lastSequence) {
+              // Never skip: resume after the last event once; a gap the server still has is real.
+              gapAt = lastSequence;
+              gap = true;
+              break;
+            }
             lastSequence = event.sequence;
             if (frame.id) lastEventId = frame.id;
             delivered = true;
             guard(() => h.onEvent(event));
+          }
+          if (gap && !signal.aborted) {
+            attempt = 0;
+            continue;
           }
           if (rotated && !signal.aborted) {
             if (delivered || Date.now() - opened >= MIN_IDLE_ROTATION_MS) {

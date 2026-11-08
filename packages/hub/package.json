@@ -54,6 +54,7 @@
     "@types/ioredis-mock": "^8.2.8",
     "@types/pg": "^8.23.1",
     "@types/ws": "^8.18.1",
+    "@uncage/client": "workspace:*",
     "esbuild": "^0.28.2",
     "express": "^5.3.0",
     "ioredis": "^5.11.1",

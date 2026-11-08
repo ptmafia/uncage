@@ -365,6 +365,45 @@ describe('subscribe', () => {
     expect((fetch.mock.calls[1]![1]!.headers as Record<string, string>)['last-event-id']).toBe(evt(2).eventId);
   });
 
+  it('a live event past a gap reconnects at once from the last event instead of skipping', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const fetch = vi
+      .fn<F>()
+      .mockResolvedValueOnce(sseResponse([frame(1), frame(3), frame(4)]))
+      // The resumed response stays open.
+      .mockResolvedValueOnce(
+        new Response(new ReadableStream({ start: (c) => c.enqueue(new TextEncoder().encode(frame(2) + frame(3) + frame(4))) }), {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        }),
+      )
+      .mockImplementation(() => new Promise<Response>(() => undefined));
+    const seen: number[] = [];
+    const states: ConnectionState[] = [];
+    const unsub = createUncageClient({ fetch }).subscribe('ses_1', { after: 0, onEvent: (e) => seen.push(e.sequence), onState: (s) => states.push(s) });
+    await vi.advanceTimersByTimeAsync(50);
+    unsub();
+    expect(seen).toEqual([1, 2, 3, 4]);
+    expect(states).toEqual(['connecting', 'live']);
+    expect(fetch.mock.calls[1]![0]).toBe('/api/uncage/sessions/ses_1/events?after=1');
+    expect((fetch.mock.calls[1]![1]!.headers as Record<string, string>)['last-event-id']).toBe(evt(1).eventId);
+  });
+
+  it('a gap the server still has after one resume is accepted (no reconnect loop)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const fetch = vi
+      .fn<F>()
+      .mockResolvedValueOnce(sseResponse([frame(1), frame(3)]))
+      .mockResolvedValueOnce(sseResponse([frame(3), frame(4)]))
+      .mockImplementation(() => new Promise<Response>(() => undefined));
+    const seen: number[] = [];
+    const unsub = createUncageClient({ fetch }).subscribe('ses_1', { after: 0, onEvent: (e) => seen.push(e.sequence) });
+    await vi.advanceTimersByTimeAsync(50);
+    unsub();
+    expect(seen).toEqual([1, 3, 4]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it('back-to-back reconnect frames with nothing in between back off instead of spinning', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const fetch = vi.fn<F>(async () => sseResponse(['event: reconnect\ndata: {}\n\n']));

@@ -11,6 +11,12 @@ export interface EventSource {
 }
 
 const HISTORY_PAGE = 200;
+/**
+ * How long a live event beyond the next sequence waits for the missing ones to become readable
+ * from history (a write committed after a later one, a cluster that delivered out of order) before
+ * the stream ends with `event: reconnect`, so the client resumes after the last event it got.
+ */
+const DEFAULT_GAP_WAIT_MS = 2_000;
 
 /** Reads history pages after `after` until caught up or `limit` events are collected. */
 export async function readHistory(src: EventSource, after: number, limit: number): Promise<UncageEvent[]> {
@@ -35,7 +41,7 @@ export async function readHistory(src: EventSource, after: number, limit: number
  */
 export function eventStreamResponse(
   src: EventSource,
-  o: { after: number; heartbeatMs: number; maxDurationMs: number; signals: AbortSignal[]; requestId: string },
+  o: { after: number; heartbeatMs: number; maxDurationMs: number; gapWaitMs?: number; signals: AbortSignal[]; requestId: string },
 ): Response {
   const encoder = new TextEncoder();
   const ac = new AbortController();
@@ -82,6 +88,19 @@ export function eventStreamResponse(
     }, o.maxDurationMs);
     unrefTimer(rotation);
     const stop = () => ac.signal.aborted || rotate;
+    const gapWaitMs = o.gapWaitMs ?? DEFAULT_GAP_WAIT_MS;
+    /** Sleeps up to `ms`; rotation or abort cut it short. */
+    const pause = (ms: number) =>
+      new Promise<void>((resolve) => {
+        const t = setTimeout(done, ms);
+        unrefTimer(t);
+        wake = done;
+        function done() {
+          clearTimeout(t);
+          if (wake === done) wake = undefined;
+          resolve();
+        }
+      });
     let unsubscribe: (() => void) | undefined;
 
     const emit = (e: UncageEvent) => {
@@ -114,11 +133,22 @@ export function eventStreamResponse(
         queue.sort((a, b) => a.sequence - b.sequence);
         const e = queue.shift()!;
         if (e.sequence <= last) continue;
-        // A gap: fetch what is missing from history first.
+        // A gap: fetch what is missing from history first, never emitting past it.
         if (e.sequence > last + 1) {
           await catchUp();
-          // Rotating mid catch-up: what is still missing comes from history on the next stream.
+          const deadline = Date.now() + gapWaitMs;
+          let delay = 25;
+          while (e.sequence > last + 1 && !stop() && Date.now() < deadline) {
+            await pause(Math.min(delay, deadline - Date.now()));
+            delay = Math.min(delay * 2, 400);
+            await catchUp();
+          }
+          // Rotating mid catch-up, or still missing: the next stream reads it from history.
           if (stop()) break;
+          if (e.sequence > last + 1) {
+            rotate = true;
+            break;
+          }
         }
         emit(e);
       }

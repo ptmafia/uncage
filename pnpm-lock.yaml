@@ -465,6 +465,9 @@ importers:
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.2
+      '@uncage/client':
+        specifier: workspace:*
+        version: link:../client
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
