@@ -47,16 +47,22 @@ const targets = (['zh', 'ja'] as const).filter((l) => l !== locale && !pendingLo
       return;
     }
     const pref = (navigator.languages && navigator.languages[0]) || navigator.language || '';
-    const want = /^zh\b/i.test(pref) ? 'zh' : /^ja\b/i.test(pref) ? 'ja' : null;
+    // Simplified Chinese only (zh, zh-CN, zh-SG, zh-Hans…); zh-TW / zh-HK read Traditional Chinese.
+    const want = /^zh(-(cn|sg|hans)(-.*)?)?$/i.test(pref) ? 'zh' : /^ja(-.*)?$/i.test(pref) ? 'ja' : null;
     if (!want || want === page) return;
     const bar = document.querySelector(`[data-lang-hint="${want}"]`);
     if (!bar) return;
     bar.hidden = false;
+    const remember = (v) => {
+      try {
+        store.setItem(KEY, v);
+      } catch {}
+    };
     bar.querySelector('[data-lang-dismiss]')?.addEventListener('click', () => {
-      store.setItem(KEY, 'dismissed');
+      remember('dismissed');
       bar.hidden = true;
     });
-    bar.querySelector('[data-lang-choice]')?.addEventListener('click', () => store.setItem(KEY, want));
+    bar.querySelector('[data-lang-choice]')?.addEventListener('click', () => remember(want));
   })();
 </script>
 

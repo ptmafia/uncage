@@ -27,7 +27,7 @@ const t = getDict(locale).flow;
       <p class="bubble r" style="--d: 2.3s">{t.assistant}</p>
       <div class="tool r" style="--d: 2.6s">
         <div class="tool-head">
-          <code>publish_page</code>
+          <code translate="no">publish_page</code>
           <span class="tool-note">{t.toolNote}</span>
         </div>
         <div class="approve">
@@ -44,12 +44,12 @@ const t = getDict(locale).flow;
     <i class="line" aria-hidden="true"></i>
   </div>
 
-  <div class="term" translate="no">
-    <p class="r" style="--d: 0.9s"><span class="d">~/Uncage/your.site/s-42 ·</span> <span class="a">claude</span></p>
-    <p class="r" style="--d: 1.3s"><span class="g">✓</span> {t.termSkill} <span class="a">landing-page</span></p>
-    <p class="r" style="--d: 1.7s"><span class="g">✓</span> {t.termWrite} <span class="w">landing/index.html</span></p>
+  <div class="term">
+    <p class="r" style="--d: 0.9s"><span class="d" translate="no">~/Uncage/your.site/s-42 ·</span> <span class="a" translate="no">claude</span></p>
+    <p class="r" style="--d: 1.3s"><span class="g">✓</span> {t.termSkill} <span class="a" translate="no">landing-page</span></p>
+    <p class="r" style="--d: 1.7s"><span class="g">✓</span> {t.termWrite} <span class="w" translate="no">landing/index.html</span></p>
     <p class="r" style="--d: 2.1s">
-      <span class="a">→</span> publish_page · <span class="d">{t.termWaiting}</span><span class="caret" aria-hidden="true"></span>
+      <span class="a">→</span> <span translate="no">publish_page</span> · <span class="d">{t.termWaiting}</span><span class="caret" aria-hidden="true"></span>
     </p>
   </div>
 </figure>

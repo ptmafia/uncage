@@ -79,6 +79,7 @@ const [before = '', em = '', after = ''] = t.hero.title.split('*');
   }
   h1 em {
     font-style: normal;
+    /* Deliberate large-display exception: --uc-accent is 3.6:1 (light) / 6.9:1 (dark) on paper, AA for text ≥ 24px; the h1 is ≥ 42px. */
     color: var(--uc-accent);
   }
   :global(:lang(zh-CN)) h1,
