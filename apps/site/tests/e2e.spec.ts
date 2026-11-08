@@ -39,21 +39,27 @@ test('English homepage: language, headline, navigation, CTAs, Coming soon, hrefl
   expect(errors).toEqual([]);
 });
 
-test('no horizontal scroll at 375x812', async ({ page }) => {
-  await page.setViewportSize({ width: 375, height: 812 });
-  await page.goto('/');
-  const { scrollWidth, innerWidth } = await page.evaluate(() => ({
-    scrollWidth: document.documentElement.scrollWidth,
-    innerWidth: window.innerWidth,
-  }));
-  expect(scrollWidth).toBeLessThanOrEqual(innerWidth);
+test('no horizontal scroll on phones (375, 360, 320) in every locale', async ({ page }) => {
+  for (const width of [375, 360, 320]) {
+    await page.setViewportSize({ width, height: 800 });
+    for (const path of ['/', '/zh/', '/ja/']) {
+      await page.goto(path);
+      const { scrollWidth, innerWidth, h1Right } = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        innerWidth: window.innerWidth,
+        h1Right: Math.max(...[...document.querySelectorAll('h1, h1 *')].map((el) => el.getBoundingClientRect().right)),
+      }));
+      expect(scrollWidth, `${path} at ${width}`).toBeLessThanOrEqual(innerWidth);
+      expect(h1Right, `${path} h1 at ${width}`).toBeLessThanOrEqual(innerWidth);
+    }
+  }
 });
 
 test('zh and ja homepages: language, translated copy, docs links, switcher, OG image', async ({ page }) => {
   const errors = trackErrors(page);
   for (const c of [
     { path: '/zh/', lang: 'zh-CN', docs: '/docs/zh-cn/', og: 'zh', h1: '你的 coding agent，无处不在。', secondary: '几分钟完成接入', soon: '即将推出' },
-    { path: '/ja/', lang: 'ja', docs: '/docs/ja/', og: 'ja', h1: 'あなたのコーディングエージェントを、どこでも。', secondary: '数分で組み込み', soon: '近日公開' },
+    { path: '/ja/', lang: 'ja', docs: '/docs/ja/', og: 'ja', h1: 'あなたのコーディングエージェントを、どこでも。', secondary: '数分で導入', soon: '近日公開' },
   ] as const) {
     await page.goto(c.path);
     await expect(page.locator('html')).toHaveAttribute('lang', c.lang);

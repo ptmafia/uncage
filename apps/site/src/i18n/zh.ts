@@ -12,7 +12,7 @@ export const zh: Dict = {
   meta: {
     title: 'Uncage：你的 coding agent，无处不在',
     description:
-      'Uncage 让你的网站驱动每位用户电脑上他们自己的 Claude Code：实时流式输出、审批、网站工具与技能，结果直接回到你的网站。开源，MIT 许可。',
+      'Uncage 让你的网站驱动每位用户在自己电脑上运行的 Claude Code：实时流式输出、审批、网站工具与技能，结果直接回到你的网站。开源，MIT 许可。',
     ogAlt: 'Uncage。你的 coding agent，无处不在。本地 harness，即服务。',
   },
   tagline: '本地 harness，即服务。',
@@ -42,7 +42,7 @@ export const zh: Dict = {
   hero: {
     eyebrow: 'v0.2 · Connected 模式已上线',
     title: '你的 coding agent，|*无处不在。*',
-    lede: '你的用户手里早就有一套强大的环境：他们自己的 Claude Code、自己的账号、自己的工具。Uncage 把这套本地 harness 变成你的产品可以调用的服务。任务在用户的电脑上运行，结果落在你的网站上。',
+    lede: '你的用户手里早就有一套强大的环境：他们自己的 Claude Code、自己的账号、自己的工具。Uncage 把这套本地 harness 变成你的产品可以调用的服务。任务在用户的电脑上运行，结果回到你的网站上。',
     primary: '体验在线演示',
     secondary: '几分钟完成接入',
     installLabel: '用户只需运行一次',
@@ -51,7 +51,7 @@ export const zh: Dict = {
     label: '一次请求的流向：你网站上的对话，由用户电脑主动建立的 WebSocket 连接，以及在这台电脑上运行的 Claude Code。',
     browserTitle: 'your.site',
     online: '电脑在线',
-    userMessage: '给这次发布做一个落地页，然后发布上线',
+    userMessage: '为这次发布做一个落地页并上线',
     toolNote: '在你的服务器上运行',
     assistant: '页面已写好。要发布到你的网站吗？',
     allow: '允许执行',
@@ -91,9 +91,9 @@ export const zh: Dict = {
         body: '一条命令，再在浏览器里授权一次。后台的守护进程主动连向你的网站，无需开放任何端口。',
       },
       {
-        tag: '下达指令',
+        tag: '指令',
         title: '由你的网站下达指令',
-        body: '你产品里的对话发起运行，实时展示每一步，并弹出「允许执行 / 拒绝」审批卡片。',
+        body: '你产品里的对话发起运行，实时展示每一步，并弹出“允许执行 / 拒绝”审批卡片。',
       },
       {
         tag: '交付',
@@ -112,7 +112,7 @@ export const zh: Dict = {
     available: [
       {
         title: '实时流式输出与审批',
-        body: '每个 token、每个工具步骤都实时推送到你的界面。有风险的操作会等待「允许执行 / 拒绝」卡片确认。',
+        body: '每个 token、每个工具步骤都实时推送到你的界面。有风险的操作会等待“允许执行 / 拒绝”卡片确认。',
       },
       {
         title: '网站工具',
@@ -120,7 +120,7 @@ export const zh: Dict = {
       },
       {
         title: '技能',
-        body: '把团队规范和模板写成 markdown 下发。每次运行时加载，绝不会被当作代码执行。',
+        body: '把团队规范和模板写成 Markdown 下发。每次运行时加载，绝不会被当作代码执行。',
       },
       {
         title: '存储由你决定',
@@ -160,7 +160,7 @@ export const zh: Dict = {
     sub: '你的认证、你的数据库、你的 Node 服务器。Uncage 直接接入你现有的技术栈。',
     moreTitle: '从零到连上一台电脑',
     moreBody: '快速入门会一步步带你搭建一个 Next.js 应用，包含 hub、设备授权页面和你的第一个网站工具。Express、Fastify 和 Hono 同样适用。',
-    more: '跟着 Connected 模式快速入门动手',
+    more: '查看 Connected 模式快速入门',
   },
   security: {
     kicker: '安全',
@@ -199,7 +199,7 @@ export const zh: Dict = {
     features: '功能',
     quickstart: '快速入门',
     api: 'API 参考',
-    forAgents: '给 coding agent',
+    forAgents: '面向 coding agent',
     changelog: '更新日志',
     license: 'MIT 许可证',
     rights: '基于 MIT 许可证发布。',

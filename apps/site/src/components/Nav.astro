@@ -206,9 +206,31 @@ const links = [
     }
   }
   @media (max-width: 380px) {
+    /* Down to 320: brand, language, Try the demo and the menu button fit in one row. */
+    .bar {
+      gap: 8px;
+    }
+    .right {
+      gap: 2px;
+    }
+    .right > :global(*) {
+      flex-shrink: 0;
+    }
     .cta {
-      padding: 7px 12px;
+      padding: 7px 10px;
       font-size: 13px;
+    }
+  }
+  @media (max-width: 340px) {
+    /* The inline style on the logo svg sets its height, hence !important. */
+    .brand :global(svg) {
+      height: 22px !important;
+    }
+    .right :global(.lang .chev) {
+      display: none;
+    }
+    .cta {
+      padding: 7px 8px;
     }
   }
 </style>

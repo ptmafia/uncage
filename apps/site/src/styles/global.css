@@ -78,6 +78,11 @@ body {
 html:lang(ja) {
   --uc-font-sans: var(--font-sans-ja);
 }
+/* zh-CN: the brand stack plus Windows / Linux Chinese fonts. */
+html:lang(zh-CN) {
+  --uc-font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', 'Noto Sans CJK SC', system-ui, sans-serif;
+}
 [lang='ja']:not(html) {
   font-family: var(--font-sans-ja);
 }

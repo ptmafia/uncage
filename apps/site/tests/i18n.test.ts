@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { docsPath, getDict, localePath, locales, pendingLocales, type Locale } from '../src/i18n/index.ts';
+import { docsPath, getDict, headline, localePath, locales, pendingLocales, type Locale } from '../src/i18n/index.ts';
 
 describe('paths', () => {
   it('localePath', () => {
@@ -15,6 +15,34 @@ describe('paths', () => {
     expect(docsPath('zh')).toBe('/docs/zh-cn/');
     expect(docsPath('en')).toBe('/docs/');
     expect(docsPath('en', '/start/quickstart-connected/')).toBe('/docs/start/quickstart-connected/');
+  });
+});
+
+describe('headline', () => {
+  it('a single phrase with emphasis (en)', () => {
+    expect(headline('Run your coding agent *everywhere.*')).toEqual([
+      [
+        { text: 'Run your coding agent ', em: false },
+        { text: 'everywhere.', em: true },
+      ],
+    ]);
+  });
+
+  it('splits phrases at | and drops the empty parts', () => {
+    expect(headline('你的 coding agent，|*无处不在。*')).toEqual([[{ text: '你的 coding agent，', em: false }], [{ text: '无处不在。', em: true }]]);
+  });
+
+  it('carries emphasis across a |', () => {
+    expect(headline('a *b|c* d')).toEqual([
+      [
+        { text: 'a ', em: false },
+        { text: 'b', em: true },
+      ],
+      [
+        { text: 'c', em: true },
+        { text: ' d', em: false },
+      ],
+    ]);
   });
 });
 
