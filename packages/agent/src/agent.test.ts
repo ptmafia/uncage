@@ -6,7 +6,8 @@ import { createFakeAdapter, type FakeStep } from '@uncage/testkit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { readActivity } from './activity.js';
-import { createAgent, readUpgradeState, SELF_UPGRADE, UPGRADE_EXIT_CODE, type Agent } from './agent.js';
+import { createAgent, readUpgradeState, UPGRADE_EXIT_CODE, type Agent } from './agent.js';
+import { selfUpgradeCommand } from './exe.js';
 import { agentConfigPath, loadAgentConfig, updateAgentSites, type AgentConfig, type AgentSite } from './config.js';
 import { siteHost } from './site.js';
 import { FAST, memoryLogger, sleep, startProxy, startTestHub, tmpHome, until, type TestHub } from './test-helpers.js';
@@ -379,8 +380,8 @@ describe('agent ↔ real hub', () => {
     await agentFor(h, [site], [{ text: 'x' }], { extra: { exec, exit } });
     await until(() => exit.mock.calls.length > 0);
     expect(exec).toHaveBeenCalledTimes(1);
-    expect(exec).toHaveBeenCalledWith(...SELF_UPGRADE);
-    expect(SELF_UPGRADE).toEqual(['npm', ['i', '-g', '@uncage/cli@latest']]);
+    expect(exec).toHaveBeenCalledWith(...(await selfUpgradeCommand()));
+    expect((await selfUpgradeCommand())[1].slice(-3)).toEqual(['i', '-g', '@uncage/cli@latest']);
     expect(exit).toHaveBeenCalledWith(UPGRADE_EXIT_CODE);
   });
 

@@ -1,0 +1,4 @@
+#!/bin/sh
+# A `codex` on PATH backed by the testkit fake app-server.
+if [ "$1" = "--version" ]; then echo "codex-cli 0.130.0"; exit 0; fi
+exec node /opt/fake-codex/fake-codex.js "$@"

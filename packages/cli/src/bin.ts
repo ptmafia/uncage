@@ -13,12 +13,12 @@ import {
   runDoctor,
 } from './doctor.js';
 import { applyWorkspaceFlag, buildAdapters, serve } from './serve.js';
-import { defaultExec } from '@uncage/agent';
+import { defaultExec, loadAgentConfig } from '@uncage/agent';
 import { ACTIVITY_HELP, showActivity } from './activity-cmd.js';
-import { AGENT_HELP, runAgent } from './agent-cmd.js';
-import { restartLaunchAgent, uninstallLaunchAgent } from './launchd.js';
+import { AGENT_HELP, resolveAgentExecutables, runAgent } from './agent-cmd.js';
+import { agentService, type AgentService } from './service/index.js';
 import { connectedHome, daemonHomeConflict } from './home.js';
-import { runSetup, SETUP_HELP } from './setup.js';
+import { installAgentService, runSetup, SETUP_HELP } from './setup.js';
 import { listSites, removeSite, SITES_HELP } from './sites.js';
 import { versionOutput } from './version.js';
 
@@ -31,8 +31,8 @@ Local Mode:
 
 Connected Mode (a website drives this computer):
   uncage setup <url> [--no-daemon] [--no-browser]   Connect this computer to a website.
-  uncage agent                                      Run the agent in the foreground.
-  uncage agent uninstall                            Remove the background agent.
+  uncage agent [--log-file <path>]                  Run the agent in the foreground.
+  uncage agent install | uninstall | status [--json]  Manage the background agent (this user).
   uncage sites                                      List connected websites.
   uncage sites remove <id>                          Disconnect a website.
   uncage activity [--site <id>] [--follow]          What websites did on this computer.
@@ -125,9 +125,16 @@ async function main(argv: string[]): Promise<number> {
       } else console.log(json);
       return 0;
     }
+    const sites = await loadAgentConfig(connectedHome())
+      .then((c) => c.sites)
+      .catch(() => []);
     const checks = await runDoctor({
       config,
-      adapters: buildAdapters(config),
+      adapters: buildAdapters(config, process.platform === 'win32' ? await resolveAgentExecutables() : {}),
+      sites,
+      // The background agent never runs with UNCAGE_HOME (setup refuses), so there is no service to check then.
+      ...(process.env.UNCAGE_HOME ? {} : { service: await realService() }),
+      exec: defaultExec,
       fetch,
       home,
       serverUrl: args.serverUrl,
@@ -174,26 +181,51 @@ async function main(argv: string[]): Promise<number> {
     const { values, positionals } = parseArgs({
       args: rest,
       allowPositionals: true,
-      options: { help: { type: 'boolean', short: 'h', default: false } },
+      options: {
+        help: { type: 'boolean', short: 'h', default: false },
+        json: { type: 'boolean', default: false },
+        'log-file': { type: 'string' },
+      },
     });
     if (values.help) {
       console.log(AGENT_HELP);
       return 0;
     }
-    if (positionals[0] === 'uninstall') {
-      const { removed } = await uninstallLaunchAgent({ home: homedir(), uid: process.getuid?.() ?? 501, exec: defaultExec });
-      console.log(removed ? '✓ Background agent stopped and removed. (~/.uncage/agent.yaml is kept.)' : 'The background agent was not installed.');
+    const sub = positionals[0];
+    if (sub === 'install' || sub === 'uninstall' || sub === 'status') {
+      if (positionals.length > 1) {
+        console.error(AGENT_HELP);
+        return 2;
+      }
+      if (process.env.UNCAGE_HOME && sub === 'install') {
+        console.error('UNCAGE_HOME is for foreground runs: the background agent always uses your home folder. Run "uncage agent" with UNCAGE_HOME instead.');
+        return 2;
+      }
+      const service = await realService();
+      if (sub === 'install') {
+        await installAgentService({ home: homedir(), exec: defaultExec, out: (l) => console.log(l), service });
+        return 0;
+      }
+      if (sub === 'uninstall') {
+        const { removed } = await service.uninstall();
+        console.log(removed ? '✓ Background agent stopped and removed. (~/.uncage/agent.yaml is kept.)' : 'The background agent was not installed.');
+        return 0;
+      }
+      const st = await service.status();
+      if (values.json) console.log(JSON.stringify(st, null, 2));
+      else console.log(formatServiceStatus(st));
       return 0;
     }
     if (positionals.length > 0) {
       console.error(`Unknown agent command "${positionals[0]}".\n\n${AGENT_HELP}`);
       return 2;
     }
-    const agent = await runAgent({ home: connectedHome() });
+    const logFile = values['log-file'] ? resolve(cwd, values['log-file']) : undefined;
+    const agent = await runAgent({ home: connectedHome(), ...(logFile ? { logFile } : {}) });
     if (agent.sites === 0) {
       await agent.close();
       console.error('No connected websites. Connect one with: uncage setup <url>');
-      return 0; // clean exit: launchd does not restart (KeepAlive only on failure)
+      return 0; // clean exit: the service manager does not restart it (restart on failure only)
     }
     let stopping = false;
     const stop = () => {
@@ -227,7 +259,7 @@ async function main(argv: string[]): Promise<number> {
     if (positionals[0] === 'remove' && positionals.length === 2) {
       await removeSite({ home: connectedHome(), id: positionals[1]!, fetch, out: (l) => console.log(l) });
       // The background agent never runs with UNCAGE_HOME (setup refuses), so leave it alone then.
-      if (!process.env.UNCAGE_HOME) await restartLaunchAgent({ home: homedir(), uid: process.getuid?.() ?? 501, exec: defaultExec });
+      if (!process.env.UNCAGE_HOME) await (await realService()).restart();
       return 0;
     }
     console.error(SITES_HELP);
@@ -260,6 +292,26 @@ async function main(argv: string[]): Promise<number> {
 
   console.error(`Unknown command "${cmd}".\n\n${HELP}`);
   return 2;
+}
+
+/** The background agent service of this computer (the real home, platform and service manager). */
+function realService(): Promise<AgentService> {
+  return agentService({ platform: process.platform, home: homedir(), env: process.env, exec: defaultExec, ...(process.getuid ? { uid: process.getuid() } : {}) });
+}
+
+function formatServiceStatus(st: Awaited<ReturnType<AgentService['status']>>): string {
+  if (st.kind === 'none') return `Background agent: no service manager here.\n${st.detail ?? ''}`;
+  if (!st.installed) return `Background agent (${st.kind}): not installed. Install it with: uncage agent install`;
+  const lines = [
+    `Background agent (${st.kind}): ${st.running ? 'running' : st.running === null ? 'installed' : 'not running'}${st.detail ? ` (${st.detail})` : ''}`,
+    `  definition: ${st.definitionPath ?? '?'}`,
+  ];
+  if (st.spec) {
+    lines.push(`  node:       ${st.spec.nodePath} ${st.nodeExists ? (st.nodeVersion ?? '') : '(missing: run uncage agent install)'}`);
+    lines.push(`  cli:        ${st.spec.cliEntry}`);
+    lines.push(`  logs:       ${st.spec.logsDir}`);
+  }
+  return lines.join('\n');
 }
 
 main(process.argv.slice(2)).then(

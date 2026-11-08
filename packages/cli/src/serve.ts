@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import { claudeExecutable, codexExecutable, resolveAgentExecutables, type AgentExecutables } from './agent-cmd.js';
 import { join, resolve } from 'node:path';
 import { createUncage } from '@uncage/core';
 import type { RuntimeAdapter } from '@uncage/protocol';
@@ -26,12 +27,20 @@ export function createLogger(env: NodeJS.ProcessEnv = process.env, destination?:
   return destination ? pino(opts, destination) : pino(opts, pino.destination(2));
 }
 
-export function buildAdapters(config: UncageConfig): RuntimeAdapter[] {
+export function buildAdapters(config: UncageConfig, exes: AgentExecutables = {}): RuntimeAdapter[] {
   const { allowBypass } = config.security;
   const adapters: RuntimeAdapter[] = [];
-  if (config.runtimes.claude.enabled) adapters.push(claudeAdapter({ allowBypass }));
+  const claude = claudeExecutable(exes.claude);
+  if (config.runtimes.claude.enabled) adapters.push(claudeAdapter({ allowBypass, ...(claude ? { executable: claude } : {}) }));
   if (config.runtimes.codex.enabled) {
-    adapters.push(codexAdapter({ allowBypass, ...(config.runtimes.codex.command ? { command: config.runtimes.codex.command } : {}) }));
+    const codex = config.runtimes.codex.command ? undefined : codexExecutable(exes.codex);
+    adapters.push(
+      codexAdapter({
+        allowBypass,
+        ...(config.runtimes.codex.command ? { command: config.runtimes.codex.command } : {}),
+        ...(codex ? { executable: codex } : {}),
+      }),
+    );
   }
   return adapters;
 }
@@ -70,7 +79,8 @@ export async function serve(o: ServeOptions): Promise<void> {
   const warn = (m: string) => logger.warn(m);
   const { token, path } = await (o.tokenFile ? ensureTokenAt(o.tokenFile, warn) : ensureToken(home, warn));
   const { config } = o;
-  const adapters = buildAdapters(config);
+  // Windows: claude / codex are often npm .cmd shims, which cannot be started without a shell.
+  const adapters = buildAdapters(config, process.platform === 'win32' ? await resolveAgentExecutables() : {});
 
   const uncage = await createUncage({
     adapters,

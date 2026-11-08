@@ -32,3 +32,12 @@ export { ActivityLog, formatActivity, parseActivityLines, readActivity, type Act
 export { agentWsUrl, normalizeHubUrl, pollDeviceToken, requestDeviceCode, DEFAULT_HUB_PATH, type DeviceGrant } from './device.js';
 export { MAX_PULL_FILE_BYTES, MAX_PULL_TOTAL_BYTES, PULL_CHUNK_BYTES } from './files.js';
 export { backoffDelay, DEFAULT_TIMING, HUB_CLOSE, siteHost, type AgentLogger, type AgentTiming } from './site.js';
+export {
+  openUrlCommand,
+  parseNpmCmdShim,
+  resolveCommand,
+  selfUpgradeCommand,
+  type ResolvedCommand,
+  type ResolveOptions,
+} from './exe.js';
+export { checkUserOnly, parseIcacls, replaceFile, restrictToUser, windowsUser, type PermsExec, type PermsOptions } from './perms.js';

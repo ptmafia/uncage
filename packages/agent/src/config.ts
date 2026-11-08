@@ -1,10 +1,11 @@
 import { randomBytes } from 'node:crypto';
-import { chmod, mkdir, open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, open, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { PermissionModeSchema, type PermissionMode } from '@uncage/protocol';
 import { parseDocument } from 'yaml';
 import { z } from 'zod';
+import { replaceFile, restrictToUser } from './perms.js';
 
 /** Site ids and host names become directory names: keep them boring. */
 export const SAFE_NAME = /^[a-z0-9][a-z0-9._-]{0,99}$/i;
@@ -79,7 +80,8 @@ export async function loadAgentConfig(home: string = homedir()): Promise<AgentCo
   const path = agentConfigPath(home);
   const raw = await readRaw(path);
   if (raw === null) return structuredClone(EMPTY);
-  if (((await stat(path)).mode & 0o077) !== 0) await chmod(path, 0o600);
+  // POSIX mode bits only: on Windows the ACL is set when the file is written (restrictToUser).
+  if (process.platform !== 'win32' && ((await stat(path)).mode & 0o077) !== 0) await chmod(path, 0o600);
   const doc = parseDocument(raw);
   if (doc.errors.length > 0) throw new Error(`Invalid ${path}: ${doc.errors[0]!.message}`);
   const parsed = AgentConfigSchema.safeParse(doc.toJS() ?? {});
@@ -97,11 +99,16 @@ export async function loadAgentConfig(home: string = homedir()): Promise<AgentCo
   };
 }
 
-/** Creates `~/.uncage` (0700), tightening an existing, group/world-accessible one. */
+/**
+ * Creates `~/.uncage` (0700), tightening an existing, group/world-accessible one. On Windows a newly
+ * created folder gets a user-only ACL (icacls); an existing one is left as it is.
+ */
 export async function ensureAgentDir(home: string): Promise<string> {
   const dir = agentDir(home);
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  if (((await stat(dir)).mode & 0o077) !== 0) await chmod(dir, 0o700);
+  const created = await mkdir(dir, { recursive: true, mode: 0o700 });
+  if (process.platform === 'win32') {
+    if (created !== undefined) await restrictToUser(dir, { dir: true });
+  } else if (((await stat(dir)).mode & 0o077) !== 0) await chmod(dir, 0o700);
   return dir;
 }
 
@@ -160,7 +167,7 @@ export async function withAgentConfigLock<T>(home: string, fn: () => Promise<T>)
 }
 
 /**
- * Re-reads the file, applies `fn` to its `sites`, and writes it back atomically with mode 0600,
+ * Re-reads the file, applies `fn` to its `sites`, and writes it back atomically, user-only (0600 / ACL),
  * under the agent.yaml lock. Comments and `localPolicy` (hand-edited by the user) are preserved.
  */
 export function updateAgentSites(home: string, fn: (sites: AgentSite[]) => AgentSite[]): Promise<AgentSite[]> {
@@ -180,8 +187,13 @@ export function updateAgentSites(home: string, fn: (sites: AgentSite[]) => Agent
     doc.set('sites', doc.createNode(next));
     const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
     await writeFile(tmp, doc.toString(), { mode: 0o600 });
-    await chmod(tmp, 0o600);
-    await rename(tmp, path);
+    try {
+      await restrictToUser(tmp); // chmod 600, or a user-only ACL on Windows (kept by the rename)
+      await replaceFile(tmp, path);
+    } catch (e) {
+      await unlink(tmp).catch(() => undefined);
+      throw e;
+    }
     return next;
   });
 }

@@ -1,10 +1,17 @@
 import { mkdtemp, readFile, stat, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { checkUserOnly } from '@uncage/agent';
 import { describe, expect, it, vi } from 'vitest';
 import { ensureToken, ensureTokenAt } from './token.js';
 
 const LONG = 'a'.repeat(32);
+const WIN = process.platform === 'win32';
+/** 0600 on POSIX; on Windows a user-only ACL (mode bits mean nothing there). */
+async function expectUserOnly(p: string): Promise<void> {
+  if (WIN) expect((await checkUserOnly(p)).ok).toBe(true);
+  else expect((await stat(p)).mode & 0o777).toBe(0o600);
+}
 const home = () => mkdtemp(join(tmpdir(), 'uncage-home-'));
 
 describe('ensureToken', () => {
@@ -13,12 +20,12 @@ describe('ensureToken', () => {
     const a = await ensureToken(h);
     expect(a.path).toBe(join(h, '.uncage', 'token'));
     expect(a.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect((await stat(a.path)).mode & 0o777).toBe(0o600);
-    expect((await stat(join(h, '.uncage'))).mode & 0o777).toBe(0o700);
+    await expectUserOnly(a.path);
+    if (!WIN) expect((await stat(join(h, '.uncage'))).mode & 0o777).toBe(0o700);
     expect((await ensureToken(h)).token).toBe(a.token);
   });
 
-  it('tightens loose permissions and warns', async () => {
+  it.skipIf(WIN)('tightens loose permissions and warns', async () => {
     const h = await home();
     await mkdir(join(h, '.uncage'), { recursive: true });
     const p = join(h, '.uncage', 'token');
@@ -36,7 +43,7 @@ describe('ensureToken', () => {
     const p = join(h, 'nested', 'tok');
     const a = await ensureTokenAt(p);
     expect(a.path).toBe(p);
-    expect((await stat(p)).mode & 0o777).toBe(0o600);
+    await expectUserOnly(p);
     expect((await ensureTokenAt(p)).token).toBe(a.token);
   });
 
