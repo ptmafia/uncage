@@ -1,0 +1,118 @@
+---
+import '../styles/global.css';
+import LangHint from '../components/LangHint.astro';
+import { GITHUB_URL, getDict, localeInfo, localePath, locales, type Locale } from '../i18n/index.ts';
+
+interface Props {
+  locale: Locale;
+  /** Path of this page inside a locale ('/' = the homepage). */
+  path?: string;
+  title?: string;
+  description?: string;
+  /** Pages that must not be indexed or get alternates (404). */
+  noindex?: boolean;
+}
+
+const { locale, path = '/', noindex = false } = Astro.props;
+const t = getDict(locale);
+const info = localeInfo[locale];
+const title = Astro.props.title ?? t.meta.title;
+const description = Astro.props.description ?? t.meta.description;
+const site = Astro.site ?? new URL('https://uncage.vercel.app');
+const abs = (p: string) => new URL(p, site).href;
+const canonical = abs(localePath(locale, path));
+const ogImage = abs(`/og/og-${locale}.png`);
+const alternates = locales.map((l) => ({ hreflang: localeInfo[l].lang, href: abs(localePath(l, path)) }));
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareSourceCode',
+  name: 'Uncage',
+  description,
+  url: abs('/'),
+  codeRepository: GITHUB_URL,
+  programmingLanguage: 'TypeScript',
+  license: 'https://opensource.org/licenses/MIT',
+  author: { '@type': 'Person', name: 'Nathan Zhang' },
+};
+---
+
+<!doctype html>
+<html lang={info.lang} dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    {noindex && <meta name="robots" content="noindex" />}
+    {!noindex && <link rel="canonical" href={canonical} />}
+    {!noindex && alternates.map((a) => <link rel="alternate" hreflang={a.hreflang} href={a.href} />)}
+    {!noindex && <link rel="alternate" hreflang="x-default" href={abs(localePath('en', path))} />}
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Uncage" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={t.meta.ogAlt} />
+    <meta property="og:locale" content={info.og} />
+    {locales.filter((l) => l !== locale).map((l) => <meta property="og:locale:alternate" content={localeInfo[l].og} />)}
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+    <meta name="twitter:image:alt" content={t.meta.ogAlt} />
+
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
+    <meta name="theme-color" content="#f7f3ec" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#171512" media="(prefers-color-scheme: dark)" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="sitemap" href="/sitemap-index.xml" />
+    <link rel="alternate" type="text/plain" title="llms.txt" href="/docs/llms.txt" />
+    {!noindex && <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLd)} />}
+  </head>
+  <body>
+    <a class="skip" href="#main">{t.a11y.skip}</a>
+    <slot />
+    <LangHint locale={locale} path={path} />
+    <div class="visually-hidden" aria-live="polite" id="uc-live"></div>
+    <script is:inline>
+      // Copy buttons: <button class="copy" data-copy="…" data-copied-label="…">.
+      document.addEventListener('click', (e) => {
+        const btn = e.target instanceof Element ? e.target.closest('button.copy[data-copy]') : null;
+        if (!btn) return;
+        navigator.clipboard?.writeText(btn.getAttribute('data-copy') || '').then(() => {
+          btn.setAttribute('data-copied', '');
+          const live = document.getElementById('uc-live');
+          if (live) live.textContent = btn.getAttribute('data-copied-label') || '';
+          setTimeout(() => btn.removeAttribute('data-copied'), 1600);
+        }, () => {});
+      });
+      // An explicit language choice (switcher) means the language hint never shows again.
+      document.addEventListener('click', (e) => {
+        const a = e.target instanceof Element ? e.target.closest('[data-lang-pick]') : null;
+        if (!a) return;
+        try {
+          localStorage.setItem('uc-lang-hint', a.getAttribute('data-lang-pick') || '');
+        } catch {}
+      });
+      // Dropdowns (<details data-dropdown>): close on outside click and Escape.
+      document.addEventListener('click', (e) => {
+        document.querySelectorAll('details[data-dropdown][open]').forEach((d) => {
+          if (!(e.target instanceof Node) || !d.contains(e.target)) d.removeAttribute('open');
+        });
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        document.querySelectorAll('details[data-dropdown][open]').forEach((d) => {
+          d.removeAttribute('open');
+          d.querySelector('summary')?.focus();
+        });
+      });
+    </script>
+  </body>
+</html>

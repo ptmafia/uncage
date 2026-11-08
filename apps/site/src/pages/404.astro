@@ -1,0 +1,84 @@
+---
+/**
+ * One static 404 for the whole domain (the host serves /404.html for any missing path), so it speaks
+ * all three languages: English first, then each translation that differs.
+ */
+import Footer from '../components/Footer.astro';
+import Icon from '../components/Icon.astro';
+import Nav from '../components/Nav.astro';
+import Base from '../layouts/Base.astro';
+import { docsPath, getDict, localeInfo, localePath, locales } from '../i18n/index.ts';
+
+const t = getDict('en');
+const seen = new Set<string>();
+const blocks = locales
+  .map((l) => ({ l, nf: getDict(l).notFound }))
+  .filter(({ nf }) => (seen.has(nf.title) ? false : (seen.add(nf.title), true)));
+---
+
+<Base locale="en" title={`404 · ${t.notFound.title} · Uncage`} description={t.notFound.body} noindex>
+  <Nav locale="en" />
+  <main id="main" class="wrap nf">
+    <p class="code" aria-hidden="true">404</p>
+    {
+      blocks.map(({ l, nf }, i) => (
+        <section lang={localeInfo[l].lang} class:list={['block', { first: i === 0 }]}>
+          {i === 0 ? <h1>{nf.title}</h1> : <h2>{nf.title}</h2>}
+          <p>{nf.body}</p>
+          <div class="links">
+            <a class={i === 0 ? 'btn primary' : 'text-link'} href={localePath(l)}>
+              {nf.home}
+              {i === 0 && <Icon name="arrow" size={16} class="arrow" />}
+            </a>
+            <a class={i === 0 ? 'btn ghost' : 'text-link'} href={docsPath(l)}>
+              {nf.docs}
+            </a>
+          </div>
+        </section>
+      ))
+    }
+  </main>
+  <Footer locale="en" />
+</Base>
+
+<style>
+  .nf {
+    padding-top: clamp(48px, 10vw, 120px);
+    padding-bottom: clamp(64px, 10vw, 120px);
+    max-width: 760px;
+  }
+  .code {
+    margin: 0 0 8px;
+    font-family: var(--uc-font-mono);
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--uc-accent-ink);
+    letter-spacing: 0.1em;
+  }
+  h1 {
+    font-size: clamp(36px, 6vw, 56px);
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    margin: 0 0 16px;
+  }
+  h2 {
+    font-size: 20px;
+    margin: 0 0 6px;
+  }
+  .block p {
+    margin: 0 0 20px;
+    color: var(--uc-ink-2);
+    font-size: 17px;
+  }
+  .block + .block {
+    margin-top: 32px;
+    padding-top: 28px;
+    border-top: 1px solid var(--uc-line);
+  }
+  .links {
+    display: flex;
+    gap: 12px 20px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+</style>

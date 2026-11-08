@@ -1,0 +1,122 @@
+---
+import Command from './Command.astro';
+import FlowDiagram from './FlowDiagram.astro';
+import Icon from './Icon.astro';
+import { TRY_DEMO, docsPath, docsPathEnglish, getDict, type Locale } from '../i18n/index.ts';
+
+interface Props {
+  locale: Locale;
+}
+
+const { locale } = Astro.props;
+const t = getDict(locale);
+const [before = '', em = '', after = ''] = t.hero.title.split('*');
+---
+
+<section class="hero wrap" aria-labelledby="hero-title">
+  <div class="copy-col">
+    <a class="eyebrow" href={docsPathEnglish('reference/changelog/')}>
+      <span class="dot" aria-hidden="true"></span>
+      {t.hero.eyebrow}
+      <Icon name="arrow" size={14} />
+    </a>
+    <h1 id="hero-title">{before}<em>{em}</em>{after}</h1>
+    <p class="lede">{t.hero.lede}</p>
+    <div class="ctas">
+      <a class="btn primary" href={docsPath(locale, TRY_DEMO)} data-cta="primary">
+        {t.hero.primary}
+        <Icon name="arrow" size={16} class="arrow" />
+      </a>
+      <a class="btn ghost" href={docsPath(locale, 'start/quickstart-connected/')} data-cta="secondary">{t.hero.secondary}</a>
+    </div>
+    <div class="install">
+      <p class="install-label">{t.hero.installLabel}</p>
+      <Command cmd="npx uncage setup https://your.site" locale={locale} />
+    </div>
+  </div>
+  <FlowDiagram locale={locale} />
+</section>
+
+<style>
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+    gap: clamp(40px, 5vw, 64px);
+    align-items: center;
+    padding-top: clamp(40px, 7vw, 88px);
+    padding-bottom: clamp(64px, 9vw, 104px);
+  }
+  .eyebrow {
+    display: inline-flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--uc-accent-ink);
+    background: var(--uc-accent-soft);
+    border: 1px solid color-mix(in srgb, var(--uc-accent) 22%, transparent);
+    border-radius: 999px;
+    padding: 5px 12px 5px 10px;
+    margin-bottom: 24px;
+    transition: border-color 0.15s ease;
+  }
+  .eyebrow:hover {
+    border-color: var(--uc-accent);
+  }
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--uc-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--uc-accent) 25%, transparent);
+  }
+  h1 {
+    font-size: clamp(42px, 6.2vw, 72px);
+    line-height: 1.02;
+    letter-spacing: -0.04em;
+    margin: 0 0 24px;
+    font-weight: 760;
+  }
+  h1 em {
+    font-style: normal;
+    color: var(--uc-accent);
+  }
+  :global(:lang(zh-CN)) h1,
+  :global(:lang(ja)) h1 {
+    letter-spacing: -0.01em;
+    line-height: 1.15;
+  }
+  .lede {
+    font-size: clamp(17px, 1.7vw, 19px);
+    line-height: 1.6;
+    color: var(--uc-ink-2);
+    max-width: 540px;
+    margin: 0 0 32px;
+  }
+  .ctas {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .install {
+    margin-top: 32px;
+  }
+  .install-label {
+    margin: 0 0 8px;
+    font-size: 14px;
+    color: var(--uc-ink-3);
+  }
+  @media (max-width: 960px) {
+    .hero {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  @media (max-width: 480px) {
+    .ctas .btn {
+      flex: 1 1 100%;
+    }
+    .install :global(.cmd) {
+      display: flex;
+    }
+  }
+</style>

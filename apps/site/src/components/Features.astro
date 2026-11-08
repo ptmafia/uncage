@@ -1,0 +1,187 @@
+---
+import Icon, { type IconName } from './Icon.astro';
+import { getDict, type Locale } from '../i18n/index.ts';
+
+interface Props {
+  locale: Locale;
+}
+
+const t = getDict(Astro.props.locale).features;
+const availableIcons: IconName[] = ['zap', 'wrench', 'book', 'database', 'layout', 'nodes'];
+const soonIcons: IconName[] = ['terminal', 'monitor', 'phone', 'cloud'];
+---
+
+<section class="section" id="features" aria-labelledby="features-title">
+  <div class="wrap">
+    <p class="kicker">{t.kicker}</p>
+    <h2 class="h2" id="features-title">{t.title}</h2>
+    <p class="sub">{t.sub}</p>
+
+    <h3 class="group"><span class="g-dot" aria-hidden="true"></span>{t.availableLabel}</h3>
+    <ul class="grid now" role="list">
+      {
+        t.available.map((f, i) => (
+          <li class="feat">
+            <span class="ic">
+              <Icon name={availableIcons[i]!} size={20} />
+            </span>
+            <h4>{f.title}</h4>
+            <p>{f.body}</p>
+          </li>
+        ))
+      }
+    </ul>
+
+    <h3 class="group soon-group"><span class="g-dot hollow" aria-hidden="true"></span>{t.soonLabel}</h3>
+    <ul class="grid later" role="list">
+      {
+        t.soon.map((f, i) => (
+          <li class="feat soon">
+            <div class="soon-top">
+              <span class="ic">
+                <Icon name={soonIcons[i]!} size={20} />
+              </span>
+              <span class="soon-tag" data-soon-badge>
+                {t.soonBadge}
+              </span>
+            </div>
+            <h4>{f.title}</h4>
+            <p>{f.body}</p>
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+</section>
+
+<style>
+  .group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 16px;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--uc-ink);
+  }
+  .group::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--uc-line);
+  }
+  .soon-group {
+    margin-top: 48px;
+    color: var(--uc-ink-2);
+  }
+  .g-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--uc-accent);
+  }
+  .g-dot.hollow {
+    background: transparent;
+    border: 1.5px dashed var(--uc-ink-3);
+    width: 10px;
+    height: 10px;
+  }
+  .grid {
+    display: grid;
+    gap: 1px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    background: var(--uc-line);
+    border: 1px solid var(--uc-line);
+    border-radius: 20px;
+    overflow: hidden;
+  }
+  .now {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .later {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .feat {
+    background: var(--surface);
+    padding: 28px;
+    transition: background-color 0.2s ease;
+  }
+  .now .feat:hover {
+    background: color-mix(in srgb, var(--surface) 70%, var(--uc-accent-soft));
+  }
+  .ic {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    background: var(--uc-accent-soft);
+    color: var(--uc-accent-ink);
+    margin-bottom: 18px;
+  }
+  h4 {
+    margin: 0 0 8px;
+    font-size: 17px;
+    font-weight: 680;
+    line-height: 1.3;
+  }
+  .feat p {
+    margin: 0;
+    font-size: 15px;
+    color: var(--uc-ink-2);
+  }
+  .feat.soon {
+    background: var(--surface-soon);
+    padding: 24px;
+  }
+  .soon-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .soon .ic {
+    background: var(--soon-ic);
+    color: var(--uc-ink-2);
+  }
+  .soon h4 {
+    font-size: 16px;
+  }
+  .soon p {
+    font-size: 14px;
+  }
+  .soon-tag {
+    flex: none;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    border: 1px solid color-mix(in srgb, var(--uc-ink-2) 50%, transparent);
+    color: var(--uc-ink-2);
+    border-radius: 999px;
+    padding: 2px 9px;
+  }
+  @media (max-width: 1000px) {
+    .later {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 860px) {
+    .now {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 560px) {
+    .now,
+    .later {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .feat {
+      padding: 22px;
+    }
+  }
+</style>

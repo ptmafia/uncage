@@ -1,0 +1,118 @@
+---
+import Icon from './Icon.astro';
+import { getDict, type Locale } from '../i18n/index.ts';
+
+interface Props {
+  locale: Locale;
+}
+
+const t = getDict(Astro.props.locale).why;
+---
+
+<section class="section" id="why" aria-labelledby="why-title">
+  <div class="wrap">
+    <p class="kicker">{t.kicker}</p>
+    <h2 class="h2" id="why-title">{t.title}<br />{t.titleLine2}</h2>
+    <p class="sub">{t.sub}</p>
+    <div class="compare">
+      <div class="col dim">
+        <h3>{t.sandbox.title}</h3>
+        <ul role="list">
+          {
+            t.sandbox.points.map((p) => (
+              <li>
+                <span class="mark no">
+                  <Icon name="x" size={14} />
+                </span>
+                {p}
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+      <div class="col yes-col">
+        <h3>{t.uncage.title}</h3>
+        <ul role="list">
+          {
+            t.uncage.points.map((p) => (
+              <li>
+                <span class="mark yes">
+                  <Icon name="check" size={14} />
+                </span>
+                {p}
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .compare {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px;
+  }
+  .col {
+    border: 1px solid var(--uc-line);
+    border-radius: 20px;
+    padding: clamp(22px, 3vw, 30px);
+  }
+  .col.dim {
+    background: transparent;
+  }
+  .yes-col {
+    background: var(--surface);
+    box-shadow: var(--shadow-sm);
+    border-color: color-mix(in srgb, var(--uc-accent) 30%, var(--uc-line));
+  }
+  h3 {
+    margin: 0 0 12px;
+    font-size: 18px;
+    font-weight: 680;
+  }
+  .dim h3 {
+    color: var(--uc-ink-2);
+  }
+  ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  li {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 12px 0;
+    border-top: 1px solid var(--uc-line);
+    font-size: 15px;
+    color: var(--uc-ink-2);
+  }
+  .yes-col li {
+    color: var(--uc-ink);
+  }
+  .mark {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 22px;
+    height: 22px;
+    margin-top: 1px;
+    border-radius: 50%;
+  }
+  .mark.no {
+    background: var(--uc-paper-2);
+    color: var(--uc-ink-2);
+  }
+  .mark.yes {
+    background: var(--uc-accent-soft);
+    color: var(--uc-accent-ink);
+  }
+  @media (max-width: 760px) {
+    .compare {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

@@ -1,0 +1,33 @@
+---
+import Base from '../layouts/Base.astro';
+import CodeSnippets from './CodeSnippets.astro';
+import Features from './Features.astro';
+import FinalCta from './FinalCta.astro';
+import Footer from './Footer.astro';
+import Hero from './Hero.astro';
+import HowItWorks from './HowItWorks.astro';
+import Nav from './Nav.astro';
+import Security from './Security.astro';
+import Why from './Why.astro';
+import type { Locale } from '../i18n/index.ts';
+
+interface Props {
+  locale: Locale;
+}
+
+const { locale } = Astro.props;
+---
+
+<Base locale={locale}>
+  <Nav locale={locale} />
+  <main id="main">
+    <Hero locale={locale} />
+    <Why locale={locale} />
+    <HowItWorks locale={locale} />
+    <Features locale={locale} />
+    <CodeSnippets locale={locale} />
+    <Security locale={locale} />
+    <FinalCta locale={locale} />
+  </main>
+  <Footer locale={locale} />
+</Base>

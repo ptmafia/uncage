@@ -1,0 +1,152 @@
+---
+import { Code } from 'astro:components';
+import Icon from './Icon.astro';
+import { docsPath, getDict, type Locale } from '../i18n/index.ts';
+import { codeTheme } from '../lib/code-theme.ts';
+// The samples are real files, type-checked against the workspace packages (src/snippets/tsconfig.json).
+import page from '../snippets/app/page.tsx?raw';
+import tools from '../snippets/lib/tools.ts?raw';
+import server from '../snippets/server.ts?raw';
+
+interface Props {
+  locale: Locale;
+}
+
+const { locale } = Astro.props;
+const all = getDict(locale);
+const t = all.code;
+const files = [
+  { name: 'server.ts', code: server, lang: 'ts' as const },
+  { name: 'lib/tools.ts', code: tools, lang: 'ts' as const },
+  { name: 'app/page.tsx', code: page, lang: 'tsx' as const },
+].map((f) => ({ ...f, code: f.code.trimEnd() }));
+---
+
+<section class="section" id="developers" aria-labelledby="code-title">
+  <div class="wrap">
+    <p class="kicker">{t.kicker}</p>
+    <h2 class="h2" id="code-title">{t.title}</h2>
+    <p class="sub">{t.sub}</p>
+    <div class="split">
+      {
+        files.map((f, i) => (
+          <div class:list={['file', `f${i}`]}>
+            <div class="file-head">
+              <span class="dots" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
+              <span class="name">{f.name}</span>
+              <button
+                type="button"
+                class="copy"
+                data-copy={f.code}
+                data-copied-label={all.a11y.copied}
+                aria-label={`${all.a11y.copy}: ${f.name}`}
+                title={all.a11y.copy}
+              >
+                <Icon name="copy" size={16} class="idle" />
+                <Icon name="check" size={16} class="done" />
+              </button>
+            </div>
+            <Code code={f.code} lang={f.lang} theme={codeTheme} />
+          </div>
+        ))
+      }
+      <div class="next">
+        <h3>{t.moreTitle}</h3>
+        <p>{t.moreBody}</p>
+        <a class="text-link" href={docsPath(locale, 'start/quickstart-connected/')}>
+          {t.more}
+          <Icon name="arrow" size={16} />
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .split {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px;
+  }
+  .next {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: clamp(24px, 3vw, 36px);
+    border: 1px dashed color-mix(in srgb, var(--uc-accent) 45%, var(--uc-line));
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--uc-accent-soft) 35%, transparent);
+  }
+  .next h3 {
+    margin: 0 0 10px;
+    font-size: 20px;
+    font-weight: 680;
+  }
+  .next p {
+    margin: 0 0 20px;
+    color: var(--uc-ink-2);
+    font-size: 15px;
+  }
+  .file {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    border-radius: 16px;
+    overflow: hidden;
+    background: var(--uc-code);
+    border: 1px solid color-mix(in srgb, var(--uc-code) 80%, var(--uc-line));
+    box-shadow: 0 24px 48px -32px rgb(30 20 5 / 0.5);
+  }
+  .file-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 8px 8px 16px;
+    border-bottom: 1px solid rgb(255 255 255 / 0.07);
+    color: var(--term-dim);
+  }
+  .dots {
+    display: flex;
+    gap: 6px;
+  }
+  .dots i {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: rgb(255 255 255 / 0.14);
+  }
+  .name {
+    flex: 1;
+    font-family: var(--uc-font-mono);
+    font-size: 13px;
+    color: var(--term-fg);
+  }
+  .file :global(pre) {
+    flex: 1;
+    margin: 0;
+    padding: 18px 20px 22px;
+    background: var(--uc-code) !important;
+    font-size: 13px;
+    line-height: 1.7;
+    overflow-x: auto;
+    tab-size: 2;
+  }
+  .file :global(pre code) {
+    font-family: var(--uc-font-mono);
+  }
+  @media (max-width: 900px) {
+    .split {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  @media (max-width: 480px) {
+    .file :global(pre) {
+      font-size: 12px;
+      padding: 14px 16px 18px;
+    }
+  }
+</style>

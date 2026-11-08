@@ -1,0 +1,63 @@
+---
+/** A one-line shell command with a copy button. */
+import Icon from './Icon.astro';
+import { getDict, type Locale } from '../i18n/index.ts';
+
+interface Props {
+  cmd: string;
+  locale: Locale;
+  class?: string;
+}
+
+const { cmd, locale, class: className } = Astro.props;
+const t = getDict(locale);
+---
+
+<div class:list={['cmd', className]}>
+  <code><span class="ps" aria-hidden="true">$</span> {cmd}</code>
+  <button type="button" class="copy" data-copy={cmd} data-copied-label={t.a11y.copied} aria-label={`${t.a11y.copy}: ${cmd}`} title={t.a11y.copy}>
+    <Icon name="copy" size={16} class="idle" />
+    <Icon name="check" size={16} class="done" />
+  </button>
+</div>
+
+<style>
+  .cmd {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    padding: 4px 4px 4px 14px;
+    background: var(--surface);
+    border: 1px solid var(--uc-line);
+    border-radius: 12px;
+    box-shadow: var(--shadow-sm);
+    color: var(--uc-ink);
+  }
+  code {
+    font-size: 14px;
+    white-space: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .ps {
+    color: var(--uc-accent-ink);
+    user-select: none;
+  }
+  .copy {
+    color: var(--uc-ink-2);
+  }
+  @media (max-width: 480px) {
+    .cmd {
+      padding-left: 12px;
+    }
+    code {
+      font-size: 13px;
+    }
+  }
+  @media (max-width: 400px) {
+    code {
+      font-size: 12px;
+    }
+  }
+</style>

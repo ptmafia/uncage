@@ -1,0 +1,144 @@
+---
+import LangSwitcher from './LangSwitcher.astro';
+import Logo from './Logo.astro';
+import { GITHUB_URL, NPM_URL, TRY_DEMO, docsPath, docsPathEnglish, getDict, localePath, type Locale } from '../i18n/index.ts';
+
+interface Props {
+  locale: Locale;
+  path?: string;
+}
+
+const { locale, path = '/' } = Astro.props;
+const t = getDict(locale);
+const cols = [
+  {
+    title: t.footer.product,
+    links: [
+      { href: localePath(locale, '#how'), label: t.nav.how },
+      { href: localePath(locale, '#features'), label: t.footer.features },
+      { href: localePath(locale, '#security'), label: t.nav.security },
+      { href: docsPath(locale, TRY_DEMO), label: t.nav.demo },
+    ],
+  },
+  {
+    title: t.footer.developers,
+    links: [
+      { href: docsPath(locale), label: t.nav.docs },
+      { href: docsPath(locale, 'start/quickstart-connected/'), label: t.footer.quickstart },
+      { href: docsPathEnglish('api/hub/'), label: t.footer.api },
+      { href: docsPath(locale, 'start/for-coding-agents/'), label: t.footer.forAgents },
+      { href: '/docs/llms.txt', label: 'llms.txt' },
+    ],
+  },
+  {
+    title: t.footer.project,
+    links: [
+      { href: GITHUB_URL, label: 'GitHub' },
+      { href: NPM_URL, label: 'npm' },
+      { href: docsPathEnglish('reference/changelog/'), label: t.footer.changelog },
+      { href: `${GITHUB_URL}/blob/main/LICENSE`, label: t.footer.license },
+    ],
+  },
+];
+---
+
+<footer class="foot">
+  <div class="wrap grid">
+    <div class="about">
+      <a href={localePath(locale)} aria-label={t.a11y.home} class="flogo"><Logo height={26} /></a>
+      <p class="tag">{t.tagline}</p>
+      <LangSwitcher locale={locale} path={path} up />
+    </div>
+    {
+      cols.map((c) => (
+        <nav aria-label={c.title}>
+          <h2>{c.title}</h2>
+          <ul role="list">
+            {c.links.map((l) => (
+              <li>
+                <a href={l.href} rel={l.href.startsWith('http') ? 'noopener' : undefined}>
+                  {l.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      ))
+    }
+  </div>
+  <div class="wrap legal">
+    <p>© 2026 Nathan Zhang · {t.footer.rights}</p>
+  </div>
+</footer>
+
+<style>
+  .foot {
+    border-top: 1px solid var(--uc-line);
+    padding: 56px 0 40px;
+    font-size: 14px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr));
+    gap: 32px;
+  }
+  .flogo {
+    display: inline-flex;
+    border-radius: 8px;
+  }
+  .tag {
+    margin: 14px 0 16px;
+    color: var(--uc-ink-2);
+    font-size: 15px;
+  }
+  .about :global(.lang) {
+    margin-left: -10px;
+  }
+  h2 {
+    margin: 4px 0 14px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--uc-ink);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  li a {
+    display: inline-block;
+    padding: 5px 0;
+    color: var(--uc-ink-2);
+  }
+  li a:hover {
+    color: var(--uc-ink);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .legal {
+    margin-top: 40px;
+  }
+  .legal p {
+    padding-top: 24px;
+    border-top: 1px solid var(--uc-line);
+    margin: 0;
+    color: var(--uc-ink-2);
+    font-size: 14px;
+  }
+  @media (max-width: 860px) {
+    .grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .about {
+      grid-column: 1 / -1;
+    }
+  }
+  @media (max-width: 480px) {
+    .grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      row-gap: 28px;
+    }
+  }
+</style>
