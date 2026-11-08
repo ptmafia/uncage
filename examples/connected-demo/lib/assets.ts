@@ -156,6 +156,15 @@ export function canReadAsset(asset: Asset, viewer: string | null, publicMode: bo
   return publicMode ? viewer !== null && viewer === asset.owner : true;
 }
 
+/**
+ * Whether a request to /asset-files must pass the owner check, judged by its `Sec-Fetch-Dest`.
+ * Sub-resources (style, script, image...) come from the opaque-origin sandboxed iframe and do not
+ * carry the Lax session cookie, so only requests that open a file as a page are checked.
+ */
+export function needsOwnerCheck(dest: string | null): boolean {
+  return dest === null || ['document', 'iframe', 'frame', 'embed', 'object'].includes(dest);
+}
+
 /** Deletes assets created more than `maxAgeMs` ago (public demo housekeeping); returns how many. */
 export async function purgeAssetsOlderThan(maxAgeMs: number, now: number = Date.now()): Promise<number> {
   const ids = await readdir(root()).catch(() => [] as string[]);
@@ -163,7 +172,8 @@ export async function purgeAssetsOlderThan(maxAgeMs: number, now: number = Date.
   for (const id of ids) {
     if (!isAssetId(id)) continue;
     const asset = await getAsset(id);
-    const created = asset ? Date.parse(asset.createdAt) : Number.NaN;
+    // Age counts from the later of creation and the last publish.
+    const created = asset ? Math.max(Date.parse(asset.createdAt), Date.parse(asset.publishedAt ?? asset.createdAt)) : Number.NaN;
     // An unreadable or unparsable meta.json is junk: remove it too.
     if (Number.isFinite(created) && now - created <= maxAgeMs) continue;
     await rm(join(root(), id), { recursive: true, force: true });

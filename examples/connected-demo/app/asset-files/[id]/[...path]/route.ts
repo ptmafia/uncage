@@ -1,5 +1,5 @@
 import { assetCsp } from '../../../../lib/asset-csp.ts';
-import { canReadAsset, getAsset, readAssetFile } from '../../../../lib/assets.ts';
+import { canReadAsset, getAsset, needsOwnerCheck, readAssetFile } from '../../../../lib/assets.ts';
 import { userFromRequest } from '../../../../lib/auth.ts';
 import { isPublicDemo, publicUrl } from '../../../../lib/config.ts';
 
@@ -9,7 +9,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const notFound = () => new Response('Not found', { status: 404, headers: { 'content-type': 'text/plain' } });
   const asset = await getAsset(id);
   // The same 404 for unknown, unpublished and not-yours, so existence does not leak.
-  if (!asset || !canReadAsset(asset, userFromRequest(req)?.name ?? null, isPublicDemo())) return notFound();
+  if (!asset) return notFound();
+  // Sub-resources from the sandboxed iframe carry no cookie, so only page-like requests are owner-checked.
+  const publicMode = isPublicDemo() && needsOwnerCheck(req.headers.get('sec-fetch-dest'));
+  if (!canReadAsset(asset, userFromRequest(req)?.id ?? null, publicMode)) return notFound();
   const file = await readAssetFile(id, path.join('/'));
   if (!file) return notFound();
   return new Response(new Uint8Array(file.data), {

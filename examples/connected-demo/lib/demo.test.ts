@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { ToolContext } from '@uncage/hub';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assetCsp } from './asset-csp.ts';
-import { canReadAsset, createAsset, getAsset, listAssets, publishAsset, purgeAssetsOlderThan, readAssetFile } from './assets.ts';
+import { canReadAsset, createAsset, getAsset, listAssets, needsOwnerCheck, publishAsset, purgeAssetsOlderThan, readAssetFile } from './assets.ts';
 import { guestUsername, normalizeUsername, readCookie, secret, signUser, verifyUser } from './auth.ts';
 import { isPublicDemo, publicUrl } from './config.ts';
 import { isSameOrigin } from './csrf.ts';
@@ -241,5 +241,26 @@ describe('public demo asset access and cleanup', () => {
     expect(await purgeAssetsOlderThan(24 * 3600_000)).toBe(1);
     expect((await listAssets('alice')).map((x) => x.id)).toEqual([fresh.id]);
     expect(await purgeAssetsOlderThan(24 * 3600_000)).toBe(0);
+  });
+
+  it('purge ages an asset from its last publish, not only its creation', async () => {
+    const a = await createAsset({ owner: 'alice', title: 'x', kind: 'landing-page', sessionId: 's' });
+    await publishAsset(a.id, [{ path: 'index.html', data: enc('x') }]);
+    const metaFile = join(dir, 'assets', a.id, 'meta.json');
+    const meta = JSON.parse(await readFile(metaFile, 'utf8')) as { createdAt: string };
+    meta.createdAt = new Date(Date.now() - 25 * 3600_000).toISOString();
+    await writeFile(metaFile, JSON.stringify(meta));
+    expect(await purgeAssetsOlderThan(24 * 3600_000)).toBe(0); // published just now
+  });
+
+  it('owner-checks page-like requests only; sub-resources of a published asset stay readable', async () => {
+    for (const d of [null, 'document', 'iframe', 'frame', 'embed', 'object']) expect(needsOwnerCheck(d)).toBe(true);
+    for (const d of ['style', 'script', 'image', 'font', 'audio']) expect(needsOwnerCheck(d)).toBe(false);
+    const a = await createAsset({ owner: 'alice', title: 'x', kind: 'landing-page', sessionId: 's' });
+    const p = await publishAsset(a.id, [{ path: 'index.html', data: enc('x') }]);
+    expect(canReadAsset(p, 'bob', needsOwnerCheck('document'))).toBe(false);
+    expect(canReadAsset(p, 'bob', needsOwnerCheck('style'))).toBe(true);
+    expect(canReadAsset(p, 'alice', needsOwnerCheck('iframe'))).toBe(true);
+    expect(canReadAsset(a, 'bob', needsOwnerCheck('style'))).toBe(false); // draft
   });
 });
