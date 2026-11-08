@@ -42,7 +42,9 @@ jobs:
           title: 'chore: version packages'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_CONFIG_PROVENANCE: 'true'
+          # Provenance is turned off: npm rejects provenance from private repositories, and the
+          # project publishes without it. Trusted publishing (OIDC) still authenticates the release.
+          NPM_CONFIG_PROVENANCE: 'false'
       - name: Explain Version PR permission failure
         if: failure() && steps.changesets.outcome == 'failure'
         run: |

@@ -41,7 +41,7 @@ Releases are automatic, driven by [Changesets](https://github.com/changesets/cha
 
 1. In every pull request with a user-visible change, run `pnpm changeset`, choose the bump, write a short note, and commit the generated `.changeset/*.md` file.
 2. When the pull request merges to `main`, `.github/workflows/release.yml` opens (or updates) a “chore: version packages” pull request that bumps versions and writes changelogs.
-3. Merging that pull request makes the same workflow run `changeset publish`, which publishes every unpublished version to npm with provenance and tags the release.
+3. Merging that pull request makes the same workflow run `changeset publish`, which publishes every unpublished version to npm (without provenance) and tags the release.
 
 Publishing uses npm **trusted publishing** (OIDC). There is no `NPM_TOKEN` secret.
 

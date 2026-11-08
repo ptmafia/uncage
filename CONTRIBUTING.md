@@ -54,7 +54,7 @@ All public `@uncage/*` packages share one version (`fixed` group).
 2. When the PR merges to `main`, `.github/workflows/release.yml` opens (or updates) a
    "chore: version packages" PR that bumps versions and writes changelogs.
 3. Merging that PR makes the same workflow run `changeset publish`, which publishes every
-   unpublished version to npm with provenance and tags the release.
+   unpublished version to npm (without provenance) and tags the release.
 
 Publishing uses npm trusted publishing (OIDC). There is no `NPM_TOKEN` secret.
 
