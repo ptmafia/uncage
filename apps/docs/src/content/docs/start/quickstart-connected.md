@@ -78,7 +78,11 @@ import { defineTool, type SiteTool } from '@uncage/hub';
 import { z } from 'zod';
 
 /** Stand-in for your database. */
-const notes = new Map<string, Array<{ id: string; title: string; text: string }>>();
+// Kept on globalThis: server.ts and Next.js pages load separate copies of this module,
+// so a plain module-level Map would look empty from a page that lists the notes.
+type Notes = Map<string, Array<{ id: string; title: string; text: string }>>;
+const g = globalThis as typeof globalThis & { __demoNotes?: Notes };
+const notes: Notes = (g.__demoNotes ??= new Map());
 
 export const saveNote = defineTool({
   name: 'save_note',
@@ -151,6 +155,7 @@ import { publishHub } from './lib/hub-registry.ts';
 import { createAppHub } from './lib/uncage-hub.ts';
 
 const dev = process.env.NODE_ENV !== 'production';
+// If you change PORT, also set PUBLIC_URL (lib/uncage-hub.ts) to the URL users open.
 const port = Number(process.env.PORT ?? 3000);
 
 const hub = await createAppHub();
@@ -305,6 +310,10 @@ export function ApprovePage({
 
 Refuse framing for the approval page (and, simplest, for every page):
 
+:::caution[Replace the whole file]
+Recent `create-next-app` templates add `cacheComponents: true` to `next.config.ts`. It conflicts with `export const dynamic = 'force-dynamic'` on the `/device` page (`next build` fails with “Route segment config "dynamic" is not compatible with `nextConfig.cacheComponents`”). Replace the generated file with the one below instead of merging into it.
+:::
+
 ```ts title="next.config.ts"
 import type { NextConfig } from 'next';
 
@@ -364,9 +373,9 @@ Click the starter prompt, or type: “Write a short poem about this website and 
 
 - Claude Code runs on your computer, in `~/Uncage/localhost-3000/<session id>/`.
 - It calls `mcp__site__save_note`. The handler runs in your Next.js server as `dev-user`.
-- The answer streams into the chat. Commands and file edits show **Allow** / **Deny** cards.
+- The answer streams into the chat. Commands and file edits show approval cards with **Allow once** / **Deny**.
 
-Stop the agent (`uncage agent uninstall`, or quit `uncage agent` if you ran it in the foreground) and reload the page: the conversation is still there, because of `sessionStorage: 'site'`, and the composer says the computer is offline.
+Stop the agent (`uncage agent uninstall`, or quit `uncage agent` if you ran it in the foreground) and reload the page: the conversation is still there (the URL keeps `?session=…`; it is also in the sidebar), because of `sessionStorage: 'site'`, and the composer says the computer is offline.
 
 ## What you built
 

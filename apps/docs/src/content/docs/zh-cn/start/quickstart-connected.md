@@ -78,7 +78,11 @@ import { defineTool, type SiteTool } from '@uncage/hub';
 import { z } from 'zod';
 
 /** Stand-in for your database. */
-const notes = new Map<string, Array<{ id: string; title: string; text: string }>>();
+// 放在 globalThis 上：server.ts 和 Next.js 页面各自加载这个模块的一份副本，
+// 普通的模块级 Map 在列出笔记的页面里会是空的。
+type Notes = Map<string, Array<{ id: string; title: string; text: string }>>;
+const g = globalThis as typeof globalThis & { __demoNotes?: Notes };
+const notes: Notes = (g.__demoNotes ??= new Map());
 
 export const saveNote = defineTool({
   name: 'save_note',
@@ -151,6 +155,7 @@ import { publishHub } from './lib/hub-registry.ts';
 import { createAppHub } from './lib/uncage-hub.ts';
 
 const dev = process.env.NODE_ENV !== 'production';
+// 改了 PORT 的话，也要把 PUBLIC_URL（lib/uncage-hub.ts）设成用户实际打开的地址。
 const port = Number(process.env.PORT ?? 3000);
 
 const hub = await createAppHub();
@@ -307,6 +312,10 @@ export function ApprovePage({
 
 禁止审批页（最简单的做法是所有页面）被嵌入框架：
 
+:::caution[整个替换这个文件]
+较新的 `create-next-app` 模板会在 `next.config.ts` 里加上 `cacheComponents: true`，它和 `/device` 页面上的 `export const dynamic = 'force-dynamic'` 冲突（`next build` 会报 “Route segment config "dynamic" is not compatible with `nextConfig.cacheComponents`”）。请用下面的文件整个替换生成的文件，不要合并。
+:::
+
 ```ts title="next.config.ts"
 import type { NextConfig } from 'next';
 
@@ -366,9 +375,9 @@ agent 只对 `localhost` 和 `127.0.0.1` 接受 `http://`。其他网站都必�
 
 - Claude Code 在你的电脑上、在 `~/Uncage/localhost-3000/<会话 id>/` 里运行。
 - 它调用 `mcp__site__save_note`，handler 以 `dev-user` 身份在你的 Next.js 服务器里运行。
-- 回答以流式显示在对话框里。执行命令和修改文件会弹出**允许 / 拒绝**卡片。
+- 回答以流式显示在对话框里。执行命令和修改文件会弹出审批卡片，按钮是**允许执行 / 拒绝**。
 
-停掉 agent（`uncage agent uninstall`；如果你是在前台运行的 `uncage agent`，直接退出它），再刷新页面：因为配置了 `sessionStorage: 'site'`，对话仍然都在，输入框提示电脑离线。
+停掉 agent（`uncage agent uninstall`；如果你是在前台运行的 `uncage agent`，直接退出它），再刷新页面：因为配置了 `sessionStorage: 'site'`，对话仍然都在（地址栏保留 `?session=…`，左侧会话列表里也能找到），输入框提示电脑离线。
 
 ## 你做了什么
 
