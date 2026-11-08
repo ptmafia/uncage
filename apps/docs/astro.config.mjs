@@ -65,6 +65,8 @@ export default defineConfig({
       description:
         'Let your website drive Claude Code on your users’ own computers: approvals, streaming, site tools and skills, with the process and the results kept on your site.',
       logo: { light: './src/assets/logo-light.svg', dark: './src/assets/logo-dark.svg', replacesTitle: false },
+      // brand/favicon.svg (adapts to prefers-color-scheme); Starlight prefixes the base path.
+      favicon: '/favicon.svg',
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/ptmafia/uncage' }],
       editLink: { baseUrl: 'https://github.com/ptmafia/uncage/edit/main/apps/docs/' },
       lastUpdated: false,
