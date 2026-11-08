@@ -75,11 +75,11 @@ describe('the Web-standard hub core', () => {
       expect(fs.stderr).toContain('Node built-in: node:fs');
       const globals = run(
         'globals.mjs',
-        'export const a = new Buffer(1);\nexport const b = (x) => x instanceof Buffer;\nexport const c = process?.env;\nexport const d = process["env"];\nexport const e = globalThis.process;\n',
+        'export const a = new Buffer(1);\nexport const b = (x) => x instanceof Buffer;\nexport const c = process?.env;\nexport const d = process["env"];\nexport const e = globalThis.process;\nexport const f = globalThis.process.env;\n',
       );
       expect(globals.status).toBe(1);
-      for (const g of ['Buffer(1)', 'process?.env', 'process["env"]']) expect(globals.stderr).toContain(g);
-      const clean = run('clean.mjs', 'export const ok = typeof process !== "undefined";\nexport const s = "another process. Buffer.from(x)";\n');
+      for (const g of ['Buffer(1)', 'process?.env', 'process["env"]', 'globalThis.process;', 'globalThis.process.env']) expect(globals.stderr).toContain(g);
+      const clean = run('clean.mjs', 'export const ok = typeof process !== "undefined";\nexport const v = globalThis.process?.env?.VERCEL;\nexport const s = "another process. Buffer.from(x)";\n');
       expect(clean.status, clean.stderr).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });

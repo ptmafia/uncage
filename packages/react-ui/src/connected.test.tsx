@@ -5,6 +5,7 @@ import {
   AgentChat,
   AgentOutdatedNotice,
   ApproveDevice,
+  Composer,
   ConnectMachine,
   UncageProvider,
   UncageUIProvider,
@@ -240,6 +241,7 @@ describe('connected mode: machine status and picker', () => {
     expect(within(status).getByText('npm i -g @uncage/cli@latest').tagName).toBe('CODE');
     expect(within(status).getByText(INSTALL.setup).tagName).toBe('CODE');
     expect(screen.queryByText(/Your computer is offline/)).toBeNull();
+    expect(screen.getAllByText('npm i -g @uncage/cli@latest')).toHaveLength(1);
     expect(textbox().disabled).toBe(true);
   });
 
@@ -258,6 +260,23 @@ describe('connected mode: machine status and picker', () => {
     await screen.findByRole('button', { name: 'Computer: MacBook Pro (online)' });
     expect(screen.queryByText(/too old/)).toBeNull();
     expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('a standalone <Composer> (custom layout) shows the same single explanation in its offline banner slot', async () => {
+    const f = fakeClient({ machines: [machine({ agentOutdated: true, online: false })] });
+    render(
+      <UncageProvider client={f.client}>
+        <UncageUIProvider>
+          <Composer />
+        </UncageUIProvider>
+      </UncageProvider>,
+    );
+    await waitFor(() => expect(screen.getAllByRole('status')).toHaveLength(1));
+    const status = screen.getByRole('status');
+    expect(status.textContent).toContain('npm i -g @uncage/cli@latest');
+    await waitFor(() => expect(status.textContent).toContain(INSTALL.setup));
+    expect(screen.queryByText(/Your computer is offline/)).toBeNull();
+    expect(screen.getAllByText('npm i -g @uncage/cli@latest')).toHaveLength(1);
   });
 
   it('AgentOutdatedNotice renders nothing for an up-to-date machine (standalone)', () => {

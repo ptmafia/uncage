@@ -23,6 +23,7 @@ import {
 } from 'react';
 import { useChatController, useRuntimeInfo, useUi } from '../context.js';
 import { errorText, formatBytes, type Strings } from '../i18n.js';
+import { AgentOutdatedNotice } from './AgentOutdatedNotice.js';
 import { AttachmentList } from './AttachmentList.js';
 import { AttachButton, acceptList } from './composer/AttachButton.js';
 import { EffortMenu } from './composer/EffortMenu.js';
@@ -256,6 +257,8 @@ export function Composer(): JSX.Element {
           )}
         </div>
       )}
+      {/* One explanation for the computer: too old (refused by the hub) wins over offline. */}
+      {machines.connected && machines.current?.agentOutdated && !readOnly && <AgentOutdatedNotice machine={machines.current} />}
       {machineOffline && !readOnly && !machines.current?.agentOutdated && (
         <div className="uc-banner uc-machine-offline" data-tone="warn" role="status">
           <WifiOff aria-hidden />

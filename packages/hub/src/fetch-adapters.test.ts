@@ -31,9 +31,12 @@ function controlledBody() {
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 const NEXT_CTX = Symbol.for('@next/request-context');
+const VERCEL_CTX = Symbol.for('@vercel/request-context');
 
 afterEach(() => {
   delete (globalThis as Record<symbol, unknown>)[NEXT_CTX];
+  delete (globalThis as Record<symbol, unknown>)[VERCEL_CTX];
+  vi.unstubAllEnvs();
 });
 
 describe('toNextHandlers', () => {
@@ -80,6 +83,43 @@ describe('toNextHandlers', () => {
     expect(f.fetch.mock.calls[0]![1]?.clientIp).toBe('203.0.113.7');
     await toNextHandlers(f.hub).GET(nextReq('GET', '/api/uncage/machines', { headers: { 'x-forwarded-for': '1.1.1.1' } }));
     expect(f.fetch.mock.calls[1]![1]?.clientIp).toBeUndefined();
+  });
+
+  it('on Vercel (VERCEL set) and no clientIp option: x-real-ip, else the first x-vercel-forwarded-for entry', async () => {
+    const f = fakeHub();
+    const h = toNextHandlers(f.hub);
+    const ipOf = async (headers: Record<string, string>) => {
+      await h.GET(nextReq('GET', '/api/uncage/machines', { headers }));
+      return f.fetch.mock.calls.at(-1)![1]?.clientIp;
+    };
+    vi.stubEnv('VERCEL', '1');
+    expect(await ipOf({ 'x-real-ip': '203.0.113.9', 'x-vercel-forwarded-for': '198.51.100.1', 'x-forwarded-for': '6.6.6.6' })).toBe('203.0.113.9');
+    expect(await ipOf({ 'x-vercel-forwarded-for': '198.51.100.1, 10.0.0.1' })).toBe('198.51.100.1');
+    expect(await ipOf({ 'x-forwarded-for': '6.6.6.6' })).toBeUndefined();
+    // An explicit option wins on Vercel too.
+    await toNextHandlers(f.hub, { clientIp: () => '192.0.2.5' }).GET(nextReq('GET', '/api/uncage/machines', { headers: { 'x-real-ip': '203.0.113.9' } }));
+    expect(f.fetch.mock.calls.at(-1)![1]?.clientIp).toBe('192.0.2.5');
+    // Off Vercel those headers are client-controlled: never used.
+    vi.unstubAllEnvs();
+    vi.stubEnv('VERCEL', '');
+    expect(await ipOf({ 'x-real-ip': '203.0.113.9', 'x-vercel-forwarded-for': '198.51.100.1' })).toBeUndefined();
+  });
+
+  it("prefers Vercel's request context waitUntil over Next's", async () => {
+    const f = fakeHub((_req, info) => {
+      info?.waitUntil?.(Promise.resolve());
+      return new Response('ok');
+    });
+    const used: string[] = [];
+    const ctxOf = (name: string) => ({ name, waitUntil(this: { name: string }) { used.push(this.name); } });
+    const next = ctxOf('next');
+    const vercel = ctxOf('vercel');
+    (globalThis as Record<symbol, unknown>)[NEXT_CTX] = { get: () => next };
+    (globalThis as Record<symbol, unknown>)[VERCEL_CTX] = { get: () => vercel };
+    await toNextHandlers(f.hub).GET(nextReq('GET'));
+    delete (globalThis as Record<symbol, unknown>)[VERCEL_CTX];
+    await toNextHandlers(f.hub).GET(nextReq('GET'));
+    expect(used).toEqual(['vercel', 'next']);
   });
 
   it('passes the given waitUntil (e.g. Next `after`), else the platform request context’s waitUntil bound to it', async () => {
@@ -198,14 +238,51 @@ describe('fetchOnce', () => {
     expect(f.close).toHaveBeenCalledTimes(1);
   });
 
-  it('a response without a body closes at once; onClose runs after the hub closed', async () => {
+  it('a response without a body closes at once; then { close } and deferred cleanups (last first)', async () => {
     const order: string[] = [];
     const f = fakeHub(() => new Response(null, { status: 204 }));
     f.close.mockImplementation(async () => void order.push('hub'));
-    const res = await fetchOnce(async () => f.hub, nextReq('DELETE'), { onClose: async () => void order.push('store') });
+    const res = await fetchOnce(async (defer) => {
+      defer(() => void order.push('pool'));
+      defer(async () => void order.push('client'));
+      return { hub: f.hub, close: async () => void order.push('created') };
+    }, nextReq('DELETE'));
     expect(res.status).toBe(204);
     await flush();
-    expect(order).toEqual(['hub', 'store']);
+    expect(order).toEqual(['hub', 'created', 'client', 'pool']);
+  });
+
+  it('create() rejecting after opening a pool: the deferred cleanup closes it (via waitUntil), the error is rethrown', async () => {
+    const pool = { end: vi.fn(async () => {}) };
+    const waited: Promise<unknown>[] = [];
+    await expect(
+      fetchOnce(
+        async (defer) => {
+          defer(() => pool.end());
+          throw new Error('migration failed');
+        },
+        nextReq('GET'),
+        { waitUntil: (p) => void waited.push(p) },
+      ),
+    ).rejects.toThrow('migration failed');
+    expect(waited).toHaveLength(1);
+    await Promise.all(waited);
+    expect(pool.end).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failing cleanup is logged and the others still run', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const f = fakeHub();
+    const end = vi.fn();
+    const res = await fetchOnce(async (defer) => {
+      defer(end);
+      return { hub: f.hub, close: () => Promise.reject(new Error('close failed')) };
+    }, nextReq('GET'));
+    expect(await res.text()).toBe('ok');
+    await flush();
+    await flush();
+    expect(err).toHaveBeenCalled();
+    expect(end).toHaveBeenCalledTimes(1);
   });
 
   it('a hub.fetch that throws still closes the hub; a failing create() rejects', async () => {

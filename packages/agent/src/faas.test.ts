@@ -303,7 +303,8 @@ describe('real agent over HTTP streaming (FaaS hubs)', () => {
           headers: { accept: 'text/event-stream', ...(lastId ? { 'last-event-id': lastId } : {}) },
         });
         for await (const fr of readSse(res)) {
-          if (fr.comment || !fr.data || fr.event === 'error') continue;
+          // `reconnect` is the hub rotating the browser stream (stream.maxDurationMs); the loop resumes with Last-Event-ID.
+          if (fr.comment || !fr.data || fr.event === 'error' || fr.event === 'reconnect') continue;
           const e = JSON.parse(fr.data) as UncageEvent;
           seqs.push(e.sequence);
           if (fr.id) lastId = fr.id;

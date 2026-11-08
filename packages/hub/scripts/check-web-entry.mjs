@@ -16,6 +16,7 @@ const isBuiltin = (p) => p.startsWith('node:') || builtins.has(p) || builtins.ha
 
 const NODE_GLOBALS = ['Buffer', 'process', 'require'];
 const marker = (g) => `__uncage_node_global_${g}__`;
+const globalThisMarker = (g) => `__uncage_node_globalthis_${g}__`;
 const entry = process.argv[2] ? resolve(process.argv[2]) : join(pkgDir, 'dist/index.js');
 
 const offenders = new Set();
@@ -32,7 +33,8 @@ const result = await build({
   logLevel: 'silent',
   // Free references to Node globals become markers; the same names inside strings, comments or
   // as local variables are left alone (e.g. the install script's `process.versions`).
-  define: Object.fromEntries(NODE_GLOBALS.flatMap((g) => [[g, marker(g)], [`globalThis.${g}`, marker(g)]])),
+  // `globalThis.X` gets its own marker: `globalThis.process?.env` is a safe feature check everywhere.
+  define: Object.fromEntries(NODE_GLOBALS.flatMap((g) => [[g, marker(g)], [`globalThis.${g}`, globalThisMarker(g)]])),
   plugins: [
     {
       name: 'node-builtins',
@@ -56,12 +58,17 @@ for (const out of Object.values(result.metafile.outputs)) {
 }
 // Any real reference to a Node global (`Buffer.x`, `Buffer(`, `new Buffer`, `instanceof Buffer`,
 // `process?.x`, `process[x]`, `globalThis.process`, `require(`…) — not the words inside strings or
-// comments. Only `typeof X` feature checks are allowed.
+// comments. Only feature checks are allowed: `typeof X`, and `globalThis.X?.…` (an optional chain on
+// `globalThis` never throws where X does not exist; a bare `X?.y` throws a ReferenceError there).
 const code = result.outputFiles.map((f) => f.text).join('\n');
 const globals = [];
 for (const m of code.matchAll(/(typeof\s+)?__uncage_node_global_(\w+?)__(.{0,30})/g)) {
   if (m[1]) continue;
   globals.push(`${m[2]}${m[3].split('\n')[0]}`);
+}
+for (const m of code.matchAll(/(typeof\s+)?__uncage_node_globalthis_(\w+?)__(.{0,30})/g)) {
+  if (m[1] || m[3].startsWith('?.')) continue;
+  globals.push(`globalThis.${m[2]}${m[3].split('\n')[0]}`);
 }
 
 if (offenders.size > 0 || globals.length > 0) {

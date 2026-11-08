@@ -10,23 +10,41 @@ export type RouteHandler = (req: Request) => Promise<Response>;
 
 type WaitUntil = (p: Promise<unknown>) => void;
 
-/** Next.js / Vercel expose the platform's request context (incl. `waitUntil`) here. */
-const NEXT_REQUEST_CONTEXT = Symbol.for('@next/request-context');
+/** Where Vercel (`@vercel/functions`) and Next.js publish the platform's request context, in lookup order. */
+const REQUEST_CONTEXTS = [Symbol.for('@vercel/request-context'), Symbol.for('@next/request-context')];
 
 /**
- * The platform's `waitUntil` for the current request, bound to its context: Vercel (and Next's
- * edge sandbox) publish `globalThis[Symbol.for('@next/request-context')].get().waitUntil`, the
- * same hook Next's own `after()` uses there. `undefined` elsewhere (e.g. self-hosted `next start`).
+ * The platform's `waitUntil` for the current request, bound to its context: Vercel publishes
+ * `globalThis[Symbol.for('@vercel/request-context')].get().waitUntil`, Next.js (on Vercel and in its
+ * edge sandbox) `globalThis[Symbol.for('@next/request-context')]` — the hook Next's own `after()`
+ * uses there. `undefined` elsewhere (e.g. self-hosted `next start`).
  */
 function platformWaitUntil(): WaitUntil | undefined {
-  try {
-    const holder = (globalThis as Record<symbol, { get?(): { waitUntil?: WaitUntil } | undefined } | undefined>)[NEXT_REQUEST_CONTEXT];
-    const ctx = holder?.get?.();
-    const fn = ctx?.waitUntil;
-    return typeof fn === 'function' ? fn.bind(ctx) : undefined;
-  } catch {
-    return undefined;
+  for (const key of REQUEST_CONTEXTS) {
+    try {
+      const holder = (globalThis as Record<symbol, { get?(): { waitUntil?: WaitUntil } | undefined } | undefined>)[key];
+      const ctx = holder?.get?.();
+      const fn = ctx?.waitUntil;
+      if (typeof fn === 'function') return fn.bind(ctx);
+    } catch {
+      // not this platform
+    }
   }
+  return undefined;
+}
+
+/**
+ * Whether this function runs on Vercel (`VERCEL` is set in every Vercel build and function).
+ * A guarded feature check: `globalThis.process?.…` is `undefined` where there is no `process`
+ * (Workers, browsers), which check-web-entry allows.
+ */
+function onVercel(): boolean {
+  return Boolean((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.['VERCEL']);
+}
+
+/** The client address Vercel's edge sets (it overwrites both headers, so clients cannot spoof them there). */
+function vercelClientIp(req: Request): string | undefined {
+  return req.headers.get('x-real-ip')?.trim() || req.headers.get('x-vercel-forwarded-for')?.split(',')[0]?.trim() || undefined;
 }
 
 /**
@@ -43,13 +61,16 @@ function platformWaitUntil(): WaitUntil | undefined {
  * - `hub` may be a hub, a promise of one, or a lazy getter. A getter is called on the first request
  *   only and memoized (a rejected getter is retried on the next request), so `next build` never
  *   connects to the database.
- * - `clientIp(req)`: the client address for per-IP rate limits. Without it no IP is passed and the
- *   hub's own `rateLimits` rules apply (`rateLimits.clientIp`, else the rightmost X-Forwarded-For
- *   only with `trustForwardedFor: true` — right on Vercel, which appends the client to it).
+ * - `clientIp(req)`: the client address for per-IP rate limits. Without it: on Vercel (the `VERCEL`
+ *   env var is set) the address Vercel's edge sets (`x-real-ip`, else the first `x-vercel-forwarded-for`
+ *   entry); anywhere else no IP is passed and the hub's own `rateLimits` rules apply
+ *   (`rateLimits.clientIp`, else the rightmost X-Forwarded-For only with `trustForwardedFor: true`).
+ *   Caveat: with another proxy or CDN in front of Vercel, those headers hold that proxy's address —
+ *   pass `clientIp` yourself (e.g. from the proxy's client-IP header).
  * - `waitUntil`: work that may outlive the response (opportunistic maintenance, …) so it never
- *   delays a response. Pass Next's `after` (from `next/server`; Next 15.1+). Without it the
- *   platform request context's `waitUntil` is used when present (Vercel), bound to its context;
- *   else the hub runs that work inline.
+ *   delays a response. Pass Next's `after` (from `next/server`; Next 15.1+) — the recommended way.
+ *   Without it the platform request context's `waitUntil` is used when present (Vercel's, then
+ *   Next's), bound to its context; else the hub runs that work inline.
  *
  * The route handler's `Request` reaches `hub.fetch` unchanged, so its `signal` does too: Next (Node
  * runtime, `next start` and Vercel) aborts `req.signal` when the client disconnects and cancels
@@ -74,7 +95,7 @@ export function toNextHandlers(
   };
   const handle: RouteHandler = async (req) => {
     const h = await resolve();
-    const clientIp = o.clientIp?.(req);
+    const clientIp = o.clientIp ? o.clientIp(req) : onVercel() ? vercelClientIp(req) : undefined;
     const waitUntil = o.waitUntil ?? platformWaitUntil();
     return h.fetch(req, {
       ...(clientIp ? { clientIp } : {}),
@@ -84,54 +105,81 @@ export function toNextHandlers(
   return { GET: handle, POST: handle, PATCH: handle, DELETE: handle };
 }
 
+/** What `fetchOnce`'s `create` returns: a hub, or a hub with the cleanup of what was created for it. */
+export type CreatedHub = Hub | { hub: Hub; close(): void | Promise<void> };
+
 /**
  * Platforms that forbid sharing I/O objects (sockets, streams) across requests, such as Cloudflare
- * Workers: creates a hub for this request, serves it, and closes the hub once the response body
- * has finished or was cancelled (the client went away) — never earlier, so streams keep working.
+ * Workers: creates a hub for this request, serves it, and closes it once the response body has
+ * finished or was cancelled (the client went away) — never earlier, so streams keep working.
  *
  * ```ts
  * export default {
  *   fetch: (req, env, ctx) =>
- *     fetchOnce(() => makeHub(env), req, {
- *       waitUntil: ctx.waitUntil.bind(ctx),
- *       clientIp: req.headers.get('cf-connecting-ip') ?? undefined,
- *     }),
+ *     fetchOnce(
+ *       async (defer) => {
+ *         const pool = new Pool({ connectionString: env.HYPERDRIVE.connectionString });
+ *         defer(() => pool.end()); // also runs if building the hub fails
+ *         return makeHub(env, pool);
+ *       },
+ *       req,
+ *       { waitUntil: ctx.waitUntil.bind(ctx), clientIp: req.headers.get('cf-connecting-ip') ?? undefined },
+ *     ),
  * };
  * ```
  *
- * - `create()` runs per request: build the store / cluster on a per-request client inside it.
- *   `postgresHubStore` and `postgresCluster` remember a migrated database per pool / connection
- *   string for the isolate's life, so migrations are checked once per isolate, not per request.
+ * - `create(defer)` runs per request: build the store / cluster on a per-request client inside it.
+ *   The hub never closes your store, so clean up what you created: return `{ hub, close }`, and/or
+ *   register cleanups with `defer(fn)` as resources are opened. After the response, `hub.close()`
+ *   runs, then `close`, then the deferred cleanups (last registered first). If `create` rejects,
+ *   the cleanups deferred so far run and the error is rethrown (the platform answers 500).
+ * - `postgresHubStore` and `postgresCluster` remember a migrated database per pool / connection
+ *   string for the isolate's life, so migrations are checked once per isolate (a per-request pool
+ *   object costs one cheap `SELECT max(id)`; key by connection string to skip even that).
  * - `waitUntil` (pass it bound, e.g. `ctx.waitUntil.bind(ctx)`) receives the hub's background work
- *   and the close, so the isolate stays alive until they finish.
- * - `onClose` runs after `hub.close()` (the hub never closes your store): end the per-request
- *   `pg.Pool` / client there. A failing close is logged, never thrown into the response.
- * - A failing `create()` rejects (the platform answers 500).
+ *   and the cleanup, so the isolate stays alive until they finish.
+ * - A failing cleanup is logged, never thrown into the response.
  */
 export async function fetchOnce(
-  create: () => Promise<Hub>,
+  create: (defer: (cleanup: () => void | Promise<void>) => void) => Promise<CreatedHub>,
   req: Request,
-  o: { clientIp?: string; waitUntil?(p: Promise<unknown>): void; onClose?(): void | Promise<void> } = {},
+  o: { clientIp?: string; waitUntil?(p: Promise<unknown>): void } = {},
 ): Promise<Response> {
-  const hub = await create();
-  let closing: Promise<void> | undefined;
-  const close = (): void => {
-    if (closing) return;
-    closing = (async () => {
-      try {
-        await hub.close();
-      } finally {
-        await o.onClose?.();
+  const cleanups: Array<() => void | Promise<void>> = [];
+  let cleaning: Promise<void> | undefined;
+  /** Runs `first` (closing the hub), then every cleanup; each failure is logged; runs once. */
+  const cleanup = (first?: () => void | Promise<void>): void => {
+    if (cleaning) return;
+    cleaning = (async () => {
+      for (const fn of [...(first ? [first] : []), ...cleanups.reverse()]) {
+        try {
+          await fn();
+        } catch (err) {
+          console.error('[uncage] fetchOnce: cleaning up the per-request hub failed:', err);
+        }
       }
-    })().catch((err: unknown) => {
-      console.error('[uncage] fetchOnce: closing the per-request hub failed:', err);
-    });
+    })();
     try {
-      o.waitUntil?.(closing);
+      o.waitUntil?.(cleaning);
     } catch {
-      // An unbound / throwing waitUntil must not break the response; the close still runs.
+      // An unbound / throwing waitUntil must not break the response; the cleanup still runs.
     }
   };
+
+  let hub: Hub;
+  try {
+    const created = await create((fn) => void cleanups.push(fn));
+    if (typeof (created as Hub).fetch === 'function') hub = created as Hub;
+    else {
+      const c = created as { hub: Hub; close(): void | Promise<void> };
+      hub = c.hub;
+      cleanups.push(() => c.close());
+    }
+  } catch (err) {
+    cleanup();
+    throw err;
+  }
+  const close = () => cleanup(() => hub.close());
 
   let res: Response;
   try {
