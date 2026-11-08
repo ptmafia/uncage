@@ -14,7 +14,7 @@ const t = getDict(locale);
 ---
 
 <details class:list={['lang', { up }]} data-dropdown>
-  <summary aria-label={`${t.a11y.language}: ${localeInfo[locale].label}`}>
+  <summary aria-label={`${localeInfo[locale].short}: ${t.a11y.language}, ${localeInfo[locale].label}`}>
     <Icon name="globe" size={17} />
     <span class="cur">{localeInfo[locale].short}</span>
     <Icon name="chevron" size={14} class="chev" />

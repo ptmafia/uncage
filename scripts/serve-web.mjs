@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -23,9 +24,20 @@ const TYPES = {
 
 const isFile = (p) => fs.existsSync(p) && fs.statSync(p).isFile();
 
-function send(res, status, file, extra = {}) {
-  const body = fs.readFileSync(file);
-  res.writeHead(status, { 'content-type': TYPES[path.extname(file)] ?? 'application/octet-stream', 'content-length': body.length, ...extra });
+const COMPRESSIBLE = new Set(['.html', '.css', '.js', '.mjs', '.json', '.svg', '.txt', '.md', '.xml']);
+
+// Emulates what Vercel adds: gzip for text and immutable caching for hashed /_astro/ assets.
+function send(req, res, status, file, extra = {}) {
+  let body = fs.readFileSync(file);
+  const ext = path.extname(file);
+  const headers = { 'content-type': TYPES[ext] ?? 'application/octet-stream', vary: 'accept-encoding', ...extra };
+  if (file.includes(`${path.sep}_astro${path.sep}`)) headers['cache-control'] = 'public, max-age=31536000, immutable';
+  if (COMPRESSIBLE.has(ext) && /\bgzip\b/.test(req.headers['accept-encoding'] ?? '')) {
+    body = zlib.gzipSync(body);
+    headers['content-encoding'] = 'gzip';
+  }
+  headers['content-length'] = body.length;
+  res.writeHead(status, headers);
   res.end(body);
 }
 
@@ -43,16 +55,16 @@ const server = http.createServer((req, res) => {
     res.writeHead(403).end('Forbidden');
     return;
   }
-  if (isFile(file)) return send(res, 200, file);
+  if (isFile(file)) return send(req, res, 200, file);
   if (isFile(path.join(file, 'index.html'))) {
     if (!pathname.endsWith('/')) {
       res.writeHead(308, { location: `${pathname}/${url.search}` }).end();
       return;
     }
-    return send(res, 200, path.join(file, 'index.html'));
+    return send(req, res, 200, path.join(file, 'index.html'));
   }
   const notFound = path.join(dir, '404.html');
-  if (isFile(notFound)) return send(res, 404, notFound);
+  if (isFile(notFound)) return send(req, res, 404, notFound);
   res.writeHead(404).end('Not found');
 });
 
