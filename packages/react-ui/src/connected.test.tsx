@@ -3,6 +3,7 @@ import type { MachineInfo } from '@uncage/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AgentChat,
+  AgentOutdatedNotice,
   ApproveDevice,
   ConnectMachine,
   UncageProvider,
@@ -226,6 +227,62 @@ describe('connected mode: machine status and picker', () => {
     renderChat(f, { locale: 'zh-CN' });
     await screen.findByText(/你的电脑离线了，等待重新连接…/);
     expect(screen.getByText('uncage agent')).toBeTruthy();
+  });
+
+  it('AgentOutdatedNotice shows the upgrade command with the site setup command for an outdated computer', async () => {
+    // A 0.2 agent refused by the hub: offline and outdated. One notice replaces the offline banner.
+    const f = fakeClient({ machines: [machine({ agentOutdated: true, online: false, agentVersion: '0.2.0' })] });
+    renderChat(f);
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toContain("This computer's Uncage agent is too old for this website.");
+    expect(status.textContent).toContain('npm i -g @uncage/cli@latest');
+    await waitFor(() => expect(status.textContent).toContain(INSTALL.setup));
+    expect(within(status).getByText('npm i -g @uncage/cli@latest').tagName).toBe('CODE');
+    expect(within(status).getByText(INSTALL.setup).tagName).toBe('CODE');
+    expect(screen.queryByText(/Your computer is offline/)).toBeNull();
+    expect(textbox().disabled).toBe(true);
+  });
+
+  it('AgentOutdatedNotice zh-CN copy; nothing for an up-to-date computer', async () => {
+    const f = fakeClient({ machines: [machine({ agentOutdated: true, online: false })] });
+    renderChat(f, { locale: 'zh-CN' });
+    const status = await screen.findByRole('status');
+    await waitFor(() =>
+      expect(status.textContent).toContain(
+        `这台电脑上的 Uncage 守护进程版本过旧。请在那台电脑上运行 npm i -g @uncage/cli@latest，然后运行 ${INSTALL.setup} 重新连接。`,
+      ),
+    );
+    cleanup();
+    const g = fakeClient({ machines: [machine()] });
+    renderChat(g);
+    await screen.findByRole('button', { name: 'Computer: MacBook Pro (online)' });
+    expect(screen.queryByText(/too old/)).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('AgentOutdatedNotice renders nothing for an up-to-date machine (standalone)', () => {
+    const { container } = render(
+      <UncageProvider client={fakeClient().client}>
+        <UncageUIProvider>
+          <AgentOutdatedNotice machine={machine()} />
+        </UncageUIProvider>
+      </UncageProvider>,
+    );
+    expect(container.innerHTML).toBe('');
+  });
+
+  it('MachineStatus lists an outdated computer as "Agent update needed"', async () => {
+    const f = fakeClient({ machines: [machine(), machine({ id: 'mac_2', name: 'Old Box', os: 'linux', online: false, agentOutdated: true })] });
+    renderChat(f);
+    fireEvent.click(await screen.findByRole('button', { name: 'Computer: MacBook Pro (online)' }));
+    const menu = screen.getByRole('menu', { name: 'Choose a computer' });
+    expect(within(menu).getByText('Linux · Agent update needed')).toBeTruthy();
+    expect(within(menu).getByText('macOS · Online')).toBeTruthy();
+    cleanup();
+    const g = fakeClient({ machines: [machine({ online: false, agentOutdated: true })] });
+    renderChat(g, { locale: 'zh-CN' });
+    fireEvent.click(await screen.findByRole('button', { name: /^电脑：MacBook Pro/ }));
+    expect(within(screen.getByRole('menu')).getByText('macOS · 需要更新守护进程')).toBeTruthy();
   });
 
   it('"Connect another computer…" opens the dialog; it polls every 3 s while open and Cancel / Esc close it', async () => {

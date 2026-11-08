@@ -29,7 +29,8 @@ export function MachineStatus({ onSelect }: MachineStatusProps): JSX.Element | n
   const triggerRef = useRef<HTMLButtonElement>(null);
   if (!connected) return null;
   const now = Date.now();
-  const status = (m: MachineInfo) => (m.online ? t.machineOnline : t.machineOffline(t.ago(now - Date.parse(m.lastSeenAt))));
+  const status = (m: MachineInfo) =>
+    m.agentOutdated ? t.machineAgentOutdated : m.online ? t.machineOnline : t.machineOffline(t.ago(now - Date.parse(m.lastSeenAt)));
   const name = current?.name ?? t.machineLabel;
   const online = current?.online === true;
   return (

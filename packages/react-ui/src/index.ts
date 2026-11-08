@@ -1,5 +1,6 @@
 export { UncageProvider } from '@uncage/react';
 export { AgentChat } from './components/AgentChat.js';
+export { AgentOutdatedNotice } from './components/AgentOutdatedNotice.js';
 export type { AgentChatProps } from './components/AgentChat.js';
 export { ApprovalCard } from './components/ApprovalCard.js';
 export { ApproveDevice } from './components/ApproveDevice.js';

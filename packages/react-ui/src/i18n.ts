@@ -195,6 +195,10 @@ const en = {
   machineOnline: 'Online',
   machineOffline: (ago: string) => `Offline · seen ${ago}`,
   machineStatus: (name: string, online: boolean) => `Computer: ${name} (${online ? 'online' : 'offline'})`,
+  machineAgentOutdated: 'Agent update needed',
+  /** The hub refused this computer's agent as too old (`MachineInfo.agentOutdated`). Backticks mark commands. */
+  agentOutdated: (setup: string) =>
+    `This computer's Uncage agent is too old for this website. On that computer run \`npm i -g @uncage/cli@latest\`, then \`${setup}\`.`,
   connectAnother: 'Connect another computer…',
   osName: (os: string) =>
     ({ darwin: 'macOS', linux: 'Linux', win32: 'Windows' } as Record<string, string>)[os] ?? os,
@@ -406,6 +410,9 @@ const zhCN: Strings = {
   machineOnline: '在线',
   machineOffline: (ago: string) => `离线 · ${ago}在线`,
   machineStatus: (name: string, online: boolean) => `电脑：${name}（${online ? '在线' : '离线'}）`,
+  machineAgentOutdated: '需要更新守护进程',
+  agentOutdated: (setup: string) =>
+    `这台电脑上的 Uncage 守护进程版本过旧。请在那台电脑上运行 \`npm i -g @uncage/cli@latest\`，然后运行 \`${setup}\` 重新连接。`,
   connectAnother: '连接另一台电脑…',
   osName: (os: string) =>
     ({ darwin: 'macOS', linux: 'Linux', win32: 'Windows' } as Record<string, string>)[os] ?? os,

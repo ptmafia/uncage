@@ -256,7 +256,7 @@ export function Composer(): JSX.Element {
           )}
         </div>
       )}
-      {machineOffline && !readOnly && (
+      {machineOffline && !readOnly && !machines.current?.agentOutdated && (
         <div className="uc-banner uc-machine-offline" data-tone="warn" role="status">
           <WifiOff aria-hidden />
           <span className="uc-banner-text">

@@ -12,9 +12,11 @@ import {
   useUncageStore,
   type PersistSessionMode,
 } from '@uncage/react';
+import type { MachineInfo } from '@uncage/protocol';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { ChatControllerContext, cx, UncageUIProvider, useUi, type ChatComponents, type ChatController } from '../context.js';
 import type { Locale } from '../i18n.js';
+import { AgentOutdatedNotice } from './AgentOutdatedNotice.js';
 import { BypassBanner } from './BypassBanner.js';
 import { Composer as DefaultComposer } from './Composer.js';
 import { ConnectMachine } from './ConnectMachine.js';
@@ -84,9 +86,9 @@ const CONNECTED_LINGER_MS = 1200;
  * Connected mode (the server is an Uncage hub): keeps computer status fresh and decides whether
  * the empty state shows `<ConnectMachine>` (no computer yet; it stays a moment after one joins).
  */
-function useConnectedMode(): { connected: boolean; showConnect: boolean } {
+function useConnectedMode(): { connected: boolean; showConnect: boolean; current?: MachineInfo } {
   const connected = useStoreSelector((s) => s.machines.mode === 'connected');
-  const { machines } = useMachines({ watch: connected ? MACHINES_STATUS_POLL_MS : false });
+  const { machines, current } = useMachines({ watch: connected ? MACHINES_STATUS_POLL_MS : false });
   const needed = connected && machines.length === 0;
   // Stays set for a moment after the first computer appears, so `<ConnectMachine>` can show
   // "Connected: <name>" before the empty state takes over.
@@ -100,7 +102,7 @@ function useConnectedMode(): { connected: boolean; showConnect: boolean } {
     const id = setTimeout(() => setShown(false), CONNECTED_LINGER_MS);
     return () => clearTimeout(id);
   }, [needed, shown]);
-  return { connected, showConnect: needed || (connected && shown) };
+  return { connected, showConnect: needed || (connected && shown), ...(connected && current ? { current } : {}) };
 }
 
 function ChatLayout({ sidebar, theme, className, defaultRuntime, starterPrompts, persistSession }: LayoutProps): JSX.Element {
@@ -150,6 +152,7 @@ function ChatLayout({ sidebar, theme, className, defaultRuntime, starterPrompts,
           <div className="uc-dock">
             <div className="uc-column">
               {!draft && <RunStatusBar />}
+              {connectedMode.current && <AgentOutdatedNotice machine={connectedMode.current} />}
               <Composer />
             </div>
           </div>
