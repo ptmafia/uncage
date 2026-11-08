@@ -17,7 +17,7 @@
   - **传统模式**（常驻进程）：现状，WebSocket + PGlite/Postgres，零外部依赖。
   - **FaaS 模式**（函数平台）：hub 以标准 `fetch(Request) → Response` 处理一切，无本地状态，连接随时可被平台切断也能无缝续上。
 - 用户电脑上的 agent 自动适配网站支持的传输方式，用户无感（同一个 `uncage setup <site>`）。
-- 0.2 的 agent、网站代码继续可用（向后兼容）。
+- **允许破坏性更新**（用户：目前还没有用户）。版本 0.3.0（0.x 下 minor 即可破坏；不发 1.0，等 API 稳定后再说）。附一页简短的“从 0.2 迁移”。
 - connected-demo 同一份代码可以按传统模式（Railway/Node）或 FaaS 模式（Vercel）部署。
 - 新增 Cloudflare Workers 接入示例（Hono 或原生 Worker）。
 - 帮助站：新增"选择部署模式"指南 + 各平台一步步接入页（Node / Next.js on Vercel / Cloudflare Workers / 其他 Fetch 平台），三语（en / zh-CN / ja），面向开发者和 coding agent 都友好。
@@ -99,8 +99,8 @@
 
 ## 5.9 审阅后补充的裁定（我方判断）
 
-1. **不破坏 0.2 网站代码**：`@uncage/hub` 根入口在 Node 下保持现有导出（`toNodeHandler`、`pgliteHubStore`、`attach`、不传 `store` 时默认 PGlite）。通过 package.json **条件导出**（`workerd` / `worker` / `edge-light` / `browser`）让函数平台解析到只含 Web 标准 API 的核心构建；另提供显式子路径 `@uncage/hub/core` 供需要时直接引用。核心构建里调用 Node 专有能力（如未传 `store`、`attach`）时给出清晰错误："FaaS 模式需要 `postgresHubStore` + `postgresCluster`"。构建检查保证核心产物无 Node 内置模块。
-2. **0.2 agent 兼容**：传统模式下 0.3 hub 仍接受 0.2 agent（`minAgentVersion` 默认保持 `0.2.0`，不强制升级）。FaaS 部署只提供 HTTP 流传输，0.2 agent 连不上：**在网站端提示**——电脑卡片/连接页显示"这台电脑的 Uncage agent 版本过旧，请运行 `npm i -g @uncage/cli@latest` 后重新连接"（依据配对时记录的 `agentVersion` 与 hub 的传输能力）。不为此做 WebSocket 桩。
+1. **包结构（破坏性）**：`@uncage/hub` 根入口就是只含 Web 标准 API 的核心（任何平台可用）；Node 专有部分（`toNodeHandler`、WebSocket `attach`、`pgliteHubStore`）移到 `@uncage/hub/node`。不做条件导出；`createHub` 必须显式传 `store`（不再默认 PGlite）。构建检查保证根入口产物无 Node 内置模块。`Hub` 接口去掉 `attach`（改由 `@uncage/hub/node` 提供 `attachWebSocket(hub, server)` 之类的函数）。
+2. **agent 版本**：hub 要求 agent ≥ 0.3（`minAgentVersion` 默认 0.3.0）。协议可借机统一整理，不保留 0.2 兼容路径。旧 agent 连接时：传统模式经 WebSocket 收到 `upgrade_required`（0.2 agent 已支持自升级）；FaaS 模式下 0.2 agent 无法握手，**在网站端提示**升级（电脑卡片/连接页：“请运行 `npm i -g @uncage/cli@latest` 后重新连接”）。
 3. **Vercel 上的 demo 要支持公开模式**（与 Railway 版等价，可以替代它）。因此框架层面：
    - **限流与防暴力破解计数**（设备码、验证码失败次数、每 IP 限流）在 FaaS 模式下改为经 store 共享（Postgres），不再只在单实例内存里——这对所有 FaaS 用户都是安全必需，不只为 demo。
    - **定期清理**改为"顺带清理"（请求中按概率/间隔触发，带分布式锁），并可选用平台定时任务（Vercel Cron）调用一个清理端点；文档给出两种方式。
