@@ -338,7 +338,7 @@ describe('landing-page skill', () => {
     expect(text).toContain('stay on the website');
     expect(text).toContain('MIT');
     expect(text).toContain(`Documentation: ${DEFAULT_DOCS_URL}`);
-    expect(DEFAULT_DOCS_URL).toBe('https://uncage.vercel.app/docs/');
+    expect(DEFAULT_DOCS_URL).toBe('https://uncage-dev.vercel.app/docs/');
   });
   it('links the docs from DOCS_URL when it is set', () => {
     expect(makeLandingPageSkill({ DOCS_URL: 'https://uncage.example/docs/' }).markdown).toContain('Documentation: https://uncage.example/docs/');

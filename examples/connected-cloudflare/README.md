@@ -5,7 +5,7 @@ user's own Claude Code call this website's `save_note` tool. Postgres through Hy
 dependency; agents connect over the HTTP streaming transport (Workers serve no WebSocket here).
 
 The help site walks through the same setup for your own Worker, with a checklist and FAQ:
-[Cloudflare Workers](https://uncage.vercel.app/docs/deploy/cloudflare-workers/).
+[Cloudflare Workers](https://uncage-dev.vercel.app/docs/deploy/cloudflare-workers/).
 
 | Route | What |
 | --- | --- |

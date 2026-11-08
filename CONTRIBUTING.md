@@ -13,7 +13,7 @@ In CI, `CI=true` makes Playwright use its bundled Chromium instead of system Chr
 
 ## Help site
 
-The help site (https://uncage.vercel.app/docs/) lives in `apps/docs` (Astro Starlight). It is
+The help site (https://uncage-dev.vercel.app/docs/) lives in `apps/docs` (Astro Starlight). It is
 not part of the root `pnpm build`, `pnpm typecheck` or `pnpm lint` (they run with `--filter=!docs`),
 because Astro needs Node.js 22.23.4 or newer while the packages support Node 22.0+. CI checks the docs
 in their own job on Node 24 (lint, typecheck, sample check, build). Locally:

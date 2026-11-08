@@ -24,7 +24,7 @@ The same tools, skill, pages and sign-in run in two modes. The entry that starts
 | One publish (`publish_asset`) | up to 20 MB | up to 5 MB (Postgres storage is small and metered) |
 | Browser attachments | up to 10 MB | up to 4 MB (Vercel refuses request bodies over ~4.5 MB) |
 
-FaaS mode refuses to start without `DATABASE_URL` and `DEMO_SECRET`, and names what is missing. Nothing is written to local disk. `lib/hub-registry.ts` gives every caller (the route handler, the `/device` page and its Server Action) the one hub of the process: in traditional mode the one `server.ts` published, in FaaS mode one built on first use. Deploying on Vercel: see [DEPLOY.md](DEPLOY.md). The help site explains both modes for your own site: [Choose a deployment mode](https://uncage.vercel.app/docs/start/choose-deployment-mode/), [Node](https://uncage.vercel.app/docs/deploy/node/), [Next.js on Vercel](https://uncage.vercel.app/docs/deploy/vercel/).
+FaaS mode refuses to start without `DATABASE_URL` and `DEMO_SECRET`, and names what is missing. Nothing is written to local disk. `lib/hub-registry.ts` gives every caller (the route handler, the `/device` page and its Server Action) the one hub of the process: in traditional mode the one `server.ts` published, in FaaS mode one built on first use. Deploying on Vercel: see [DEPLOY.md](DEPLOY.md). The help site explains both modes for your own site: [Choose a deployment mode](https://uncage-dev.vercel.app/docs/start/choose-deployment-mode/), [Node](https://uncage-dev.vercel.app/docs/deploy/node/), [Next.js on Vercel](https://uncage-dev.vercel.app/docs/deploy/vercel/).
 
 In traditional mode, one Node `http` server (`server.ts`) carries everything:
 

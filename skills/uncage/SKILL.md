@@ -6,8 +6,8 @@ description: Integrate Uncage into a website or web app, so the site's users can
 # Integrate Uncage into a website
 
 Uncage puts Claude Code behind a web UI with streaming, approval cards, Stop and reload-safe history.
-Full docs: https://uncage.vercel.app/docs/ (every page also as markdown: add `.md` to the URL;
-index: https://uncage.vercel.app/docs/llms.txt; everything: https://uncage.vercel.app/docs/llms-full.txt).
+Full docs: https://uncage-dev.vercel.app/docs/ (every page also as markdown: add `.md` to the URL;
+index: https://uncage-dev.vercel.app/docs/llms.txt; everything: https://uncage-dev.vercel.app/docs/llms-full.txt).
 
 ## 1. Pick the mode
 
@@ -16,10 +16,10 @@ index: https://uncage.vercel.app/docs/llms.txt; everything: https://uncage.verce
   (`curl -fsSL https://<site>/api/uncage/install.sh | bash`, Windows: `irm https://<site>/api/uncage/install.ps1 | iex`,
   then `uncage setup https://<site>`); a background agent on their computer dials out to the hub.
   Claude Code (or Codex, or any ACP agent the user has) can call the website's own tools.
-  Guide: https://uncage.vercel.app/docs/start/quickstart-connected.md
+  Guide: https://uncage-dev.vercel.app/docs/start/quickstart-connected.md
 - **Local Mode**: the app and the agent run on the same machine (internal tool, dev dashboard). Run
   `npx uncage serve --workspace <dir>`; the app adds a same-origin proxy route and `<AgentChat>`.
-  Guide: https://uncage.vercel.app/docs/start/quickstart-local.md
+  Guide: https://uncage-dev.vercel.app/docs/start/quickstart-local.md
 
 If unsure, ask the user: "Will each end user connect their own computer (Connected), or does the agent
 run on the same machine as this app (Local)?"
@@ -29,15 +29,15 @@ run on the same machine as this app (Local)?"
 Find where the site runs (package.json scripts, `vercel.json`, `wrangler.toml`, `netlify.toml`,
 Dockerfile/Procfile, hosting docs) and pick the matching page. Same `createHub` options, tools,
 skills and UI in every mode; only `store`, `cluster` and the mount differ.
-Comparison: https://uncage.vercel.app/docs/start/choose-deployment-mode.md
+Comparison: https://uncage-dev.vercel.app/docs/start/choose-deployment-mode.md
 
 | Site runs on | Mode | Mount | Store / cluster | Follow |
 | --- | --- | --- | --- | --- |
-| A long-running Node server / container (Express, Fastify, Hono, VM, Railway, Fly.io) | traditional | `toNodeHandler(hub)` + `attachWebSocket(hub, server)` from `@uncage/hub/node` | `pgliteHubStore({ dataDir })` (zero deps) | https://uncage.vercel.app/docs/deploy/node.md |
-| Next.js, self-hosted with a custom server | traditional | the same, around Next's request handler | `pgliteHubStore` | steps below, https://uncage.vercel.app/docs/start/quickstart-connected.md |
-| Next.js on Vercel (or `next start` without a custom server) | FaaS | `toNextHandlers(getHub, { waitUntil: after })` in `app/api/uncage/[...path]/route.ts`, `maxDuration = 300` | `postgresHubStore({ pool })` + `postgresCluster({ pool })` | https://uncage.vercel.app/docs/deploy/vercel.md |
-| Cloudflare Workers | FaaS | `fetchOnce(create, req, { waitUntil: ctx.waitUntil.bind(ctx), clientIp: cf-connecting-ip })`, a `pg.Pool` per request via Hyperdrive, `nodejs_compat` | `postgresHubStore` + `postgresCluster` | https://uncage.vercel.app/docs/deploy/cloudflare-workers.md |
-| Netlify, Deno, Bun, other Fetch hosts | FaaS | `hub.fetch(req, { clientIp, waitUntil })` | `postgresHubStore` + `postgresCluster` | https://uncage.vercel.app/docs/deploy/other-fetch-platforms.md |
+| A long-running Node server / container (Express, Fastify, Hono, VM, Railway, Fly.io) | traditional | `toNodeHandler(hub)` + `attachWebSocket(hub, server)` from `@uncage/hub/node` | `pgliteHubStore({ dataDir })` (zero deps) | https://uncage-dev.vercel.app/docs/deploy/node.md |
+| Next.js, self-hosted with a custom server | traditional | the same, around Next's request handler | `pgliteHubStore` | steps below, https://uncage-dev.vercel.app/docs/start/quickstart-connected.md |
+| Next.js on Vercel (or `next start` without a custom server) | FaaS | `toNextHandlers(getHub, { waitUntil: after })` in `app/api/uncage/[...path]/route.ts`, `maxDuration = 300` | `postgresHubStore({ pool })` + `postgresCluster({ pool })` | https://uncage-dev.vercel.app/docs/deploy/vercel.md |
+| Cloudflare Workers | FaaS | `fetchOnce(create, req, { waitUntil: ctx.waitUntil.bind(ctx), clientIp: cf-connecting-ip })`, a `pg.Pool` per request via Hyperdrive, `nodejs_compat` | `postgresHubStore` + `postgresCluster` | https://uncage-dev.vercel.app/docs/deploy/cloudflare-workers.md |
+| Netlify, Deno, Bun, other Fetch hosts | FaaS | `hub.fetch(req, { clientIp, waitUntil })` | `postgresHubStore` + `postgresCluster` | https://uncage-dev.vercel.app/docs/deploy/other-fetch-platforms.md |
 
 FaaS rules: never import `@uncage/hub/node` there; set `stream.maxDurationMs` below the platform's
 request limit (250 000 for Vercel's 300 s) and keep `toolTimeoutMs` inside it; give the hub the client
@@ -73,9 +73,9 @@ Requirements: a long-running Node server (Node.js 22.18+).
 10. `next.config.ts` headers for `/device` (or all pages): `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`.
 11. `.gitignore`: `.uncage-hub/` (the PGlite store folder; keep it on a persistent disk in production).
 
-Copy the exact files from https://uncage.vercel.app/docs/start/quickstart-connected.md; they are
+Copy the exact files from https://uncage-dev.vercel.app/docs/start/quickstart-connected.md; they are
 type-checked in CI. Other servers (Express, Fastify, Hono, node:http):
-https://uncage.vercel.app/docs/guides/mount-the-hub.md
+https://uncage-dev.vercel.app/docs/guides/mount-the-hub.md
 
 ## 3. Local Mode steps (Next.js App Router)
 
@@ -122,7 +122,7 @@ curl -s http://localhost:3000/api/uncage/runtimes   # JSON array containing "cla
   `publicUrl`. Proxies should forward WebSocket upgrades on `/api/uncage/agent` (agents fall back to
   HTTP streaming otherwise), keep the `Host` header and not buffer SSE or `/api/uncage/agent/stream`.
 - `createHub` requires `store`; there is no `hub.attach` or `hub.handler` (0.2 API) — use
-  `attachWebSocket` and `hub.fetch`. Upgrading: https://uncage.vercel.app/docs/reference/migrate-from-0-2.md
+  `attachWebSocket` and `hub.fetch`. Upgrading: https://uncage-dev.vercel.app/docs/reference/migrate-from-0-2.md
 - `publicUrl` is the exact origin users open (`https://…`). The agent refuses `http://` except for
   localhost, 127.0.0.1 and [::1].
 - Tool handlers: scope every read/write to `ctx.user.id`; throw **user-safe** messages (they are shown

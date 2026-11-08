@@ -7,7 +7,7 @@ user's own machine; the hub routes commands and events, executes your site tools
 attachments.
 
 The root entry is a Web-standard Fetch handler (`hub.fetch(request)`) that runs on any platform. It
-has two deployment modes ([which one?](https://uncage.vercel.app/docs/start/choose-deployment-mode/)):
+has two deployment modes ([which one?](https://uncage-dev.vercel.app/docs/start/choose-deployment-mode/)):
 
 **Traditional mode**: a long-running Node process, zero external dependencies. The Node-only parts
 live in `@uncage/hub/node`.
@@ -47,10 +47,10 @@ export const maxDuration = 300; // the hub ends its streams before this (stream.
 
 On Cloudflare Workers, `fetchOnce(create, req, { waitUntil: ctx.waitUntil.bind(ctx), clientIp })`
 creates a hub per request on a per-request pool. Complete files and checklists per platform:
-[Node](https://uncage.vercel.app/docs/deploy/node/), [Vercel](https://uncage.vercel.app/docs/deploy/vercel/),
-[Cloudflare Workers](https://uncage.vercel.app/docs/deploy/cloudflare-workers/),
-[other Fetch platforms](https://uncage.vercel.app/docs/deploy/other-fetch-platforms/). Upgrading from
-0.2: [migration guide](https://uncage.vercel.app/docs/reference/migrate-from-0-2/).
+[Node](https://uncage-dev.vercel.app/docs/deploy/node/), [Vercel](https://uncage-dev.vercel.app/docs/deploy/vercel/),
+[Cloudflare Workers](https://uncage-dev.vercel.app/docs/deploy/cloudflare-workers/),
+[other Fetch platforms](https://uncage-dev.vercel.app/docs/deploy/other-fetch-platforms/). Upgrading from
+0.2: [migration guide](https://uncage-dev.vercel.app/docs/reference/migrate-from-0-2/).
 
 `store` is required, and the hub never closes it. The hub requires agents 0.3 or newer
 (`minAgentVersion`); older agents are told to upgrade.
@@ -89,7 +89,7 @@ instance gets the agent's HTTP POST):
 - **Exactly once on connection drop**: the call and its result are stored under the call's id, and a
   re-sent call gets the stored result (kept 24 h) instead of a second run (on FaaS platforms: when
   the hub is given the platform's `waitUntil`, which `toNextHandlers` and `fetchOnce` pass on; see
-  the [Workers FAQ](https://uncage.vercel.app/docs/deploy/cloudflare-workers/#do-site-tools-run-exactly-once-on-workers)). **At most once on instance
+  the [Workers FAQ](https://uncage-dev.vercel.app/docs/deploy/cloudflare-workers/#do-site-tools-run-exactly-once-on-workers)). **At most once on instance
   kill**: if the instance running the handler dies, the call fails with "Site tool "<name>" timed out
   on the website. Please try again." (`details.reason: 'interrupted'`) and is never re-run. Keep
   handlers within your platform's request time limit and idempotent where you can.

@@ -2,7 +2,7 @@ import type { SkillSpec } from '@uncage/protocol';
 import { docsUrl } from './config.ts';
 
 /** The help site linked from the skill when `DOCS_URL` is not set. */
-export const DEFAULT_DOCS_URL = 'https://uncage.vercel.app/docs/';
+export const DEFAULT_DOCS_URL = 'https://uncage-dev.vercel.app/docs/';
 
 /** Facts about Uncage, so a page "about Uncage" describes the real product instead of guessing. */
 function aboutUncage(docs: string): string {
