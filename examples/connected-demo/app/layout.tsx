@@ -32,7 +32,13 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
             <a href="/assets">素材</a>
           </nav>
           <span className="demo-spacer" />
-          {user ? (
+          {user && isPublicDemo() ? (
+            // Public demo: no log out. The guest identity is the only key to the linked computer and
+            // the assets; signing in again would mint a new guest and orphan them.
+            <span className="demo-user">
+              <span data-testid="demo-user">{user.name}</span>
+            </span>
+          ) : user ? (
             <form action="/auth/logout" method="post" className="demo-user">
               <span data-testid="demo-user">{user.name}</span>
               <button type="submit">退出</button>

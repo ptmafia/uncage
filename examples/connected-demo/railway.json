@@ -1,5 +1,9 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
-  "build": { "builder": "DOCKERFILE", "dockerfilePath": "examples/connected-demo/Dockerfile" },
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "examples/connected-demo/Dockerfile",
+    "watchPatterns": ["examples/connected-demo/**", "packages/**", "pnpm-lock.yaml", ".dockerignore"]
+  },
   "deploy": { "healthcheckPath": "/login", "restartPolicyType": "ON_FAILURE" }
 }

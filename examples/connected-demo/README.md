@@ -56,9 +56,9 @@ pnpm start                          # production: http://localhost:3200
 
 To keep your real `~/.uncage` and `~/Uncage` untouched while trying it, prefix both commands with `UNCAGE_HOME=/tmp/uncage-demo`. `HOME` is not changed, so Claude Code keeps its login.
 
-Environment: `PORT` (3200), `HOST` (127.0.0.1), `PUBLIC_URL` (`http://localhost:$PORT`, the URL users open and give to `uncage setup`), `DEMO_DATA_DIR` (`./.data`: the hub's PGlite store, the assets and the cookie secret), `DEMO_SECRET` (cookie key, at least 32 bytes; shorter values are ignored with a warning; otherwise generated into the data dir).
+Environment: `PORT` (3200), `HOST` (127.0.0.1), `PUBLIC_URL` (`http://localhost:$PORT`, the URL users open and give to `uncage setup`), `DEMO_DATA_DIR` (`./.data`: the hub's PGlite store, the assets and the cookie secret), `DEMO_SECRET` (cookie key, at least 32 bytes; shorter values are ignored with a warning; otherwise generated into the data dir), `TRUST_PROXY=1` / `CLIENT_IP_HEADER=<header>` (where per-IP rate limits find the client behind a proxy; leave both unset without one, see [DEPLOY.md](DEPLOY.md)).
 
-Public demo mode: `DEMO_PUBLIC=1` replaces the sign-in form with a random guest account, shows a banner, makes page requests owner-only (the page's sub-resources are guarded by the unguessable asset id), and deletes assets last created or published more than 24 hours ago (at start and hourly). `DOCS_URL` (for example `https://uncage.example/docs/`) adds a link to the docs in the banner. To host it, see [DEPLOY.md](DEPLOY.md).
+Public demo mode: `DEMO_PUBLIC=1` replaces the sign-in form with a random guest account, shows a banner, makes page requests owner-only (the page's sub-resources are guarded by the unguessable asset id), deletes assets last created or published more than 24 hours ago (at start and hourly), caps each guest at 20 assets and hides Log out (the guest identity is the key to the linked computer). `DOCS_URL` (for example `https://uncage.example/docs/`) adds a link to the docs in the banner. To host it, see [DEPLOY.md](DEPLOY.md).
 
 ## Run it (multi-node)
 

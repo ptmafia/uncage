@@ -4,10 +4,14 @@
  */
 import { defineTool, type SiteTool } from '@uncage/hub';
 import { z } from 'zod';
-import { createAsset, getAsset, publishAsset } from './assets.ts';
+import { createAsset, getAsset, listAssets, publishAsset } from './assets.ts';
+import { isPublicDemo } from './config.ts';
 
 /** Total bytes one publish may pull from the machine. */
 export const PUBLISH_MAX_BYTES = 20 * 1024 * 1024;
+
+/** Public demo: assets one guest may keep at a time (each up to PUBLISH_MAX_BYTES), so nobody fills the disk. */
+export const PUBLIC_MAX_ASSETS_PER_OWNER = 20;
 
 export const createAssetTool = defineTool({
   name: 'create_asset',
@@ -18,6 +22,11 @@ export const createAssetTool = defineTool({
     kind: z.literal('landing-page'),
   }),
   handler: async ({ title, kind }, ctx) => {
+    if (isPublicDemo() && (await listAssets(ctx.user.id)).length >= PUBLIC_MAX_ASSETS_PER_OWNER) {
+      throw new Error(
+        `This demo keeps at most ${PUBLIC_MAX_ASSETS_PER_OWNER} assets per visitor, and you already have that many. Publish into one of your existing assets instead (publish_asset replaces its files), or try again after older ones are cleared (24 hours after they were last created or published).`,
+      );
+    }
     const asset = await createAsset({ owner: ctx.user.id, title, kind, sessionId: ctx.sessionId });
     return {
       assetId: asset.id,

@@ -8,10 +8,10 @@ import { canReadAsset, createAsset, getAsset, listAssets, needsOwnerCheck, publi
 import { guestUsername, normalizeUsername, readCookie, secret, signUser, verifyUser } from './auth.ts';
 import { docsUrl, isPublicDemo, publicUrl } from './config.ts';
 import { isSameOrigin } from './csrf.ts';
-import { forwardedClient } from './hub.ts';
+import { clientIpResolver, forwardedClient } from './hub.ts';
 import { safeNext } from './session-utils.ts';
 import { DEFAULT_DOCS_URL, landingPageSkill, makeLandingPageSkill } from './skills.ts';
-import { createAssetTool, pageRelative, publishAssetTool } from './tools.ts';
+import { createAssetTool, pageRelative, PUBLIC_MAX_ASSETS_PER_OWNER, publishAssetTool } from './tools.ts';
 
 let dir: string;
 beforeEach(async () => {
@@ -66,6 +66,15 @@ describe('demo cookie sign-in', () => {
   it('uses the rightmost X-Forwarded-For entry behind the dev proxy', () => {
     expect(forwardedClient(new Request('http://x/', { headers: { 'x-forwarded-for': '1.1.1.1, 10.0.0.2' } }))).toBe('10.0.0.2');
     expect(forwardedClient(new Request('http://x/'))).toBeUndefined();
+  });
+  it('picks the rate-limit client IP from CLIENT_IP_HEADER, then TRUST_PROXY, else the socket', () => {
+    const req = new Request('http://x/', { headers: { 'x-forwarded-for': '1.1.1.1, 10.0.0.2', 'x-real-ip': ' 203.0.113.7 ' } });
+    expect(clientIpResolver({})).toBeUndefined();
+    expect(clientIpResolver({ TRUST_PROXY: '0' })).toBeUndefined();
+    expect(clientIpResolver({ TRUST_PROXY: '1' })?.(req)).toBe('10.0.0.2');
+    expect(clientIpResolver({ CLIENT_IP_HEADER: 'X-Real-IP', TRUST_PROXY: '1' })?.(req)).toBe('203.0.113.7');
+    expect(clientIpResolver({ CLIENT_IP_HEADER: 'cf-connecting-ip' })?.(req)).toBeUndefined();
+    expect(clientIpResolver({ CLIENT_IP_HEADER: ' ' })).toBeUndefined();
   });
 });
 
@@ -184,6 +193,22 @@ describe('site tools', () => {
     expect(publishAssetTool.requiresConfirmation).toBe(true);
     expect(createAssetTool.requiresConfirmation).toBeFalsy();
     expect(createAssetTool.input.safeParse({ title: 't', kind: 'blog' }).success).toBe(false);
+  });
+
+  it('create_asset caps each owner at PUBLIC_MAX_ASSETS_PER_OWNER assets in public mode only', async () => {
+    const input = createAssetTool.input.parse({ title: 't', kind: 'landing-page' });
+    for (let i = 0; i < PUBLIC_MAX_ASSETS_PER_OWNER; i++) await createAsset({ owner: 'guest-a', title: `p${i}`, kind: 'landing-page', sessionId: 's' });
+    // Not public: no cap.
+    await expect(createAssetTool.handler(input, ctx('guest-a', {}))).resolves.toMatchObject({ status: 'draft' });
+    process.env.DEMO_PUBLIC = '1';
+    try {
+      await expect(createAssetTool.handler(input, ctx('guest-a', {}))).rejects.toThrow(/at most 20 assets per visitor/);
+      // Other guests are unaffected.
+      await expect(createAssetTool.handler(input, ctx('guest-b', {}))).resolves.toMatchObject({ status: 'draft' });
+    } finally {
+      delete process.env.DEMO_PUBLIC;
+    }
+    expect((await listAssets('guest-a')).length).toBe(PUBLIC_MAX_ASSETS_PER_OWNER + 1);
   });
 
   it('maps pulled paths to page-relative ones; never falls back to basenames', () => {

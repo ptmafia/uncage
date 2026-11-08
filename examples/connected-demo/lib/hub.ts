@@ -25,9 +25,8 @@ export async function createDemoHub(env: NodeJS.ProcessEnv = process.env): Promi
     // The website keeps a replica of every conversation: history stays visible with the machine off.
     sessionStorage: 'site',
     site: { name: 'Uncage Connected Demo' },
-    // Behind scripts/multinode.ts's proxy every request comes from 127.0.0.1; the proxy appends the
-    // real client to X-Forwarded-For, so per-IP rate limits use its rightmost entry instead.
-    ...(env.TRUST_PROXY === '1' ? { rateLimits: { clientIp: forwardedClient } } : {}),
+    // Per-IP rate limits behind a proxy: see clientIpResolver.
+    ...withClientIp(clientIpResolver(env)),
   });
   return {
     hub,
@@ -38,6 +37,25 @@ export async function createDemoHub(env: NodeJS.ProcessEnv = process.env): Promi
       await store.close();
     },
   };
+}
+
+function withClientIp(clientIp: ((req: Request) => string | undefined) | undefined) {
+  return clientIp ? { rateLimits: { clientIp } } : {};
+}
+
+/**
+ * How per-IP rate limits find the client. Unset (plain `docker run`, no proxy): the socket address.
+ * `TRUST_PROXY=1`: the rightmost `X-Forwarded-For` entry, for a proxy that sets it (Railway's edge
+ * overwrites the header; scripts/multinode.ts's proxy appends to it). `CLIENT_IP_HEADER=<name>`
+ * (for example `x-real-ip` on Railway, `cf-connecting-ip` behind Cloudflare) reads that header
+ * instead and takes precedence. Only set either when every request really comes through that proxy:
+ * otherwise clients can choose their own rate-limit key.
+ */
+export function clientIpResolver(env: Record<string, string | undefined> = process.env): ((req: Request) => string | undefined) | undefined {
+  const header = env.CLIENT_IP_HEADER?.trim().toLowerCase();
+  if (header) return (req) => req.headers.get(header)?.trim() || undefined;
+  if (env.TRUST_PROXY === '1') return forwardedClient;
+  return undefined;
 }
 
 /** Rightmost `X-Forwarded-For` entry: the address our own proxy saw. */
