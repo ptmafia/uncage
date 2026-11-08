@@ -42,10 +42,9 @@ jobs:
           title: 'chore: version packages'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # npm only accepts provenance from public repositories (E422 "Unsupported GitHub Actions
-          # source repository visibility: private"). Trusted publishing (OIDC) itself works either
-          # way, so attach provenance only while the repo is public.
-          NPM_CONFIG_PROVENANCE: ${{ github.event.repository.private && 'false' || 'true' }}
+          # Provenance is turned off: npm rejects provenance from private repositories, and the
+          # project publishes without it. Trusted publishing (OIDC) still authenticates the release.
+          NPM_CONFIG_PROVENANCE: 'false'
       - name: Explain Version PR permission failure
         if: failure() && steps.changesets.outcome == 'failure'
         run: |
