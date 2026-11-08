@@ -49,7 +49,12 @@ export function ConnectMachine({ variant = 'dialog', onClose, onConnected, class
   const store = useUncageStore();
   const { machines, install, error, connected, loadInstallInfo } = useMachines({ watch: CONNECT_POLL_MS });
   const id = useId();
-  const [tab, setTab] = useState<'unix' | 'windows'>(() => detectOs());
+  const [tab, setTab] = useState<'unix' | 'windows'>('unix');
+  // After mount, not in the initializer: the server render (and hydration) must match, and Node has a
+  // `navigator` of its own, which describes the server.
+  useEffect(() => {
+    setTab(detectOs());
+  }, []);
   const [installFailed, setInstallFailed] = useState<typeof error>();
   const [joined, setJoined] = useState<MachineInfo>();
   /** Ids online when the dialog opened (captured from the first connected-mode list). */
