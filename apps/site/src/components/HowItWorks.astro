@@ -1,12 +1,18 @@
 ---
 import { getDict, type Locale } from '../i18n/index.ts';
+import { INSTALL_COMMANDS } from '../lib/install.ts';
 
 interface Props {
   locale: Locale;
 }
 
 const t = getDict(Astro.props.locale).how;
-const codes = [['npm i -g @uncage/cli', 'uncage setup https://your.site'], '<AgentChat />', 'defineTool({ name, input, handler })'];
+/** Step 1 shows the visitor's installer (the line for the other OS is hidden by global.css; the hero tabs switch both). */
+const codes: { line: string; os?: string }[][] = [
+  INSTALL_COMMANDS.map((c) => ({ line: c.cmd, os: c.os })),
+  [{ line: '<AgentChat />' }],
+  [{ line: 'defineTool({ name, input, handler })' }],
+];
 ---
 
 <section class="section" id="how" aria-labelledby="how-title">
@@ -24,7 +30,13 @@ const codes = [['npm i -g @uncage/cli', 'uncage setup https://your.site'], '<Age
             </p>
             <h3>{s.title}</h3>
             <p class="body">{s.body}</p>
-            <code translate="no">{[codes[i]].flat().map((line) => <span class="line">{line}</span>)}</code>
+            <code translate="no">
+              {codes[i]!.map((c) => (
+                <span class="line" data-os-only={c.os}>
+                  {c.line}
+                </span>
+              ))}
+            </code>
           </li>
         ))
       }
@@ -108,6 +120,11 @@ const codes = [['npm i -g @uncage/cli', 'uncage setup https://your.site'], '<Age
   }
   .line {
     display: block;
+  }
+  /* The install command wraps instead of scrolling, so the whole of it stays visible. */
+  .line[data-os-only] {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   @media (max-width: 860px) {
     .steps {

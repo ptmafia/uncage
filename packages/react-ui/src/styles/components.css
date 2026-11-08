@@ -1828,6 +1828,17 @@
   line-height: var(--uncage-text-caption-lh);
   color: var(--uncage-ink-3);
 }
+.uc-connect-alt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--uncage-divider);
+}
+.uc-connect-alt .uc-connect-note {
+  margin: 0;
+}
 .uc-connect-soon {
   display: flex;
   align-items: center;

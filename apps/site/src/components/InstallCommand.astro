@@ -1,0 +1,140 @@
+---
+/**
+ * The one-command installer with "macOS / Linux" and "Windows" tabs. The server renders macOS / Linux;
+ * the inline script in Base.astro's <head> sets html[data-os="windows"] on Windows before the body
+ * renders (no layout shift), and global.css shows the matching [data-os-only] panel. Choosing a tab
+ * switches every OS-specific command on the page (the How it works box follows too).
+ */
+import Command from './Command.astro';
+import { getDict, type Locale } from '../i18n/index.ts';
+import { INSTALL_COMMANDS } from '../lib/install.ts';
+
+interface Props {
+  locale: Locale;
+  /** Prefix for element ids (unique per page). */
+  id?: string;
+}
+
+const { locale, id = 'install' } = Astro.props;
+const t = getDict(locale);
+---
+
+<div class="install-cmd">
+  <div class="tabs" role="tablist" aria-label={t.a11y.installOs}>
+    {
+      INSTALL_COMMANDS.map((c, i) => (
+        <button
+          type="button"
+          role="tab"
+          id={`${id}-tab-${c.os}`}
+          aria-controls={`${id}-panel-${c.os}`}
+          aria-selected={i === 0 ? 'true' : 'false'}
+          tabindex={i === 0 ? 0 : -1}
+          data-os-tab={c.os}
+        >
+          {c.label}
+        </button>
+      ))
+    }
+  </div>
+  {
+    INSTALL_COMMANDS.map((c) => (
+      <div class="panel" role="tabpanel" id={`${id}-panel-${c.os}`} aria-labelledby={`${id}-tab-${c.os}`} data-os-only={c.os} data-install-cmd>
+        <Command cmd={c.cmd} prompt={c.prompt} locale={locale} />
+      </div>
+    ))
+  }
+</div>
+
+<script is:inline>
+  (() => {
+    if (window.__ucInstallTabs) return;
+    window.__ucInstallTabs = true;
+    const root = document.documentElement;
+    const current = () => (root.getAttribute('data-os') === 'windows' ? 'ps' : 'sh');
+    const sync = () => {
+      const os = current();
+      document.querySelectorAll('[data-os-tab]').forEach((b) => {
+        const on = b.getAttribute('data-os-tab') === os;
+        b.setAttribute('aria-selected', String(on));
+        b.tabIndex = on ? 0 : -1;
+      });
+    };
+    const choose = (os) => {
+      root.setAttribute('data-os', os === 'ps' ? 'windows' : 'unix');
+      sync();
+    };
+    sync();
+    document.addEventListener('click', (e) => {
+      const b = e.target instanceof Element ? e.target.closest('[data-os-tab]') : null;
+      if (b) choose(b.getAttribute('data-os-tab'));
+    });
+    document.addEventListener('keydown', (e) => {
+      const b = e.target instanceof Element ? e.target.closest('[data-os-tab]') : null;
+      if (!b || !b.parentElement) return;
+      const tabs = [...b.parentElement.querySelectorAll('[data-os-tab]')];
+      const i = tabs.indexOf(b);
+      const next =
+        e.key === 'ArrowRight' ? tabs[(i + 1) % tabs.length] : e.key === 'ArrowLeft' ? tabs[(i - 1 + tabs.length) % tabs.length] : e.key === 'Home' ? tabs[0] : e.key === 'End' ? tabs[tabs.length - 1] : null;
+      if (!next) return;
+      e.preventDefault();
+      choose(next.getAttribute('data-os-tab'));
+      next.focus();
+    });
+  })();
+</script>
+
+<style>
+  .install-cmd {
+    max-width: 100%;
+  }
+  .tabs {
+    display: inline-flex;
+    gap: 2px;
+    padding: 3px;
+    margin-bottom: 8px;
+    border: 1px solid var(--uc-line);
+    border-radius: 10px;
+    background: var(--uc-paper);
+  }
+  [role='tab'] {
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--uc-ink-2);
+    background: transparent;
+    border: 0;
+    border-radius: 7px;
+    padding: 4px 12px;
+    cursor: pointer;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
+  }
+  [role='tab']:hover {
+    color: var(--uc-ink);
+  }
+  [role='tab'][aria-selected='true'] {
+    color: var(--uc-ink);
+    background: var(--surface);
+    box-shadow: var(--shadow-sm);
+  }
+  [role='tab']:focus-visible {
+    outline: 2px solid var(--uc-accent);
+    outline-offset: 1px;
+  }
+  /* The whole command stays readable: it wraps (at spaces, else inside the URL) instead of scrolling out of view. */
+  .panel :global(.cmd code) {
+    font-size: 13px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  @media (max-width: 480px) {
+    .panel :global(.cmd) {
+      display: flex;
+    }
+    .panel :global(.cmd code) {
+      font-size: 12.5px;
+    }
+  }
+</style>

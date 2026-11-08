@@ -25,6 +25,7 @@ export const zh: Dict = {
     copy: '复制',
     copied: '已复制',
     external: '在新标签页打开',
+    installOs: '操作系统',
   },
   nav: {
     product: '产品',
@@ -45,7 +46,7 @@ export const zh: Dict = {
     lede: '你的用户手里早就有一套强大的环境：他们自己的 Claude Code、自己的账号、自己的工具。Uncage 把这套本地 harness 变成你的产品可以调用的服务。任务在用户的电脑上运行，结果回到你的网站上。',
     primary: '体验在线演示',
     secondary: '几分钟完成接入',
-    installLabel: '用户只需运行一次',
+    installLabel: '一条命令，一次批准',
   },
   flow: {
     label: '一次请求的流向：你网站上的对话，由用户电脑主动建立的 WebSocket 连接，以及在这台电脑上运行的 Claude Code。',
@@ -88,7 +89,7 @@ export const zh: Dict = {
       {
         tag: '连接',
         title: '用户连接自己的电脑',
-        body: '两条命令，再在浏览器里授权一次。后台的守护进程主动连向你的网站，无需开放任何端口。',
+        body: '一条命令，再在浏览器里批准一次。后台的守护进程主动连向你的网站，无需开放任何端口。',
       },
       {
         tag: '指令',
@@ -138,15 +139,15 @@ export const zh: Dict = {
         title: '任意 ACP agent',
         body: 'Gemini CLI、OpenCode、Claude Code 的 ACP 适配器：任何支持 Agent Client Protocol 的 agent 都会出现在运行时选择器里。',
       },
+      {
+        title: 'macOS、Windows 与 Linux',
+        body: '一条命令，在 macOS、Windows 或 Linux 上装好一切。守护进程作为当前用户的后台服务运行，无需管理员权限。',
+      },
     ],
     soon: [
       {
         title: 'Codex 实机验证',
         body: 'Codex 适配器现已发布，并已通过模拟服务器测试。下一步是在真实的可执行文件上完成验证。',
-      },
-      {
-        title: 'Windows 与 Linux 守护进程',
-        body: '目前后台守护进程运行在 macOS 上。',
       },
       {
         title: '更多入口',
@@ -157,7 +158,7 @@ export const zh: Dict = {
   code: {
     kicker: '面向开发者',
     title: '挂载 hub，放入对话框。',
-    sub: '你的认证、你的数据库、你的服务器或函数平台。Uncage 直接接入你现有的技术栈。',
+    sub: '你的认证、你的数据库、你的服务器或 Serverless 函数平台。Uncage 直接接入你现有的技术栈。',
     moreTitle: '从零到连上一台电脑',
     moreBody: '快速入门会一步步带你搭建一个 Next.js 应用，包含 hub、设备授权页面和你的第一个网站工具。Express、Fastify 和 Hono 同样适用。',
     more: '查看 Connected 模式快速入门',

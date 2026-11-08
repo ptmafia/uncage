@@ -29,9 +29,17 @@ export interface ConnectMachineProps {
 const FOCUSABLE =
   'button:not([disabled]):not([tabindex="-1"]), [href]:not([tabindex="-1"]), summary:not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])';
 
+/** The visitor's OS from the browser (`userAgentData.platform`, else `platform`); macOS / Linux when unknown. */
+function detectOs(nav: { platform?: string; userAgentData?: { platform?: string } } | undefined = globalThis.navigator): 'unix' | 'windows' {
+  const p = nav?.userAgentData?.platform ?? nav?.platform ?? '';
+  return /^win/i.test(p) ? 'windows' : 'unix';
+}
+
 /**
- * "Connect your computer": the two commands to run on the computer (install the CLI, then
- * `uncage setup <url>`), each with a copy button, and a live status row that switches from
+ * "Connect your computer": the one command to run on the computer (the site's checking installer:
+ * `install.sh` on macOS / Linux, `install.ps1` on Windows, in OS tabs that start on the detected OS),
+ * with a copy button, a secondary `uncage setup <url>` for a computer that already has the CLI, and
+ * a live status row that switches from
  * "Waiting for your computer…" to "Connected: <name>" once a computer comes online. Polls the
  * hub every 3 s while shown and the page is visible. Mount it only while it should be visible
  * (unmounting stops the polling). Connected mode only (needs an Uncage hub).
@@ -41,7 +49,7 @@ export function ConnectMachine({ variant = 'dialog', onClose, onConnected, class
   const store = useUncageStore();
   const { machines, install, error, connected, loadInstallInfo } = useMachines({ watch: CONNECT_POLL_MS });
   const id = useId();
-  const [tab, setTab] = useState<'unix' | 'windows'>('unix');
+  const [tab, setTab] = useState<'unix' | 'windows'>(() => detectOs());
   const [installFailed, setInstallFailed] = useState<typeof error>();
   const [joined, setJoined] = useState<MachineInfo>();
   /** Ids online when the dialog opened (captured from the first connected-mode list). */
@@ -164,13 +172,10 @@ export function ConnectMachine({ variant = 'dialog', onClose, onConnected, class
         </div>
       </div>
 
-      <ol className="uc-connect-steps">
-        <li className="uc-connect-step">
-          <span className="uc-connect-num" aria-hidden>
-            1
-          </span>
+      <div className="uc-connect-steps">
+        <div className="uc-connect-step">
           <div className="uc-connect-step-body">
-            <h3 className="uc-connect-step-title">{t.connectStep1}</h3>
+            <h3 className="uc-connect-step-title">{t.connectOneCommand}</h3>
             <div className="uc-tabs" role="tablist" aria-label={t.osTabs}>
               {(['unix', 'windows'] as const).map((k) => (
                 <button
@@ -206,6 +211,7 @@ export function ConnectMachine({ variant = 'dialog', onClose, onConnected, class
               ) : install.windows ? (
                 <CopyCommand command={install.windows} />
               ) : (
+                // A custom client without a Windows installer.
                 <p className="uc-connect-soon">
                   <span className="uc-pill" data-tone="neutral">
                     {t.comingSoon}
@@ -213,19 +219,16 @@ export function ConnectMachine({ variant = 'dialog', onClose, onConnected, class
                 </p>
               )}
             </div>
+            <p className="uc-connect-note">{t.connectOneCommandNote}</p>
+            {install && (
+              <div className="uc-connect-alt">
+                <p className="uc-connect-note">{t.connectAlreadyInstalled}</p>
+                <CopyCommand command={install.setup} />
+              </div>
+            )}
           </div>
-        </li>
-        <li className="uc-connect-step">
-          <span className="uc-connect-num" aria-hidden>
-            2
-          </span>
-          <div className="uc-connect-step-body">
-            <h3 className="uc-connect-step-title">{t.connectStep2}</h3>
-            {install ? <CopyCommand command={install.setup} /> : !shownError && <p className="uc-connect-muted">{t.loadingCommands}</p>}
-            <p className="uc-connect-note">{t.connectStep2Note}</p>
-          </div>
-        </li>
-      </ol>
+        </div>
+      </div>
 
       <p className="uc-connect-status" role="status" data-state={joined ? 'connected' : 'waiting'}>
         {joined ? <CheckCircle2 className="uc-connect-ok" aria-hidden /> : <span className="uc-live-dot" aria-hidden />}

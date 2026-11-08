@@ -26,6 +26,7 @@ export const ja: Dict = {
     copy: 'コピー',
     copied: 'コピーしました',
     external: '新しいタブで開きます',
+    installOs: 'OSの選択',
   },
   nav: {
     product: '製品',
@@ -46,7 +47,7 @@ export const ja: Dict = {
     lede: 'ユーザーの手元には、すでに強力な環境があります。本人のClaude Code、ログイン済みのアカウント、使い慣れたツール。Uncageは、そのローカルハーネスを、あなたのプロダクトから呼び出せるサービスに変えます。処理はユーザーのコンピュータで実行され、成果はあなたのサイトに届きます。',
     primary: 'ライブデモを試す',
     secondary: '数分で導入',
-    installLabel: 'ユーザーが実行するのは一度だけ',
+    installLabel: 'コマンド1つ、承認1回',
   },
   flow: {
     label: 'リクエストの流れ：あなたのサイトのチャット、ユーザーのコンピュータから接続するWebSocket、そしてそのコンピュータで動くClaude Code。',
@@ -94,7 +95,7 @@ export const ja: Dict = {
       {
         tag: '接続',
         title: 'ユーザーがコンピュータをつなぐ',
-        body: 'コマンドを2つ実行し、ブラウザで1回承認するだけ。バックグラウンドのエージェントがあなたのサイトへ自ら接続するため、ポートを開ける必要はありません。',
+        body: 'コマンドを1つ実行し、ブラウザで1回承認するだけ。バックグラウンドのエージェントがあなたのサイトへ自ら接続するため、ポートを開ける必要はありません。',
       },
       {
         tag: '指示',
@@ -141,18 +142,18 @@ export const ja: Dict = {
         body: '常時稼働のNodeサーバー、Vercel、Cloudflare Workers、あらゆるFetchプラットフォームで動作。FaaSモードに必要なのはPostgresだけ。Redisを足せばスケールアウトできます。',
       },
       {
-        title: 'あらゆるACP エージェント',
+        title: 'あらゆるACPエージェント',
         body: 'Gemini CLI、OpenCode、Claude CodeのACPアダプターなど、Agent Client Protocolに対応したエージェントならどれでもランタイムの選択肢に表示されます。',
+      },
+      {
+        title: 'macOS・Windows・Linux',
+        body: 'コマンド1つで、macOS、Windows、Linuxのどれにも必要なものがすべて入ります。エージェントはユーザーごとのバックグラウンドサービスとして動くため、管理者権限は要りません。',
       },
     ],
     soon: [
       {
         title: 'Codexの実機検証',
         body: 'Codexアダプターは提供中で、シミュレーションサーバーでテスト済み。次は実際のバイナリでの検証です。',
-      },
-      {
-        title: 'Windows・Linux版エージェント',
-        body: 'バックグラウンドのエージェントは、現在はmacOSで動作します。',
       },
       {
         title: 'その他の入口',

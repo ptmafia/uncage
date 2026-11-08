@@ -55,6 +55,10 @@ export async function connectMachine(o: ConnectOptions): Promise<{ home: string;
   // 1. No computer yet: the chat's empty state is ConnectMachine with this site's setup command.
   await page.goto(url);
   await expect(page.getByText('等待你的电脑上线…')).toBeVisible();
+  // One command (the site's checking installer, on the tab of this OS), plus `uncage setup` for an installed CLI.
+  await expect(page.getByRole('heading', { name: '在你的电脑上运行这条命令' })).toBeVisible();
+  await expect(page.getByRole('tabpanel').getByText(/\/install\.(sh \| bash|ps1 \| iex)$/)).toBeVisible();
+  await expect(page.getByText('已经装好 CLI？')).toBeVisible();
   await expect(page.getByText(`uncage setup ${url}`).first()).toBeVisible();
 
   // 2. `uncage setup` (real CLI) — approved on /device in a second tab of the same browser session.

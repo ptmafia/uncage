@@ -17,6 +17,7 @@ export const en: Dict = {
     copy: 'Copy',
     copied: 'Copied',
     external: 'opens in a new tab',
+    installOs: 'Operating system',
   },
   nav: {
     product: 'Product',
@@ -37,7 +38,7 @@ export const en: Dict = {
     lede: 'Your users already have a powerful setup: their own Claude Code, their logins, their tools. Uncage turns that local harness into a service your product can call. The work runs on their machine; the results land on your site.',
     primary: 'Try the live demo',
     secondary: 'Integrate in minutes',
-    installLabel: 'Your users run once',
+    installLabel: 'One command, one approval',
   },
   flow: {
     label: 'How a request flows: a chat on your site, a WebSocket opened by the user’s computer, and Claude Code running there.',
@@ -85,7 +86,7 @@ export const en: Dict = {
       {
         tag: 'Connect',
         title: 'The user links their computer',
-        body: 'Two commands, one approval in the browser. A background agent dials out to your site, so no ports are opened.',
+        body: 'One command, one approval in the browser. A background agent dials out to your site, so no ports are opened.',
       },
       {
         tag: 'Instruct',
@@ -135,15 +136,15 @@ export const en: Dict = {
         title: 'Any ACP agent',
         body: 'Gemini CLI, OpenCode, Claude Code’s ACP adapter: any agent that speaks the Agent Client Protocol shows up in the runtime picker.',
       },
+      {
+        title: 'macOS, Windows and Linux',
+        body: 'One command installs everything on macOS, Windows or Linux. The agent runs as a per-user background service; no admin rights needed.',
+      },
     ],
     soon: [
       {
         title: 'Codex, verified',
         body: 'The Codex adapter ships today, tested against a simulated server. Verification on the real binary is next.',
-      },
-      {
-        title: 'Windows and Linux agents',
-        body: 'The background agent runs on macOS today.',
       },
       {
         title: 'More entry points',

@@ -10,8 +10,9 @@ function aboutUncage(docs: string): string {
 Uncage is an open-source (MIT) set of npm packages that lets a website drive each user's own
 Claude Code on the user's own computer. This website is built with it.
 - The website gives the instructions; the user's own Claude Code does the work on their machine,
-  under their own login. The user connects a computer once with two commands
-  (\`curl -fsSL <site>/api/uncage/install.sh | bash\`, then \`uncage setup <site>\`) and approves it in the browser.
+  under their own login. The user connects a computer (macOS, Windows or Linux) once with one command
+  (\`curl -fsSL <site>/api/uncage/install.sh | bash\`, or \`irm <site>/api/uncage/install.ps1 | iex\` on Windows),
+  which installs what is missing, then approves the computer in the browser.
 - The website offers **site tools** (like \`create_asset\` and \`publish_asset\` here), which run on the
   website's server as the signed-in user, and **skills** (like this one) that describe its formats.
 - **Approvals**: Claude Code's permission prompts and the site tools that need confirmation show an

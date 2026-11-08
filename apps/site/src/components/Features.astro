@@ -7,8 +7,8 @@ interface Props {
 }
 
 const t = getDict(Astro.props.locale).features;
-const availableIcons: IconName[] = ['zap', 'wrench', 'book', 'database', 'layout', 'cloud', 'plug'];
-const soonIcons: IconName[] = ['terminal', 'monitor', 'phone'];
+const availableIcons: IconName[] = ['zap', 'wrench', 'book', 'database', 'layout', 'cloud', 'plug', 'monitor'];
+const soonIcons: IconName[] = ['terminal', 'phone'];
 ---
 
 <section class="section" id="features" aria-labelledby="features-title">
@@ -21,7 +21,7 @@ const soonIcons: IconName[] = ['terminal', 'monitor', 'phone'];
     <ul class="grid now" role="list">
       {
         t.available.map((f, i) => (
-          <li class:list={['feat', { wide: i === 6 }]}>
+          <li class:list={['feat', { wide: i >= 6 }]}>
             <span class="ic">
               <Icon name={availableIcons[i]!} size={20} />
             </span>
@@ -98,20 +98,24 @@ const soonIcons: IconName[] = ['terminal', 'monitor', 'phone'];
     border-radius: 20px;
     overflow: hidden;
   }
+  /* Six tracks: the first six cards take two each (a 3×2 grid), the last two take three each (one row). */
   .now {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+  .now .feat {
+    grid-column: span 2;
   }
   .later {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .feat {
     background: var(--surface);
     padding: 28px;
     transition: background-color 0.2s ease;
   }
-  /* The 7th card (any ACP agent) is a full-width row under the 3×2 grid. */
+  /* The 7th and 8th cards (any ACP agent; macOS, Windows and Linux) share a row under the 3×2 grid. */
   .now .wide {
-    grid-column: 1 / -1;
+    grid-column: span 3;
   }
   .now .feat:hover {
     background: color-mix(in srgb, var(--surface) 70%, var(--uc-accent-soft));
@@ -169,14 +173,14 @@ const soonIcons: IconName[] = ['terminal', 'monitor', 'phone'];
     border-radius: 999px;
     padding: 2px 9px;
   }
-  @media (max-width: 1000px) {
-    .later {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-  }
+  /* Tablet: two columns, so 6 + 2 cards fill four full rows (no empty cell). */
   @media (max-width: 860px) {
     .now {
       grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .now .feat,
+    .now .wide {
+      grid-column: span 1;
     }
   }
   @media (max-width: 560px) {

@@ -30,9 +30,9 @@ In traditional mode, one Node `http` server (`server.ts`) carries everything:
 
 | Path | What |
 | --- | --- |
-| `/api/uncage/*` | `toNodeHandler(hub)`: the browser API, the device-login endpoints and `install.sh`. Other paths fall through to Next.js. |
+| `/api/uncage/*` | `toNodeHandler(hub)`: the browser API, the device-login endpoints and the installers (`install.sh`, `install.ps1`). Other paths fall through to Next.js. |
 | `/api/uncage/agent` | `attachWebSocket(hub, server)`: the WebSocket that users' machines dial into |
-| `/` | `<AgentChat>` in Connected Mode. With no computer yet, its empty state is `<ConnectMachine>` (install, then `uncage setup <this site>`). |
+| `/` | `<AgentChat>` in Connected Mode. With no computer yet, its empty state is `<ConnectMachine>` (one command per OS, which installs what is missing and runs `uncage setup <this site>`). |
 | `/assets` | The user's assets (gallery) |
 | `/assets/[id]` | One asset, previewed in `<iframe sandbox="allow-scripts">` |
 | `/asset-files/[id]/…` | The published files, sent with a strict CSP (`lib/asset-csp.ts`): `sandbox allow-scripts`, `default-src 'none'`, `connect-src 'none'`; inline styles/scripts plus the asset's own files (`<origin>/asset-files/<id>/`, e.g. `css/app.css`), nothing else. Published means public: anyone with the link can open it (in public demo mode, page requests are owner-only). |

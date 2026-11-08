@@ -71,12 +71,12 @@ describe('connected mode: no computer yet', () => {
     const f = fakeClient({ machines: [] });
     renderChat(f);
     const region = await screen.findByRole('region', { name: 'Connect your computer' });
-    expect(within(region).getByText(/Run these two commands on the computer/)).toBeTruthy();
+    expect(within(region).getByText(/Run one command on the computer/)).toBeTruthy();
     await within(region).findByText(INSTALL.install);
+    expect(within(region).getByText('Run this command on your computer')).toBeTruthy();
+    expect(within(region).getByText(/asks before installing anything/)).toBeTruthy();
+    expect(within(region).getByText('Already have the CLI?')).toBeTruthy();
     expect(within(region).getByText(INSTALL.setup)).toBeTruthy();
-    expect(within(region).getByText('Install the Uncage CLI')).toBeTruthy();
-    expect(within(region).getByText('Start the agent')).toBeTruthy();
-    expect(within(region).getByText(/Opens a browser to sign in/)).toBeTruthy();
     expect(within(region).getByText('Waiting for your computer…')).toBeTruthy();
     // Inline: no Cancel.
     expect(within(region).queryByRole('button', { name: 'Cancel' })).toBeNull();
@@ -115,6 +115,26 @@ describe('connected mode: no computer yet', () => {
     expect(within(region).getByText(INSTALL.windows!)).toBeTruthy();
     expect(within(region).queryByText('Coming soon')).toBeNull();
     expect(within(region).queryByText(INSTALL.install)).toBeNull();
+  });
+
+  it('ConnectMachine shows one command, picks the Windows tab on Windows, and offers uncage setup for an installed CLI', async () => {
+    const platform = vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Win32');
+    try {
+      const f = fakeClient({ machines: [] });
+      renderChat(f);
+      const region = await screen.findByRole('region', { name: 'Connect your computer' });
+      await within(region).findByText(INSTALL.windows!);
+      expect(within(region).getByRole('tab', { name: 'Windows' }).getAttribute('aria-selected')).toBe('true');
+      expect(within(region).queryByText(INSTALL.install)).toBeNull();
+      // One step only: no second "Start the agent" heading; the setup command is the secondary line.
+      expect(within(region).getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['Run this command on your computer']);
+      expect(within(region).getByText('Already have the CLI?')).toBeTruthy();
+      expect(within(region).getByRole('button', { name: `Copy command: ${INSTALL.setup}` })).toBeTruthy();
+      fireEvent.click(within(region).getByRole('tab', { name: 'macOS / Linux' }));
+      expect(within(region).getByText(INSTALL.install)).toBeTruthy();
+    } finally {
+      platform.mockRestore();
+    }
   });
 
   it('Windows tab says coming soon when the hub has no Windows command', async () => {
@@ -174,12 +194,12 @@ describe('connected mode: no computer yet', () => {
     const f = fakeClient({ machines: [] });
     renderChat(f, { locale: 'zh-CN' });
     const region = await screen.findByRole('region', { name: '连接你的电脑' });
-    expect(within(region).getByText('在要连接的电脑上运行这两条命令。守护进程一上线，这里就会自动识别。')).toBeTruthy();
-    expect(within(region).getByText('安装 Uncage CLI')).toBeTruthy();
-    expect(within(region).getByText('启动守护进程')).toBeTruthy();
-    expect(within(region).getByText('会打开浏览器登录，然后在后台保持守护进程运行。')).toBeTruthy();
+    expect(within(region).getByText('在要连接的电脑上运行一条命令。守护进程一上线，这里就会自动识别。')).toBeTruthy();
+    expect(within(region).getByText('在你的电脑上运行这条命令')).toBeTruthy();
+    expect(within(region).getByText(/之前都会先征求你的同意；然后打开浏览器登录，并在后台保持守护进程运行。$/)).toBeTruthy();
     expect(within(region).getByText('等待你的电脑上线…')).toBeTruthy();
     expect(within(region).getByText('那台电脑打不开浏览器？')).toBeTruthy();
+    expect(within(region).getByText('已经装好 CLI？')).toBeTruthy();
     fireEvent.click(within(region).getByRole('tab', { name: 'Windows' }));
     expect(within(region).getByText(INSTALL.windows!)).toBeTruthy();
   });
