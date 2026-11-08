@@ -59,7 +59,10 @@ describe('device login over HTTP', () => {
     if (ok.status !== 'ok') throw new Error('expected ok');
     expect(ok.machineToken).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 bytes base64url
     expect(ok.site).toEqual({ id: '127.0.0.1-' + new URL(t.origin).port, name: '127.0.0.1', url: t.api });
-    expect(ok.transports).toEqual([{ kind: 'ws', url: t.wsUrl }]);
+    expect(ok.transports).toEqual([
+      { kind: 'ws', url: t.wsUrl },
+      { kind: 'http', url: `${t.api}/agent` },
+    ]);
     const m = await t.store.getMachine(ok.machineId);
     expect(m?.userId).toBe('alice');
     expect(m?.tokenHash).toBe(await sha256Hex(ok.machineToken));
@@ -120,12 +123,14 @@ describe('machine connections', () => {
     const a = await connect({ url: t.wsUrl, token: machineToken, agentVersion: '0.1.9', waitWelcome: false });
     expect(await a.waitFor((f) => f.t === 'upgrade_required')).toEqual({ t: 'upgrade_required', minAgentVersion: '0.2.0' });
     expect((await a.closed).code).toBe(CLOSE.upgrade);
-    expect((await machinesOf(t, 'alice'))[0]).toMatchObject({ online: false, agentOutdated: false }); // never said hello
+    // Refused for its version: the website shows "agent update needed" even though it never said hello.
+    expect((await machinesOf(t, 'alice'))[0]).toMatchObject({ online: false, agentVersion: '0.0.0', agentOutdated: true });
     await t.store.updateMachine(machineId, { agentVersion: '0.1.9' });
     expect((await machinesOf(t, 'alice'))[0]).toMatchObject({ agentVersion: '0.1.9', agentOutdated: true });
-    // Exactly the minimum is fine.
+    // Exactly the minimum is fine, and clears the notice.
     const b = await connect({ url: t.wsUrl, token: machineToken, agentVersion: '0.2.0' });
     expect(b.frames[0]?.t).toBe('welcome');
+    expect((await machinesOf(t, 'alice'))[0]).toMatchObject({ agentVersion: '0.2.0', agentOutdated: false, online: true, transport: 'ws' });
   });
 
   it('closes a socket whose first frame is not hello, and on malformed frames', async () => {

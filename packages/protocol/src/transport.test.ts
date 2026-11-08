@@ -26,6 +26,7 @@ describe('http transport wire', () => {
     for (const raw of [
       'not json',
       JSON.stringify({ linkId, busy: false }),
+      JSON.stringify({ linkId: 'lnk_x', busy: false, msgs: [] }),
       JSON.stringify({ linkId, ack: -1, busy: false, msgs: [] }),
       JSON.stringify({ linkId, busy: false, msgs: [{ id: 'bad', msg: { t: 'pong', at: 1 } }] }),
       JSON.stringify({ linkId, busy: false, msgs: Array.from({ length: 501 }, () => ({ id: upId, msg: { t: 'events', sessionId: 's', events: [] } })) }),

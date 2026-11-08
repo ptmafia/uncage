@@ -73,14 +73,19 @@ const toError = (body: ErrorBody): UncageError =>
 const errorBody = (e: unknown): ErrorBody =>
   (e instanceof UncageError ? e : new UncageError('internal_error')).toBody();
 
+/** The cluster reply carrying a machine's `result` frame. */
+const resMsg = (machineId: string, frame: Extract<AgentFrame, { t: 'result' }>): NodeMsg =>
+  frame.ok ? { k: 'res', id: frame.id, ok: true, data: frame.data, machineId } : { k: 'res', id: frame.id, ok: false, error: frame.error, machineId };
+
 /**
  * Messages on a node's cluster channel. Replies (`res`) go to the node encoded in the command or
  * upload id (`routeOf`).
  */
 type NodeMsg =
   | { k: 'cmd'; id: string; machineId: string; op: HubCommandOp; args: unknown }
-  | { k: 'res'; id: string; ok: true; data: unknown }
-  | { k: 'res'; id: string; ok: false; error: ErrorBody }
+  /** `machineId`: the machine that answered (checked against the command's target). */
+  | { k: 'res'; id: string; ok: true; data: unknown; machineId?: string }
+  | { k: 'res'; id: string; ok: false; error: ErrorBody; machineId?: string }
   | { k: 'kick'; machineId: string; reason: 'revoked' | 'replaced'; except?: string }
   /** One frame of a chunked upload, forwarded as-is to the machine (`begin` registers the upload on the link). */
   | { k: 'up'; id: string; machineId: string; frame: HubFrame };
@@ -88,7 +93,7 @@ type NodeMsg =
 /** Shape check for cluster messages: anything else on a node channel is dropped. */
 const NodeMsgSchema = z.discriminatedUnion('k', [
   z.object({ k: z.literal('cmd'), id: z.string(), machineId: z.string(), op: HubCommandOpSchema, args: z.unknown() }),
-  z.object({ k: z.literal('res'), id: z.string(), ok: z.boolean(), data: z.unknown().optional(), error: z.unknown().optional() }),
+  z.object({ k: z.literal('res'), id: z.string(), ok: z.boolean(), data: z.unknown().optional(), error: z.unknown().optional(), machineId: z.string().optional() }),
   z.object({ k: z.literal('kick'), machineId: z.string(), reason: z.enum(['revoked', 'replaced']), except: z.string().optional() }),
   z.object({ k: z.literal('up'), id: z.string(), machineId: z.string(), frame: HubFrameSchema }),
 ]);
@@ -96,6 +101,14 @@ const UPLOAD_FRAMES = new Set(['attachment_begin', 'attachment_chunk', 'attachme
 
 export const nodeChannel = (nodeId: string): string => `uncage:node:${nodeId}`;
 export const sessionChannel = (sessionId: string): string => `uncage:session:${sessionId}`;
+/** Presence value of a machine connected over the HTTP streaming transport (any instance serves it). */
+export const HTTP_PRESENCE = 'http';
+/** Wake-up channel of a machine's HTTP stream: `'wake'` is published after each outbox write. */
+export const machineChannel = (machineId: string): string => `uncage:machine:${machineId}`;
+/** A `file_pull` in the outbox expires after this long. */
+const PULL_OUTBOX_TTL_MS = 30_000;
+/** Upload frames are written to the outbox this many at a time. */
+const UPLOAD_OUTBOX_BATCH = 8;
 
 /** One connection of a machine to the hub, whatever carries it. */
 export interface MachineLink {
@@ -107,6 +120,8 @@ export interface MachineLink {
   readonly signal: AbortSignal;
   /** ws: write now; http: `durable` → outbox, otherwise collected into the response's `replies`. */
   send(f: HubFrame, o?: { durable?: boolean }): Promise<void>;
+  /** http: the acknowledged outbox seq, set by `hello` when it opens the link. */
+  cursor?: number;
 }
 
 /** A link whose connection is held by this node (a WebSocket): commands for its machine are routed here. */
@@ -131,7 +146,9 @@ interface LinkState {
 type Timer = ReturnType<typeof setTimeout>;
 
 interface PullState {
-  state: LinkState;
+  /** The local (WebSocket) link the pull was sent on; unset for a pull sent through the outbox. */
+  state?: LinkState;
+  machineId: string;
   asm: PullAssembler;
   path: string;
   resolve(r: PullOutcome): void;
@@ -142,6 +159,7 @@ interface PullState {
 
 interface Pending {
   op: HubCommandOp;
+  machineId: string;
   resolve(v: unknown): void;
   reject(e: unknown): void;
   timer: Timer;
@@ -207,6 +225,59 @@ export class MachineHub {
 
   private get presenceTtlSec(): number {
     return Math.ceil((this.d.pingIntervalMs * (this.d.missedPings + 1)) / 1000) + 5;
+  }
+
+  /**
+   * HTTP presence lasts (missedPings + 1) ping intervals: the stream refreshes it on every ping, so
+   * a machine whose stream stopped (and did not reconnect) shows offline within that time.
+   */
+  get httpPresenceTtlSec(): number {
+    return (this.d.pingIntervalMs * (this.d.missedPings + 1)) / 1000;
+  }
+
+  /** The presence value of a machine: a node id (WebSocket), `HTTP_PRESENCE`, or `null` (offline). */
+  presenceOf(machineId: string): Promise<string | null> {
+    return this.d.cluster.getPresence(machineId);
+  }
+
+  /** Refreshes the HTTP presence of a streaming machine (and its `lastSeenAt`). */
+  async touchHttp(machine: MachineRecord): Promise<void> {
+    const lastSeenAt = new Date().toISOString();
+    machine.lastSeenAt = lastSeenAt;
+    await Promise.all([this.d.cluster.setPresence(machine.id, HTTP_PRESENCE, this.httpPresenceTtlSec), this.d.store.updateMachine(machine.id, { lastSeenAt })]);
+  }
+
+  /** Clears the HTTP presence of a machine (it disconnected). */
+  async clearHttp(machineId: string): Promise<void> {
+    await this.d.cluster.clearPresence(machineId, HTTP_PRESENCE);
+  }
+
+  /** Wakes the machine's HTTP stream (wherever it is served) so it polls the outbox at once. */
+  async wake(machineId: string): Promise<void> {
+    try {
+      await this.d.cluster.publish(machineChannel(machineId), 'wake');
+    } catch (err) {
+      this.d.logger.error({ err }, 'cluster publish failed');
+    }
+  }
+
+  /**
+   * Makes `linkId` the machine's current HTTP link: older links (HTTP on any instance, or a
+   * WebSocket here or on another node) are replaced, presence becomes `HTTP_PRESENCE`. Resolves
+   * the acknowledged outbox seq (the stream's starting cursor).
+   */
+  private async openHttpLink(machineId: string, linkId: string): Promise<number> {
+    const { ackedSeq } = await this.d.store.openLink(machineId, { linkId, transport: 'http', at: new Date().toISOString() });
+    const local = this.active.get(machineId);
+    if (local) void this.retire(local, { close: [LINK_CLOSE.replaced, 'replaced by a newer connection'], keepPresence: true });
+    const elsewhere = await this.d.cluster.getPresence(machineId);
+    if (elsewhere && elsewhere !== HTTP_PRESENCE && elsewhere !== this.d.nodeId) {
+      await this.publishQuiet(elsewhere, { k: 'kick', machineId, reason: 'replaced' });
+    }
+    await this.d.cluster.setPresence(machineId, HTTP_PRESENCE, this.httpPresenceTtlSec);
+    // An older HTTP stream sees `replaced` on its next poll: make that now.
+    await this.wake(machineId);
+    return ackedSeq;
   }
 
   /**
@@ -307,6 +378,8 @@ export class MachineHub {
   async hello(link: MachineLink, hello: Extract<AgentFrame, { t: 'hello' }>): Promise<'ok' | 'upgrade' | 'hub_too_old' | 'revoked'> {
     if (hello.protocol > CONNECTED_PROTOCOL) return 'hub_too_old';
     if (hello.protocol < CONNECTED_PROTOCOL || compareVersions(hello.agentVersion, this.d.minAgentVersion) < 0) {
+      // The website shows "agent update needed" for this machine.
+      await this.markOutdated(link.machine.id);
       await link.send({ t: 'upgrade_required', minAgentVersion: this.d.minAgentVersion });
       return 'upgrade';
     }
@@ -343,7 +416,11 @@ export class MachineHub {
         void this.retire(previous, { close: [LINK_CLOSE.replaced, 'replaced by a newer connection'], keepPresence: true });
       }
       const elsewhere = await this.d.cluster.getPresence(machineId);
-      if (elsewhere && elsewhere !== this.d.nodeId) {
+      if (elsewhere === HTTP_PRESENCE) {
+        // An HTTP link: take its place in the store, so its stream ends with `replaced`.
+        await this.d.store.openLink(machineId, { linkId: link.linkId, transport: 'ws', at: new Date().toISOString() });
+        await this.wake(machineId);
+      } else if (elsewhere && elsewhere !== this.d.nodeId) {
         await this.publishQuiet(elsewhere, { k: 'kick', machineId, reason: 'replaced' });
       }
       await this.d.cluster.setPresence(machineId, this.d.nodeId, this.presenceTtlSec);
@@ -356,6 +433,8 @@ export class MachineHub {
         return 'ok';
       }
       s.ready = true;
+    } else if (link.kind === 'http') {
+      link.cursor = await this.openHttpLink(link.machine.id, link.linkId);
     }
     await link.send({ t: 'welcome', machineId: link.machine.id, protocol: CONNECTED_PROTOCOL, minAgentVersion: this.d.minAgentVersion });
     await this.d.onConnected(link.machine, (f) => void link.send(f));
@@ -385,24 +464,14 @@ export class MachineHub {
       case 'result': {
         const pull = this.pulls.get(frame.id);
         if (pull && pull.state === s) {
-          // A pull that failed on the machine (possibly mid-stream): drop what arrived so far.
-          const err = frame.ok
-            ? new UncageError('internal_error', { message: 'The machine answered a file pull with a result.' })
-            : new UncageError(frame.error.code === 'not_found' || frame.error.code === 'invalid_request' ? frame.error.code : 'tool_failed', {
-                message: `Could not pull "${pull.path}": ${frame.error.message}`,
-                ...(frame.error.details !== undefined ? { details: frame.error.details } : {}),
-              });
-          this.endPull(frame.id, err);
+          this.pullResult(frame.id, pull, frame);
           return;
         }
         // Only answers to commands this link was sent; the reply goes to the node in the id.
         if (!s.inflight.delete(frame.id)) return;
         const to = routeOf(frame.id);
         if (!to) return;
-        const msg: NodeMsg = frame.ok
-          ? { k: 'res', id: frame.id, ok: true, data: frame.data }
-          : { k: 'res', id: frame.id, ok: false, error: frame.error };
-        await this.publishQuiet(to, msg);
+        await this.publishQuiet(to, resMsg(link.machine.id, frame));
         return;
       }
       case 'events': {
@@ -442,17 +511,111 @@ export class MachineHub {
       case 'file_done': {
         const pull = this.pulls.get(frame.id);
         if (!pull || pull.state !== s) return; // unknown, finished or abandoned pull
-        try {
-          if (frame.t === 'file_chunk') {
-            pull.asm.chunk(frame);
-            pull.timer = this.rearm(pull.timer, () => this.pullIdle(frame.id, pull.path), PULL_IDLE_MS);
-          } else this.endPull(frame.id, null, pull.asm.done(frame));
-        } catch (err) {
-          this.endPull(frame.id, err);
-        }
+        this.pullFrame(frame.id, pull, frame);
         return;
       }
     }
+  }
+
+  /** A pull that failed on the machine (possibly mid-stream): drop what arrived so far. */
+  private pullResult(id: string, pull: PullState, frame: Extract<AgentFrame, { t: 'result' }>): void {
+    const err = frame.ok
+      ? new UncageError('internal_error', { message: 'The machine answered a file pull with a result.' })
+      : new UncageError(frame.error.code === 'not_found' || frame.error.code === 'invalid_request' ? frame.error.code : 'tool_failed', {
+          message: `Could not pull "${pull.path}": ${frame.error.message}`,
+          ...(frame.error.details !== undefined ? { details: frame.error.details } : {}),
+        });
+    this.endPull(id, err);
+  }
+
+  /** Site tool calls executing on this instance per machine connected over HTTP. */
+  private readonly httpToolCalls = new Map<string, number>();
+
+  /**
+   * One upstream message from an HTTP link (`POST /agent/events`), handled on whichever instance
+   * received it. Resolves once it is handled (an `events` frame applied, a `tool_call`'s result
+   * sent into the link's replies); rejects when handling failed, so the message is retried.
+   */
+  async handleUpstream(link: MachineLink, frame: AgentFrame): Promise<void> {
+    const send = (f: HubFrame) => void link.send(f);
+    const machineId = link.machine.id;
+    /** A pull sent through the outbox by this instance for this machine. */
+    const pullOf = (id: string) => {
+      const p = this.pulls.get(id);
+      return p && !p.state && p.machineId === machineId ? p : undefined;
+    };
+    switch (frame.t) {
+      case 'hello':
+      case 'pong':
+        return;
+      case 'result': {
+        const pull = pullOf(frame.id);
+        if (pull) {
+          this.pullResult(frame.id, pull, frame);
+          return;
+        }
+        // The command may have been sent by any instance: the reply goes to the node in the id.
+        const to = routeOf(frame.id);
+        if (!to) return;
+        await this.publish(to, resMsg(machineId, frame));
+        return;
+      }
+      case 'events': {
+        if (frame.events.some((e) => e.sessionId !== frame.sessionId)) {
+          this.d.logger.warn({ machineId }, 'events frame with mismatched sessionId dropped');
+          return;
+        }
+        // The agent sends one batch at a time and the batch is processed in order.
+        await this.d.onEvents(link.machine, frame.sessionId, frame.events, send);
+        return;
+      }
+      case 'tool_call': {
+        const running = this.httpToolCalls.get(machineId) ?? 0;
+        if (running >= this.d.maxConcurrentToolCalls) {
+          const err = new UncageError('tool_failed', {
+            message: `Too many site tool calls at once (at most ${this.d.maxConcurrentToolCalls}).`,
+            details: { reason: 'too_many_concurrent' },
+          });
+          send({ t: 'tool_result', id: frame.id, ok: false, error: err.toBody() });
+          return;
+        }
+        this.httpToolCalls.set(machineId, running + 1);
+        try {
+          const f = await this.d.onToolCall(link.machine, frame, link.signal);
+          if (f) send(f);
+        } catch (err) {
+          send({ t: 'tool_result', id: frame.id, ok: false, error: errorBody(err) });
+        } finally {
+          const n = (this.httpToolCalls.get(machineId) ?? 1) - 1;
+          if (n > 0) this.httpToolCalls.set(machineId, n);
+          else this.httpToolCalls.delete(machineId);
+        }
+        return;
+      }
+      case 'file_chunk':
+      case 'file_done': {
+        const pull = pullOf(frame.id);
+        if (!pull) return;
+        this.pullFrame(frame.id, pull, frame);
+        return;
+      }
+    }
+  }
+
+  private pullFrame(id: string, pull: PullState, frame: Extract<AgentFrame, { t: 'file_chunk' | 'file_done' }>): void {
+    try {
+      if (frame.t === 'file_chunk') {
+        pull.asm.chunk(frame);
+        pull.timer = this.rearm(pull.timer, () => this.pullIdle(id, pull.path), PULL_IDLE_MS);
+      } else this.endPull(id, null, pull.asm.done(frame));
+    } catch (err) {
+      this.endPull(id, err);
+    }
+  }
+
+  /** Records that the machine's agent was refused as too old (the website asks for an update). */
+  async markOutdated(machineId: string): Promise<void> {
+    await this.d.store.markMachineOutdated(machineId, new Date().toISOString()).catch((err: unknown) => this.d.logger.error({ err }, 'markMachineOutdated failed'));
   }
 
   private rearm(t: Timer, fn: () => void, ms: number): Timer {
@@ -533,6 +696,10 @@ export class MachineHub {
     if (msg.k === 'res') {
       const p = this.pending.get(msg.id);
       if (!p) return;
+      if (msg.machineId !== undefined && msg.machineId !== p.machineId) {
+        this.d.logger.warn({ machineId: msg.machineId }, 'a machine answered a command sent to another machine; dropped');
+        return;
+      }
       this.pending.delete(msg.id);
       clearTimeout(p.timer);
       if (!msg.ok) {
@@ -580,7 +747,27 @@ export class MachineHub {
     p.reject(err);
   }
 
-  /** Sends a command to the machine (wherever it is connected) and resolves its validated result. */
+  /**
+   * Writes frames to the machine's durable outbox (HTTP transport) and wakes its stream. Rejects
+   * with `machine_offline` when the machine no longer exists.
+   */
+  async enqueue(machineId: string, items: Array<{ msgId: string; msg: HubFrame; ttlMs: number }>): Promise<void> {
+    const now = Date.now();
+    const r = await this.d.store.enqueueOutbox(
+      machineId,
+      items.map((it) => ({ msgId: it.msgId, msg: it.msg, expiresAt: new Date(now + it.ttlMs).toISOString() })),
+      new Date(now).toISOString(),
+    );
+    if (r === 'gone') throw new UncageError('machine_offline');
+    await this.wake(machineId);
+  }
+
+  /**
+   * Sends a command to the machine (wherever it is connected) and resolves its validated result.
+   * WebSocket: through the cluster to the node holding the socket. HTTP: through the durable outbox
+   * (expiring with the command timeout); the result may arrive on any instance and is routed back
+   * by the node encoded in the id.
+   */
   async command<K extends HubCommandOp>(machineId: string, op: K, args: HubCommandArgs[K]): Promise<HubCommandResults[K]> {
     if (this.closed) throw new UncageError('machine_offline');
     const node = await this.d.cluster.getPresence(machineId);
@@ -599,9 +786,13 @@ export class MachineHub {
       const result = new Promise<HubCommandResults[K]>((resolve, reject) => {
         const timer = setTimeout(() => this.settle(id, new UncageError('machine_offline', { message: 'The machine did not respond in time.' })), this.d.commandTimeoutMs);
         unrefTimer(timer);
-        this.pending.set(id, { op, resolve: resolve as (v: unknown) => void, reject, timer });
+        this.pending.set(id, { op, machineId, resolve: resolve as (v: unknown) => void, reject, timer });
       });
-      this.publish(node, { k: 'cmd', id, machineId, op, args }).catch((err: unknown) => this.settle(id, err));
+      const sent =
+        node === HTTP_PRESENCE
+          ? this.enqueue(machineId, [{ msgId: id, msg: { t: 'command', id, op, args }, ttlMs: this.d.commandTimeoutMs }])
+          : this.publish(node, { k: 'cmd', id, machineId, op, args });
+      sent.catch((err: unknown) => this.settle(id, err));
       return await result;
     } finally {
       this.release();
@@ -618,7 +809,24 @@ export class MachineHub {
     const node = await this.d.cluster.getPresence(machineId);
     if (!node) throw new UncageError('machine_offline');
     const id = routedId('upl', this.d.nodeId);
-    const send = (frame: HubFrame) => this.publish(node, { k: 'up', id, machineId, frame });
+    const http = node === HTTP_PRESENCE;
+    /** HTTP: frames are written to the outbox in batches. */
+    let batch: HubFrame[] = [];
+    let n = 0;
+    const flush = async () => {
+      if (batch.length === 0) return;
+      const frames = batch;
+      batch = [];
+      await this.enqueue(
+        machineId,
+        frames.map((msg) => ({ msgId: `${id}:${n++}`, msg, ttlMs: this.d.commandTimeoutMs })),
+      );
+    };
+    const send = async (frame: HubFrame): Promise<void> => {
+      if (!http) return this.publish(node, { k: 'up', id, machineId, frame });
+      batch.push(frame);
+      if (batch.length >= UPLOAD_OUTBOX_BATCH || frame.t === 'attachment_end' || frame.t === 'attachment_abort') await flush();
+    };
     await this.acquire();
     try {
       const timedOut = () => {
@@ -634,7 +842,7 @@ export class MachineHub {
       const result = new Promise<Attachment>((resolve, reject) => {
         const timer = setTimeout(timedOut, this.d.commandTimeoutMs);
         unrefTimer(timer);
-        this.pending.set(id, { op: 'addAttachment', resolve: resolve as (v: unknown) => void, reject, timer });
+        this.pending.set(id, { op: 'addAttachment', machineId, resolve: resolve as (v: unknown) => void, reject, timer });
       });
       result.catch(() => undefined);
       try {
@@ -664,10 +872,12 @@ export class MachineHub {
    * Pulls `path` from the session workspace of a machine connected to this node (site tools run
    * on the node holding the machine's connection). All-or-nothing; see `PullAssembler`.
    */
-  pull(machineId: string, sessionId: string, path: string, maxBytes: number, signal?: AbortSignal): Promise<PullOutcome> {
+  async pull(machineId: string, sessionId: string, path: string, maxBytes: number, signal?: AbortSignal): Promise<PullOutcome> {
     const s = this.live(machineId);
-    if (!s) return Promise.reject(new UncageError('machine_offline'));
-    if (signal?.aborted) return Promise.reject(new UncageError('tool_failed', { message: 'The tool call was abandoned.' }));
+    // Over HTTP the pull request goes through the outbox and the chunks come back in POSTs.
+    const http = !s && (await this.d.cluster.getPresence(machineId)) === HTTP_PRESENCE;
+    if (!s && !http) throw new UncageError('machine_offline');
+    if (signal?.aborted) throw new UncageError('tool_failed', { message: 'The tool call was abandoned.' });
     const id = routedId('pull', this.d.nodeId);
     return new Promise<PullOutcome>((resolve, reject) => {
       const onAbort = () => this.endPull(id, new UncageError('tool_failed', { message: 'The tool call was abandoned.' }));
@@ -675,7 +885,8 @@ export class MachineHub {
       unrefTimer(timer);
       signal?.addEventListener('abort', onAbort, { once: true });
       this.pulls.set(id, {
-        state: s,
+        ...(s ? { state: s } : {}),
+        machineId,
         asm: new PullAssembler(path, maxBytes),
         path,
         resolve,
@@ -683,7 +894,9 @@ export class MachineHub {
         timer,
         cleanup: () => signal?.removeEventListener('abort', onAbort),
       });
-      void s.link.send({ t: 'file_pull', id, sessionId, path, maxBytes });
+      const frame: HubFrame = { t: 'file_pull', id, sessionId, path, maxBytes };
+      if (s) void s.link.send(frame);
+      else this.enqueue(machineId, [{ msgId: id, msg: frame, ttlMs: PULL_OUTBOX_TTL_MS }]).catch((err: unknown) => this.endPull(id, err));
     });
   }
 
@@ -703,6 +916,14 @@ export class MachineHub {
     const node = await this.d.cluster.getPresence(machineId);
     const local = this.active.get(machineId);
     if (local) await this.retire(local, { close: reason === 'revoked' ? [LINK_CLOSE.revoked, 'revoked'] : [LINK_CLOSE.replaced, 'replaced'] });
+    if (node === HTTP_PRESENCE) {
+      // Revoked: the machine's link rows are gone with it. Token rotated (re-paired): close the
+      // link the old token opened. Either way its stream ends on its next poll — now.
+      if (reason === 'replaced') await this.d.store.closeLink(machineId, null);
+      await this.d.cluster.clearPresence(machineId, HTTP_PRESENCE);
+      await this.wake(machineId);
+      return;
+    }
     if (node && node !== this.d.nodeId) await this.publishQuiet(node, { k: 'kick', machineId, reason });
     if (node) await this.d.cluster.clearPresence(machineId, node);
   }

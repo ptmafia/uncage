@@ -124,3 +124,29 @@ export function concatBytes(parts: Uint8Array[], size = parts.reduce((n, p) => n
   }
   return out;
 }
+
+/**
+ * Reads at most `limit` bytes of the body; `null` when it is longer (a `Content-Length` over the
+ * limit is refused before reading; otherwise reading stops as soon as the limit is passed).
+ */
+export async function readBody(req: Request, limit: number): Promise<Uint8Array | null> {
+  if (Number(req.headers.get('content-length')) > limit) {
+    await req.body?.cancel().catch(() => undefined);
+    return null;
+  }
+  if (!req.body) return new Uint8Array();
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  return concatBytes(chunks);
+}

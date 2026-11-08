@@ -26,12 +26,12 @@ import { downloadHeaders } from '@uncage/server/wire';
 import { z } from 'zod';
 import type { ClusterAdapter } from './cluster/cluster.js';
 import type { DeviceFlow } from './device.js';
-import { compareVersions, sessionChannel, type MachineHub } from './machines.js';
+import { compareVersions, HTTP_PRESENCE, sessionChannel, type MachineHub } from './machines.js';
 import { toSessionSnapshot } from './replica.js';
 import { eventStreamResponse, readHistory, type EventSource } from './sse.js';
 import type { HubStore, MachineRecord, ResourceKind, SessionRecord } from './store/store.js';
 import type { HubOptions, HubUser } from './types.js';
-import { randomHex, sha256Hex, toBase64 } from './web.js';
+import { randomHex, readBody, sha256Hex, toBase64 } from './web.js';
 
 /**
  * Largest attachment the hub relays to a machine (the attachment limit, 10 MiB; runtimes may
@@ -98,31 +98,6 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
     });
   }
   return r.data;
-}
-
-/** Reads at most `limit` bytes of the body; `null` when it is longer. */
-async function readBody(req: Request, limit: number): Promise<Uint8Array | null> {
-  if (!req.body) return new Uint8Array();
-  const reader = req.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > limit) {
-      await reader.cancel().catch(() => undefined);
-      return null;
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(size);
-  let at = 0;
-  for (const c of chunks) {
-    out.set(c, at);
-    at += c.byteLength;
-  }
-  return out;
 }
 
 async function readJson(req: Request): Promise<unknown> {
@@ -210,7 +185,8 @@ export function browserApi(ctx: ApiContext) {
   }
 
   const toMachineInfo = async (m: MachineRecord): Promise<MachineInfo> => {
-    const online = await machines.isOnline(m.id);
+    const presence = await machines.presenceOf(m.id);
+    const online = presence !== null;
     return {
       id: m.id,
       name: m.name,
@@ -219,10 +195,13 @@ export function browserApi(ctx: ApiContext) {
       runtimes: m.runtimes,
       online,
       lastSeenAt: m.lastSeenAt,
-      // '0.0.0' is the placeholder of a machine that paired but never said hello.
-      agentOutdated: m.agentVersion !== '0.0.0' && compareVersions(m.agentVersion, ctx.minAgentVersion) < 0,
-      // Only the WebSocket link exists so far; the HTTP link reports 'http' once it lands.
-      transport: online ? 'ws' : null,
+      // Refused as too old since it last connected, or (placeholder '0.0.0' aside: paired, never
+      // said hello) a version below the minimum.
+      agentOutdated:
+        (m.outdatedAt !== undefined && m.outdatedAt > m.lastSeenAt) ||
+        (m.agentVersion !== '0.0.0' && compareVersions(m.agentVersion, ctx.minAgentVersion) < 0),
+      // Presence holds the transport: 'http' for the HTTP stream, a node id for a WebSocket.
+      transport: presence === null ? null : presence === HTTP_PRESENCE ? 'http' : 'ws',
     };
   };
 

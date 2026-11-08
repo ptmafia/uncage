@@ -18,6 +18,8 @@ export const MAX_HTTP_BODY_BYTES = 1_048_576;
 export const HTTP_STREAM_CONTENT_TYPE = 'application/x-ndjson; charset=utf-8';
 /** Agent-generated idempotent id of one upstream message. */
 export const UPSTREAM_ID = /^up_[A-Za-z0-9_-]{16,64}$/;
+/** Id of one HTTP link (`POST /agent/connect` → `linkId`). */
+export const LINK_ID = /^lnk_[0-9a-f]{24}$/;
 
 /** Agent → hub messages allowed upstream over HTTP (no hello/pong: connect replaces hello, the stream replaces ping/pong). */
 export const UpstreamMessageSchema = z.object({
@@ -32,7 +34,7 @@ export const HttpConnectResponseSchema = z.discriminatedUnion('t', [
     machineId: z.string(),
     protocol: z.number().int(),
     minAgentVersion: z.string(),
-    linkId: z.string().regex(/^lnk_[0-9a-f]{24}$/),
+    linkId: z.string().regex(LINK_ID),
     /** Highest outbox `seq` already acknowledged; open the stream with this cursor. */
     cursor: z.number().int().nonnegative(),
     replies: z.array(HubFrameSchema),
@@ -42,7 +44,7 @@ export const HttpConnectResponseSchema = z.discriminatedUnion('t', [
 export type HttpConnectResponse = z.infer<typeof HttpConnectResponseSchema>;
 
 export const HttpEventsRequestSchema = z.object({
-  linkId: z.string(),
+  linkId: z.string().regex(LINK_ID),
   /** Highest outbox `seq` the agent has processed; lets the hub delete delivered items. */
   ack: z.number().int().nonnegative().optional(),
   /** The agent still has work in flight (keeps the hub in its fast polling mode). */

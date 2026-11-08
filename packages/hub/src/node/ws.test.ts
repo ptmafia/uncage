@@ -79,13 +79,18 @@ describe('attachWebSocket', () => {
     const detach = attachWebSocket(hub, server);
     const tok = await pair(hub, origin);
     const wsUrl = `${origin.replace('http', 'ws')}/api/uncage/agent`;
-    expect(tok.transports).toEqual([{ kind: 'ws', url: wsUrl }]);
+    expect(tok.transports).toEqual([
+      { kind: 'ws', url: wsUrl },
+      { kind: 'http', url: `${origin}/api/uncage/agent` },
+    ]);
     const agent = await connectFakeAgent({ url: wsUrl, token: tok.machineToken });
     closers.push(() => agent.close());
     expect(agent.frames[0]).toMatchObject({ t: 'welcome', machineId: tok.machineId });
 
     detach();
     expect(await dial(wsUrl, tok.machineToken)).not.toBe('open');
+    // No longer offered once detached.
+    expect((await pair(hub, origin)).transports).toEqual([{ kind: 'http', url: `${origin}/api/uncage/agent` }]);
     // The connected machine stays until the hub closes.
     expect(agent.ws.readyState).toBe(WebSocket.OPEN);
   });
@@ -95,7 +100,10 @@ describe('attachWebSocket', () => {
     attachWebSocket(hub, server, { path: '/machines/ws' });
     const tok = await pair(hub, origin);
     const wsUrl = `${origin.replace('http', 'ws')}/machines/ws`;
-    expect(tok.transports).toEqual([{ kind: 'ws', url: wsUrl }]);
+    expect(tok.transports).toEqual([
+      { kind: 'ws', url: wsUrl },
+      { kind: 'http', url: `${origin}/api/uncage/agent` },
+    ]);
     const agent = await connectFakeAgent({ url: wsUrl, token: tok.machineToken });
     closers.push(() => agent.close());
     expect(agent.frames[0]?.t).toBe('welcome');

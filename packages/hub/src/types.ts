@@ -1,4 +1,4 @@
-import type { SkillSpec } from '@uncage/protocol';
+import type { SkillSpec, TransportKind } from '@uncage/protocol';
 import type { ClusterAdapter } from './cluster/cluster.js';
 import type { HubLogger, MachineHub } from './machines.js';
 import type { MaintenanceReport } from './maintenance.js';
@@ -68,6 +68,26 @@ export interface HubOptions {
    * unanswered, so a silent machine shows offline within ~30 s.
    */
   heartbeat?: { pingIntervalMs?: number; missedPings?: number };
+  /**
+   * Transports offered to agents (device token and `GET <basePath>/agent/info`). Default: `http`
+   * (the HTTP streaming transport, served by `fetch` on any platform), plus `ws` first when
+   * `attachWebSocket` runs in this process. List `ws` when WebSockets are served by another
+   * process at `<basePath>/agent`; leave `http` out to offer WebSockets only.
+   */
+  transports?: TransportKind[];
+  /**
+   * Long-lived responses end on the server's initiative after `maxDurationMs` (default 250 000)
+   * and the client reconnects at once: the agent's HTTP stream (a `rotate` line). Keep it below
+   * your platform's function duration limit (e.g. Vercel `maxDuration`).
+   */
+  stream?: { maxDurationMs?: number };
+  /**
+   * How often an agent's HTTP stream polls the machine's outbox: every `activeMs` (300) while
+   * something was delivered within `activeWindowMs` (30 000) or the machine reports work in flight,
+   * otherwise backing off (doubling) to `idleMs` (2 000). A command written by another instance
+   * wakes the stream at once through the cluster.
+   */
+  polling?: { activeMs?: number; idleMs?: number; activeWindowMs?: number };
   /** SSE comment heartbeat for browser event streams. Defaults to 15 000 ms. */
   sseHeartbeatMs?: number;
   /** How long a browser request waits for the machine. Defaults to 30 000 ms. */
@@ -145,6 +165,8 @@ export interface HubInternalsHandle {
   logger: HubLogger;
   /** This process serves machine WebSockets (at `path`, default `<basePath>/agent`): offer them and listen for commands. */
   enableWebSocket(o?: { path?: string }): void;
+  /** The WebSocket server was detached: stop offering `ws` (unless `HubOptions.transports` lists it). */
+  disableWebSocket(): void;
   /** Machine heartbeat for WebSocket links. */
   heartbeat: { pingIntervalMs: number; missedPings: number };
   /** Maintenance interval: a long-running process calls `hub.maintain()` this often. */
@@ -155,7 +177,8 @@ export interface Hub {
   /** Normalized mount path, e.g. `/api/uncage`. */
   readonly basePath: string;
   /**
-   * Browser API, device endpoints and `install.sh`, all under `basePath`, as a Fetch handler.
+   * Browser API, device endpoints, `install.sh` and the agents' HTTP streaming transport
+   * (`<basePath>/agent/*`), all under `basePath`, as a Fetch handler.
    * Pass `info.clientIp` (the client address) when known; `toNodeHandler` does. `info.waitUntil`
    * is the platform's hook for work that may outlive the response (e.g. Workers' `ctx.waitUntil`).
    */

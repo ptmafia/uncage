@@ -42,7 +42,7 @@ function internals(hub: Hub): HubInternalsHandle {
 
 /**
  * Accepts machine WebSockets on `server` at `path` (default `<basePath>/agent`), the traditional
- * mode transport; the URL offered to agents follows `path`. Also runs `hub.maintain()` every
+ * mode transport; agents are offered `ws` at `path` (before `http`) until detached. Also runs `hub.maintain()` every
  * `maintenance.intervalMs` (default 60 s) in this long-running process. Returns a function that stops accepting new sockets
  * (connected machines stay until `hub.close()`); `hub.close()` detaches too. One server per hub
  * at a time: a second call before detaching throws.
@@ -98,6 +98,7 @@ export function attachWebSocket(hub: Hub, server: Server, o: { path?: string } =
     if (detached) return;
     detached = true;
     attached.delete(machines);
+    h.disableWebSocket();
     clearInterval(sweep);
     server.off('upgrade', listener);
     wss.close();

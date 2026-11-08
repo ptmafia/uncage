@@ -1,5 +1,16 @@
 import { UncageError } from '@uncage/core/errors';
-import { MAX_FRAME_BYTES, SkillSpecSchema, type HubFrame, type SkillSpec, type ToolCallResult, type ToolSpec, type UncageEvent } from '@uncage/protocol';
+import {
+  CONNECTED_PROTOCOL,
+  MAX_FRAME_BYTES,
+  SkillSpecSchema,
+  type HubFrame,
+  type SkillSpec,
+  type ToolCallResult,
+  type ToolSpec,
+  type TransportKind,
+  type TransportOffer,
+  type UncageEvent,
+} from '@uncage/protocol';
 import { errorResponse } from '@uncage/server/wire';
 import pkg from '../package.json' with { type: 'json' };
 import { browserApi } from './browser-api.js';
@@ -7,6 +18,7 @@ import type { ClusterAdapter } from './cluster/cluster.js';
 import { memoryCluster } from './cluster/memory.js';
 import { deviceFlow, randomSecret } from './device.js';
 import { DEFAULT_PULL_MAX_BYTES, DEFAULT_READ_MAX_BYTES, filePull } from './files.js';
+import { httpTransport } from './http-transport.js';
 import { assertVersionRange, defaultCliRange, installScript } from './install-script.js';
 import { newNodeId } from './ids.js';
 import { compareVersions, MachineHub, sessionChannel, type HubLogger } from './machines.js';
@@ -28,6 +40,12 @@ const DEFAULT_MISSED_PINGS = DEFAULT_HEARTBEAT.missedPings;
 const DEFAULT_SSE_HEARTBEAT_MS = 15_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
+/** Server-initiated rotation of the agent's HTTP stream (and, later, browser SSE). */
+export const DEFAULT_STREAM_MAX_DURATION_MS = 250_000;
+/** Adaptive outbox polling of an HTTP stream. */
+export const DEFAULT_POLLING = { activeMs: 300, idleMs: 2_000, activeWindowMs: 30_000 } as const;
+/** A tool call's inbox claim outlives its handler's timeout by this much. */
+const TOOL_LEASE_GRACE_MS = 10_000;
 /** How long a tool call for a run whose startRun result is still in flight waits for it. */
 const DEFAULT_RUN_INDEX_WAIT_MS = 10_000;
 /** Hub copies of attachments are deleted after this many days (`attachmentRetentionDays`). */
@@ -150,13 +168,38 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   const shutdown = new AbortController();
   /** Set by `attachWebSocket`: this process serves machine WebSockets at this path. */
   let wsPath: string | undefined;
+  if (o.transports !== undefined && (o.transports.length === 0 || o.transports.some((k) => k !== 'ws' && k !== 'http'))) {
+    throw new Error(`createHub: transports must be a non-empty list of "ws" and "http" (got ${JSON.stringify(o.transports)})`);
+  }
+  const streamMaxMs = o.stream?.maxDurationMs ?? DEFAULT_STREAM_MAX_DURATION_MS;
+  if (!(streamMaxMs > 0)) throw new Error(`createHub: stream.maxDurationMs must be > 0 (got ${streamMaxMs})`);
+  const polling = {
+    activeMs: o.polling?.activeMs ?? DEFAULT_POLLING.activeMs,
+    idleMs: o.polling?.idleMs ?? DEFAULT_POLLING.idleMs,
+    activeWindowMs: o.polling?.activeWindowMs ?? DEFAULT_POLLING.activeWindowMs,
+  };
+  if (!(polling.activeMs > 0) || !(polling.idleMs >= polling.activeMs) || !(polling.activeWindowMs >= 0)) {
+    throw new Error(`createHub: polling needs activeMs > 0, idleMs >= activeMs, activeWindowMs >= 0 (got ${JSON.stringify(polling)})`);
+  }
+  /**
+   * What agents are offered (device token and `GET /agent/info`): `ws` when this process serves
+   * WebSockets (`attachWebSocket`) or `transports` lists it; `http` (served by `fetch`) unless
+   * `transports` leaves it out.
+   */
+  const transportOffers = (): [TransportOffer, ...TransportOffer[]] => {
+    const kinds: TransportKind[] = o.transports ?? (wsPath ? ['ws', 'http'] : ['http']);
+    const offers: TransportOffer[] = [];
+    if (kinds.includes('ws')) offers.push({ kind: 'ws', url: `${origin.replace(/^http/, 'ws')}${wsPath ?? `${basePath}/agent`}` });
+    if (kinds.includes('http')) offers.push({ kind: 'http', url: `${hubUrl}/agent` });
+    return offers as [TransportOffer, ...TransportOffer[]];
+  };
 
   const userCodeWindowMs = o.rateLimits?.userCodeWindowMs ?? DEFAULT_USER_CODE_WINDOW_MS;
   const device = deviceFlow({
     store,
     verificationUri: `${origin}/${trimSlashes(o.verificationPath ?? '/device')}`,
     site,
-    transports: () => [{ kind: 'ws', url: `${origin.replace(/^http/, 'ws')}${wsPath ?? `${basePath}/agent`}` }],
+    transports: transportOffers,
     async createMachine({ userId, name, os, machineKeyHash }) {
       const machineToken = randomSecret();
       const now = new Date().toISOString();
@@ -460,6 +503,20 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     ],
   });
 
+  const agentTransport = httpTransport({
+    store,
+    cluster,
+    machines,
+    logger,
+    minAgentVersion,
+    agentInfo: () => ({ protocol: CONNECTED_PROTOCOL, minAgentVersion, transports: transportOffers() }),
+    stream: { maxDurationMs: streamMaxMs },
+    polling,
+    pingIntervalMs: machines.heartbeat.pingIntervalMs,
+    toolLeaseMs: toolTimeoutMs + TOOL_LEASE_GRACE_MS,
+    shutdown: shutdown.signal,
+  });
+
   const setupUrl = basePath === DEFAULT_BASE_PATH ? origin : hubUrl;
   const api = browserApi({
     store,
@@ -484,7 +541,6 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   let closing: Promise<void> | undefined;
   return {
     basePath,
-    // TODO(Task 6): hand outbox writes after the response to `info.waitUntil` too.
     async fetch(req, info) {
       const requestId = `req_${randomHex(12)}`;
       try {
@@ -503,7 +559,8 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
             'no client IP for per-IP rate limits: every caller shares one bucket, so one client can use up deviceCodesPerMinute for everyone. Pass info.clientIp to hub.fetch, set rateLimits.clientIp, or rateLimits.trustForwardedFor behind a proxy that appends X-Forwarded-For (e.g. Vercel).',
           );
         }
-        return await api.handle(req, url, path, requestId, key);
+        // Machine routes (HTTP streaming transport) first, then the browser API.
+        return (await agentTransport.handle(req, url, path)) ?? (await api.handle(req, url, path, requestId, key));
       } catch (err) {
         const uerr = err instanceof UncageError ? err : new UncageError('internal_error');
         if (!(err instanceof UncageError)) logger.error({ err, requestId }, 'hub request failed');
@@ -535,6 +592,9 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
       enableWebSocket(opts = {}) {
         wsPath = opts.path ?? `${basePath}/agent`;
         machines.enableWebSocket();
+      },
+      disableWebSocket() {
+        wsPath = undefined;
       },
       heartbeat: machines.heartbeat,
       maintenance: { intervalMs: maintenanceIntervalMs },
