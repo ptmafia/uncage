@@ -20,7 +20,7 @@ Rules for translators:
 | machine | 电脑（API 中为 machine） | コンピュータ（API では machine） | “computer” in the UI, “machine” in the API. |
 | run | 运行 | 実行（Run） | One prompt and everything the agent does. Use 「Run」 for the API object in ja when ambiguous. |
 | session | 会话 | セッション | |
-| approval card | 审批卡片 | 承認カード | UI buttons: 允许执行 / 拒绝, 許可 / 拒否. |
+| approval card | 审批卡片 | 承認カード | UI buttons: 允许执行 / 拒绝 (zh); ja keeps the English labels **Allow once**（許可）/ **Deny**（拒否）, see “UI labels in prose”. |
 | workspace | 工作区 | ワークスペース | |
 | local policy | 本地策略 | ローカルポリシー | `localPolicy` in `~/.uncage/agent.yaml`. |
 | activity log | 活动日志 | アクティビティログ | `uncage activity`. |
@@ -30,3 +30,11 @@ Rules for translators:
 | agent (the background process) | 守护进程（agent） | エージェント（バックグラウンドプロセス） | Matches the existing zh UI word. |
 | website / site | 网站 | ウェブサイト | |
 | computer online / offline | 在线 / 离线 | オンライン / オフライン | |
+| composer | 输入框 | コンポーザー | The prompt box of `<AgentChat>` with its pickers. ja may say プロンプト入力欄 only when describing the text box itself. |
+| draft (session before the first prompt) | 草稿 | ドラフト | `openDraft()` / `commitDraft()`. |
+| folder | 目录（偶尔用“文件夹”） | フォルダ | ja: not フォルダー. |
+| machine token | 机器令牌 | マシントークン | |
+| machine ID | machine id（保持英文） | マシンID | ja: no space between マシン and ID (same for ランタイムID). |
+| trust model | 信任模型 | トラストモデル | The page `concepts/trust-model`. ja: not 信頼モデル. |
+| source of truth | 以……为准 | 正となるデータ | E.g. the computer's local database. ja: not 信頼できる唯一の情報源. |
+| UI labels in prose | Real Chinese UI labels (允许执行 / 拒绝, 批准, 素材) | English UI label + Japanese gloss on first use: **Allow once**（許可）/ **Deny**（拒否） | `@uncage/react-ui` has no Japanese strings. The connected demo's UI is Chinese: en/ja pages quote the Chinese label with a gloss, e.g. **允许执行** (Allow once), **允许执行**（1回だけ許可）. |
