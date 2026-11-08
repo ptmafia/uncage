@@ -33,7 +33,7 @@ export const lookupOrder = defineTool({
 ## 一次调用时发生了什么
 
 1. 用户电脑只会收到工具的**名称**、**描述**和 `input` 的 **JSON Schema**（由 `z.toJSONSchema` 生成）。Claude Code 把这个工具看作 `mcp__site__lookup_order`。
-2. Claude Code 调用它时，守护进程通过 WebSocket 发出调用。持有这条连接的 hub 节点会检查：
+2. Claude Code 调用它时，守护进程把调用发给 hub（通过它的 WebSocket，或者在 FaaS 模式下以 HTTP POST 发送）。收到调用的 hub 实例会检查：
    - 会话属于这台电脑及其用户；
    - 这次运行是经 hub 启动的，而且工具在**这次运行的清单**里（见 [selectManifest](/docs/zh-cn/guides/select-manifest/)）；
    - 参数符合 `input`。参数会用它解析，所以 zod 的默认值和 transform 都会生效。不符合时以 `invalid_request` 失败，handler 不会被调用。
@@ -58,7 +58,7 @@ export const lookupOrder = defineTool({
 | --- | --- |
 | `ctx.user` | `{ id, name? }`：会话所属用户，即你的 `getUser` 返回的值。每次查询和写入都要用它。 |
 | `ctx.sessionId`、`ctx.runId` | 发起这次调用的会话和运行。 |
-| `ctx.signal` | 一个 `AbortSignal`，调用被放弃时触发：超时（`toolTimeoutMs`，默认 120 秒）、运行结束，或电脑断开。把它传给你自己的 I/O（`fetch(url, { signal: ctx.signal })`）。 |
+| `ctx.signal` | 一个 `AbortSignal`，调用被放弃时触发：超时（`toolTimeoutMs`，默认 120 秒）、运行结束（停止），或者 hub 正在关闭且 `toolDrainMs` 已用完。连接断开**不会**触发它：结果会被存储，等电脑重连后再送达。把它传给你自己的 I/O（`fetch(url, { signal: ctx.signal })`）。 |
 | `ctx.files` | [文件通道](#从用户电脑读取文件)。 |
 
 ## 返回结果
@@ -68,7 +68,7 @@ export const lookupOrder = defineTool({
 - 想完全掌控，就返回 `ToolCallResult`：`{ content: [{ type: 'text', text }, { type: 'json', json }], isError?: boolean }`。`isError: true` 会告诉模型调用没有成功，而不必抛错。
 - `undefined` / `null` 会变成空结果。
 
-结果必须能放进一个 WebSocket 帧：略小于 1 MiB 的 JSON。更大的结果会以 `tool_failed` 失败。请返回 id 或 URL，而不是大块数据。
+结果必须能放进一条消息：略小于 1 MiB 的 JSON。更大的结果会以 `tool_failed` 失败。请返回 id 或 URL，而不是大块数据。
 
 ## 错误
 
@@ -216,6 +216,21 @@ describe('lookup_order', () => {
 
 `examples/connected-demo/lib/demo.test.ts` 用这种方式测试了演示里的两个工具，包括一个假的 `ctx.files.pull`。
 
+## 连接断开或实例停止时
+
+电脑和 hub 之间的连接随时都会断开（笔记本休眠、网络切换、Serverless 平台切断长请求、部署重启节点）。Uncage 保证这些情况对工具调用来说是安全的：
+
+- **连接断开：恰好一次。** 每次调用都有一个 id，hub 会存储调用本身，并在 handler 返回后存储它的结果。电脑重连后会用相同的 id 再次发送这次调用；hub 直接返回已存储的结果，而不会再运行一次你的 handler。如果这次调用还在别处运行，hub 会等它完成，而不是重新开始。已存储的结果保留 24 h。
+- **实例在 handler 执行中途停止：最多一次。** 如果运行 handler 的 hub 进程或函数实例挂掉了（崩溃、部署、平台时间上限），谁也无法知道它执行到了哪一步。等这次调用的租期（`toolTimeoutMs` + 10 s）用完，它会以这条消息失败：“Site tool "<name>" timed out on the website. Please try again.”（`tool_failed`，`details.reason: 'interrupted'`）。它永远不会被自动重新执行；模型会看到这个错误，通常会再试一次，而那是一次新的调用。
+- **`hub.close()`**（优雅关闭）会让正在运行的 handler 在 `toolDrainMs`（5 s）内收尾，之后以同样的错误中止它们。
+- **Cloudflare Workers** 可能会在客户端断开时取消请求中的工作。传入 `waitUntil`（`ctx.waitUntil.bind(ctx)`），hub 就会让 handler 继续运行，连接断开时仍然是恰好一次。不传的话，就会变成最多一次的情况。见 [Workers → 常见问题](/docs/zh-cn/deploy/cloudflare-workers/#在-workers-上网站工具会恰好执行一次吗)。
+
+这对你的 handler 意味着：
+
+- 让它们的耗时**短于平台的时间上限**（Vercel：`maxDuration`，默认 300 s；让 `toolTimeoutMs` 不超过它）。耗时长的工作应该交给后台任务：返回任务 id，再给模型提供第二个工具来查询进度。
+- **尽量让它们具备幂等性**（例如用从参数推导出的键做 `upsert`），这样调用被中断后模型重试也不会造成问题。
+- 你自己的 I/O 要使用 `ctx.signal`，这样被放弃的调用会停止它的工作。
+
 ## 限制一览
 
 | 限制 | 值 |
@@ -224,7 +239,7 @@ describe('lookup_order', () => {
 | 描述 | 1000 个字符 |
 | `input` 的 JSON Schema | 64 KB |
 | 每次运行的工具数 | 64 |
-| handler 运行时间 | `toolTimeoutMs`，默认 120 秒 |
+| handler 运行时间 | `toolTimeoutMs`，默认 120 秒（在 FaaS 模式下还要在平台的请求时间上限之内） |
 | 每台电脑的并发调用数 | `maxConcurrentToolCalls`，默认 8 |
 | 结果大小 | 略小于 1 MiB 的 JSON |
 | `ctx.files.pull` | 总计 50 MiB，单个文件 10 MiB |

@@ -1,9 +1,26 @@
 ---
 title: CLI 参考
-description: uncage 的所有命令和参数，包括 Connected 模式（setup、agent、sites、activity）和 Local 模式（serve、doctor），以及它们读取的环境变量。
+description: uncage 的所有命令和参数，包括 Connected 模式（setup、agent install / uninstall / status、sites、runtimes、activity）和 Local 模式（serve、doctor）、uncage --version、一键安装脚本，以及它们读取的环境变量。
 ---
 
-`@uncage/cli` 提供 `uncage` 命令。终端用户通过你网站的 `install.sh`（或 `npm i -g @uncage/cli`）获得它；Local 模式的应用通过 `npx uncage …` 使用它。每个命令都支持 `--help`。
+`@uncage/cli` 提供 `uncage` 命令。终端用户通过你网站的一键安装脚本获得它，或者用 `npm i -g @uncage/cli` 安装；Local 模式的应用通过 `npx uncage …` 使用它。每个命令都支持 `--help`。
+
+```sh
+curl -fsSL https://your.site/api/uncage/install.sh | bash        # macOS, Linux
+irm https://your.site/api/uncage/install.ps1 | iex               # Windows PowerShell
+```
+
+安装脚本会检查电脑（Node.js 22+、npm、已安装的 coding agent），在每个步骤之前询问 `[Y/n]`（如果用户有版本管理器，就用它安装 Node.js；绝不使用 `sudo` 或管理员权限），安装 `@uncage/cli`，并询问是否为那个网站运行 `uncage setup`。
+
+### `uncage --version`
+
+```text
+uncage --version
+0.3.0
+node v22.18.0 (/Users/ada/.local/share/fnm/node-versions/v22.18.0/installation/bin/node)
+```
+
+第一行是 CLI 版本；第二行是运行它的 Node.js 及其路径（也就是 `uncage agent install` 为后台守护进程固定使用的那个 Node.js）。
 
 ## Connected 模式（在用户电脑上）
 
@@ -18,7 +35,7 @@ uncage setup <url> [--no-daemon] [--no-browser]
 1. 申请一个设备码，并打印链接和验证码。
 2. 在浏览器里打开链接（`open`），由已登录用户批准。
 3. 等待批准，然后把网站和机器令牌保存到 `~/.uncage/agent.yaml`（权限 0600）。
-4. 安装并（重新）启动后台守护进程（launchd：`~/Library/LaunchAgents/dev.uncage.agent.plist`）。
+4. 为当前用户安装并（重新）启动后台守护进程，效果与 `uncage agent install` 相同：macOS 上是 launchd（`~/Library/LaunchAgents/dev.uncage.agent.plist`），Linux 上是 systemd 用户服务，Windows 上是计划任务。如果没有服务管理器，它会打印如何在前台运行 `uncage agent`。
 
 | 参数 | |
 | --- | --- |
@@ -30,11 +47,23 @@ uncage setup <url> [--no-daemon] [--no-browser]
 ### `uncage agent`
 
 ```text
-uncage agent              # run in the foreground
-uncage agent uninstall    # stop and remove the background agent; config and data stay
+uncage agent [--log-file <path>]   # run in the foreground
+uncage agent install               # install and start the background agent for this user
+uncage agent uninstall             # stop and remove the background agent; config and data stay
+uncage agent status [--json]       # installed? running? which Node.js?
 ```
 
-连接 `~/.uncage/agent.yaml` 里的每个网站并为它们服务。没有网站时正常退出。想手动运行它，请先停掉后台服务。
+`uncage agent` 连接 `~/.uncage/agent.yaml` 里的每个网站并为它们服务，每个网站提供哪种传输方式就用哪种（WebSocket 或 HTTP 流式传输）。没有网站时正常退出。想手动运行它，请先停掉后台服务。
+
+| 参数 / 子命令 | |
+| --- | --- |
+| `--log-file <path>` | 把日志追加到这个文件，而不是 stderr。每次启动时都会限制日志文件的大小。 |
+| `install` | 安装并启动按用户运行的后台服务，**固定使用运行这条命令的 Node.js**（它的真实路径，而不是版本管理器的 shim）：macOS 上是 launchd，Linux 上是 systemd 用户服务，Windows 上是计划任务（当前用户、最低权限；无法创建计划任务时改用注册表的 Run 项）。不需要管理员权限。更换或删除那个 Node.js 之后，请重新运行它。设置了 `UNCAGE_HOME` 时会拒绝执行。 |
+| `uninstall` | 停止并删除服务。`~/.uncage/agent.yaml` 和数据会保留。 |
+| `status` | 服务类型、是否已安装并在运行、服务定义文件、固定使用的 Node.js（以及它是否还存在）、CLI 入口和日志目录（`~/.uncage/logs`）。`--json` 以 JSON 输出同样的内容。 |
+| `--supervise` | 内部使用：Windows 计划任务运行的是 `uncage agent --supervise`，它会在守护进程崩溃或自我升级后将其重启（任务计划程序本身不会这样做）。macOS 和 Linux 上不需要。 |
+
+在 Linux 上，除非开启了 lingering，用户服务会在注销时停止：`uncage doctor` 会提示你，运行 `loginctl enable-linger $USER` 即可解决。Linux 和 Windows 已通过 CI 验证，尚待真机确认；macOS 已在真机上验证。
 
 ### `uncage sites`
 
@@ -103,7 +132,7 @@ uncage doctor [--port <n> | --url <url>] [--workspace <dir>] [--data-dir <dir>] 
 uncage doctor --export-events <sessionId> [--out <file>] [--include-content] [--port <n> | --url <url>]
 ```
 
-检查 Node、数据目录、令牌、正在运行的 Uncage 服务和运行时（Claude Code、Codex，以及每个 ACP agent 各一行 `runtime.acp-<id>`，来自 `uncage.config.yaml` 的 `runtimes.acp` 或自动检测）。每一行是 ✓ 或 ✗，每个 ✗ 都会打印一条 `fix:` 命令。ACP 的行是可选的：这些行出现 ✗（例如未安装，fix 为安装提示）不会改变退出码。`uncage.config.yaml` 用自己的 `command` 添加的每个 ACP agent，还会多一行警告，显示它运行的命令。当服务的工作区是一个没有忽略 `.uncage/` 的 git 仓库时，以及在把令牌发往非回环 URL 之前，它会给出警告（`!`，不致命）。
+检查 Node、数据目录、令牌、正在运行的 Uncage 服务、Connected 模式的后台守护进程（是否已安装并在运行、固定使用的 Node.js 是否还在、Linux 的 lingering、每个已连接网站对应的守护进程版本）和运行时（Claude Code、Codex，以及每个 ACP agent 各一行 `runtime.acp-<id>`，来自 `uncage.config.yaml` 的 `runtimes.acp` 或自动检测）。每一行是 ✓ 或 ✗，每个 ✗ 都会打印一条 `fix:` 命令。ACP 的行是可选的：这些行出现 ✗（例如未安装，fix 为安装提示）不会改变退出码。`uncage.config.yaml` 用自己的 `command` 添加的每个 ACP agent，还会多一行警告，显示它运行的命令。当服务的工作区是一个没有忽略 `.uncage/` 的 git 仓库时，以及在把令牌发往非回环 URL 之前，它会给出警告（`!`，不致命）。
 
 `--export-events` 把一个会话的事件导出为 JSON，用于提交 bug 报告；除非加上 `--include-content`，内容会被脱敏。
 

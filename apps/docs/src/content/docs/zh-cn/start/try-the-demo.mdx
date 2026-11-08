@@ -80,7 +80,7 @@ Claude Code 的权限模式不自动放行的步骤（输入框下方显示 **�
 ## 关于你的数据
 
 - 你以访客身份登录演示网站，身份由你使用的浏览器识别。换一个浏览器就看不到你的任何对话和页面。
-- 演示网站是公开、共享的。除非部署方把数据放在持久化卷上，每次部署和重启都会清空全部数据。素材（你创建的页面）在最后一次创建或发布 24 小时后删除。
+- 演示网站是公开、共享的。如果运行在一台没有持久化卷的服务器上，每次部署和重启都会清空全部数据；在 Vercel 上，数据保存在 Postgres 里。无论哪种情况，素材（你创建的页面）都会在最后一次创建或发布 24 小时后删除。
 - 已发布页面的页面请求仅限所有者：只有你的访客账号能打开它。页面加载的文件由页面无法猜测的 ID 保护。
 - 不要在演示网站里放任何私密内容。
 
@@ -88,4 +88,4 @@ Claude Code 的权限模式不自动放行的步骤（输入框下方显示 **�
 
 ## 自己运行演示
 
-演示网站的源码就是一个普通的 Uncage Connected 模式网站。要在你自己的电脑上运行，请按照[示例的 README](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo#run-it-single-node) 操作。要搭建你自己的网站，接着看[快速上手：Connected 模式](/docs/zh-cn/start/quickstart-connected/)。
+演示网站的源码就是一个普通的 Uncage Connected 模式网站，在同一套工具、技能和页面之上有两个入口：传统模式用的 `server.ts`（一个 Node 进程，例如部署在 Railway 上），以及 FaaS 模式用的 Next.js route handler（Vercel 加 Postgres）。要在你自己的电脑上运行，请按照[示例的 README](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo#run-it-single-node) 操作。要搭建你自己的网站，接着看[快速上手：Connected 模式](/docs/zh-cn/start/quickstart-connected/)；托管在哪里，见[选择部署模式](/docs/zh-cn/start/choose-deployment-mode/)。

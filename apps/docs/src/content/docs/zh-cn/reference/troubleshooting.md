@@ -1,6 +1,6 @@
 ---
 title: 故障排查
-description: 常见问题的解决方法：Connected 模式（电脑连不上、显示离线、setup 出错、工具没被调用、代理后面的 WebSocket）和 Local 模式（Uncage 服务连不上、forbidden_origin、端口、登录）。
+description: 常见问题的解决方法：Connected 模式（电脑连不上、显示离线、需要更新守护进程、setup 出错、工具没被调用、Serverless 上的 504 和超时、连接被切断、连接池、代理后面的 WebSocket）和 Local 模式（Uncage 服务连不上、forbidden_origin、端口、登录）。
 ---
 
 ## Connected 模式
@@ -18,24 +18,68 @@ description: 常见问题的解决方法：Connected 模式（电脑连不上、
 设备码的限制（每分钟 20 个）是**按客户端 IP** 计算的。在反向代理、负载均衡或 CDN 后面，除非你配置了客户端 IP，hub 看到的都是代理的地址，于是所有用户落进同一个桶，一分钟内的第 21 次 setup 对所有人都会失败。
 
 - **Express：** `app.set('trust proxy', 1)`（数字是前面的代理层数），并用 `toNodeHandler(hub)` 挂载 hub，它会传入 `req.ip`。
-- **Fetch 风格的服务器（Hono、Next route handler……）：** `createHub({ rateLimits: { clientIp: (req) => req.headers.get('cf-connecting-ip') ?? undefined } })`，换成你所用平台的客户端 IP 请求头；或者调用 `hub.handler(req, { clientIp })`。
+- **Vercel 上的 Next.js：** `toNextHandlers` 会自己读取 Vercel 的 `x-real-ip`；如果 Vercel 前面还有别的代理，请传入它的 `clientIp` 选项。
+- **Cloudflare Workers：** 给 `fetchOnce` 传入 `clientIp: req.headers.get('cf-connecting-ip') ?? undefined`。
+- **其他 Fetch 风格的服务器（Hono 等）：** `createHub({ rateLimits: { clientIp: (req) => req.headers.get('cf-connecting-ip') ?? undefined } })`，换成你所用平台的客户端 IP 请求头；或者调用 `hub.fetch(req, { clientIp })`。
 - **`rateLimits.trustForwardedFor: true`**，仅当你的代理会把客户端地址追加到 `X-Forwarded-For` 时使用。
 
-多节点时，限制在每个节点上分别计数。详见[反向代理或负载均衡之后](/docs/zh-cn/guides/mount-the-hub/#反向代理或负载均衡之后)。
+计数保存在 store 中，由所有节点和函数实例共享。详见[反向代理或负载均衡之后](/docs/zh-cn/guides/mount-the-hub/#反向代理或负载均衡之后)。
 
 ### 页面一直显示“等待你的电脑上线…”
 
 1. 在电脑上：`uncage sites` 应该把你的网站列为 `active`。
-2. 守护进程在运行吗？`launchctl print gui/$(id -u)/dev.uncage.agent | head`（后台服务），或者在终端里运行 `uncage agent` 查看输出。日志：`~/.uncage/logs/agent.err.log`。
-3. 它能连到 WebSocket 吗？你的服务器必须在提供 `publicUrl` 的同一个 HTTP 服务器上调用 `hub.attach(server)`，前面的每一层代理都必须转发 `<basePath>/agent` 上的 WebSocket 升级。最常见的原因是代理对升级请求直接返回 404 或 502。
-4. `publicUrl` 必须是用户打开的 URL。安装和 setup 命令，以及守护进程据此推导出的 WebSocket URL，都来自它。
+2. 守护进程在运行吗？`uncage agent status` 会显示后台服务及其使用的 Node.js；或者先停掉服务（`uncage agent uninstall`），再在终端里运行 `uncage agent` 查看输出。日志：`~/.uncage/logs/agent.log` 和 `agent.err.log`。
+3. hub 提供了什么？`curl -s https://your.site/api/uncage/agent/info` 必须返回带 `"transports"` 的 JSON。如果返回的是 HTML 页面或 404，说明 hub 没有挂载在那个路径上。
+4. 传统模式：你的服务器必须在提供 `publicUrl` 的同一个 HTTP 服务器上调用 `attachWebSocket(hub, server)`，前面的每一层代理都应该转发 `<basePath>/agent` 上的 WebSocket 升级。（升级失败时，守护进程会在三次尝试后切换到 HTTP 流式传输，所以单是 WebSocket 被拦截，已经不会让电脑一直离线。）
+5. FaaS 模式：守护进程必须是 0.3 或更新版本（见[需要更新守护进程](#需要更新守护进程--426-upgrade_required)），平台也必须以流式返回响应（见[流被切断](#电脑反复重连或者流被切断)）。
+6. `publicUrl` 必须是用户打开的 URL。安装和 setup 命令，以及守护进程使用的传输方式 URL，都来自它。
 
 ### 守护进程在运行，电脑却显示离线
 
 - 笔记本休眠或网络切换：守护进程会以退避方式重连（1 秒，最多 30 秒）。运行在本地继续进行，重连后事件会补齐。
 - 负载均衡的空闲超时低于约 30 秒会断开 WebSocket。请调高它；hub 每 10 秒 ping 一次。
+- `uncage agent status` 显示安装服务时用的 Node.js 不见了（Homebrew 升级过，或者删除了某个 nvm/fnm 版本）：重新运行 `uncage agent install`。
 - 这台电脑已在你的网站上被吊销：`uncage sites` 显示 `revoked`。重新运行 `uncage setup <url>`。
-- 守护进程太旧（日志里有 `upgrade_required`）：它会用 `npm i -g @uncage/cli@latest` 自我升级。如果那台电脑上的 npm 需要 `sudo`，升级就会失败；请修改 npm 的全局前缀（`npm config set prefix ~/.npm-global`，并把它的 `bin` 加进 `PATH`），然后重新安装。
+- 守护进程太旧：见下一节。
+
+### “需要更新守护进程” / 426 `upgrade_required`
+
+hub 要求守护进程是 0.3 或更新版本（`minAgentVersion`）。
+
+- **传统模式（WebSocket）：** hub 告诉守护进程 `upgrade_required`，守护进程会用 `npm i -g @uncage/cli@latest` 自行升级，然后重新连接。如果那台电脑上的 npm 需要 `sudo`，升级就会失败；请修改 npm 的全局前缀（`npm config set prefix ~/.npm-global`，并把它的 `bin` 加进 `PATH`），然后重新安装。重新运行你网站的安装命令也能自动完成这些步骤。
+- **FaaS 模式（Vercel、Workers 等）：** 0.2 守护进程只会用 WebSocket，而 FaaS 模式的 hub 不提供 WebSocket。它会收到 `426 upgrade_required`，hub 把这台电脑标记为版本过旧，网站会在这台电脑的卡片上和对话中显示**需要更新守护进程**（`<AgentOutdatedNotice>`、`MachineInfo.agentOutdated`）。在那台电脑上运行：
+
+  ```sh
+  npm i -g @uncage/cli@latest
+  uncage setup https://your.site
+  ```
+
+  `uncage --version` 第一行输出 CLI 版本，第二行输出运行它的 Node.js。
+
+### Serverless 上出现 504 错误或“FUNCTION_INVOCATION_TIMEOUT”
+
+有请求超过了平台的时间上限。
+
+- **守护进程的流和浏览器的事件流：** 把 `stream.maxDurationMs` 设在上限以下并留出余量（Vercel `maxDuration = 300` → `250_000`，即默认值）。这样 hub 会自己结束它们，客户端立即重连。
+- **网站工具调用：** 每次调用都在一个请求里执行，所以 `toolTimeoutMs`（120 秒）也必须放得进上限。被平台停止的 handler 会以“Site tool "<name>" timed out on the website. Please try again.”失败，并且不会重新执行。
+- **上传：** 请求体必须在 `bodyTimeoutMs`（30 秒）内传完；上传太慢会被以 `400` 拒绝。如果要通过慢速网络上传大附件，请调高它（并保持在上限以下）。
+- **在 Vercel 上超过约 4.5 MB 的附件**会在 hub 运行之前收到 Vercel 自己的 `413`。见 [Vercel → 常见问题](/docs/zh-cn/deploy/vercel/#超过约-4-mb-的附件发送失败)。
+
+### 电脑反复重连，或者流被切断
+
+连接被切断是预料之中的事，也没有危害：守护进程会带着游标重连，什么都不会丢失，也不会重复送达。只有在一直稳定不下来时才需要细查：
+
+- 守护进程日志里**每隔几分钟出现一次 `http stream rotated`** 是正常的（hub 在 `stream.maxDurationMs` 时结束流）。
+- **每隔几秒就报错**：有东西过早关闭了长请求（代理或 CDN 的超时）。把那个超时调到 `stream.maxDurationMs` 以上，或者把 `stream.maxDurationMs` 调到它以下。
+- **响应一次性全部到达**（提示词的回复到最后才出现）：有代理缓冲了流。为 `<basePath>/sessions/*/events` 和 `<basePath>/agent/stream` 关闭缓冲（nginx：`proxy_buffering off;`）；hub 会在守护进程的流上发送 `X-Accel-Buffering: no`，但并非所有代理都会遵守。
+- **`/agent/*` 返回 `429`**：某个带错误令牌的守护进程（例如一台已被吊销但仍在运行的电脑）触发了 `agentAuthFailuresPerMinute`。在那台电脑上，`uncage sites` 会列出这个网站；重新运行 `uncage setup <url>`。
+
+### Postgres：连接池和 Serverless 驱动
+
+- **事务模式的连接池**（PgBouncer、Neon 的 `-pooler` 主机）可以配合 `postgresHubStore` 和 `postgresCluster` 使用：迁移使用事务级锁。
+- **Neon 的 `neon()` HTTP 函数会失败**：hub 需要在同一个连接上执行事务。请使用 `pg`，或者 `@neondatabase/serverless` 中 Neon 的 `Pool`。
+- **连接数过多**：每个函数实例都会打开自己的连接池。请使用带连接池的 URL，并让每个连接池保持很小（`max: 5`），由 store 和 cluster 共用。
+- **`Connection terminated` 让 Node 进程崩溃**：给你自己创建的每个连接池挂上 `pool.on('error', …)`。
 
 ### 电脑关机后历史消失了
 
