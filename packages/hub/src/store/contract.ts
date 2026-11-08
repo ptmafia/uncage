@@ -259,10 +259,12 @@ export function hubStoreContract(make: () => Promise<{ store: HubStore; cleanup?
   it(
     'outbox: seqs are per machine, monotonic, ack deletes and only moves forward',
     withStore(async (store) => {
+      await store.insertMachine(machine('m1'));
+      await store.insertMachine(machine('m2'));
       expect(await store.openLink('m1', { linkId: 'lnk_a', transport: 'http', at })).toEqual({ ackedSeq: 0 });
-      expect(await store.enqueueOutbox('m1', [item('x'), item('y')])).toEqual([1, 2]);
-      expect(await store.enqueueOutbox('m2', [item('z')])).toEqual([1]);
-      expect(await store.enqueueOutbox('m1', [])).toEqual([]);
+      expect(await store.enqueueOutbox('m1', [item('x'), item('y')], at)).toEqual([1, 2]);
+      expect(await store.enqueueOutbox('m2', [item('z')], at)).toEqual([1]);
+      expect(await store.enqueueOutbox('m1', [], at)).toEqual([]);
       const first = await store.pollLink('m1', 'lnk_a', { after: 0, limit: 10, now });
       expect(first).toMatchObject({ state: 'current', busy: false });
       expect(first.items.map((i) => i.msgId)).toEqual(['x', 'y']);
@@ -274,7 +276,7 @@ export function hubStoreContract(make: () => Promise<{ store: HubStore; cleanup?
       expect((await store.pollLink('m1', 'lnk_a', { after: 0, limit: 10, now })).items.map((i) => i.seq)).toEqual([2]);
       // An ack beyond what was enqueued cannot pre-delete future items.
       expect(await store.updateLink('m1', 'lnk_a', { ackedSeq: 99, at })).toBe('current');
-      expect(await store.enqueueOutbox('m1', [item('w')])).toEqual([3]);
+      expect(await store.enqueueOutbox('m1', [item('w')], at)).toEqual([3]);
       expect((await store.pollLink('m1', 'lnk_a', { after: 0, limit: 10, now })).items.map((i) => i.msgId)).toEqual(['w']);
       // A new link keeps the machine's seqs and acked position.
       expect(await store.openLink('m1', { linkId: 'lnk_b', transport: 'ws', at })).toEqual({ ackedSeq: 2 });
@@ -289,7 +291,7 @@ export function hubStoreContract(make: () => Promise<{ store: HubStore; cleanup?
     'outbox: expired items are not returned; a replaced link reports replaced; a deleted machine reports gone',
     withStore(async (store) => {
       await store.insertMachine(machine('m1'));
-      await store.enqueueOutbox('m1', [item('old', t(-1)), item('fresh', t(60))]); // before any link
+      await store.enqueueOutbox('m1', [item('old', t(-1)), item('fresh', t(60))], at); // before any link
       expect((await store.openLink('m1', { linkId: 'lnk_a', transport: 'http', at })).ackedSeq).toBe(0);
       expect((await store.pollLink('m1', 'lnk_a', { after: 0, limit: 10, now: t(0) })).items.map((i) => i.msgId)).toEqual(['fresh']);
       expect((await store.pollLink('m1', 'lnk_a', { after: 0, limit: 10, now: t(61) })).items).toEqual([]);
@@ -303,7 +305,7 @@ export function hubStoreContract(make: () => Promise<{ store: HubStore; cleanup?
 
       await store.closeLink('m1', null);
       expect((await store.pollLink('m1', 'lnk_b', { after: 0, limit: 10, now })).state).toBe('gone');
-      expect(await store.enqueueOutbox('m1', [item('later')])).toEqual([3]); // seqs survive a closed link
+      expect(await store.enqueueOutbox('m1', [item('later')], at)).toEqual([3]); // seqs survive a closed link
 
       await store.openLink('m1', { linkId: 'lnk_c', transport: 'http', at });
       await store.claimInbox('m1', ['up_1'], { leaseUntil: t(10), now: t(0) });
@@ -311,6 +313,8 @@ export function hubStoreContract(make: () => Promise<{ store: HubStore; cleanup?
       expect(await store.pollLink('m1', 'lnk_c', { after: 0, limit: 10, now })).toEqual({ state: 'gone', busy: false, items: [] });
       expect(await store.updateLink('m1', 'lnk_c', { busy: true, at })).toBe('gone');
       expect(await store.claimInbox('m1', ['up_1'], { leaseUntil: t(10), now: t(0) })).toEqual({ up_1: 'new' }); // inbox rows went too
+      expect(await store.enqueueOutbox('m1', [item('x')], at)).toBe('gone'); // no link row resurrected for a deleted machine
+      expect(await store.enqueueOutbox('nope', [item('x')], at)).toBe('gone');
       // A re-created link starts from scratch (no outbox rows left behind).
       await store.openLink('m1', { linkId: 'lnk_d', transport: 'http', at });
       expect((await store.pollLink('m1', 'lnk_d', { after: 0, limit: 10, now })).items).toEqual([]);
@@ -364,7 +368,13 @@ export function hubStoreContract(make: () => Promise<{ store: HubStore; cleanup?
       expect(await store.finishToolCall(rec.id, { ...interrupted, result })).toBe(true);
       expect(await store.finishToolCall(rec.id, { ...ok, result })).toBe(false);
       expect(await store.claimToolCall(rec, { leaseUntil: t(40), now: t(12) })).toMatchObject({ kind: 'done', record: { status: 'interrupted', result } });
-      expect(await store.listStaleToolCalls(t(99), 10)).toEqual([{ ...rec, id: 'tcl_2', machineId: 'm2', leaseUntil: t(30) }]);
+      // A running row without a lease (an older hub's audit row) is stale too, as claimToolCall treats it.
+      await store.insertToolCall({ ...rec, id: 'tcl_old', callId: 'tc_old', startedAt: t(-1) });
+      expect(await store.listStaleToolCalls(t(99), 10)).toEqual([
+        { ...rec, id: 'tcl_old', callId: 'tc_old', startedAt: t(-1) },
+        { ...rec, id: 'tcl_2', machineId: 'm2', leaseUntil: t(30) },
+      ]);
+      expect((await store.claimToolCall({ ...rec, id: 'tcl_x', callId: 'tc_old' }, { leaseUntil: t(200), now: t(99) })).kind).toBe('stale');
       expect((await store.listToolCalls('s1')).find((r) => r.id === 'tcl_1')).toMatchObject({ status: 'interrupted', errorMessage: 'interrupted', result });
       const racers = await Promise.all([
         store.claimToolCall({ ...rec, callId: 'tc_9', id: 'tcl_9a' }, { leaseUntil: t(50), now: t(40) }),
@@ -430,7 +440,7 @@ export function hubStoreContract(make: () => Promise<{ store: HubStore; cleanup?
       expect((await store.getMachine('m1'))?.outdatedAt).toBe(t(1));
 
       await store.openLink('m1', { linkId: 'lnk', transport: 'http', at: t(0) });
-      await store.enqueueOutbox('m1', [item('a', t(5)), item('b', t(9_000))]);
+      await store.enqueueOutbox('m1', [item('a', t(5)), item('b', t(9_000))], at);
       await store.claimInbox('m1', ['done_old', 'leased', 'expired'], { leaseUntil: t(10), now: t(0) });
       await store.completeInbox('m1', ['done_old'], t(1));
       expect(await store.claimInbox('m1', ['leased'], { leaseUntil: t(9_999), now: t(11) })).toEqual({ leased: 'new' }); // re-claimed: lease runs past the prune

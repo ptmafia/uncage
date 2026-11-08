@@ -36,6 +36,7 @@ describe('postgresHubStore outbox on Postgres 16 (Review Focus #1)', () => {
     try {
       const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
       const at = new Date().toISOString();
+      await store.insertMachine({ id: 'm', userId: 'u', tokenHash: 'h', name: 'M', os: 'linux', agentVersion: '0.3.0', runtimes: [], createdAt: at, lastSeenAt: at });
       await store.openLink('m', { linkId: 'lnk', transport: 'http', at });
       const seen: string[] = [];
       let cursor = 0;
@@ -54,7 +55,9 @@ describe('postgresHubStore outbox on Postgres 16 (Review Focus #1)', () => {
       const seqs = await Promise.all(
         Array.from({ length: 50 }, async (_, i) => {
           await new Promise((r) => setTimeout(r, Math.random() * 20));
-          return store.enqueueOutbox('m', [{ msgId: `msg_${i}`, msg: { t: 'ping', at: i }, expiresAt }]);
+          const r = await store.enqueueOutbox('m', [{ msgId: `msg_${i}`, msg: { t: 'ping', at: i }, expiresAt }], new Date().toISOString());
+          if (r === 'gone') throw new Error('machine unexpectedly gone');
+          return r;
         }),
       );
       writing = false;
@@ -62,6 +65,34 @@ describe('postgresHubStore outbox on Postgres 16 (Review Focus #1)', () => {
       expect(seqs.flat().sort((a, b) => a - b)).toEqual(Array.from({ length: 50 }, (_, i) => i + 1));
       expect(new Set(seen).size).toBe(50);
       expect(seen).toHaveLength(50);
+    } finally {
+      await store.close();
+      await pool.end();
+      await db.drop();
+    }
+  });
+});
+
+describe('postgresHubStore tool-call claims on Postgres 16 (Review Focus #2)', () => {
+  it('20 concurrent claimToolCall on one call: exactly one new, the rest running', async () => {
+    const db = await freshDatabase();
+    const pool = new pg.Pool({ connectionString: db.url, max: 20 });
+    pool.on('error', () => undefined);
+    const store = await postgresHubStore({ pool });
+    try {
+      const now = new Date().toISOString();
+      const leaseUntil = new Date(Date.now() + 60_000).toISOString();
+      const claims = await Promise.all(
+        Array.from({ length: 20 }, (_, i) =>
+          store.claimToolCall(
+            { id: `tcl_${i}`, callId: 'tc_1', sessionId: 's', runId: 'r', userId: 'u', machineId: 'm', tool: 'x', args: null, status: 'running', startedAt: now },
+            { leaseUntil, now },
+          ),
+        ),
+      );
+      expect(claims.filter((c) => c.kind === 'new')).toHaveLength(1);
+      expect(claims.filter((c) => c.kind === 'running')).toHaveLength(19);
+      expect(await store.listToolCalls('s')).toHaveLength(1);
     } finally {
       await store.close();
       await pool.end();

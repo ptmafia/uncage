@@ -148,6 +148,11 @@ CREATE INDEX uncage_hub_attachments_created_idx ON uncage_hub_attachments (creat
     // HTTP transport and stateless instances: per-machine link + durable outbox (seq allocated
     // from the link row), upstream inbox dedupe, shared rate-limit windows and leases, tool-call
     // leases and stored results.
+    //
+    // Before the unique (machine_id, call_id) index: an older hub could write two audit rows for
+    // one resent call id. Audit rows are never deleted; later duplicates get their call_id
+    // suffixed with '#<row id>' so the index can be created and every row stays readable.
+    // (No semicolons inside statements: migrations are split on them.)
     id: 7,
     sql: `
 CREATE TABLE uncage_hub_links (
@@ -191,11 +196,13 @@ CREATE TABLE uncage_hub_leases (
   until text NOT NULL
 );
 ALTER TABLE uncage_hub_tool_calls ADD result jsonb, ADD lease_until text;
-DELETE FROM uncage_hub_tool_calls a USING uncage_hub_tool_calls b
+UPDATE uncage_hub_tool_calls a SET call_id = a.call_id || '#' || a.id
+  FROM uncage_hub_tool_calls b
   WHERE a.machine_id = b.machine_id AND a.call_id = b.call_id AND (a.started_at, a.id) > (b.started_at, b.id);
 CREATE UNIQUE INDEX uncage_hub_tool_calls_call_idx ON uncage_hub_tool_calls (machine_id, call_id);
 CREATE INDEX uncage_hub_tool_calls_lease_idx ON uncage_hub_tool_calls (lease_until) WHERE status = 'running';
 ALTER TABLE uncage_hub_device_codes ADD last_poll_at text;
+CREATE INDEX uncage_hub_device_codes_expires_idx ON uncage_hub_device_codes (expires_at);
 ALTER TABLE uncage_hub_machines ADD outdated_at text
 `,
   },
@@ -374,6 +381,9 @@ function sessionSet(patch: SessionPatch, start: number): { sql: string[]; params
 
 class CasFailed extends Error {}
 
+/** Rows per DELETE in `pruneTransport`. */
+const PRUNE_BATCH = 5000;
+
 /** A `HubStore` over any Postgres-compatible client. `close` is called by `HubStore.close()`. */
 export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore {
   const one = async <R, T>(sql: string, params: unknown[], map: (r: R) => T): Promise<T | null> => {
@@ -425,16 +435,18 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
     },
     async deleteMachine(id) {
       return db.transaction(async (tx) => {
+        // Lock order shared with enqueueOutbox (machine, then link, then outbox) and updateLink
+        // (link, then outbox), so concurrent calls cannot deadlock.
         const { rows } = await tx.query('DELETE FROM uncage_hub_machines WHERE id = $1 RETURNING id', [id]);
+        await tx.query('DELETE FROM uncage_hub_links WHERE machine_id = $1', [id]);
+        await tx.query('DELETE FROM uncage_hub_outbox WHERE machine_id = $1', [id]);
+        await tx.query('DELETE FROM uncage_hub_inbox WHERE machine_id = $1', [id]);
         // Its attachment bytes go too (rows from before migration 6 are matched through their session).
         await tx.query(
           `DELETE FROM uncage_hub_attachments WHERE machine_id = $1
              OR (machine_id IS NULL AND meta->>'sessionId' IN (SELECT id FROM uncage_hub_sessions WHERE machine_id = $1))`,
           [id],
         );
-        await tx.query('DELETE FROM uncage_hub_outbox WHERE machine_id = $1', [id]);
-        await tx.query('DELETE FROM uncage_hub_inbox WHERE machine_id = $1', [id]);
-        await tx.query('DELETE FROM uncage_hub_links WHERE machine_id = $1', [id]);
         return rows.length > 0;
       });
     },
@@ -682,7 +694,9 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
     },
     async listStaleToolCalls(now, limit) {
       const { rows } = await db.query<ToolCallRow>(
-        `SELECT * FROM uncage_hub_tool_calls WHERE status = 'running' AND lease_until < $1 ORDER BY lease_until, id LIMIT $2`,
+        // Rows without a lease were written by an older hub: stale, as in claimToolCall.
+        `SELECT * FROM uncage_hub_tool_calls WHERE status = 'running' AND (lease_until IS NULL OR lease_until < $1)
+         ORDER BY started_at, id LIMIT $2`,
         [now, limit],
       );
       return rows.map(toToolCall);
@@ -742,10 +756,13 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
         [machineId, linkId],
       );
     },
-    async enqueueOutbox(machineId, items) {
+    async enqueueOutbox(machineId, items, createdAt) {
       if (items.length === 0) return [];
-      const createdAt = new Date().toISOString();
-      return db.transaction(async (tx) => {
+      return db.transaction(async (tx): Promise<number[] | 'gone'> => {
+        // FOR SHARE: a concurrent deleteMachine waits for this commit (or wins first and we see no
+        // machine), so a deleted machine never gets its link row back.
+        const m = await tx.query('SELECT 1 FROM uncage_hub_machines WHERE id = $1 FOR SHARE', [machineId]);
+        if (m.rows.length === 0) return 'gone';
         await tx.query(
           `INSERT INTO uncage_hub_links (machine_id, link_id, transport, updated_at) VALUES ($1, '', '', $2) ON CONFLICT (machine_id) DO NOTHING`,
           [machineId, createdAt],
@@ -833,17 +850,25 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
       return rows.length > 0;
     },
     async pruneTransport(o) {
-      const count = async (sql: string, params: unknown[]) => (await db.query(sql, params)).rows.length;
+      // Batched (short statements, no long-held locks on a big backlog); only counts come back.
+      const prune = async (table: string, where: string, params: unknown[]): Promise<number> => {
+        let total = 0;
+        for (;;) {
+          const { rows } = await db.query<{ n: number }>(
+            `WITH d AS (DELETE FROM ${table} WHERE ctid IN (SELECT ctid FROM ${table} WHERE ${where} LIMIT ${PRUNE_BATCH}) RETURNING 1)
+             SELECT count(*)::int AS n FROM d`,
+            params,
+          );
+          const n = Number(rows[0]?.n ?? 0);
+          total += n;
+          if (n < PRUNE_BATCH) return total;
+        }
+      };
       const [outbox, inbox, rateLimits, deviceCodes] = await Promise.all([
-        count('DELETE FROM uncage_hub_outbox WHERE expires_at < $1 RETURNING seq', [o.now]),
-        count(
-          `DELETE FROM uncage_hub_inbox WHERE updated_at < $1 AND (state = 'done' OR lease_until < $2) RETURNING msg_id`,
-          [o.inboxBefore, o.now],
-        ),
-        count('DELETE FROM uncage_hub_rate_limits WHERE window_start < $1 RETURNING key', [o.rateLimitBeforeMs]),
-        count('DELETE FROM uncage_hub_device_codes WHERE expires_at < $1 RETURNING device_code_hash', [
-          new Date(Date.parse(o.now) - 3_600_000).toISOString(),
-        ]),
+        prune('uncage_hub_outbox', 'expires_at < $1', [o.now]),
+        prune('uncage_hub_inbox', `updated_at < $1 AND (state = 'done' OR lease_until < $2)`, [o.inboxBefore, o.now]),
+        prune('uncage_hub_rate_limits', 'window_start < $1', [o.rateLimitBeforeMs]),
+        prune('uncage_hub_device_codes', 'expires_at < $1', [new Date(Date.parse(o.now) - 3_600_000).toISOString()]),
       ]);
       return { outbox, inbox, rateLimits, deviceCodes };
     },

@@ -111,8 +111,16 @@ describe('postgresHubStore migration fast path', () => {
       for (const stmt of m.sql.split(';').map((x) => x.trim()).filter(Boolean)) await pg.query(stmt);
       await pg.query('INSERT INTO uncage_hub_migrations (id) VALUES ($1)', [m.id]);
     }
+    // An older hub could write two audit rows for one resent call id: both survive migration 7.
+    for (const [id, at] of [['tcl_b', '2026-01-02'], ['tcl_a', '2026-01-01']]) {
+      await pg.query(
+        `INSERT INTO uncage_hub_tool_calls (id, call_id, session_id, run_id, user_id, machine_id, tool, status, started_at) VALUES ($1, 'tc_1', 's', 'r', 'u', 'm', 'x', 'ok', $2)`,
+        [id, at],
+      );
+    }
     const rec = recording(pglitePool(pg));
     const store = await postgresHubStore({ pool: rec.pool });
+    expect((await store.listToolCalls('s')).map((r) => [r.id, r.callId])).toEqual([['tcl_a', 'tc_1'], ['tcl_b', 'tc_1#tcl_b']]);
     expect(rec.sql.some((q) => q.includes('pg_advisory_lock'))).toBe(true);
     const { rows } = await pg.query<{ id: number }>('SELECT id FROM uncage_hub_migrations ORDER BY id');
     expect(rows.map((r) => r.id)).toEqual(HUB_MIGRATIONS.map((m) => m.id));

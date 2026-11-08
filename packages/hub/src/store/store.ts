@@ -154,6 +154,9 @@ export type ToolCallFinish = Required<Pick<ToolCallRecord, 'status' | 'finishedA
 /**
  * Hub persistence. `pgliteHubStore` is the single-node default; multi-node deployments need a
  * store shared by every node. Every method is safe to call concurrently.
+ *
+ * Timestamps are ISO strings from `Date.prototype.toISOString()` (UTC, millisecond precision):
+ * leases, expiries and pruning compare them as text, which is only correct in that one format.
  */
 export interface HubStore {
   insertMachine(m: MachineRecord): Promise<void>;
@@ -268,9 +271,10 @@ export interface HubStore {
   closeLink(machineId: string, linkId: string | null): Promise<void>;
   /**
    * Appends to the machine's outbox; resolves the per-machine seqs, monotonic and gap-free in
-   * commit order (a reader never sees a seq before every lower one is visible).
+   * commit order (a reader never sees a seq before every lower one is visible). Resolves `'gone'`
+   * (nothing written) when the machine does not exist.
    */
-  enqueueOutbox(machineId: string, items: Array<{ msgId: string; msg: HubFrame; expiresAt: string }>): Promise<number[]>;
+  enqueueOutbox(machineId: string, items: Array<{ msgId: string; msg: HubFrame; expiresAt: string }>, at: string): Promise<number[] | 'gone'>;
 
   /**
    * Upstream dedupe: claims each message id for processing until `leaseUntil`. `new`: process it;
@@ -287,7 +291,8 @@ export interface HubStore {
   tryLease(name: string, o: { holder: string; until: string; now: string }): Promise<boolean>;
   /**
    * Retention for the transport tables: expired outbox items, inbox rows last touched before
-   * `inboxBefore` (done or lease over), rate-limit windows starting before `rateLimitBeforeMs`,
+   * `inboxBefore` (done or lease over; `inboxBefore` must be older than the longest window in
+   * which an agent may still resend a message, or a late resend would run twice), rate-limit windows starting before `rateLimitBeforeMs`,
    * device codes expired over an hour before `now`. Resolves how many rows each lost.
    */
   pruneTransport(o: { now: string; inboxBefore: string; rateLimitBeforeMs: number }): Promise<{ outbox: number; inbox: number; rateLimits: number; deviceCodes: number }>;
