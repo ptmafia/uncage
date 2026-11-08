@@ -5,6 +5,7 @@ import { memoryCluster } from './cluster/memory.js';
 import { sqlCluster } from './cluster/postgres.js';
 import type { SqlClient } from './store/sql.js';
 import { redisCluster, type RedisLike } from './cluster/redis.js';
+import { runFaasScenario } from './faas-scenario.js';
 import { runMultiNodeScenario } from './multinode-scenario.js';
 import { pgliteHubStore } from './node/index.js';
 import { clusterContract } from './cluster/contract.js';
@@ -40,6 +41,16 @@ describe('two hub nodes (machine on A, browser on B)', () => {
     closers.push(() => store.close(), () => clusterA.close(), () => clusterB.close());
     await runMultiNodeScenario({ clusterA, clusterB, store });
   }, 30_000);
+});
+
+describe('FaaS mode, three instances', () => {
+  it('FaaS scenario: sqlCluster + one PGlite store (in-process)', async () => {
+    // PGlite has one connection: every instance shares the one database through the same client.
+    const db = await sharedPglite();
+    const store = await pgliteHubStore({ dataDir: 'memory://' });
+    closers.push(() => store.close());
+    await runFaasScenario({ makeStore: async () => store, makeCluster: () => sqlCluster(db, { activePollMs: 30, idlePollMs: 150 }), streamMaxMs: 400 });
+  }, 90_000);
 });
 
 /** A fresh in-memory PGlite as a `SqlClient`, closed after the test. */

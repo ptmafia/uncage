@@ -499,13 +499,22 @@ export interface FaasHubs {
  * goes to one instance through its own `toNodeHandler`), like a FaaS deployment: no WebSocket.
  */
 export async function startFaasHubs(
-  o: { n: number; makeStore?: () => Promise<HubStore>; makeCluster?: () => ClusterAdapter } & Partial<HubOptions> & HubInternals,
+  o: {
+    n: number;
+    makeStore?: () => Promise<HubStore>;
+    makeCluster?: () => ClusterAdapter;
+    /** Every instance gets its own store and cluster from the factories (own pools), not one shared object. */
+    perInstance?: boolean;
+  } & Partial<HubOptions> &
+    HubInternals,
 ): Promise<FaasHubs> {
-  const { n, makeStore, makeCluster, ...rest } = o;
+  const { n, makeStore, makeCluster, perInstance, ...rest } = o;
   const ownStore = !rest.store;
   const store = rest.store ?? (makeStore ? await makeStore() : await pgliteHubStore({ dataDir: 'memory://' }));
   const ownCluster = !rest.cluster;
   const cluster = rest.cluster ?? (makeCluster ? makeCluster() : memoryCluster());
+  const extraStores: HubStore[] = [];
+  const extraClusters: ClusterAdapter[] = [];
   const server = createServer();
   const sockets = new Set<Socket>();
   server.on('connection', (s) => {
@@ -521,16 +530,23 @@ export async function startFaasHubs(
   const kills: Array<() => void> = [];
   const handlers: Array<ReturnType<typeof toNodeHandler>> = [];
   for (let i = 0; i < n; i++) {
-    const ks = killable(store);
+    let myStore = store;
+    let myCluster = cluster;
+    if (perInstance && i > 0) {
+      if (makeStore) extraStores.push((myStore = await makeStore()));
+      if (makeCluster) extraClusters.push((myCluster = makeCluster()));
+    }
+    const ks = killable(myStore);
     let dead = false;
     const kc = killable<ClusterAdapter>({
-      ...cluster,
-      publish: (c, m) => cluster.publish(c, m),
-      setPresence: (a, b, c) => cluster.setPresence(a, b, c),
-      getPresence: (a) => cluster.getPresence(a),
-      clearPresence: (a, b) => cluster.clearPresence(a, b),
+      ...myCluster,
+      publish: (c, m) => myCluster.publish(c, m),
+      setPresence: (a, b, c) => myCluster.setPresence(a, b, c),
+      getPresence: (a) => myCluster.getPresence(a),
+      clearPresence: (a, b) => myCluster.clearPresence(a, b),
+      ...(myCluster.refreshPresence ? { refreshPresence: (a: string, b: string, c: number) => myCluster.refreshPresence!(a, b, c) } : {}),
       // A killed instance no longer receives anything.
-      subscribe: (c, fn) => cluster.subscribe(c, (m) => void (dead || fn(m))),
+      subscribe: (c, fn) => myCluster.subscribe(c, (m) => void (dead || fn(m))),
       close: async () => undefined,
     });
     const hub = await createHub({
@@ -628,6 +644,8 @@ export async function startFaasHubs(
       await Promise.all(hubs.map((h, i) => (killed.has(i) ? Promise.race([h.close(), sleep(200)]) : h.close())));
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
+      await Promise.all(extraClusters.map((c) => c.close().catch(() => undefined)));
+      await Promise.all(extraStores.map((st) => st.close().catch(() => undefined)));
       if (ownCluster) await cluster.close();
       if (ownStore) await store.close();
     },

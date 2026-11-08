@@ -5,6 +5,7 @@ import { afterAll, describe, expect, inject, it } from 'vitest';
 import { clusterContract } from './cluster/contract.js';
 import { postgresCluster } from './cluster/postgres.js';
 import { redisCluster } from './cluster/redis.js';
+import { runFaasScenario } from './faas-scenario.js';
 import { runMultiNodeScenario } from './multinode-scenario.js';
 import { hubStoreContract } from './store/contract.js';
 import { postgresHubStore } from './store/postgres.js';
@@ -367,4 +368,79 @@ describe('postgresHubStore behind a transaction-mode pooler', () => {
       await db.drop();
     }
   });
+});
+
+describe('three hub instances sharing one Postgres (FaaS mode, no Redis)', () => {
+  it('FaaS scenario: postgresCluster + postgresHubStore on Postgres 16, 3 instances', async () => {
+    const db = await freshDatabase();
+    const pools: pg.Pool[] = [];
+    let clusterPolls = 0;
+    const isPoll = (sql: string) => /^\s*SELECT\b/i.test(sql) && sql.includes('uncage_cluster_messages') && sql.includes('id >');
+    const t0 = Date.now();
+    try {
+      await runFaasScenario({
+        // Every instance: its own pools, like separate function instances.
+        makeStore: () => postgresHubStore({ connectionString: db.url }),
+        makeCluster: () => {
+          const pool = new pg.Pool({ connectionString: db.url, max: 5 });
+          pool.on('error', () => undefined);
+          pools.push(pool);
+          return postgresCluster({
+            pool: {
+              query: (sql: string, params?: unknown[]) => {
+                if (isPoll(sql)) clusterPolls++;
+                return pool.query(sql, params);
+              },
+              connect: () => pool.connect(),
+              end: async () => undefined,
+            } as never,
+          });
+        },
+        streamMaxMs: 800,
+      });
+      const elapsedS = (Date.now() - t0) / 1000;
+      console.info(`[faas-scenario] cluster poll queries: ${clusterPolls} in ${elapsedS.toFixed(1)} s across 3 instances while active (${(clusterPolls / elapsedS / 3).toFixed(1)}/s per instance)`);
+    } finally {
+      await Promise.all(pools.map((p) => p.end().catch(() => undefined)));
+      await db.drop();
+    }
+  }, 120_000);
+
+  it('adaptive polling: queries per second per instance, idle vs active', async () => {
+    const db = await freshDatabase();
+    const pool = new pg.Pool({ connectionString: db.url, max: 5 });
+    pool.on('error', () => undefined);
+    let polls = 0;
+    const counting = {
+      query: (sql: string, params?: unknown[]) => {
+        if (/^\s*SELECT\b/i.test(sql) && sql.includes('uncage_cluster_messages') && sql.includes('id >')) polls++;
+        return pool.query(sql, params);
+      },
+      connect: () => pool.connect(),
+      end: async () => undefined,
+    } as never;
+    const a = postgresCluster({ pool: counting, activeWindowMs: 2_000 });
+    const b = postgresCluster({ connectionString: db.url });
+    try {
+      await a.subscribe('ch', () => undefined);
+      await new Promise((r) => setTimeout(r, 6_000)); // quiet: the interval has backed off to idlePollMs
+      let before = polls;
+      await new Promise((r) => setTimeout(r, 6_000));
+      const idle = (polls - before) / 6;
+      const remote = setInterval(() => void b.publish('ch', 'x'), 50);
+      await new Promise((r) => setTimeout(r, 1_000));
+      before = polls;
+      await new Promise((r) => setTimeout(r, 3_000));
+      const active = (polls - before) / 3;
+      clearInterval(remote);
+      console.info(`[faas-scenario] cluster poll queries per instance: idle ${idle.toFixed(2)}/s, active ${active.toFixed(2)}/s`);
+      expect(idle).toBeLessThan(1);
+      expect(active).toBeGreaterThan(idle * 3);
+    } finally {
+      await a.close();
+      await b.close();
+      await pool.end();
+      await db.drop();
+    }
+  }, 60_000);
 });
