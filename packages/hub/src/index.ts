@@ -37,5 +37,15 @@ export type {
 export { postgresHubStore, type PgClientLike, type PgPoolLike } from './store/postgres.js';
 export { HUB_MIGRATIONS, migrateHubStore, sqlHubStore, type SqlClient, type SqlQueryable } from './store/sql.js';
 export { HUB_ATTACHMENT_MAX_BYTES, SINGLE_FRAME_ATTACHMENT_BYTES } from './browser-api.js';
-export { installScript } from './install-script.js';
+export {
+  assertScriptUrl,
+  installScript,
+  installScriptPs1,
+  INSTALL_MESSAGES,
+  INSTALL_MESSAGES_PS1,
+  type InstallLocale,
+  type InstallMessageKey,
+  type InstallScriptExtension,
+  type InstallScriptOptions,
+} from './install/index.js';
 export { USER_CODE_ALPHABET } from './device.js';

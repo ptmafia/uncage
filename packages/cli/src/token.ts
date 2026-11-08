@@ -2,12 +2,15 @@ import { randomBytes } from 'node:crypto';
 import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { restrictToUser } from '@uncage/agent';
+
+const WIN = process.platform === 'win32';
 
 export function tokenPath(home: string = homedir()): string {
   return join(home, '.uncage', 'token');
 }
 
-/** Returns the bearer token from `~/.uncage/token`, creating it (mode 0600, dir 0700) if missing. */
+/** Returns the bearer token from `~/.uncage/token`, creating it (mode 0600 / a user-only ACL, dir 0700) if missing. */
 export function ensureToken(
   home: string = homedir(),
   warn: (msg: string) => void = () => undefined,
@@ -40,7 +43,8 @@ export async function ensureTokenAt(
             'Delete the file so a strong token is generated, or put a longer random token in it.',
         );
       }
-      if ((st.mode & 0o077) !== 0) {
+      // POSIX mode bits; on Windows the file got a user-only ACL when it was created.
+      if (!WIN && (st.mode & 0o077) !== 0) {
         await chmod(path, 0o600);
         warn(`Token file ${path} had loose permissions (${(st.mode & 0o777).toString(8)}); changed to 600.`);
       }
@@ -52,6 +56,6 @@ export async function ensureTokenAt(
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const token = randomBytes(32).toString('base64url');
   await writeFile(path, `${token}\n`, { mode: 0o600 });
-  await chmod(path, 0o600);
+  await restrictToUser(path); // chmod 600; on Windows icacls: only this user
   return { token, path };
 }

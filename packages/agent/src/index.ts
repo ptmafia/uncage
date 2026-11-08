@@ -43,3 +43,12 @@ export { chooseTransport, compareVersions, fetchAgentInfo } from './transport/ch
 export { dialHttp, MAX_UPSTREAM_MESSAGE_BYTES } from './transport/http.js';
 export { dialWs } from './transport/ws.js';
 export { FrameTooLargeError, type AgentLink, type DialOptions, type LinkEnd } from './transport/types.js';
+export {
+  openUrlCommand,
+  parseNpmCmdShim,
+  resolveCommand,
+  selfUpgradeCommand,
+  type ResolvedCommand,
+  type ResolveOptions,
+} from './exe.js';
+export { checkUserOnly, parseIcacls, replaceFile, restrictToUser, windowsUser, type PermsExec, type PermsOptions } from './perms.js';

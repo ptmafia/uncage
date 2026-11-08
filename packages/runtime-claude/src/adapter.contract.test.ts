@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { AdapterRunContext, AdapterRunInput, ApprovalOutcome, NativeApprovalInput, RunTool } from '@uncage/protocol';
 import type { Options, Query, SDKUserMessage, query } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CLAUDE_FALLBACK_MODELS, claudeAdapter, claudeCapabilities } from './index.js';
+import { CLAUDE_FALLBACK_MODELS, claudeAdapter, claudeCapabilities, probeClaude } from './index.js';
 import { scriptedQuery } from './test-utils.js';
 
 const versionOk = () => Promise.resolve({ stdout: '2.1.318 (Claude Code)\n' });
@@ -481,6 +481,18 @@ describe('probe', () => {
       hint: 'Install Claude Code and make sure `claude` is on your PATH.',
       installUrl: 'https://docs.claude.com/en/docs/claude-code/setup',
     });
+  });
+
+  it('Windows: EINVAL (a .cmd started without a shell) → not_installed; a .js executable runs through node', async () => {
+    const einval = () => Promise.reject(Object.assign(new Error('spawn EINVAL'), { code: 'EINVAL' }));
+    expect((await probeClaude('claude', einval, 'win32')).status).toBe('not_installed');
+    expect((await probeClaude('claude', einval, 'linux')).status).toBe('error');
+    const calls: Array<[string, string[]]> = [];
+    await probeClaude('C:\\npm\\node_modules\\c\\cli.js', async (cmd, args) => {
+      calls.push([cmd, args]);
+      return { stdout: '2.1.0' };
+    });
+    expect(calls).toEqual([[process.execPath, ['C:\\npm\\node_modules\\c\\cli.js', '--version']]]);
   });
 
   it('parses the version and defers the login check', async () => {

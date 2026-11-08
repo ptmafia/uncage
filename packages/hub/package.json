@@ -25,6 +25,7 @@
   },
   "scripts": {
     "build": "tsup && node scripts/check-web-entry.mjs",
+    "embed:installers": "node scripts/embed-installers.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint ."

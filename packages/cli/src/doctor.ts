@@ -4,9 +4,11 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { AGENT_VERSION, compareVersions, fetchAgentInfo, loadAgentConfig } from '@uncage/agent';
 import { redactForExport } from '@uncage/core';
+import { checkUserOnly, resolveCommand, type ExecFn } from '@uncage/agent';
 import type { RuntimeAdapter } from '@uncage/protocol';
 import { DEFAULT_PORT, type UncageConfig } from './config.js';
 import { projectAcpCommands } from './acp.js';
+import { lingerEnabled, nodeMajor, type AgentService } from './service/index.js';
 import { tokenPath } from './token.js';
 
 export interface DoctorCheck {
@@ -41,7 +43,116 @@ export interface DoctorDeps {
   agentHome?: string;
   /** Version compared with each website's `minAgentVersion`. Defaults to the installed agent. */
   agentVersion?: string;
+  /** For the `node` row and the per-platform checks. Default `process.platform`. */
+  platform?: NodeJS.Platform;
+  /** The running Node's version without `v` (default `process.versions.node`) and binary (default `process.execPath`). */
+  nodeVersion?: string;
+  execPath?: string;
+  /** Whether Homebrew is installed (the macOS Node fix). Default: `brew` found on PATH. */
+  hasBrew?: boolean;
+  /** Connected websites (agent.yaml): the `service` row fails only when some are active. */
+  sites?: Array<{ url: string; revokedAt?: string | undefined }>;
+  /** The background agent service. Omitted → no `service*` rows. */
+  service?: AgentService;
+  /** Runs `loginctl` (linger) and `icacls` (Windows token). Default: no shell, `execFile`. */
+  exec?: ExecFn;
+  /** POSIX user name for `loginctl show-user`. Default `$USER`. */
+  username?: string;
 }
+
+/**
+ * How to get Node 22: Homebrew on a Mac that has it, else the connected website's one-command
+ * installer (it installs Node through the user's version manager), else nodejs.org.
+ */
+export function nodeFix(platform: NodeJS.Platform, hasBrew: boolean, siteUrl: string | undefined): string {
+  if (platform === 'darwin' && hasBrew) return 'brew install node@22';
+  if (siteUrl) return platform === 'win32' ? `irm ${siteUrl}/install.ps1 | iex` : `curl -fsSL ${siteUrl}/install.sh | bash`;
+  return 'https://nodejs.org';
+}
+
+/** The `service`, `service.node` and `service.linger` rows. */
+export async function serviceChecks(o: {
+  service: AgentService;
+  activeSites: number;
+  exec: ExecFn;
+  env: NodeJS.ProcessEnv;
+  username?: string;
+}): Promise<DoctorCheck[]> {
+  const checks: DoctorCheck[] = [];
+  const st = await o.service.status();
+  const label = 'Background agent';
+  if (st.kind === 'none') {
+    checks.push({
+      id: 'service',
+      label,
+      ok: o.activeSites === 0,
+      warn: o.activeSites > 0,
+      detail: 'no service manager on this computer (systemd --user is not running)',
+      ...(o.activeSites > 0 ? { fix: 'uncage agent   # run it in the foreground (tmux / screen)' } : {}),
+    });
+    return checks;
+  }
+  if (!st.installed) {
+    const ok = o.activeSites === 0;
+    checks.push({
+      id: 'service',
+      label,
+      ok,
+      detail: `${st.kind}: not installed${ok ? ' (no connected websites)' : ''}`,
+      ...(ok ? {} : { fix: 'uncage agent install' }),
+    });
+    return checks;
+  }
+  if (st.running === false) {
+    checks.push({
+      id: 'service',
+      label,
+      ok: false,
+      warn: true,
+      detail: `${st.kind}: installed, not running${st.detail ? ` (${st.detail})` : ''}${st.definitionPath ? ` · ${st.definitionPath}` : ''}`,
+      fix: 'uncage agent install   # rewrites and restarts it; logs: ~/.uncage/logs',
+    });
+  } else {
+    checks.push({
+      id: 'service',
+      label,
+      ok: true,
+      detail: `${st.kind}: ${st.running ? 'running' : 'installed'}${st.definitionPath ? ` · ${st.definitionPath}` : ''}`,
+    });
+  }
+  if (st.spec) {
+    const major = nodeMajor(st.nodeVersion);
+    const ok = st.nodeExists === true && major >= 22;
+    const detail = !st.nodeExists
+      ? `${st.spec.nodePath} no longer exists (Node was removed or upgraded)`
+      : `${st.nodeVersion ?? 'version unknown'} · ${st.spec.nodePath}${ok ? '' : ' (needs Node >= 22)'}`;
+    checks.push({ id: 'service.node', label: 'Background agent Node', ok, detail, ...(ok ? {} : { fix: 'uncage agent install' }) });
+  }
+  if (st.kind === 'systemd') {
+    const linger = await lingerEnabled({ exec: o.exec, env: o.env, ...(o.username ? { username: o.username } : {}) });
+    const user = o.username ?? o.env.USER ?? '$USER';
+    if (linger === false) {
+      checks.push({
+        id: 'service.linger',
+        label: 'Agent keeps running after logout',
+        ok: false,
+        warn: true,
+        detail: 'linger is off: the agent stops when you log out',
+        fix: `loginctl enable-linger ${user}`,
+      });
+    } else if (linger === true) {
+      checks.push({ id: 'service.linger', label: 'Agent keeps running after logout', ok: true, detail: 'linger on' });
+    }
+  }
+  return checks;
+}
+
+const defaultDoctorExec: ExecFn = (file, args) =>
+  new Promise((done, fail) => {
+    execFile(file, args, { encoding: 'utf8', timeout: 10_000, windowsHide: true }, (err, stdout, stderr) =>
+      err ? fail(Object.assign(err, { stdout, stderr })) : done({ stdout, stderr }),
+    );
+  });
 
 export const DOCTOR_HELP = `uncage doctor - check the local Uncage setup
 
@@ -239,13 +350,19 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
   const { config, adapters, home } = deps;
   const checks: DoctorCheck[] = [];
 
-  const major = Number(process.versions.node.split('.')[0]);
+  const platform = deps.platform ?? process.platform;
+  const exec = deps.exec ?? defaultDoctorExec;
+  const nodeVersion = deps.nodeVersion ?? process.versions.node;
+  const major = Number(nodeVersion.split('.')[0]);
+  const activeSites = (deps.sites ?? []).filter((s) => !s.revokedAt);
+  const nodeOk = major >= 22;
+  const hasBrew = nodeOk ? false : (deps.hasBrew ?? (platform === 'darwin' && (await resolveCommand('brew')) !== null));
   checks.push({
     id: 'node',
     label: 'Node.js >= 22',
-    ok: major >= 22,
-    detail: `v${process.versions.node}`,
-    ...(major >= 22 ? {} : { fix: 'brew install node@22' }),
+    ok: nodeOk,
+    detail: `v${nodeVersion} · ${deps.execPath ?? process.execPath}`,
+    ...(nodeOk ? {} : { fix: nodeFix(platform, hasBrew, activeSites[0]?.url) }),
   });
 
   const dataDir = deps.dataDir ?? join(home, '.uncage', 'data');
@@ -264,20 +381,37 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
   }
 
   const tp = deps.tokenFile ?? tokenPath(home);
-  try {
-    const mode = (await stat(tp)).mode & 0o777;
-    if (mode === 0o600) checks.push({ id: 'token', label: 'Token file', ok: true, detail: `${tp} (mode 600)` });
-    else {
+  if (platform === 'win32') {
+    try {
+      await stat(tp);
+      const r = await checkUserOnly(tp, { platform, exec });
+      checks.push({ id: 'token', label: 'Token file', ok: r.ok, detail: `${tp} (${r.detail})`, ...(r.ok ? {} : { fix: r.fix }) });
+    } catch (e) {
+      const missing = (e as NodeJS.ErrnoException).code === 'ENOENT';
       checks.push({
         id: 'token',
         label: 'Token file',
         ok: false,
-        detail: `${tp} has mode ${mode.toString(8)}, expected 600`,
-        fix: `chmod 600 '${tp}'`,
+        detail: missing ? `${tp} not found` : `${tp}: ${(e as Error).message}`,
+        fix: missing ? 'uncage serve' : `icacls "${tp}"`,
       });
     }
-  } catch {
-    checks.push({ id: 'token', label: 'Token file', ok: false, detail: `${tp} not found`, fix: 'uncage serve' });
+  } else {
+    try {
+      const mode = (await stat(tp)).mode & 0o777;
+      if (mode === 0o600) checks.push({ id: 'token', label: 'Token file', ok: true, detail: `${tp} (mode 600)` });
+      else {
+        checks.push({
+          id: 'token',
+          label: 'Token file',
+          ok: false,
+          detail: `${tp} has mode ${mode.toString(8)}, expected 600`,
+          fix: `chmod 600 '${tp}'`,
+        });
+      }
+    } catch {
+      checks.push({ id: 'token', label: 'Token file', ok: false, detail: `${tp} not found`, fix: 'uncage serve' });
+    }
   }
 
   const serverUrl = trimUrl(deps.serverUrl ?? `http://127.0.0.1:${config.server.port}`);
@@ -326,6 +460,11 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
   }
   const workspaces = deps.workspaces ?? daemonWorkspaces ?? [config.workspace.default, ...config.workspace.allowedRoots];
   checks.push(...(await uncageIgnoreChecks(workspaces, deps.gitCommand ?? 'git')));
+  if (deps.service) {
+    checks.push(
+      ...(await serviceChecks({ service: deps.service, activeSites: activeSites.length, exec, env: process.env, ...(deps.username ? { username: deps.username } : {}) })),
+    );
+  }
   checks.push(...(await siteChecks(deps.fetch, deps.agentHome ?? home, deps.agentVersion ?? AGENT_VERSION)));
   return checks;
 }

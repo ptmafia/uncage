@@ -60,8 +60,9 @@ export interface ApiContext {
   publicOrigin: string;
   /** Agents older than this are reported as `agentOutdated` in `MachineInfo`. */
   minAgentVersion: string;
-  install: { install: string; setup: string; windows: null };
-  installScript: string;
+  install: { install: string; setup: string; windows: string };
+  /** Rendered installers (`install.sh` for macOS / Linux, `install.ps1` for Windows). */
+  installScripts: { sh: string; ps1: string };
   /** `secret` set: `GET|POST /maintenance` with `Authorization: Bearer <secret>` runs maintenance. */
   maintenance: { secret: string | undefined; run(): Promise<unknown> };
   version: string;
@@ -293,11 +294,12 @@ export function browserApi(ctx: ApiContext) {
   };
 
   // ---- Machine side (no website session) -------------------------------------------------------
-  add('GET', '/install.sh', async () =>
-    new Response(ctx.installScript, {
+  const script = (text: string) => async () =>
+    new Response(text, {
       headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-cache', 'x-content-type-options': 'nosniff' },
-    }),
-  { public: true });
+    });
+  add('GET', '/install.sh', script(ctx.installScripts.sh), { public: true });
+  add('GET', '/install.ps1', script(ctx.installScripts.ps1), { public: true });
 
   // Platform cron (e.g. Vercel Cron with CRON_SECRET). Without a secret there is no such route.
   const maintenanceSecret = ctx.maintenance.secret;

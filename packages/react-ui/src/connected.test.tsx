@@ -101,7 +101,7 @@ describe('connected mode: no computer yet', () => {
     expect(screen.getByRole('button', { name: 'Computer: Studio Mac (online)' })).toBeTruthy();
   });
 
-  it('Windows tab says coming soon; tabs are keyboard operable', async () => {
+  it('Windows tab shows the PowerShell command; tabs are keyboard operable', async () => {
     const f = fakeClient({ machines: [] });
     renderChat(f);
     const region = await screen.findByRole('region', { name: 'Connect your computer' });
@@ -112,8 +112,19 @@ describe('connected mode: no computer yet', () => {
     const win = within(region).getByRole('tab', { name: 'Windows' });
     expect(win.getAttribute('aria-selected')).toBe('true');
     expect(document.activeElement).toBe(win);
-    expect(within(region).getByText('Coming soon')).toBeTruthy();
+    expect(within(region).getByText(INSTALL.windows!)).toBeTruthy();
+    expect(within(region).queryByText('Coming soon')).toBeNull();
     expect(within(region).queryByText(INSTALL.install)).toBeNull();
+  });
+
+  it('Windows tab says coming soon when the hub has no Windows command', async () => {
+    const f = fakeClient({ machines: [] });
+    f.client.installInfo.mockResolvedValue({ ...INSTALL, windows: null });
+    renderChat(f);
+    const region = await screen.findByRole('region', { name: 'Connect your computer' });
+    await within(region).findByText(INSTALL.install);
+    fireEvent.click(within(region).getByRole('tab', { name: 'Windows' }));
+    expect(within(region).getByText('Coming soon')).toBeTruthy();
   });
 
   it('a failed copy says so and asks to select the text', async () => {
@@ -170,7 +181,7 @@ describe('connected mode: no computer yet', () => {
     expect(within(region).getByText('等待你的电脑上线…')).toBeTruthy();
     expect(within(region).getByText('那台电脑打不开浏览器？')).toBeTruthy();
     fireEvent.click(within(region).getByRole('tab', { name: 'Windows' }));
-    expect(within(region).getByText('即将支持')).toBeTruthy();
+    expect(within(region).getByText(INSTALL.windows!)).toBeTruthy();
   });
 });
 

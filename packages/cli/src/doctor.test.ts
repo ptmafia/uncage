@@ -1,12 +1,13 @@
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, realpath, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { RuntimeAdapter, RuntimeProbe } from '@uncage/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { updateAgentSites } from '@uncage/agent';
 import { loadConfig } from './config.js';
-import { DOCTOR_HELP, doctorExitCode, exportEvents, formatChecks, nonLoopbackWarning, parseDoctorArgs, runDoctor } from './doctor.js';
+import { DOCTOR_HELP, doctorExitCode, exportEvents, formatChecks, nodeFix, nonLoopbackWarning, parseDoctorArgs, runDoctor } from './doctor.js';
+import { probeNode, type AgentService, type ServiceKind, type ServiceSpec, type ServiceStatus } from './service/index.js';
 import { ensureToken, ensureTokenAt } from './token.js';
 
 /** Tmp dirs created by this file's tests; removed after each test. */
@@ -238,7 +239,7 @@ describe('doctor flags: --port, --url, UNCAGE_URL, --workspace, --help (F5)', ()
     );
     expect(() => parseDoctorArgs(['--port', 'abc'], {}, config, cwd)).toThrow(/--port/);
     const o = parseDoctorArgs(['--workspace', 'ws', '--data-dir', 'd', '--token-file', 't'], {}, config, cwd);
-    expect(o).toMatchObject({ workspace: '/here/ws', dataDir: '/here/d', tokenFile: '/here/t', help: false });
+    expect(o).toMatchObject({ workspace: resolve(cwd, 'ws'), dataDir: resolve(cwd, 'd'), tokenFile: resolve(cwd, 't'), help: false });
   });
 
   it('--help / -h is accepted and documents --port and UNCAGE_URL', async () => {
@@ -361,5 +362,95 @@ describe('exportEvents', () => {
     const text = JSON.stringify(await exportEvents({ sessionId: 's', config, home, fetch: f, includeContent: false }));
     expect(text).not.toContain('SECRET');
     expect(text).toContain('tool_1');
+  });
+});
+
+describe('runDoctor: Node, background agent service, Windows token', () => {
+  const svcSpec = (nodePath: string): ServiceSpec => ({
+    nodePath,
+    cliEntry: '/usr/local/lib/node_modules/@uncage/cli/dist/bin.js',
+    args: ['agent'],
+    env: { PATH: '/usr/bin:/bin', HOME: '/home/u' },
+    workingDir: '/home/u',
+    logsDir: '/home/u/.uncage/logs',
+  });
+  /** A service whose status is computed like the real ones (the pinned Node is probed). */
+  const fakeService = (o: { kind?: ServiceKind; installed?: boolean; running?: boolean | null; spec?: ServiceSpec | null } = {}): AgentService => ({
+    kind: o.kind ?? 'systemd',
+    install: async () => ({ definitionPath: '/def', notes: [] }),
+    uninstall: async () => ({ removed: true }),
+    restart: async () => true,
+    status: async (): Promise<ServiceStatus> => {
+      const spec = o.spec === undefined ? svcSpec(process.execPath) : o.spec;
+      const node = spec ? await probeNode(async (f, a) => ({ stdout: execFileSync(f, a, { encoding: 'utf8' }), stderr: '' }), spec.nodePath) : { nodeExists: null, nodeVersion: null };
+      return { kind: o.kind ?? 'systemd', installed: o.installed ?? true, running: o.running ?? true, spec, ...node, definitionPath: '/def' };
+    },
+  });
+  const site = { url: 'https://app.example.com/api/uncage' };
+  const lingerExec = (value: 'yes' | 'no') => async (file: string) => ({ stdout: file === 'loginctl' ? `Linger=${value}\n` : '', stderr: '' });
+  const run = async (extra: Partial<Parameters<typeof runDoctor>[0]>) => {
+    const { home, config } = await setup();
+    return runDoctor({ config, home, fetch: okFetch, adapters: [], exec: lingerExec('yes'), username: 'u', ...extra });
+  };
+
+  it('node: the version and the binary in use; per-platform fix when it is too old', async () => {
+    const checks = await run({});
+    expect(checks.find((c) => c.id === 'node')).toMatchObject({ ok: true, detail: `v${process.versions.node} · ${process.execPath}` });
+    const old = async (platform: NodeJS.Platform, hasBrew: boolean, sites: Array<{ url: string }> = []) =>
+      (await run({ platform, hasBrew, sites, nodeVersion: '20.11.0', execPath: '/usr/bin/node' })).find((c) => c.id === 'node');
+    expect(await old('darwin', true)).toMatchObject({ ok: false, detail: 'v20.11.0 · /usr/bin/node', fix: 'brew install node@22' });
+    expect((await old('darwin', false, [site]))?.fix).toBe('curl -fsSL https://app.example.com/api/uncage/install.sh | bash');
+    expect((await old('linux', false, [site]))?.fix).toBe('curl -fsSL https://app.example.com/api/uncage/install.sh | bash');
+    expect((await old('linux', false))?.fix).toBe('https://nodejs.org');
+    expect(nodeFix('win32', false, site.url)).toBe('irm https://app.example.com/api/uncage/install.ps1 | iex');
+  });
+
+  it('service: ok when running; missing fails only when websites are connected', async () => {
+    expect((await run({ service: fakeService() })).find((c) => c.id === 'service')).toMatchObject({ ok: true, detail: 'systemd: running · /def' });
+    const missing = fakeService({ installed: false, spec: null });
+    expect((await run({ service: missing })).find((c) => c.id === 'service')).toMatchObject({ ok: true });
+    const failing = await run({ service: missing, sites: [site] });
+    expect(failing.find((c) => c.id === 'service')).toMatchObject({ ok: false, fix: 'uncage agent install' });
+    expect(doctorExitCode(failing.filter((c) => c.id === 'service'))).toBe(1);
+    const stopped = (await run({ service: fakeService({ running: false }), sites: [site] })).find((c) => c.id === 'service');
+    expect(stopped).toMatchObject({ ok: false, warn: true });
+    const none = (await run({ service: fakeService({ kind: 'none', installed: false, spec: null, running: null }), sites: [site] })).find((c) => c.id === 'service');
+    expect(none).toMatchObject({ ok: false, warn: true, fix: expect.stringContaining('uncage agent') });
+    const noneIdle = (await run({ service: fakeService({ kind: 'none', installed: false, spec: null, running: null }) })).find((c) => c.id === 'service');
+    expect(noneIdle).toMatchObject({ ok: true });
+    expect(noneIdle).not.toHaveProperty('fix');
+  });
+
+  it('doctor: missing pinned Node → fix uncage agent install', async () => {
+    const checks = await runDoctor({ ...(await setup()), fetch: okFetch, adapters: [], exec: lingerExec('yes'), service: fakeService({ spec: svcSpec('/gone/node') }) });
+    expect(checks.find((c) => c.id === 'service.node')).toMatchObject({ ok: false, fix: 'uncage agent install' });
+    expect(checks.find((c) => c.id === 'service.node')?.detail).toContain('/gone/node no longer exists');
+    const fine = await run({ service: fakeService() });
+    expect(fine.find((c) => c.id === 'service.node')).toMatchObject({ ok: true, detail: `${process.version} · ${process.execPath}` });
+  });
+
+  it('doctor: linger off is a warning with loginctl enable-linger', async () => {
+    const off = await run({ service: fakeService(), exec: lingerExec('no') });
+    const c = off.find((x) => x.id === 'service.linger');
+    expect(c).toMatchObject({ ok: false, warn: true, fix: 'loginctl enable-linger u' });
+    expect(c?.detail).toMatch(/stops when you log out/);
+    expect(doctorExitCode(off.filter((x) => x.id.startsWith('service')))).toBe(0);
+    expect((await run({ service: fakeService() })).find((x) => x.id === 'service.linger')).toMatchObject({ ok: true });
+    expect((await run({ service: fakeService({ kind: 'launchd' }) })).some((x) => x.id === 'service.linger')).toBe(false);
+  });
+
+  it('token on win32 uses icacls (checkUserOnly)', async () => {
+    const { home, config } = await setup();
+    const tp = join(home, '.uncage', 'token');
+    const icacls = (extra: string) => async (file: string) => ({
+      stdout: file === 'icacls' ? `${tp} PC\\u:(F)\n${extra}\nSuccessfully processed 1 files; Failed processing 0 files\n` : '',
+      stderr: '',
+    });
+    const user = process.env.USERNAME ?? process.env.USER ?? 'u';
+    const asUser = (s: string) => s.replace('PC\\u', `PC\\${user}`);
+    const good = await runDoctor({ config, home, fetch: okFetch, adapters: [], platform: 'win32', exec: async (f) => ({ stdout: asUser((await icacls(' NT AUTHORITY\\SYSTEM:(F)')(f)).stdout), stderr: '' }) });
+    expect(good.find((c) => c.id === 'token')).toMatchObject({ ok: true });
+    const bad = await runDoctor({ config, home, fetch: okFetch, adapters: [], platform: 'win32', exec: async (f) => ({ stdout: asUser((await icacls(' BUILTIN\\Users:(I)(RX)')(f)).stdout), stderr: '' }) });
+    expect(bad.find((c) => c.id === 'token')).toMatchObject({ ok: false, detail: expect.stringContaining('BUILTIN\\Users'), fix: expect.stringContaining('icacls') });
   });
 });

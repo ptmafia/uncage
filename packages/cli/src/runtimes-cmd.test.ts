@@ -181,7 +181,7 @@ describe('uncage runtimes', () => {
     expect(acp.nativeIcons.codex?.light).toMatch(/^data:image\/svg\+xml;base64,/);
     expect(await readFile(log, 'utf8').catch(() => '')).toBe('');
 
-    const built = agentAdapters(false, acp.adapters, acp.nativeIcons)();
+    const built = agentAdapters(false, acp.adapters, {}, acp.nativeIcons)();
     expect(built.map((a) => a.id)).toEqual(['claude', 'codex', 'acp-goose']);
     expect(built[0]!.icon).toEqual(acp.nativeIcons.claude);
     expect(built[2]!.icon).toEqual(acp.adapters[0]!.icon);

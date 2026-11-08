@@ -141,7 +141,7 @@ export function fakeClient(snap: () => SessionSnapshot = () => snapshot(), opts:
     installInfo: vi.fn<UncageClient['installInfo']>(async () => ({
       install: 'curl -fsSL https://site.test/api/uncage/install.sh | bash',
       setup: 'uncage setup https://site.test/api/uncage',
-      windows: null,
+      windows: 'irm https://site.test/api/uncage/install.ps1 | iex',
     })),
     revokeMachine: vi.fn<UncageClient['revokeMachine']>(async () => undefined),
     subscribe: vi.fn((sessionId: string, h: SubscribeHandlers) => {
