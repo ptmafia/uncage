@@ -15,7 +15,7 @@ export default async function DevicePage({ searchParams }: { searchParams: Promi
   let lookup = null;
   let error: { code: string; message: string } | undefined;
   try {
-    lookup = code ? await getHub().lookupDevice(code, user) : null;
+    lookup = code ? await (await getHub()).lookupDevice(code, user) : null;
   } catch (e) {
     const err = e as { code?: string; message?: string };
     error = { code: err.code ?? 'internal_error', message: err.message ?? 'Failed' };

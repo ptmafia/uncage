@@ -7,7 +7,7 @@
  *   HUB_NODES=2 REDIS_URL=redis://127.0.0.1:6380 \
  *     DATABASE_URL=postgres://uncage:uncage@127.0.0.1:5433/uncage pnpm multinode
  *
- * Node i listens on PORT+1+i. All nodes share DEMO_DATA_DIR (assets, cookie secret), so run them
+ * Node i listens on PORT+1+i. Assets are in Postgres; all nodes share DEMO_DATA_DIR (cookie secret), so run them
  * on one machine. Stops every node on SIGINT / SIGTERM.
  */
 import { spawn, type ChildProcess } from 'node:child_process';

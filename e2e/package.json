@@ -8,7 +8,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "e2e:mock": "playwright test --project=mock-default --project=mock-headless --project=connected-mock --project=connected-multinode",
+    "e2e:mock": "playwright test --project=mock-default --project=mock-headless --project=connected-mock --project=connected-multinode --project=connected-faas-mock",
     "e2e:live": "playwright test --project=live-claude --project=connected-live --pass-with-no-tests",
     "typecheck": "tsc --noEmit",
     "lint": "eslint ."

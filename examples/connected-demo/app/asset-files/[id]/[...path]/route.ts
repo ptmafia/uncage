@@ -1,5 +1,5 @@
 import { assetCsp } from '../../../../lib/asset-csp.ts';
-import { canReadAsset, getAsset, needsOwnerCheck, readAssetFile } from '../../../../lib/assets.ts';
+import { assetStore, canReadAsset, needsOwnerCheck } from '../../../../lib/assets.ts';
 import { userFromRequest } from '../../../../lib/auth.ts';
 import { isPublicDemo, publicUrl } from '../../../../lib/config.ts';
 
@@ -7,7 +7,8 @@ import { isPublicDemo, publicUrl } from '../../../../lib/config.ts';
 export async function GET(req: Request, { params }: { params: Promise<{ id: string; path: string[] }> }): Promise<Response> {
   const { id, path } = await params;
   const notFound = () => new Response('Not found', { status: 404, headers: { 'content-type': 'text/plain' } });
-  const asset = await getAsset(id);
+  const store = assetStore();
+  const asset = await store.get(id);
   // The same 404 for unknown, unpublished and not-yours, so existence does not leak.
   if (!asset) return notFound();
   // Sub-resources from the sandboxed iframe carry no cookie, so they are not owner-checked;
@@ -15,7 +16,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const viewer = userFromRequest(req)?.id ?? null;
   const publicMode = isPublicDemo() && needsOwnerCheck(req.headers.get('sec-fetch-dest'), viewer, asset.owner);
   if (!canReadAsset(asset, viewer, publicMode)) return notFound();
-  const file = await readAssetFile(id, path.join('/'));
+  const file = await store.readFile(id, path.join('/'));
   if (!file) return notFound();
   return new Response(new Uint8Array(file.data), {
     headers: {

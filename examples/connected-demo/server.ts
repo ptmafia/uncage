@@ -1,11 +1,15 @@
 /**
- * The demo website's server: one Node `http` server carrying
+ * The demo's traditional-mode entry (Railway, Docker, `pnpm dev`; see lib/mode.ts): one Node `http`
+ * server carrying
  *   - the Uncage hub's browser API and device endpoints under /api/uncage (`toNodeHandler(hub)`),
  *   - the machines' WebSockets at /api/uncage/agent (`attachWebSocket(hub, server)`),
  *   - everything else: the Next.js app (pages, server actions, /asset-files).
  *
  *   pnpm dev                    # next dev mode
  *   pnpm build && pnpm start    # production mode
+ *
+ * Started without this file (`next start`, Vercel), the same app runs in FaaS mode instead: the
+ * route handler app/api/uncage/[[...path]]/route.ts serves the hub (`pnpm start:faas`).
  *
  * Env: PORT (3200), HOST (127.0.0.1), PUBLIC_URL (http://localhost:$PORT), DEMO_DATA_DIR (./.data),
  * DATABASE_URL + REDIS_URL (multi-node), TRUST_PROXY=1 (behind scripts/multinode.ts).
@@ -15,9 +19,9 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { attachWebSocket, toNodeHandler } from '@uncage/hub/node';
 import next from 'next';
-import { purgeAssetsOlderThan } from './lib/assets.ts';
+import { assetStore } from './lib/assets.ts';
 import { isPublicDemo, publicUrl } from './lib/config.ts';
-import { createDemoHub } from './lib/hub.ts';
+import { createDemoHub, PUBLIC_ASSET_MAX_AGE_MS } from './lib/hub.ts';
 import { publishHub } from './lib/hub-registry.ts';
 
 const dev = process.env.NODE_ENV !== 'production';
@@ -25,8 +29,8 @@ const port = Number(process.env.PORT || 3200);
 const host = process.env.HOST || '127.0.0.1';
 const dir = dirname(fileURLToPath(import.meta.url));
 
-const { hub, close: closeHub } = await createDemoHub();
-publishHub(hub);
+const { hub, close: closeHub } = await createDemoHub({ mode: 'traditional' });
+publishHub(hub); // also what puts this process in traditional mode (lib/mode.ts)
 const hubHandler = toNodeHandler(hub);
 
 const server = createServer();
@@ -58,7 +62,8 @@ if (dev) {
 if (isPublicDemo()) {
   // Guests' pages are throwaway: drop anything older than a day, now and hourly.
   const sweep = (): void => {
-    purgeAssetsOlderThan(24 * 3600_000)
+    assetStore()
+      .purgeOlderThan(PUBLIC_ASSET_MAX_AGE_MS)
       .then((n) => console.log(`purged ${n} expired asset(s)`))
       .catch((err: unknown) => console.error('asset purge failed', err));
   };

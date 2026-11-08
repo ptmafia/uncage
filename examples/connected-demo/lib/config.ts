@@ -8,7 +8,7 @@ import { resolve } from 'node:path';
 type Env = Record<string, string | undefined>;
 
 /** Everything the demo writes (hub store, assets, the cookie secret). Default `./.data`. */
-export function dataDir(env: NodeJS.ProcessEnv = process.env): string {
+export function dataDir(env: Env = process.env): string {
   // turbopackIgnore: a runtime data path, not something Next.js should trace into the build.
   return resolve(/*turbopackIgnore: true*/ env.DEMO_DATA_DIR || '.data');
 }

@@ -10,7 +10,7 @@ export async function decide(code: string, approve: boolean): Promise<DecideResu
   const user = await currentUser();
   if (!user) return { error: { code: 'unauthorized', message: 'Sign in again.' } };
   try {
-    const hub = getHub();
+    const hub = await getHub();
     return { result: await (approve ? hub.approveDevice(code, user) : hub.denyDevice(code, user)) };
   } catch (e) {
     const err = e as { code?: string; message?: string };
