@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { appendFile } from 'node:fs/promises';
+import { appendFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
 /** Env var naming the supervisor's pid: the agent child exits when that process is gone. */
 export const SUPERVISOR_PID_ENV = 'UNCAGE_SUPERVISOR_PID';
@@ -19,6 +20,12 @@ export interface SuperviseOptions {
   args: string[];
   /** Appends one line per restart (the agent's log file). */
   logFile?: string;
+  /**
+   * Where the supervisor writes its pid (default `supervisor.pid` beside `logFile`): the Windows
+   * service kills this process tree on uninstall / restart, because ending the task only stops
+   * conhost, not the node processes under it.
+   */
+  pidFile?: string;
   /** Wait before restarting after a failure (default 10 s, like the systemd unit's RestartSec). */
   restartDelayMs?: number;
   /** Wait before restarting after a self-upgrade (exit 75; default 1 s). */
@@ -56,19 +63,27 @@ export async function superviseAgent(o: SuperviseOptions): Promise<number> {
     stopping = true;
     current?.kill();
   });
+  const pidFile = o.pidFile ?? (o.logFile ? supervisorPidPath(dirname(o.logFile)) : undefined);
+  if (pidFile) await writeFile(pidFile, `${process.pid}\n`).catch(() => undefined);
+  const done = async (): Promise<number> => {
+    if (pidFile) await rm(pidFile, { force: true }).catch(() => undefined);
+    return 0;
+  };
   const note = (msg: string) =>
     o.logFile ? appendFile(o.logFile, `${JSON.stringify({ level: 40, time: Date.now(), msg: `supervisor: ${msg}` })}\n`).catch(() => undefined) : undefined;
   for (;;) {
     current = start(o.execPath, [o.entry, ...o.args], env);
     const code = await current.exited;
-    if (stopping) return 0;
-    if (code === 0) return 0;
+    if (stopping || code === 0) return done();
     const delay = code === UPGRADE_EXIT ? (o.upgradeDelayMs ?? 1_000) : (o.restartDelayMs ?? 10_000);
     await note(`agent exited with ${code ?? 'a signal'}; restarting in ${delay} ms`);
     await sleep(delay);
-    if (stopping) return 0;
+    if (stopping) return done();
   }
 }
+
+/** `<logsDir>/supervisor.pid`. */
+export const supervisorPidPath = (logsDir: string): string => join(logsDir, 'supervisor.pid');
 
 /** In the agent child: exit when the supervisor that started it is gone (checked every second). */
 export function watchSupervisor(env: NodeJS.ProcessEnv = process.env, exit: (code: number) => void = (c) => process.exit(c)): void {

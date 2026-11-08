@@ -1,3 +1,6 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { SUPERVISOR_PID_ENV, superviseAgent, watchSupervisor, type SupervisedChild } from './supervise.js';
 
@@ -21,6 +24,16 @@ describe('superviseAgent (the Windows service restarts the agent itself)', () =>
     expect(s.calls[0]).toMatchObject({ file: '/n/node', args: ['/c/bin.js', 'agent', '--log-file', '/l/agent.log'] });
     expect(s.calls[0]!.env[SUPERVISOR_PID_ENV]).toBe(String(process.pid));
     expect(sleep.mock.calls).toEqual([[10_000], [1_000], [10_000]]);
+  });
+
+  it('writes supervisor.pid beside the log while it runs and removes it at the end', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'uncage-sup-'));
+    let seen = '';
+    const start = (): SupervisedChild => ({ exited: readFile(join(dir, 'supervisor.pid'), 'utf8').then((t) => ((seen = t), 0)), kill: () => undefined });
+    expect(await superviseAgent({ execPath: 'n', entry: 'e', args: [], logFile: join(dir, 'agent.log'), start })).toBe(0);
+    expect(seen.trim()).toBe(String(process.pid));
+    await expect(readFile(join(dir, 'supervisor.pid'))).rejects.toThrow();
+    await rm(dir, { recursive: true, force: true });
   });
 
   it('stops (0) when asked, killing the child', async () => {

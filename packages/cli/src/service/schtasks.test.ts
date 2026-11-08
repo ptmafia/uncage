@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExecFn } from '@uncage/agent';
@@ -98,13 +98,17 @@ describe('schtasks service', () => {
     expect(await svc.restart()).toBe(true);
     expect(exec.mock.calls.filter(([f]) => f === 'schtasks').map(([, a]) => a[0])).toEqual(['/query', '/end', '/run']);
 
+    // The `--supervise` process tree survives /end (only conhost stops): uninstall kills it by its pid file.
+    await writeFile(join(s.logsDir, 'supervisor.pid'), '5150\n');
     exec.mockClear();
     expect(await svc.uninstall()).toEqual({ removed: true });
     expect(exec.mock.calls).toEqual([
       ['schtasks', ['/end', '/tn', TASK_NAME]],
       ['schtasks', ['/delete', '/tn', TASK_NAME, '/f']],
       ['reg', ['delete', RUN_KEY, '/v', TASK_NAME, '/f']],
+      ['taskkill', ['/pid', '5150', '/t', '/f']],
     ]);
+    await expect(stat(join(s.logsDir, 'supervisor.pid'))).rejects.toThrow();
     await expect(stat(def)).rejects.toThrow();
     expect(await svc.status()).toMatchObject({ installed: false, running: false, spec: null });
   });

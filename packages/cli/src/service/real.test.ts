@@ -38,7 +38,7 @@ const dir = __dirname;
 const argv = process.argv.slice(2);
 if (argv.includes('--supervise')) {
   import(pathToFileURL(${JSON.stringify(supervise)}).href).then(async (m) => {
-    process.exitCode = await m.superviseAgent({ execPath: process.execPath, entry: __filename, args: argv.filter((a) => a !== '--supervise'), restartDelayMs: 2000 });
+    process.exitCode = await m.superviseAgent({ execPath: process.execPath, entry: __filename, args: argv.filter((a) => a !== '--supervise'), logFile: argv[argv.indexOf('--log-file') + 1], restartDelayMs: 2000 });
   });
 } else {
   if (process.env.UNCAGE_SUPERVISOR_PID) {
@@ -79,7 +79,7 @@ describe.runIf(enabled)('real service (CI only)', () => {
     const deps: ServiceDeps = { platform: process.platform, home: process.platform === 'win32' ? dir : homedir(), env: process.env, exec };
     const kind = await detectServiceKind(deps);
     if (kind === 'none') {
-      console.log(`[real.test] skipped: no user systemd on this runner (systemctl --user show-environment failed)`);
+      console.log(`::notice title=real service (${process.platform})::skipped: no user systemd on this runner (systemctl --user show-environment failed)`);
       ctx.skip();
       return;
     }
@@ -112,7 +112,7 @@ describe.runIf(enabled)('real service (CI only)', () => {
         async () => (await beats(dir)).find((b) => b.pid !== first.pid && b.at > killedAt),
         90_000,
       );
-      console.log(`[real.test] restarted after ${restarted.at - killedAt} ms (pid ${first.pid} → ${restarted.pid})`);
+      console.log(`::notice title=real service (${svc.kind})::exit 75 → restarted after ${restarted.at - killedAt} ms (pid ${first.pid} → ${restarted.pid})`);
     } finally {
       const { removed } = await svc.uninstall();
       expect(removed).toBe(true);

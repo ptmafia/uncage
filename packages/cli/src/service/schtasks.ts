@@ -214,8 +214,8 @@ function defaultSpawnDetached(file: string, args: string[]): number | undefined 
 /**
  * Windows: a scheduled task `UncageAgent` for the current user (`schtasks /create /xml`). When Task
  * Scheduler answers "Access is denied" (some managed machines refuse standard users), the agent is
- * registered under `HKCU\…\Run` instead and started now, detached and hidden (no restart on failure
- * there: it comes back at the next login or `uncage agent install`).
+ * registered under `HKCU\…\Run` instead and started now, detached and hidden (the `--supervise`
+ * process restarts a failed agent; the supervisor itself comes back at the next login).
  */
 export function schtasksService(d: ServiceDeps): AgentService {
   const user = d.username ?? windowsUser(d.env);
@@ -239,10 +239,17 @@ export function schtasksService(d: ServiceDeps): AgentService {
     const n = Number((await readFile(pidPath, 'utf8').catch(() => '')).trim());
     return Number.isInteger(n) && n > 0 ? n : null;
   };
-  const killStarted = async () => {
-    const pid = await readPid();
-    if (pid !== null) await d.exec('taskkill', ['/pid', String(pid), '/t', '/f']).catch(() => undefined);
-    await rm(pidPath, { force: true });
+  /**
+   * Stops what we started: the Run-key process, and the `--supervise` process tree (its pid file is
+   * beside the log). Ending a task only stops conhost; the node processes under it would survive.
+   */
+  const killStarted = async (spec?: ServiceSpec | null) => {
+    const files = [pidPath, ...(spec?.logsDir ? [join(spec.logsDir, 'supervisor.pid')] : [])];
+    for (const file of files) {
+      const n = Number((await readFile(file, 'utf8').catch(() => '')).trim());
+      if (Number.isInteger(n) && n > 0) await d.exec('taskkill', ['/pid', String(n), '/t', '/f']).catch(() => undefined);
+      await rm(file, { force: true });
+    }
   };
   const startDetached = async (spec: ServiceSpec) => {
     const { command, args } = taskCommand(spec, headless);
@@ -261,6 +268,7 @@ export function schtasksService(d: ServiceDeps): AgentService {
       return kind;
     },
     async install(spec) {
+      const previous = await readSpec();
       await mkdir(spec.logsDir, { recursive: true });
       await mkdir(dir, { recursive: true });
       // schtasks reads the file as UTF-16 (BOM) like the document declares.
@@ -273,40 +281,42 @@ export function schtasksService(d: ServiceDeps): AgentService {
         }
         kind = 'run-key';
         await d.exec('reg', ['add', RUN_KEY, '/v', TASK_NAME, '/t', 'REG_SZ', '/d', runKeyCommand(spec, headless), '/f']);
-        await killStarted();
+        await killStarted(previous);
         await startDetached(spec);
         return {
           definitionPath: `${RUN_KEY}\\${TASK_NAME}`,
           notes: [
             'Task Scheduler refused to register the task (Access is denied), so the agent starts at login from',
-            `${RUN_KEY} instead. It is not restarted automatically if it stops: run "uncage agent install" again.`,
+            `${RUN_KEY} instead (its supervisor restarts it if it fails; if it stops, run "uncage agent install" again).`,
           ],
         };
       }
       kind = 'schtasks';
       // A Run-key registration from an earlier, refused install is replaced by the task.
       await d.exec('reg', ['delete', RUN_KEY, '/v', TASK_NAME, '/f']).catch(() => undefined);
-      await killStarted();
       await schtasks('/end', '/tn', TASK_NAME).catch(() => undefined);
+      await killStarted(previous);
       await schtasks('/run', '/tn', TASK_NAME);
       return { definitionPath: defPath, notes: [] };
     },
     async uninstall() {
+      const spec = await readSpec();
       await schtasks('/end', '/tn', TASK_NAME).catch(() => undefined);
       const task = await ok(schtasks('/delete', '/tn', TASK_NAME, '/f'));
       const run = await ok(d.exec('reg', ['delete', RUN_KEY, '/v', TASK_NAME, '/f']));
-      await killStarted();
+      await killStarted(spec);
       await rm(defPath, { force: true });
       return { removed: task || run };
     },
     async restart() {
+      const spec = await readSpec();
       if (await taskExists()) {
         await schtasks('/end', '/tn', TASK_NAME).catch(() => undefined);
+        await killStarted(spec);
         return ok(schtasks('/run', '/tn', TASK_NAME));
       }
-      const spec = await readSpec();
       if (spec && (await runValueExists())) {
-        await killStarted();
+        await killStarted(spec);
         await startDetached(spec);
         return true;
       }
