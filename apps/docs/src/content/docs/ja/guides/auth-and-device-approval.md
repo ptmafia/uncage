@@ -1,26 +1,26 @@
 ---
 title: 認証とデバイスの承認
-description: getUser でハブをサインイン処理に接続し、/device の承認ページを安全に構築する方法（サインイン必須、frame-ancestors 'none'、CSRF 対策済みの POST）を、Next.js と任意の Node サーバーについて説明します。
+description: getUserでハブをサインイン処理に接続し、/deviceの承認ページを安全に構築する方法（サインイン必須、frame-ancestors 'none'、CSRF対策済みのPOST）を、Next.jsと任意のNodeサーバーについて説明します。
 ---
 
 ハブは独自のアカウントを持ちません。誰がサインインしているかをウェブサイトに尋ね、コンピュータをその人に紐づける処理はウェブサイトの承認ページに任せます。
 
 ## `getUser(req)`
 
-`getUser` は、ハブへのすべてのブラウザリクエストを Fetch の `Request` として受け取り、サインイン中のユーザーまたは `null` を返します。
+`getUser`は、ハブへのすべてのブラウザリクエストをFetchの`Request`として受け取り、サインイン中のユーザーまたは`null`を返します。
 
 ```ts nocheck
 getUser(req: Request): Promise<{ id: string; name?: string } | null>
 ```
 
-- `id` は、ユーザーごとに一意で変わらない値でなければなりません。ハブはコンピュータ（machine）、セッション、ツール呼び出しの記録をこの値に紐づけて保存し、ツールハンドラーには `ctx.user.id` として渡します。
-- `name` は表示用で、省略できます。
-- `null` を返すと、リクエストは `401 unauthorized` で失敗します。CLI が使うデバイスエンドポイント（`/device/code`、`/device/token`、`/machine/revoke`）と `install.sh` は公開されており、`getUser` を呼びません。
-- この関数はすべてのリクエスト（SSE の接続ごとを含む）で実行されるため、署名付き Cookie のチェックやキャッシュしたセッションの参照など、高速な処理にしてください。
+- `id`は、ユーザーごとに一意で変わらない値でなければなりません。ハブはコンピュータ（machine）、セッション、ツール呼び出しの記録をこの値に紐づけて保存し、ツールハンドラーには`ctx.user.id`として渡します。
+- `name`は表示用で、省略できます。
+- `null`を返すと、リクエストは`401 unauthorized`で失敗します。CLIが使うデバイスエンドポイント（`/device/code`、`/device/token`、`/machine/revoke`）と`install.sh`は公開されており、`getUser`を呼びません。
+- この関数はすべてのリクエスト（SSEの接続ごとを含む）で実行されるため、署名付きCookieのチェックやキャッシュしたセッションの参照など、高速な処理にしてください。
 
-### セッション Cookie から
+### セッションCookieから
 
-多くのサインインライブラリは、セッション ID や署名付きトークンを Cookie に保存します。`Cookie` ヘッダーから読み取ります。
+多くのサインインライブラリは、セッションIDや署名付きトークンをCookieに保存します。`Cookie`ヘッダーから読み取ります。
 
 ```ts title="auth.ts"
 import type { HubUser } from '@uncage/hub';
@@ -44,36 +44,36 @@ export async function getUser(req: Request): Promise<HubUser | null> {
 }
 ```
 
-ライブラリが Fetch の `Request` を受け取るヘルパーを提供している場合（多くはそうです）、それを直接呼び出してください。`examples/connected-demo` アプリは HMAC で署名した Cookie を使っています。`lib/auth.ts` を参照してください。
+ライブラリがFetchの`Request`を受け取るヘルパーを提供している場合（多くはそうです）、それを直接呼び出してください。`examples/connected-demo`アプリはHMACで署名したCookieを使っています。`lib/auth.ts`を参照してください。
 
-### Cookie と CSRF
+### CookieとCSRF
 
-ブラウザ API は Cookie で認証されるため、ハブはクロスサイトリクエストから API を保護します。GET 以外のリクエストで、`Origin` が `publicUrl` でもリクエスト自身のホストでもないもの、または `Sec-Fetch-Site: cross-site` が付いたものは `403 forbidden_origin` になります。あわせて、セッション Cookie は `SameSite=Lax`（または `Strict`）と `Secure` にしておいてください。
+ブラウザAPIはCookieで認証されるため、ハブはクロスサイトリクエストからAPIを保護します。GET以外のリクエストで、`Origin`が`publicUrl`でもリクエスト自身のホストでもないもの、または`Sec-Fetch-Site: cross-site`が付いたものは`403 forbidden_origin`になります。あわせて、セッションCookieは`SameSite=Lax`（または`Strict`）と`Secure`にしておいてください。
 
 ## 承認ページ（`/device`）
 
-`uncage setup https://your.site` は `https://your.site/device?code=ABCD-EFGH` を開きます。パスは `verificationPath` オプションで変更できます。このページで、サインイン中のユーザーがコードを承認または拒否します。**承認すると、そのコンピュータにユーザーのアカウントへのアクセス権が与えられる**ため、このページはクリックジャッキングや CSRF の標的になります。次の要件を満たす必要があります。
+`uncage setup https://your.site`は`https://your.site/device?code=ABCD-EFGH`を開きます。パスは`verificationPath`オプションで変更できます。このページで、サインイン中のユーザーがコードを承認または拒否します。**承認すると、そのコンピュータにユーザーのアカウントへのアクセス権が与えられる**ため、このページはクリックジャッキングやCSRFの標的になります。次の要件を満たす必要があります。
 
-1. **通常のサインイン済みセッションを必須にします。** ユーザーがサインインしていなければ、ログインページに送ってから戻します。
-2. **フレーム内での表示を拒否します：** `Content-Security-Policy: frame-ancestors 'none'` と `X-Frame-Options: DENY`。
-3. **CSRF 対策済みの POST で判定します。** GET やリンクを開いただけで承認してはいけません。
-4. **何を承認するのかを表示します：** コード（ユーザーはターミナルの表示と見比べます）と、`hub.lookupDevice` から得たコンピュータの名前と OS。
+1. **通常のサインイン済みセッションを必須にします**。ユーザーがサインインしていなければ、ログインページに送ってから戻します。
+2. **フレーム内での表示を拒否します**：`Content-Security-Policy: frame-ancestors 'none'`と`X-Frame-Options: DENY`。
+3. **CSRF対策済みのPOSTで判定します**。GETやリンクを開いただけで承認してはいけません。
+4. **何を承認するのかを表示します**：コード（ユーザーはターミナルの表示と見比べます）と、`hub.lookupDevice`から得たコンピュータの名前とOS。
 
-ハブには 3 つの呼び出しがあり、いずれもコードとサインイン中のユーザーを受け取ります。
+ハブには3つの呼び出しがあり、いずれもコードとサインイン中のユーザーを受け取ります。
 
 | 呼び出し | 戻り値 |
 | --- | --- |
-| `hub.lookupDevice(code, user)` | 保留中のコードなら `{ name?, os?, expiresAt, repairsMachine }`、それ以外は `null`。`repairsMachine` は、承認するとこのユーザーのコンピュータのいずれかが再ペアリングされる場合に設定されます。そのコンピュータは ID とセッションを維持し、古いトークンは使えなくなります。 |
-| `hub.approveDevice(code, user)` | `'ok'`、`'not_found'`、`'expired'` のいずれか |
-| `hub.denyDevice(code, user)` | `'ok'`、`'not_found'`、`'expired'` のいずれか |
+| `hub.lookupDevice(code, user)` | 保留中のコードなら`{ name?, os?, expiresAt, repairsMachine }`、それ以外は`null`。`repairsMachine`は、承認するとこのユーザーのコンピュータのいずれかが再ペアリングされる場合に設定されます。そのコンピュータはIDとセッションを維持し、古いトークンは使えなくなります。 |
+| `hub.approveDevice(code, user)` | `'ok'`、`'not_found'`、`'expired'`のいずれか |
+| `hub.denyDevice(code, user)` | `'ok'`、`'not_found'`、`'expired'`のいずれか |
 
-コードは `ABCDEFGHJKMNPQRSTUVWXYZ23456789` から選ばれた 8 文字で、`ABCD-EFGH` の形式で表示され、10 分間有効です。大文字・小文字、スペース、ハイフンは無視されます。未知のコードは推測の失敗として数えられ、10 分間に 10 回失敗すると（`rateLimits.userCodeFailures`、`userCodeWindowMs`）、これらの呼び出しは `code: 'rate_limited'`（`details.retryAfterSec`）のエラーを投げます。
+コードは`ABCDEFGHJKMNPQRSTUVWXYZ23456789`から選ばれた8文字で、`ABCD-EFGH`の形式で表示され、10分間有効です。大文字・小文字、スペース、ハイフンは無視されます。未知のコードは推測の失敗として数えられ、10分間に10回失敗すると（`rateLimits.userCodeFailures`、`userCodeWindowMs`）、これらの呼び出しは`code: 'rate_limited'`（`details.retryAfterSec`）のエラーを投げます。
 
-`@uncage/react-ui` の `<ApproveDevice>` がこのページを描画します。コード、コンピュータ、再ペアリングの警告、**Approve**（承認）と **Deny**（拒否）のボタン、そして結果です。表示だけを担うコンポーネントなので、判定はサーバーで行います。失敗した呼び出しのエラーは `error` プロップに渡してください。ローカライズされたメッセージ（`rate_limited` なら “Too many requests. Wait a moment and try again.”）が表示されます。照会結果がある場合はボタンの上に、`lookupDevice` 自体が失敗して `lookup` が `null` の場合は “This code is invalid or has expired” の代わりに表示されます。
+`@uncage/react-ui`の`<ApproveDevice>`がこのページを描画します。コード、コンピュータ、再ペアリングの警告、**Approve**（承認）と**Deny**（拒否）のボタン、そして結果です。表示だけを担うコンポーネントなので、判定はサーバーで行います。失敗した呼び出しのエラーは`error`プロップに渡してください。ローカライズされたメッセージ（`rate_limited`なら「Too many requests. Wait a moment and try again.」）が表示されます。照会結果がある場合はボタンの上に、`lookupDevice`自体が失敗して`lookup`が`null`の場合は「This code is invalid or has expired」の代わりに表示されます。
 
 ### Next.js
 
-Next.js の完全な実装は [Connected モードのクイックスタート](/docs/ja/start/quickstart-connected/)にあります。`lookupDevice` を呼ぶサーバーコンポーネント、`approveDevice` / `denyDevice` を呼ぶ Server Action（Server Action は POST 専用で、Next.js が `Origin` をチェックするため、これが CSRF 対策になります）、`<ApproveDevice>` を包むクライアントコンポーネント、そして `next.config.ts` でのヘッダー設定です。実際のサインインへのリダイレクトを含む同じパターンが、`examples/connected-demo/app/device/` にあります。
+Next.jsの完全な実装は[Connected モードのクイックスタート](/docs/ja/start/quickstart-connected/#7-承認ページ)にあります。`lookupDevice`を呼ぶサーバーコンポーネント、`approveDevice` / `denyDevice`を呼ぶServer Action（Server ActionはPOST専用で、Next.jsが`Origin`をチェックするため、これがCSRF対策になります）、`<ApproveDevice>`を包むクライアントコンポーネント、そして`next.config.ts`でのヘッダー設定です。実際のサインインへのリダイレクトを含む同じパターンが、`examples/connected-demo/app/device/`にあります。
 
 承認ページにだけヘッダーを追加する例です。
 
@@ -97,9 +97,9 @@ const config: NextConfig = {
 export default config;
 ```
 
-### Express（任意の Node サーバー）
+### Express（任意のNodeサーバー）
 
-Server Action がない場合は、小さなエンドポイントを 2 つ書き、オリジンを自分でチェックします。以下は完全なサーバーです（`getUser` は[前述](#セッション-cookie-から)のものです）。ページ自体は、`<ApproveDevice>` を描画し、`fetch` でこれらのエンドポイントを呼び出す任意の React ページでかまいません。
+Server Actionがない場合は、小さなエンドポイントを2つ書き、オリジンを自分でチェックします。以下は完全なサーバーです（`getUser`は[前述](#セッションcookieから)のものです）。ページ自体は、`<ApproveDevice>`を描画し、`fetch`でこれらのエンドポイントを呼び出す任意のReactページでかまいません。
 
 ```ts title="server.ts"
 import { createServer } from 'node:http';
@@ -163,11 +163,11 @@ hub.attach(server);
 server.listen(3000);
 ```
 
-ページでは `GET /device/lookup?code=…` を呼び出し、`<ApproveDevice code lookup state error onApprove onDeny />` を描画して、`{ code, approve }` を付けて `POST /device/decision` を送ります（ブラウザは `fetch` の POST に `Origin` を付けます）。応答は `ApproveDevice` の `state` に対応づけます。`'ok'` は `'approved'` または `'denied'` に、`'not_found'` と `'expired'` はそのままです。エラーは `error` プロップに渡します（再試行できるようボタンは有効なままです。`lookup: null` の場合は、エラーが「コードが見つからない」というメッセージの代わりに表示されます）。
+ページでは`GET /device/lookup?code=…`を呼び出し、`<ApproveDevice code lookup state error onApprove onDeny />`を描画して、`{ code, approve }`を付けて`POST /device/decision`を送ります（ブラウザは`fetch`のPOSTに`Origin`を付けます）。応答は`ApproveDevice`の`state`に対応づけます。`'ok'`は`'approved'`または`'denied'`に、`'not_found'`と`'expired'`はそのままです。エラーは`error`プロップに渡します（再試行できるようボタンは有効なままです。`lookup: null`の場合は、エラーが「コードが見つからない」というメッセージの代わりに表示されます）。
 
 ## コンピュータを取り消す
 
-- **ウェブサイトから：** `<AgentChat>` のコンピュータメニューに、ユーザーのコンピュータが一覧表示されます。独自の UI では `useMachines().revoke(id)` または `DELETE <basePath>/machines/:id` を使います。サーバーでは `await hub.revokeMachine(machineId, user)` を呼びます（他のユーザーの ID や未知の ID なら `machine_not_found` を投げます）。
-- **コンピュータから：** `uncage sites remove <site id>` が、コンピュータ自身のトークンを使ってウェブサイト上でそのコンピュータを取り消し、ローカルのトークンを削除します。
+- **ウェブサイトから**：`<AgentChat>`のコンピュータメニューに、ユーザーのコンピュータが一覧表示されます。独自のUIでは`useMachines().revoke(id)`または`DELETE <basePath>/machines/:id`を使います。サーバーでは`await hub.revokeMachine(machineId, user)`を呼びます（他のユーザーのIDや未知のIDなら`machine_not_found`を投げます）。
+- **コンピュータから**：`uncage sites remove <site id>`が、コンピュータ自身のトークンを使ってウェブサイト上でそのコンピュータを取り消し、ローカルのトークンを削除します。
 
 どちらの方法でも、トークンは即座に使えなくなり、コンピュータは切断されます。セッションはストア（とコンピュータ上）に残ります。

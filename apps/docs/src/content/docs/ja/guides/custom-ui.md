@@ -1,17 +1,17 @@
 ---
-title: フックで UI をカスタマイズする
-description: AgentChat をカスタマイズする（ロケール、テーマ、コンポーネント、CSS 変数）か、ヘッドレスな @uncage/react のフックから独自のチャットとコンピュータ接続のフローを構築します。Connected モードと Local モードの両方に対応します。
+title: フックでUIをカスタマイズする
+description: AgentChatをカスタマイズする（ロケール、テーマ、コンポーネント、CSS変数）か、ヘッドレスな@uncage/reactのフックから独自のチャットとコンピュータ接続のフローを構築します。Connected モードとLocal モードの両方に対応します。
 ---
 
-カスタマイズは 3 つの段階のどこで止めてもかまいません。
+カスタマイズは3つの段階のどこで止めてもかまいません。
 
 1. **`<AgentChat>`**（`@uncage/react-ui`）をそのまま使い、スタイルを変えたり一部を差し替えたりする。
-2. `@uncage/react-ui` の**部品**（`<ConnectMachine>`、`<MachineStatus>`、`<ApproveDevice>`、`<ApprovalCard>`、`<Composer>` など）を独自のレイアウトに配置する。
+2. `@uncage/react-ui`の**部品**（`<ConnectMachine>`、`<MachineStatus>`、`<ApproveDevice>`、`<ApprovalCard>`、`<Composer>`など）を独自のレイアウトに配置する。
 3. **ヘッドレスなフック**（`@uncage/react`）を使い、同じストアの上に独自のコンポーネントを作る。
 
-どれも両方のモードで動作します。ストアはサーバーに `/machines` を問い合わせて、どちらのモードかを判断します。ハブが応答すれば Connected モード、ローカルのデーモンが 404 を返せば Local モードです。
+どれも両方のモードで動作します。ストアはサーバーに`/machines`を問い合わせて、どちらのモードかを判断します。ハブが応答すればConnected モード、ローカルのデーモンが404を返せばLocal モードです。
 
-## 1. `<AgentChat>` をカスタマイズする
+## 1. `<AgentChat>`をカスタマイズする
 
 ```tsx title="chat.tsx"
 'use client';
@@ -38,27 +38,27 @@ export function Chat() {
 
 | プロップ | デフォルト | |
 | --- | --- | --- |
-| `locale` | `'en'` | `'en'` または `'zh-CN'` |
-| `theme` | `'auto'` | `'light'`、`'dark'`、`'auto'`（OS の設定に従う） |
+| `locale` | `'en'` | `'en'`または`'zh-CN'` |
+| `theme` | `'auto'` | `'light'`、`'dark'`、`'auto'`（OSの設定に従う） |
 | `sidebar` | `true` | セッション一覧 |
-| `defaultRuntime` | 最初に利用可能なもの | 新しいセッションのランタイム ID。例：`'claude'` |
+| `defaultRuntime` | 最初に利用可能なもの | 新しいセッションのランタイムID。例：`'claude'` |
 | `starterPrompts` | なし | 空の状態に表示するボタン |
 | `showTools` | `true` | メッセージ間のツールのステップ |
-| `persistSession` | `'url'` | リロード後にセッションを開き直す方法：`?session=<id>`、`'localStorage'`、または `false` |
-| `components` | | `UserMessage`、`AssistantMessage`、`ToolSteps`、`ApprovalCard`、`Composer`、`EmptyState` を差し替えます |
+| `persistSession` | `'url'` | リロード後にセッションを開き直す方法：`?session=<id>`、`'localStorage'`、または`false` |
+| `components` | | `UserMessage`、`AssistantMessage`、`ToolSteps`、`ApprovalCard`、`Composer`、`EmptyState`を差し替えます |
 | `className` | | ルート要素に付与されます |
 
-スタイルは `--uncage-*` の CSS 変数で変更します。すべてのクラスには `uc-` の接頭辞が付いています。`UncageProvider` の `baseUrl` のデフォルトは `/api/uncage` です。ハブ（または Local モードのプロキシ）を別の場所にマウントした場合は指定してください。
+スタイルは`--uncage-*`のCSS変数で変更します。すべてのクラスには`uc-`の接頭辞が付いています。`UncageProvider`の`baseUrl`のデフォルトは`/api/uncage`です。ハブ（またはLocal モードのプロキシ）を別の場所にマウントした場合は指定してください。
 
-Connected モードでは、`<AgentChat>` はさらに次のように動作します。
+Connected モードでは、`<AgentChat>`はさらに次のように動作します。
 
-- ユーザーがコンピュータを持っていない間は、空の状態として `<ConnectMachine variant="inline">` を表示します。
-- 開いている会話のコンピュータをヘッダーに表示します（`<MachineStatus>`）。切り替え用のピッカーと “Connect another computer…”（別のコンピュータを接続）も備えています。
-- そのコンピュータがオフラインの間は入力欄を無効にします（“Your computer is offline. Waiting for it to reconnect…”）。
+- ユーザーがコンピュータを持っていない間は、空の状態として`<ConnectMachine variant="inline">`を表示します。
+- 開いている会話のコンピュータをヘッダーに表示します（`<MachineStatus>`）。切り替え用のピッカーと「Connect another computer…」（別のコンピュータを接続）も備えています。
+- そのコンピュータがオフラインの間はコンポーザーを無効にします（「Your computer is offline. Waiting for it to reconnect…」）。
 
 ## 2. 部品を使う
 
-`<ConnectMachine>` は「コンピュータを接続する」フローを単独で提供します。インストールコマンド（macOS タブ。Windows は “coming soon”）、コピーボタン付きの `uncage setup <url>` コマンド、“Waiting for your computer…” から “Connected: &lt;name&gt;” に切り替わるライブ表示（表示中は 3 秒ごとにポーリングします）、ブラウザを開けないコンピュータ向けのヘルプが含まれます。設定ページ、オンボーディングのステップ、ダイアログなどに配置してください。
+`<ConnectMachine>`は「コンピュータを接続する」フローを単独で提供します。インストールコマンド（macOSタブ。Windowsは「coming soon」）、コピーボタン付きの`uncage setup <url>`コマンド、「Waiting for your computer…」から「Connected: &lt;name&gt;」に切り替わるライブ表示（表示中は3秒ごとにポーリングします）、ブラウザを開けないコンピュータ向けのヘルプが含まれます。設定ページ、オンボーディングのステップ、ダイアログなどに配置してください。
 
 ```tsx title="connect-button.tsx"
 'use client';
@@ -87,36 +87,36 @@ export function ConnectButton({ onConnected }: Pick<ConnectMachineProps, 'onConn
 }
 ```
 
-`variant="dialog"`（デフォルト）は、キャンセルボタン、Esc キー、背景クリックで閉じられるモーダルです。`variant="inline"` はページに埋め込みます。`<MachineStatus onSelect>` はヘッダーのコンピュータメニューです。`<ApproveDevice>` は `/device` ページです（[ガイド](/docs/ja/guides/auth-and-device-approval/)）。表示だけを担う `<ApproveDevice>` を除き、いずれも `UncageProvider` の内側に置く必要があります。
+`variant="dialog"`（デフォルト）は、キャンセルボタン、Escキー、背景クリックで閉じられるモーダルです。`variant="inline"`はページに埋め込みます。`<MachineStatus onSelect>`はヘッダーのコンピュータメニューです。`<ApproveDevice>`は`/device`ページです（[ガイド](/docs/ja/guides/auth-and-device-approval/)）。表示だけを担う`<ApproveDevice>`を除き、いずれも`UncageProvider`の内側に置く必要があります。
 
 ## 3. ヘッドレスなフック
 
-アプリを `<UncageProvider>`（`@uncage/react` または `@uncage/react-ui` から）で包み、次のフックを使います。
+アプリを`<UncageProvider>`（`@uncage/react`または`@uncage/react-ui`から）で包み、次のフックを使います。
 
 | フック | 戻り値 | 用途 |
 | --- | --- | --- |
-| `useMachines({ watch? })` | `{ mode, connected, machines, selected, current, currentId, loading, error, install, select(id), refresh(), revoke(id), loadInstallInfo() }` | Connected モード：ユーザーのコンピュータ、新しいセッションが使うもの（`selected`）、開いているセッションが動いているもの（`current`）、インストールコマンド。`watch: true` を指定すると、ページが表示されている間 3 秒ごとにポーリングします。 |
-| `useRuntimes()` | `{ runtimes, loading }` | ランタイムのピッカー。`status` は `available`、`not_installed`、`auth_required` などで、`hint` と `installUrl` が付きます |
+| `useMachines({ watch? })` | `{ mode, connected, machines, selected, current, currentId, loading, error, install, select(id), refresh(), revoke(id), loadInstallInfo() }` | Connected モード：ユーザーのコンピュータ、新しいセッションが使うもの（`selected`）、開いているセッションが動いているもの（`current`）、インストールコマンド。`watch: true`を指定すると、ページが表示されている間3秒ごとにポーリングします。 |
+| `useRuntimes()` | `{ runtimes, loading }` | ランタイムのピッカー。`status`は`available`、`not_installed`、`auth_required`などで、`hint`と`installUrl`が付きます |
 | `useSessions()` | `{ sessions, activeSessionId, loading, select(id), create(body), reload() }` | セッション一覧、新しいチャット |
 | `usePersistSession(mode = 'url')` | `void` | リロード時に最後のセッションを開き直す |
-| `useSession()` | `{ session, connection, replayIncomplete }` | ヘッダー、接続状態のバナー。Connected モードでは `session.machineId` |
-| `useRun()` | `{ run, isActive, send(prompt), cancel() }` | 入力欄と停止ボタン。`send` は実行が受け付けられると `true` で解決します |
+| `useSession()` | `{ session, connection, replayIncomplete }` | ヘッダー、接続状態のバナー。Connected モードでは`session.machineId` |
+| `useRun()` | `{ run, isActive, send(prompt), cancel() }` | コンポーザーと停止ボタン。`send`は実行が受け付けられると`true`で解決します |
 | `useMessages()` | `{ timeline, messages, tools }` | 会話を順番どおりに |
 | `useApprovals()` | `{ pending, all }` | 承認カード |
 | `useApprovalActions()` | `{ decide(id, 'allow' \| 'deny'), pending }` | 許可と拒否。カードごとの処理中の状態付き |
-| `useSessionSettings()` | `{ settings, capabilities, update(patch), pendingForNextRun }` | モデル、エフォート、パーミッションモードのピッカー |
+| `useSessionSettings()` | `{ settings, capabilities, update(patch), pendingForNextRun }` | モデル、Effort、パーミッションモードのピッカー |
 | `useAttachments()` | `{ items, add(files), remove(localId), clear(), ready, rejected }` | 添付ボタンとチップ |
-| `useAttachmentUrl(id)` | `string` | 送信済みの添付ファイル用の `<img src>` |
-| `useRunningSessions()` | `{ runs, count }` | 「N 件実行中」のインジケーター |
+| `useAttachmentUrl(id)` | `string` | 送信済みの添付ファイル用の`<img src>` |
+| `useRunningSessions()` | `{ runs, count }` | 「N件実行中」のインジケーター |
 | `useRuntimeCapabilities(id?)` | `RuntimeCapabilities` | ランタイムが対応している機能だけを表示する |
 | `useSpeechInput({ lang, onText })` | `{ supported, listening, start(), stop(), error }` | 音声入力（Web Speech API） |
 | `useConnection()` | `'connecting' \| 'live' \| 'reconnecting' \| 'offline'` | イベントストリームの接続状態 |
-| `useUncageError()` | `{ error, dismiss }` | エラーのトースト。すべてのエラーに `message` と `hint` があります |
-| `useUncageStore()` | ストア | `actions.openDraft`、`actions.commitDraft` など |
+| `useUncageError()` | `{ error, dismiss }` | エラーのトースト。すべてのエラーに`message`と`hint`があります |
+| `useUncageStore()` | ストア | `actions.openDraft`、`actions.commitDraft`など |
 
 ### ヘッドレスなチャットの完全な例（Connected モード）
 
-最初のプロンプトを送るまで、セッションは存在しません。設定やファイルを選べるよう**下書き**を開き（`openDraft(runtimeId)`）、続いて `commitDraft()` で選択中のコンピュータにセッションを作成し、`select(id)` でそれを開き、`send(prompt)` で実行を開始します。
+最初のプロンプトを送るまで、セッションは存在しません。設定やファイルを選べるよう**ドラフト**を開き（`openDraft(runtimeId)`）、続いて`commitDraft()`で選択中のコンピュータにセッションを作成し、`select(id)`でそれを開き、`send(prompt)`で実行を開始します。
 
 ```tsx title="headless-chat.tsx"
 'use client';
@@ -254,13 +254,13 @@ export function HeadlessChat() {
 }
 ```
 
-[`examples/react-headless-chat`](https://github.com/ptmafia/uncage/tree/main/examples/react-headless-chat) は、これらのフックだけで作った、より本格的なヘッドレスチャット（設定のピッカー、添付ファイル、リロードしても失われない URL）で、Local モード向けです。
+[`examples/react-headless-chat`](https://github.com/ptmafia/uncage/tree/main/examples/react-headless-chat)は、これらのフックだけで作った、より本格的なヘッドレスチャット（設定のピッカー、添付ファイル、リロードしても失われないURL）で、Local モード向けです。
 
 ## より低いレベル
 
-- **`@uncage/client`**：React を使わないブラウザ用のトランスポートです。REST 呼び出しと、再開可能な SSE の購読を提供します（`createUncageClient({ baseUrl })`）。minify 後で約 5 KB です。
-- **HTTP API** そのもの：[HTTP API](/docs/ja/reference/http-api/) を参照してください。型は `@uncage/protocol` にあります。
+- **`@uncage/client`**：Reactを使わないブラウザ用のトランスポートです。REST呼び出しと、再開可能なSSEの購読を提供します（`createUncageClient({ baseUrl })`）。minify後で約5 KBです。
+- **HTTP API**そのもの：[HTTP API](/docs/ja/reference/http-api/)を参照してください。型は`@uncage/protocol`にあります。
 
 ## 用語
 
-ユーザーが混乱しないよう、組み込みの UI と同じ言葉を使ってください。ユーザーのマシンは**コンピュータ**（英語 UI では computer、中国語 UI では 电脑）、その上で動くバックグラウンドプロセスは**エージェント**（英語 UI では the agent、中国語 UI では 守护进程）、ウェブサイトは**サイト**（英語 UI では the site、中国語 UI では 网站）と呼びます。
+ユーザーが混乱しないよう、組み込みのUIと同じ言葉を使ってください。ユーザーのマシンは**コンピュータ**（英語UIではcomputer、中国語UIでは 电脑）、その上で動くバックグラウンドプロセスは**エージェント**（英語UIではthe agent、中国語UIでは 守护进程）、ウェブサイトは**サイト**（英語UIではthe site、中国語UIでは 网站）と呼びます。

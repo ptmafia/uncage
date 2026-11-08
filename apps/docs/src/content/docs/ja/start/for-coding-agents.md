@@ -75,7 +75,7 @@ Use postgresHubStore with DATABASE_URL and redisCluster with REDIS_URL; attach '
 
 ## エージェント向けの経験則
 
-- **名前は正確に**。APIの名前は、このサイトに書かれているとおりに使ってください（`createHub`、`defineTool`、`toNodeHandler`、`hub.attach`、`selectManifest`、`sessionStorage`、`ctx.files.pull`）。すべての用語は[用語集](/docs/ja/reference/glossary/)で定義されており、すべてのシグネチャは[自動生成されたAPIリファレンス](/docs/api/hub/)に載っています。
+- **名前は正確に**。APIの名前は、このサイトに書かれているとおりに使ってください（`createHub`、`defineTool`、`toNodeHandler`、`hub.attach`、`selectManifest`、`sessionStorage`、`ctx.files.pull`）。すべての用語は[用語集](/docs/ja/reference/glossary/)で定義されており、すべてのシグネチャは[自動生成されたAPIリファレンス](/docs/api/hub/)（英語）に載っています。
 - **コードサンプルはコンパイルできます**。このサイトのTypeScriptサンプルはすべて、CIで最新のパッケージに対して型チェックされています。サンプルのタイトルに書かれたファイル（`lib/tools.ts`）は相対パスで互いをインポートします。表示されていないモジュール（アプリの`./auth`など）は、あなたが書くものです。
 - **ウェブサイトからユーザーのコンピュータでシェルコマンドを実行する手段は、決して追加しないでください**。また、ウェブサイトから`bypassPermissions`を有効にしようとしないでください。Uncageは設計上、どちらも拒否します（[トラストモデル](/docs/ja/concepts/trust-model/)）。
 - **推測せず、確認する**。組み込みを終えたら、スキルとクイックスタートにある検証コマンドを実行し、その出力をレポートに含めてください。

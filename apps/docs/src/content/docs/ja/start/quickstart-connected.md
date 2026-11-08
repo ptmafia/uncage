@@ -10,7 +10,7 @@ description: Next.jsアプリにUncageを追加し、サインインしたユー
 - ユーザーは`/device`で自分のコンピュータを承認する。
 - ユーザーのコンピュータ上のClaude Codeが、あなたのツールの1つである`save_note`を呼び出せる。このツールはあなたのサーバーで、そのユーザーとして実行される。
 
-あなたは両方の役を演じます。まずウェブサイトの開発者、次にコンピュータを接続するユーザーです。
+このページでは、あなたが両方の立場を担当します。まずウェブサイトの開発者、次にコンピュータを接続するユーザーです。
 
 ## コーディングエージェント用のプロンプトをコピーする
 
@@ -33,7 +33,7 @@ Verify: start the dev server, then curl -s http://localhost:3000/api/uncage/inst
 - **ユーザー側（このテストではあなた自身のMac）**：macOS、Node.js 22以降、インストール済みでサインインしたClaude Code：`npm i -g @anthropic-ai/claude-code`を実行し、`claude`を一度起動して`/login`と入力します。
 
 :::caution[カスタムサーバーが必要な理由]
-ハブは接続中のすべてのコンピュータとWebSocketを開いたままにするため、HTTPサーバーにアクセスできる常駐のNodeプロセスが必要です。Next.jsのルートハンドラーだけではWebSocketのアップグレードを受け付けられず、サーバーレスプラットフォーム（Vercel Functionsなど）ではハブをホストできません。Vercelでは、ハブを独立したNodeサービスとして動かしてください。[ハブをマウントする](/docs/ja/guides/mount-the-hub/)のサーバーレスホスティング（Vercel、Netlify）の説明を参照してください。
+ハブは接続中のすべてのコンピュータとWebSocketを開いたままにするため、HTTPサーバーにアクセスできる常駐のNodeプロセスが必要です。Next.jsのルートハンドラーだけではWebSocketのアップグレードを受け付けられず、サーバーレスプラットフォーム（Vercel Functionsなど）ではハブをホストできません。Vercelでは、ハブを独立したNodeサービスとして動かしてください。[ハブをマウントする：サーバーレスでのホスティング](/docs/ja/guides/mount-the-hub/#サーバーレスでのホスティングvercelnetlify)を参照してください。
 :::
 
 ## 1. インストールする
@@ -308,7 +308,7 @@ export function ApprovePage({
 }
 ```
 
-承認ページ（いちばん簡単なのはすべてのページ）でフレームへの埋め込みを拒否します：
+承認ページで（いちばん簡単なのはすべてのページで）フレームへの埋め込みを拒否します：
 
 :::caution[ファイル全体を置き換える]
 最近の`create-next-app`テンプレートは`next.config.ts`に`cacheComponents: true`を追加します。これは`/device`ページの`export const dynamic = 'force-dynamic'`と競合します（`next build`が「Route segment config "dynamic" is not compatible with `nextConfig.cacheComponents`」で失敗します）。生成されたファイルにマージするのではなく、次のファイルで置き換えてください。
@@ -396,4 +396,4 @@ curl -s http://localhost:3000/api/uncage/install.sh | head -3
 - [スキルを書く](/docs/ja/guides/write-skills/)、[実行ごとに選ぶ](/docs/ja/guides/select-manifest/)。
 - [認証とデバイスの承認](/docs/ja/guides/auth-and-device-approval/)：実際のサインインを接続します。
 - [マルチノード](/docs/ja/guides/multi-node/)：ロードバランサーの背後でPostgres + Redisを使います。
-- **プロキシの背後にデプロイする前に**：クライアントIPを設定してください（`trust proxy`または`rateLimits.clientIp`）。設定しないと、すべてのユーザーが`uncage setup`のレート制限を1つの枠で共有することになります。[ハブをマウントする](/docs/ja/guides/mount-the-hub/)のリバースプロキシ・ロードバランサーに関する説明を参照してください。
+- **プロキシの背後にデプロイする前に**：クライアントIPを設定してください（`trust proxy`または`rateLimits.clientIp`）。設定しないと、すべてのユーザーが`uncage setup`のレート制限を1つの枠で共有することになります。[プロキシの背後で](/docs/ja/guides/mount-the-hub/#リバースプロキシやロードバランサーの背後で)を参照してください。

@@ -9,13 +9,13 @@ description: Uncageのすべての用語（エージェント、コンピュー�
 | --- | --- | --- | --- |
 | **Connected モード**（Connected Mode） | ウェブサイトが、ハブを通じて各ユーザー自身のコンピュータ上のClaude Codeを動かします。 | `@uncage/hub`、`@uncage/agent` | |
 | **Local モード**（Local Mode） | アプリが、ローカルデーモンと同一オリジンのプロキシを通じて、自身が動いているマシン上のClaude Codeを動かします。 | `uncage serve`、`createUncageHandler` | |
-| **ウェブサイト／サイト**（Website / site） | あなたのウェブアプリケーション。ハブを1つ動かします。コンピュータはサイトのidと名前でウェブサイトを識別します。 | `HubOptions.site`、`publicUrl` | site / 网站 |
+| **ウェブサイト／サイト**（Website / site） | あなたのウェブアプリケーション。ハブを1つ動かします。コンピュータはサイトのIDと名前でウェブサイトを識別します。 | `HubOptions.site`、`publicUrl` | site / 网站 |
 | **ハブ**（Hub） | ウェブサイトのNodeバックエンドにマウントするUncageの部品：デバイスログイン、コンピュータとの接続、ブラウザ向けAPI、サイトツール。 | `createHub()`、`Hub` | |
 | **ベースパス**（Base path） | ハブをマウントする場所。 | `basePath`、デフォルトは`/api/uncage` | |
 | **コンピュータ／マシン**（Computer / machine） | あなたのウェブサイトに接続された1人のユーザーのコンピュータ。APIでは「machine」、UIでは「computer」と呼びます。 | `MachineInfo`、`machineId`、`useMachines()` | computer / 电脑 |
 | **エージェント**（Agent） | ユーザーのコンピュータ上でハブに接続し、Claude Codeを実行するバックグラウンドプロセス。 | `uncage agent`、`@uncage/agent` | the agent / 守护进程 |
 | **オンライン**（Online） | コンピュータのWebSocketが接続されていて、ハートビートに応答している状態。応答が途絶えると約30秒以内にオフラインになります。 | `MachineInfo.online` | online / 在线、offline / 离线 |
-| **ペアリング／デバイスログイン**（Pairing / device login） | コンピュータをユーザーに紐付けること：`uncage setup`がコードを取得し、ユーザーが`/device`でそれを承認します。 | `approveDevice`、`lookupDevice`、`denyDevice` | |
+| **ペアリング／デバイスログイン**（Pairing / device login） | コンピュータをユーザーに紐づけること：`uncage setup`がコードを取得し、ユーザーが`/device`でそれを承認します。 | `approveDevice`、`lookupDevice`、`denyDevice` | |
 | **ユーザーコード**（User code） | ユーザーが照合して承認する8文字のコード（`ABCD-EFGH`）。有効期間は10分です。 | `?code=` | |
 | **承認ページ**（Approval page） | サインイン中のユーザーがコードを承認する、あなたの`/device`ページ。 | `verificationPath`、`<ApproveDevice>` | |
 | **マシントークン**（Machine token） | コンピュータが1つのウェブサイトに接続するときに使う秘密の値。`~/.uncage/agent.yaml`にのみ保存されます。 | | |

@@ -89,7 +89,7 @@ sequenceDiagram
 
 2. `install.sh`はハブが配信する固定のスクリプトです。macOS、Node.js 22以降、npmを確認し、Claude Codeが見つからなければインストール方法を案内し、`@uncage/cli`をグローバルにインストールします。それ以外は何もダウンロードしません。
 3. `uncage setup`がデバイスログインを開始します。8文字のコード（有効期間10分）を取得し、`https://your.site/device?code=…`を開きます。
-4. あなたのサイトにサインインしたユーザーがコードを確認し、**Approve**（承認）をクリックします。承認ページは`hub.approveDevice(code, user)`を呼び出します。これでコンピュータがそのユーザーに紐付けられます。
+4. あなたのサイトにサインインしたユーザーがコードを確認し、**Approve**（承認）をクリックします。承認ページは`hub.approveDevice(code, user)`を呼び出します。これでコンピュータがそのユーザーに紐づけられます。
 5. CLIは**マシントークン**（ランダムな値で、コンピュータとウェブサイトの組み合わせごとに1つ）を受け取り、`~/.uncage/agent.yaml`（モード0600）に保存し、エージェントをlaunchdサービスとしてインストールします。
 6. エージェントが`wss://your.site/api/uncage/agent`に接続します。ページの表示が「Waiting for your computer…」（コンピュータを待機中）から「Connected」（接続済み）に切り替わります。
 
