@@ -21,3 +21,6 @@ body { display: flex; flex-direction: column; }
 .demo-login input { font: inherit; padding: 8px 12px; border: 1px solid #d0d3d9; border-radius: 8px; }
 .demo-warning { background: #fff7e6; border: 1px solid #ffd591; border-radius: 8px; padding: 8px 12px; font-size: 13px; }
 .demo-device { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.demo-banner { flex: none; background: #fff7e6; border-bottom: 1px solid #ffd591; padding: 6px 20px; font-size: 13px; text-align: center; }
+.demo-banner a { color: inherit; font-weight: 600; }
+.demo-btn-primary { background: #1f2329; color: #fff; border-color: #1f2329; padding: 8px 16px; }

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
+import { docsUrl, isPublicDemo } from '../lib/config.ts';
 import { currentUser } from '../lib/session.ts';
 import './demo.css';
 
@@ -7,9 +8,21 @@ export const metadata: Metadata = { title: 'Uncage · Connected demo' };
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const user = await currentUser();
+  const docs = docsUrl();
   return (
     <html lang="zh-CN">
       <body>
+        {isPublicDemo() ? (
+          <div className="demo-banner" role="note">
+            临时体验环境：数据可能随时清空，请不要放重要内容。Claude Code 在你自己的电脑上运行，用你自己的 Claude 账号。
+            {docs ? (
+              <>
+                {' '}
+                <a href={docs}>了解 Uncage →</a>
+              </>
+            ) : null}
+          </div>
+        ) : null}
         <header className="demo-nav">
           <a className="demo-brand" href="/">
             Uncage Connected Demo

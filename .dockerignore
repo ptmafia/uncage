@@ -1,0 +1,12 @@
+# Build context is the repository root (examples/connected-demo/Dockerfile builds the workspace).
+**/node_modules
+**/.next
+**/dist
+**/.turbo
+**/.data
+**/*.tsbuildinfo
+**/.DS_Store
+.git
+.superpowers
+e2e/**/results
+apps/docs/src/content/docs/api

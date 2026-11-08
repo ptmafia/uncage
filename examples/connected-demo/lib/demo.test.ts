@@ -5,7 +5,8 @@ import type { ToolContext } from '@uncage/hub';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assetCsp } from './asset-csp.ts';
 import { createAsset, getAsset, listAssets, publishAsset, readAssetFile } from './assets.ts';
-import { normalizeUsername, readCookie, secret, signUser, verifyUser } from './auth.ts';
+import { guestUsername, normalizeUsername, readCookie, secret, signUser, verifyUser } from './auth.ts';
+import { isPublicDemo, publicUrl } from './config.ts';
 import { isSameOrigin } from './csrf.ts';
 import { forwardedClient } from './hub.ts';
 import { safeNext } from './session-utils.ts';
@@ -64,6 +65,28 @@ describe('demo cookie sign-in', () => {
   it('uses the rightmost X-Forwarded-For entry behind the dev proxy', () => {
     expect(forwardedClient(new Request('http://x/', { headers: { 'x-forwarded-for': '1.1.1.1, 10.0.0.2' } }))).toBe('10.0.0.2');
     expect(forwardedClient(new Request('http://x/'))).toBeUndefined();
+  });
+});
+
+describe('public demo settings', () => {
+  it('hands out random guest names that are valid usernames and never repeat', () => {
+    const names = new Set(Array.from({ length: 200 }, () => guestUsername()));
+    expect(names.size).toBe(200);
+    for (const n of names) {
+      expect(n).toMatch(/^guest-[a-z2-7]{12}$/);
+      expect(normalizeUsername(n)).toBe(n);
+    }
+  });
+  it('turns public mode on only with DEMO_PUBLIC=1', () => {
+    expect(isPublicDemo({})).toBe(false);
+    expect(isPublicDemo({ DEMO_PUBLIC: '1' })).toBe(true);
+    expect(isPublicDemo({ DEMO_PUBLIC: 'true' })).toBe(false);
+  });
+  it('derives the public URL from PUBLIC_URL, then Railway, then Render, then localhost', () => {
+    expect(publicUrl({ PUBLIC_URL: 'https://demo.example/', RAILWAY_PUBLIC_DOMAIN: 'x.up.railway.app' })).toBe('https://demo.example');
+    expect(publicUrl({ RAILWAY_PUBLIC_DOMAIN: 'x.up.railway.app' })).toBe('https://x.up.railway.app');
+    expect(publicUrl({ RENDER_EXTERNAL_URL: 'https://x.onrender.com/' })).toBe('https://x.onrender.com');
+    expect(publicUrl({ PORT: '4000' })).toBe('http://localhost:4000');
   });
 });
 

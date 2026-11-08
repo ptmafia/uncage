@@ -11,6 +11,12 @@ import { dataDir } from './config.ts';
 export const SESSION_COOKIE = 'demo_user';
 const USERNAME = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 
+/** A random, unguessable guest name for the public demo (`guest-` + 12 base32 characters, 60 bits). */
+export function guestUsername(): string {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz234567';
+  return `guest-${Array.from(randomBytes(12), (b) => alphabet[b & 31]).join('')}`;
+}
+
 /** Usernames are lower-case `[a-z0-9_-]`, 1–32 chars. Returns the normalized name or null. */
 export function normalizeUsername(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;

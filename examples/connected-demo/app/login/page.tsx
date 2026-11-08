@@ -1,7 +1,22 @@
+import { isPublicDemo } from '../../lib/config.ts';
 import { safeNext } from '../../lib/session-utils.ts';
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string; error?: string }> }) {
   const { next, error } = await searchParams;
+  if (isPublicDemo()) {
+    return (
+      <form className="demo-login" action="/auth/login" method="post">
+        <h1>开始体验</h1>
+        <p className="demo-note">
+          这是一个公开的临时体验站。点击下面的按钮，网站会给你分配一个随机的访客身份（保存在这个浏览器里），不需要注册。
+        </p>
+        <input type="hidden" name="next" value={safeNext(next)} />
+        <button className="demo-btn demo-btn-primary" type="submit">
+          以访客身份进入
+        </button>
+      </form>
+    );
+  }
   return (
     <form className="demo-login" action="/auth/login" method="post">
       <h1>登录</h1>
