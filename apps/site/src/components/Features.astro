@@ -7,8 +7,8 @@ interface Props {
 }
 
 const t = getDict(Astro.props.locale).features;
-const availableIcons: IconName[] = ['zap', 'wrench', 'book', 'database', 'layout', 'nodes', 'plug'];
-const soonIcons: IconName[] = ['terminal', 'monitor', 'phone', 'cloud'];
+const availableIcons: IconName[] = ['zap', 'wrench', 'book', 'database', 'layout', 'cloud', 'plug'];
+const soonIcons: IconName[] = ['terminal', 'monitor', 'phone'];
 ---
 
 <section class="section" id="features" aria-labelledby="features-title">
@@ -102,7 +102,7 @@ const soonIcons: IconName[] = ['terminal', 'monitor', 'phone', 'cloud'];
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .later {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .feat {
     background: var(--surface);

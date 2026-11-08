@@ -24,9 +24,9 @@ test('English homepage: language, headline, navigation, CTAs, Coming soon, hrefl
     await expect(page.locator(sel)).toHaveAttribute('href', '/docs/start/try-the-demo/');
   }
 
-  // Four Coming soon features, each badged (the group heading "Coming soon" is separate).
-  await expect(page.locator('[data-soon-badge]')).toHaveCount(4);
-  await expect(page.locator('[data-soon-badge]', { hasText: /^Coming soon$/ })).toHaveCount(4);
+  // Three Coming soon features, each badged (the group heading "Coming soon" is separate).
+  await expect(page.locator('[data-soon-badge]')).toHaveCount(3);
+  await expect(page.locator('[data-soon-badge]', { hasText: /^Coming soon$/ })).toHaveCount(3);
   await expect(page.locator('#features li.feat:not(.soon)')).toHaveCount(7);
   // The 7th card (any ACP agent) spans the whole row under the 3×2 grid.
   const grid = await page.locator('#features ul.now').boundingBox();
@@ -74,7 +74,7 @@ test('zh and ja homepages: language, translated copy, docs links, switcher, OG i
     for (const sel of ['header a.cta', '[data-cta="primary"]', '[data-cta="final"]']) {
       await expect(page.locator(sel)).toHaveAttribute('href', `${c.docs}start/try-the-demo/`);
     }
-    await expect(page.locator('[data-soon-badge]', { hasText: new RegExp(`^${c.soon}$`) })).toHaveCount(4);
+    await expect(page.locator('[data-soon-badge]', { hasText: new RegExp(`^${c.soon}$`) })).toHaveCount(3);
     await expect(page.locator('#features li.feat:not(.soon)')).toHaveCount(7);
     await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', new RegExp(`${c.path}$`));
     await expect(page.locator('meta[property="og:image"]')).toHaveAttribute('content', new RegExp(`/og/og-${c.og}\\.png$`));

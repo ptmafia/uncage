@@ -131,8 +131,8 @@ export const zh: Dict = {
         body: 'Claude Code 风格的输入框，支持选择模型、推理强度和权限模式，还有附件与语音输入。',
       },
       {
-        title: '横向扩展',
-        body: '借助 Postgres 和 Redis 适配器，hub 可以在任意负载均衡器之后多节点运行。',
+        title: '随处运行',
+        body: '长期运行的 Node 服务器、Vercel、Cloudflare Workers 或任何 Fetch 平台均可。FaaS 模式只需要 Postgres；加上 Redis 即可横向扩展。',
       },
       {
         title: '任意 ACP agent',
@@ -152,16 +152,12 @@ export const zh: Dict = {
         title: '更多入口',
         body: '移动应用、聊天应用和浏览器扩展，驱动同一套本地 harness。',
       },
-      {
-        title: '适配 Serverless 的传输层',
-        body: '把 hub 部署在 Vercel 或 Netlify 上。目前 WebSocket 仍需要一个长期运行的 Node 进程。',
-      },
     ],
   },
   code: {
     kicker: '面向开发者',
     title: '挂载 hub，放入对话框。',
-    sub: '你的认证、你的数据库、你的 Node 服务器。Uncage 直接接入你现有的技术栈。',
+    sub: '你的认证、你的数据库、你的服务器或函数平台。Uncage 直接接入你现有的技术栈。',
     moreTitle: '从零到连上一台电脑',
     moreBody: '快速入门会一步步带你搭建一个 Next.js 应用，包含 hub、设备授权页面和你的第一个网站工具。Express、Fastify 和 Hono 同样适用。',
     more: '查看 Connected 模式快速入门',

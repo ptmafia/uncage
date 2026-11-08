@@ -105,4 +105,11 @@ describe('features', () => {
       expect(d.features.available[6].title).toMatch(/ACP/);
     }
   });
+
+  it('no locale still lists serverless transport as coming soon', () => {
+    for (const d of [getDict('en'), getDict('zh'), getDict('ja')]) {
+      expect(JSON.stringify(d.features.soon)).not.toMatch(/Serverless|无服务器|サーバーレス|Vercel/);
+      expect(d.features.soon).toHaveLength(3);
+    }
+  });
 });

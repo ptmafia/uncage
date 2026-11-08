@@ -110,7 +110,7 @@ export interface Dict {
     soonBadge: string;
     /** Six cards in a 3×2 grid, then the full-width “Any ACP agent” row. */
     available: Seven<Feature>;
-    soon: Four<Feature>;
+    soon: Three<Feature>;
   };
   code: {
     kicker: string;

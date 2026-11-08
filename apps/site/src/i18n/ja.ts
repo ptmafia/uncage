@@ -137,8 +137,8 @@ export const ja: Dict = {
         body: 'Claude Code風のコンポーザー。モデル、推論の強さ、パーミッションモード、ファイル添付、音声入力に対応。',
       },
       {
-        title: 'スケールアウト',
-        body: 'PostgresとRedisのアダプターで、ハブを任意のロードバランサー配下の複数ノードで動かせます。',
+        title: 'どこでも動く',
+        body: '常時稼働のNodeサーバー、Vercel、Cloudflare Workers、あらゆるFetchプラットフォームで動作。FaaSモードに必要なのはPostgresだけ。Redisを足せばスケールアウトできます。',
       },
       {
         title: 'あらゆるACP エージェント',
@@ -158,16 +158,12 @@ export const ja: Dict = {
         title: 'その他の入口',
         body: 'モバイルアプリ、チャットアプリ、ブラウザ拡張から、同じローカルハーネスを動かす。',
       },
-      {
-        title: 'サーバーレス対応のトランスポート',
-        body: 'ハブをVercelやNetlifyでホスト。現在はWebSocketのために、常時稼働のNodeプロセスが必要です。',
-      },
     ],
   },
   code: {
     kicker: '開発者向け',
     title: 'ハブをマウントして、チャットを置く。',
-    sub: '認証も、データベースも、Nodeサーバーも、今あるものをそのまま。Uncageは既存の構成に組み込めます。',
+    sub: '認証も、データベースも、サーバーや関数プラットフォームも、今あるものをそのまま。Uncageは既存の構成に組み込めます。',
     moreTitle: 'ゼロから、コンピュータの接続まで',
     moreBody: 'クイックスタートでは、ハブ、デバイスの承認ページ、最初のサイトツールを備えたNext.jsアプリを順を追って作ります。Express、Fastify、Honoでも動きます。',
     more: 'Connectedモードのクイックスタートへ',

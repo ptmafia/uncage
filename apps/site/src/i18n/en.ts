@@ -128,8 +128,8 @@ export const en: Dict = {
         body: 'A Claude Code-style composer with models, effort, permission modes, attachments and voice input.',
       },
       {
-        title: 'Scales out',
-        body: 'Postgres and Redis adapters run the hub on many nodes behind any load balancer.',
+        title: 'Runs anywhere',
+        body: 'A long-running Node server, Vercel, Cloudflare Workers or any Fetch platform. FaaS mode needs only Postgres; add Redis to scale out.',
       },
       {
         title: 'Any ACP agent',
@@ -149,16 +149,12 @@ export const en: Dict = {
         title: 'More entry points',
         body: 'Mobile apps, chat apps and browser extensions driving the same local harness.',
       },
-      {
-        title: 'Serverless-ready transport',
-        body: 'Host the hub on Vercel or Netlify. Today it needs a long-running Node process for WebSockets.',
-      },
     ],
   },
   code: {
     kicker: 'For developers',
     title: 'Mount a hub. Drop in a chat.',
-    sub: 'Your auth, your database, your Node server. Uncage plugs into what you run today.',
+    sub: 'Your auth, your database, your server or functions platform. Uncage plugs into what you run today.',
     moreTitle: 'From zero to a connected computer',
     moreBody: 'The quickstart builds a Next.js app with the hub, the device approval page and your first site tool, step by step. Express, Fastify and Hono work too.',
     more: 'Follow the Connected Mode quickstart',
