@@ -1,10 +1,21 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig } from './config.js';
 
-const tmp = () => mkdtemp(join(tmpdir(), 'uncage-cfg-'));
+/** Tmp dirs created by this file's tests; removed after each test. */
+const madeDirs: string[] = [];
+const mkTmp = async (prefix: string): Promise<string> => {
+  const d = await mkdtemp(join(tmpdir(), prefix));
+  madeDirs.push(d);
+  return d;
+};
+afterEach(async () => {
+  await Promise.all(madeDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
+});
+
+const tmp = () => mkTmp('uncage-cfg-');
 
 describe('loadConfig', () => {
   it('defaults with no file', async () => {

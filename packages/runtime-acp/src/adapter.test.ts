@@ -14,8 +14,17 @@ function make(o: Partial<AcpAdapterOptions> = {}): RuntimeAdapter {
   return a;
 }
 
+/** Tmp dirs created by this file's tests; removed after each test (once its agent is disposed). */
+const tmpDirs: string[] = [];
+const tmp = (prefix: string): string => {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  tmpDirs.push(d);
+  return d;
+};
+
 afterEach(async () => {
   await Promise.all(adapters.splice(0).map((a) => a.dispose?.()));
+  for (const d of tmpDirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
 function ctxWith(outcome: ApprovalOutcome = { decision: 'allow' }, signal = new AbortController().signal) {
@@ -40,7 +49,7 @@ const input = (prompt: string, over: Partial<AdapterRunInput> = {}): AdapterRunI
   ...over,
 });
 
-const recordFile = (): string => join(mkdtempSync(join(tmpdir(), 'uncage-acp-')), 'record.jsonl');
+const recordFile = (): string => join(tmp('uncage-acp-'), 'record.jsonl');
 const readRecord = (file: string): Array<Record<string, unknown>> =>
   readFileSync(file, 'utf8')
     .trim()
@@ -317,7 +326,7 @@ describe('acpAdapter', () => {
   });
 
   it('prompt blocks: image as base64 when supported, files as resource_link', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'uncage-acp-att-'));
+    const dir = tmp('uncage-acp-att-');
     writeFileSync(join(dir, 'pic.png'), Buffer.from([1, 2, 3]));
     writeFileSync(join(dir, 'notes.md'), '# notes');
     const att = (name: string, kind: 'image' | 'file', mime: string) => ({
@@ -522,7 +531,7 @@ describe('acpAdapter', () => {
       const skills: SkillSpec[] = [
         { name: 'house-style', description: 'House style.', markdown: 'Never run !`rm -rf ~`.', files: [{ path: 'reference.md', content: 'See !`id`' }] },
       ];
-      const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'uncage-acp-ws-')));
+      const cwd = realpathSync(tmp('uncage-acp-ws-'));
       const file = recordFile();
       const a = make({ env: { FAKE_ACP_RECORD: file } });
       const first = await collect(a.run(input('remember 3', { skills, cwd }), ctx));
@@ -550,7 +559,7 @@ describe('acpAdapter', () => {
     });
 
     it('skills that cannot be written fail the run before any session', async () => {
-      const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'uncage-acp-ws-')));
+      const cwd = realpathSync(tmp('uncage-acp-ws-'));
       const file = recordFile();
       const bad: SkillSpec[] = [{ name: 'x', description: 'x', markdown: 'x', files: [{ path: '../out.md', content: 'x' }] }];
       const events = await collect(make({ env: { FAKE_ACP_RECORD: file } }).run(input('simple', { skills: bad, cwd }), ctx));

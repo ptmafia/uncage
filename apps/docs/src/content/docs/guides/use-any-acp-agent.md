@@ -43,7 +43,7 @@ runtimes:
 | `presets` | `auto` | `auto` registers each [preset](#presets) whose command is on PATH and that is not already listed in `agents`. `off`: none. |
 | `autoDetect` | `true` | Detect installed agents from the ACP registry. An agent is enabled only if it answers the ACP `initialize` handshake (cached per path and file version). `false`: no detection and no handshakes. |
 | `enable` | `[]` | Registry agents to run although they are not detected, for example agents that are downloaded with `npx` or `uvx`. Use `uncage runtimes enable <id>` rather than editing it. |
-| `consented` | `{}` | Per id in `enable`: the runner (`local`, `npx`, `uvx`), the command or package (any version), `args` and `env` you agreed to. If the registry later runs something else, the agent waits for `uncage runtimes enable` again. |
+| `consented` | `{}` | Per id in `enable`: the runner (`local`, `npx`, `uvx`), the command or package (any version), `args` and `env` you agreed to. A newer version of the same package runs without asking again; if the registry later runs anything else (another package or runner, other args or env), the agent waits for `uncage runtimes enable` again. |
 | `disable` | `[]` | Never register these, whatever else says so (`uncage runtimes disable <id>`). |
 | `agents` | `[]` | Agents you list yourself. They are always registered (if `enabled`). |
 | `agents[].id` | required | Lowercase letters, digits and `-`. The runtime id is `acp-<id>`. Unique. |
@@ -79,7 +79,7 @@ uncage runtimes enable gemini    # consent: prints exactly what will run, then r
 uncage runtimes disable gemini   # never register it
 ```
 
-In Local Mode (`uncage serve`), `uncage.config.yaml` accepts the same `runtimes.acp` block, except that `enable` and `consented` are ignored there: a project file cannot consent to running downloaded agents. `uncage doctor` and `uncage serve` print the command of every ACP agent the project file adds.
+In Local Mode (`uncage serve`), `uncage.config.yaml` accepts the same `runtimes.acp` block, except that `enable` and `consented` are ignored there: a project file cannot consent to running downloaded agents. `uncage doctor` and `uncage serve` print the command of every ACP agent the project file adds. Unlike downloaded agents, `agents[].command` in a project file runs without consent. Only run `uncage serve` in projects you trust, and read the commands it prints at startup.
 
 ## Presets
 

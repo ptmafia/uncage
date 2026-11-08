@@ -43,7 +43,7 @@ runtimes:
 | `presets` | `auto` | `auto`は、コマンドがPATH上にあり、`agents`にまだ書かれていない[プリセット](#プリセット)をすべて登録します。`off`：登録しません。 |
 | `autoDetect` | `true` | ACPレジストリからインストール済みのエージェントを検出します。ACPの`initialize`ハンドシェイクに応答したエージェントだけが有効になります（パスとファイルのバージョンごとにキャッシュ）。`false`：検出もハンドシェイクも行いません。 |
 | `enable` | `[]` | 検出されなくても実行するレジストリのエージェント。たとえば`npx`や`uvx`でダウンロードされるエージェントです。手で編集せず、`uncage runtimes enable <id>`を使ってください。 |
-| `consented` | `{}` | `enable`の各IDについて、同意した内容：実行方法（`local`、`npx`、`uvx`）、コマンドまたはパッケージ（バージョンは問わない）、`args`、`env`。レジストリが後で別のものを実行するようになると、そのエージェントは再度の`uncage runtimes enable`を待ちます。 |
+| `consented` | `{}` | `enable`の各IDについて、同意した内容：実行方法（`local`、`npx`、`uvx`）、コマンドまたはパッケージ（バージョンは問わない）、`args`、`env`。同じパッケージの新しいバージョンは、改めて同意しなくても実行されます。レジストリが後で別のもの（別のパッケージや実行方法、異なる`args`や`env`）を実行するようになると、そのエージェントは再度の`uncage runtimes enable`を待ちます。 |
 | `disable` | `[]` | 他の設定にかかわらず、これらは登録しません（`uncage runtimes disable <id>`）。 |
 | `agents` | `[]` | 自分で書くエージェント。`enabled`なら必ず登録されます。 |
 | `agents[].id` | 必須 | 英小文字、数字、`-`。ランタイムIDは`acp-<id>`です。重複不可。 |
@@ -79,7 +79,7 @@ uncage runtimes enable gemini    # consent: prints exactly what will run, then r
 uncage runtimes disable gemini   # never register it
 ```
 
-Local モード（`uncage serve`）では、`uncage.config.yaml`も同じ`runtimes.acp`ブロックを受け付けます。ただし`enable`と`consented`は無視されます。プロジェクトのファイルが、ダウンロードしたエージェントの実行に同意することはできないからです。`uncage doctor`と`uncage serve`は、プロジェクトのファイルが追加したACP エージェントごとにそのコマンドを表示します。
+Local モード（`uncage serve`）では、`uncage.config.yaml`も同じ`runtimes.acp`ブロックを受け付けます。ただし`enable`と`consented`は無視されます。プロジェクトのファイルが、ダウンロードしたエージェントの実行に同意することはできないからです。`uncage doctor`と`uncage serve`は、プロジェクトのファイルが追加したACP エージェントごとにそのコマンドを表示します。ダウンロードされるエージェントと違い、プロジェクトのファイルの`agents[].command`は同意なしに実行されます。信頼できるプロジェクトでだけ`uncage serve`を実行し、起動時に表示されるコマンドを確認してください。
 
 ## プリセット
 

@@ -43,7 +43,7 @@ runtimes:
 | `presets` | `auto` | `auto` 注册命令在 PATH 上、且没有在 `agents` 里列出的每个[预设](#预设)。`off`：一个都不注册。 |
 | `autoDetect` | `true` | 从 ACP registry 检测已安装的 agent。只有回应了 ACP `initialize` 握手的 agent 才会启用（按路径和文件版本缓存）。`false`：不检测，也不握手。 |
 | `enable` | `[]` | 即使没有检测到也要运行的 registry agent，例如通过 `npx` 或 `uvx` 下载的 agent。请用 `uncage runtimes enable <id>`，不要手动编辑。 |
-| `consented` | `{}` | `enable` 里每个 id 对应你同意运行的内容：运行方式（`local`、`npx`、`uvx`）、命令或包（任意版本）、`args` 和 `env`。如果 registry 之后改成运行别的东西，这个 agent 会等你再次执行 `uncage runtimes enable`。 |
+| `consented` | `{}` | `enable` 里每个 id 对应你同意运行的内容：运行方式（`local`、`npx`、`uvx`）、命令或包（任意版本）、`args` 和 `env`。同一个包的新版本无需再次同意就会运行；如果 registry 之后改成运行别的东西（换了包或运行方式，或 args、env 变了），这个 agent 会等你再次执行 `uncage runtimes enable`。 |
 | `disable` | `[]` | 无论其他设置怎么写，都不注册这些（`uncage runtimes disable <id>`）。 |
 | `agents` | `[]` | 你自己列出的 agent。只要 `enabled`，总会注册。 |
 | `agents[].id` | 必填 | 小写字母、数字和 `-`。运行时 id 为 `acp-<id>`。不能重复。 |
@@ -79,7 +79,7 @@ uncage runtimes enable gemini    # consent: prints exactly what will run, then r
 uncage runtimes disable gemini   # never register it
 ```
 
-在 Local 模式（`uncage serve`）中，`uncage.config.yaml` 接受同样的 `runtimes.acp` 配置块，只是其中的 `enable` 和 `consented` 会被忽略：项目文件不能代替用户同意运行下载的 agent。`uncage doctor` 和 `uncage serve` 会打印项目文件添加的每个 ACP agent 的命令。
+在 Local 模式（`uncage serve`）中，`uncage.config.yaml` 接受同样的 `runtimes.acp` 配置块，只是其中的 `enable` 和 `consented` 会被忽略：项目文件不能代替用户同意运行下载的 agent。`uncage doctor` 和 `uncage serve` 会打印项目文件添加的每个 ACP agent 的命令。与下载的 agent 不同，项目文件里 `agents[].command` 指定的命令无需同意就会运行。请只在你信任的项目中运行 `uncage serve`，并留意启动时打印的命令。
 
 ## 预设
 

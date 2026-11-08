@@ -14,6 +14,7 @@ export {
 export { toPromptBlocks } from './prompt.js';
 export { BRIDGE_TOKEN_ENV, bridgePath, SITE_MCP_SERVER, siteMcpDeclaration, startSiteMcpServer, type SiteMcpOptions, type SiteMcpServer } from './site-mcp.js';
 export { skillsPreamble } from './skills.js';
+export { redactAcpTraffic } from './traffic.js';
 export { ACP_PRESETS, acpName, isDisabled, resolveAcpAgents, type AcpAgentEntry, type AcpAgentsConfig, type AcpPreset } from './presets.js';
 export {
   ACP_PLATFORMS,

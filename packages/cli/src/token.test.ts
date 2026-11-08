@@ -1,11 +1,22 @@
-import { mkdtemp, readFile, stat, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, readFile, stat, writeFile, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ensureToken, ensureTokenAt } from './token.js';
 
+/** Tmp dirs created by this file's tests; removed after each test. */
+const madeDirs: string[] = [];
+const mkTmp = async (prefix: string): Promise<string> => {
+  const d = await mkdtemp(join(tmpdir(), prefix));
+  madeDirs.push(d);
+  return d;
+};
+afterEach(async () => {
+  await Promise.all(madeDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
+});
+
 const LONG = 'a'.repeat(32);
-const home = () => mkdtemp(join(tmpdir(), 'uncage-home-'));
+const home = () => mkTmp('uncage-home-');
 
 describe('ensureToken', () => {
   it('creates 0600 and is stable on second call', async () => {

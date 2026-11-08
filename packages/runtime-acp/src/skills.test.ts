@@ -1,9 +1,9 @@
-import { mkdtempSync, readFileSync, realpathSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SkillSpec } from '@uncage/protocol';
 import { materializeSkills } from '@uncage/protocol/node';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { ACP_SKILLS_ROOT, skillsPreamble } from './skills.js';
 
 const skill = (over: Partial<SkillSpec> = {}): SkillSpec => ({
@@ -16,7 +16,15 @@ const skill = (over: Partial<SkillSpec> = {}): SkillSpec => ({
   ],
   ...over,
 });
-const ws = (): string => realpathSync(mkdtempSync(join(tmpdir(), 'uncage-acp-skills-')));
+const dirs: string[] = [];
+const ws = (): string => {
+  const d = realpathSync(mkdtempSync(join(tmpdir(), 'uncage-acp-skills-')));
+  dirs.push(d);
+  return d;
+};
+afterEach(() => {
+  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
 
 describe('skillsPreamble', () => {
   it('is empty without skills', () => expect(skillsPreamble([])).toBe(''));
