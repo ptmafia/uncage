@@ -33,7 +33,7 @@ import {
   type StreamLine,
 } from '@uncage/protocol';
 import type { ClusterAdapter } from './cluster/cluster.js';
-import { compareVersions, machineChannel, type HubLogger, type MachineHub, type MachineLink } from './machines.js';
+import { compareVersions, machineChannel, UpstreamRetry, type HubLogger, type MachineHub, type MachineLink } from './machines.js';
 import type { RateLimiter } from './rate-limit.js';
 import type { HubStore, LinkState, MachineRecord } from './store/store.js';
 import { randomHex, readBody, unrefTimer } from './web.js';
@@ -370,6 +370,17 @@ export function httpTransport(ctx: HttpTransportContext) {
       const lease = m.msg.t === 'tool_call' ? ctx.toolLeaseMs : MESSAGE_LEASE_MS;
       const claim = (await store.claimInbox(machine.id, [m.id], { leaseUntil: iso(now + lease), now: iso(now) }))[m.id];
       if (claim === 'done') {
+        if (m.msg.t === 'tool_call') {
+          // Processed before, but the reply may never have reached the agent (a cut response):
+          // answer again from the stored outcome (the call is not run again).
+          try {
+            await machines.handleUpstream(link, m.msg);
+          } catch (err) {
+            if (!(err instanceof UpstreamRetry)) logger.error({ err, machineId: machine.id }, 'tool result replay failed');
+            retry.push(...body.msgs.slice(i).map((x) => x.id));
+            break;
+          }
+        }
         processed.push(m.id);
         continue;
       }
@@ -379,16 +390,17 @@ export function httpTransport(ctx: HttpTransportContext) {
       }
       try {
         await machines.handleUpstream(link, m.msg);
+        await store.completeInbox(machine.id, [m.id], iso(Date.now()));
       } catch (err) {
-        // Not applied (e.g. a transient store error): give the claim back so the agent's retry
-        // runs at once instead of waiting out the lease. Tool-handler errors never land here
-        // (they are the call's result).
-        logger.error({ err, machineId: machine.id, t: m.msg.t }, 'upstream message failed');
+        // Not applied, or not recorded as applied (e.g. a transient store error), or a tool call
+        // running elsewhere (`UpstreamRetry`): give the claim back so the agent's retry runs at
+        // once instead of waiting out the lease. Tool-handler errors never land here (they are the
+        // call's result); a retried tool call is answered from the store, never re-run.
+        if (!(err instanceof UpstreamRetry)) logger.error({ err, machineId: machine.id, t: m.msg.t }, 'upstream message failed');
         await store.releaseInbox(machine.id, [m.id]).catch((e: unknown) => logger.error({ err: e }, 'inbox release failed'));
         retry.push(...body.msgs.slice(i).map((x) => x.id));
         break;
       }
-      await store.completeInbox(machine.id, [m.id], iso(Date.now()));
       processed.push(m.id);
     }
     return json({ processed, retry, replies } satisfies HttpEventsResponse);

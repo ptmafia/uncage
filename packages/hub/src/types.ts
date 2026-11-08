@@ -94,11 +94,15 @@ export interface HubOptions {
   sseHeartbeatMs?: number;
   /** How long a browser request waits for the machine. Defaults to 30 000 ms. */
   commandTimeoutMs?: number;
-  /** A site tool handler still running after this fails with `tool_failed`. Defaults to 120 000 ms. */
+  /**
+   * A site tool handler still running after this fails with `tool_failed`. Defaults to 120 000 ms.
+   * Keep it below your platform's function duration limit: a call whose instance is stopped mid-handler
+   * fails with "Site tool "<name>" timed out on the website. Please try again." (it is never re-run).
+   */
   toolTimeoutMs?: number;
   /**
-   * Site tool calls one machine connection may have executing at once. Further calls fail at once
-   * with `tool_failed` (`details.reason: 'too_many_concurrent'`). Defaults to 8.
+   * Site tool calls one machine may have executing at once on one hub instance. Further calls fail at
+   * once with `tool_failed` (`details.reason: 'too_many_concurrent'`). Defaults to 8.
    */
   maxConcurrentToolCalls?: number;
   /**
@@ -139,7 +143,9 @@ export interface HubOptions {
   };
   /**
    * Retention (old run manifests, attachment copies, expired outbox items, finished inbox rows,
-   * old rate-limit windows, expired device codes). It runs at most once per `intervalMs` across
+   * old rate-limit windows, expired device codes), and failing site tool calls whose instance died
+   * mid-handler (their lease, `toolTimeoutMs` + 10 s, ran out: the machine gets the "timed out on
+   * the website" error; reported as `interruptedToolCalls`). It runs at most once per `intervalMs` across
    * every instance (a store lease): `attachWebSocket` runs it on a timer in a long-running process;
    * otherwise requests trigger it (in the background through `info.waitUntil` when the platform
    * provides it). A platform cron can also call `GET|POST <basePath>/maintenance`.

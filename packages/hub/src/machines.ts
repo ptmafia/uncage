@@ -1,5 +1,6 @@
 import { UncageError } from '@uncage/core/errors';
 import {
+  AgentFrameSchema,
   CONNECTED_PROTOCOL,
   ErrorBodySchema,
   FILE_CHUNK_BYTES,
@@ -21,8 +22,8 @@ import { z } from 'zod';
 import type { ClusterAdapter } from './cluster/cluster.js';
 import { PullAssembler, type PullOutcome } from './files.js';
 import { routedId, routeOf } from './ids.js';
-import type { HubStore, MachineRecord } from './store/store.js';
-import { sha256Hex, toBase64, unrefTimer, utf8Length } from './web.js';
+import type { HubStore, MachineRecord, ToolResultFrame } from './store/store.js';
+import { randomHex, sha256Hex, toBase64, unrefTimer, utf8Length } from './web.js';
 
 export interface HubLogger {
   warn(obj: unknown, msg?: string): void;
@@ -88,7 +89,15 @@ type NodeMsg =
   | { k: 'res'; id: string; ok: false; error: ErrorBody; machineId?: string }
   | { k: 'kick'; machineId: string; reason: 'revoked' | 'replaced'; except?: string }
   /** One frame of a chunked upload, forwarded as-is to the machine (`begin` registers the upload on the link). */
-  | { k: 'up'; id: string; machineId: string; frame: HubFrame };
+  | { k: 'up'; id: string; machineId: string; frame: HubFrame }
+  /** A file-pull frame from the machine that reached another instance, to the instance assembling the pull. */
+  | { k: 'pull'; id: string; machineId: string; frame: PullFrame }
+  /** A frame for a machine whose WebSocket this node holds (`deliver`). */
+  | { k: 'deliver'; machineId: string; frame: HubFrame };
+
+/** Machine → hub frames of a file pull. */
+type PullFrame = Extract<AgentFrame, { t: 'file_chunk' | 'file_done' | 'result' }>;
+const PULL_FRAMES = new Set(['file_chunk', 'file_done', 'result']);
 
 /** Shape check for cluster messages: anything else on a node channel is dropped. */
 const NodeMsgSchema = z.discriminatedUnion('k', [
@@ -96,6 +105,8 @@ const NodeMsgSchema = z.discriminatedUnion('k', [
   z.object({ k: z.literal('res'), id: z.string(), ok: z.boolean(), data: z.unknown().optional(), error: z.unknown().optional(), machineId: z.string().optional() }),
   z.object({ k: z.literal('kick'), machineId: z.string(), reason: z.enum(['revoked', 'replaced']), except: z.string().optional() }),
   z.object({ k: z.literal('up'), id: z.string(), machineId: z.string(), frame: HubFrameSchema }),
+  z.object({ k: z.literal('pull'), id: z.string(), machineId: z.string(), frame: AgentFrameSchema }),
+  z.object({ k: z.literal('deliver'), machineId: z.string(), frame: HubFrameSchema }),
 ]);
 const UPLOAD_FRAMES = new Set(['attachment_begin', 'attachment_chunk', 'attachment_end', 'attachment_abort']);
 
@@ -107,8 +118,21 @@ export const HTTP_PRESENCE = 'http';
 export const machineChannel = (machineId: string): string => `uncage:machine:${machineId}`;
 /** A `file_pull` in the outbox expires after this long. */
 const PULL_OUTBOX_TTL_MS = 30_000;
+/** Default expiry of a frame `deliver` writes to the outbox. */
+const DELIVER_OUTBOX_TTL_MS = 600_000;
 /** Upload frames are written to the outbox this many at a time. */
 const UPLOAD_OUTBOX_BATCH = 8;
+
+/**
+ * Thrown from `handleUpstream` when a message cannot be handled yet (a tool call running on another
+ * instance): the HTTP transport gives its inbox claim back and lists it in `retry`, without logging.
+ */
+export class UpstreamRetry extends Error {
+  constructor(message = 'retry later') {
+    super(message);
+    this.name = 'UpstreamRetry';
+  }
+}
 
 /** One connection of a machine to the hub, whatever carries it. */
 export interface MachineLink {
@@ -139,8 +163,6 @@ interface LinkState {
   ready: boolean;
   /** Aborted when the link is retired or its connection goes. */
   abort: AbortController;
-  /** Site tool calls from this link still executing. */
-  toolCalls: number;
 }
 
 type Timer = ReturnType<typeof setTimeout>;
@@ -173,7 +195,7 @@ export interface MachineHubDeps {
   pingIntervalMs: number;
   missedPings: number;
   commandTimeoutMs: number;
-  /** Site tool calls one connection may have executing at once; more fail with `too_many_concurrent`. */
+  /** Site tool calls one machine may have executing at once on this instance; more fail with `too_many_concurrent`. */
   maxConcurrentToolCalls: number;
   logger: HubLogger;
   /** After `welcome`: e.g. send replication `ack`s. */
@@ -182,9 +204,10 @@ export interface MachineHubDeps {
   onEvents(machine: MachineRecord, sessionId: string, events: UncageEvent[], send: (f: HubFrame) => void): Promise<void>;
   /**
    * A `tool_call` frame; resolves the `tool_result` frame to send back, or `null` to send nothing
-   * (the call was abandoned). `signal` aborts when this connection goes away.
+   * now (running elsewhere, or abandoned because its run ended: over HTTP the message is retried).
+   * A dropped connection never abandons the call.
    */
-  onToolCall(machine: MachineRecord, call: Extract<AgentFrame, { t: 'tool_call' }>, signal: AbortSignal): Promise<HubFrame | null>;
+  onToolCall(machine: MachineRecord, call: Extract<AgentFrame, { t: 'tool_call' }>): Promise<ToolResultFrame | null>;
 }
 
 /**
@@ -385,7 +408,7 @@ export class MachineHub {
     const abort = new AbortController();
     if (link.signal.aborted) abort.abort();
     else link.signal.addEventListener('abort', () => abort.abort(), { once: true });
-    this.links.set(link.linkId, { link, inflight: new Set(), queue: Promise.resolve(), dead: false, ready: false, abort, toolCalls: 0 });
+    this.links.set(link.linkId, { link, inflight: new Set(), queue: Promise.resolve(), dead: false, ready: false, abort });
   }
 
   /** The connection went away: retires the link (in-flight commands fail with `machine_offline`). */
@@ -518,24 +541,12 @@ export class MachineHub {
         return done;
       }
       case 'tool_call': {
-        if (s.toolCalls >= this.d.maxConcurrentToolCalls) {
-          const err = new UncageError('tool_failed', {
-            message: `Too many site tool calls at once (at most ${this.d.maxConcurrentToolCalls}).`,
-            details: { reason: 'too_many_concurrent' },
-          });
-          send({ t: 'tool_result', id: frame.id, ok: false, error: err.toBody() });
-          return;
-        }
-        s.toolCalls++;
-        // Not serialized: a slow tool must not hold up events.
-        try {
-          const f = await this.d.onToolCall(link.machine, frame, s.abort.signal);
-          if (f) send(f);
-        } catch (err) {
-          send({ t: 'tool_result', id: frame.id, ok: false, error: errorBody(err) });
-        } finally {
-          s.toolCalls--;
-        }
+        // Not serialized: a slow tool must not hold up events. The call outlives this connection:
+        // if it went away meanwhile, the result goes wherever the machine is now.
+        const f = await this.runToolCall(link.machine, frame);
+        if (!f) return;
+        if (!s.dead && !link.signal.aborted) send(f);
+        else await this.deliver(link.machine.id, f).catch((err: unknown) => this.d.logger.error({ err, machineId: link.machine.id }, 'tool result delivery failed'));
         return;
       }
       case 'file_chunk':
@@ -559,8 +570,34 @@ export class MachineHub {
     this.endPull(id, err);
   }
 
-  /** Site tool calls executing on this instance per machine connected over HTTP. */
-  private readonly httpToolCalls = new Map<string, number>();
+  /** Site tool calls executing on this instance per machine (either transport). */
+  private readonly toolCallsRunning = new Map<string, number>();
+
+  /**
+   * Runs one tool call under the per-machine, per-instance concurrency cap. Handler errors become an
+   * error `tool_result` (never a retry: a tool that ran is not re-run because it failed).
+   */
+  private async runToolCall(machine: MachineRecord, frame: Extract<AgentFrame, { t: 'tool_call' }>): Promise<ToolResultFrame | null> {
+    const machineId = machine.id;
+    const running = this.toolCallsRunning.get(machineId) ?? 0;
+    if (running >= this.d.maxConcurrentToolCalls) {
+      const err = new UncageError('tool_failed', {
+        message: `Too many site tool calls at once (at most ${this.d.maxConcurrentToolCalls}).`,
+        details: { reason: 'too_many_concurrent' },
+      });
+      return { t: 'tool_result', id: frame.id, ok: false, error: err.toBody() };
+    }
+    this.toolCallsRunning.set(machineId, running + 1);
+    try {
+      return await this.d.onToolCall(machine, frame);
+    } catch (err) {
+      return { t: 'tool_result', id: frame.id, ok: false, error: errorBody(err) };
+    } finally {
+      const n = (this.toolCallsRunning.get(machineId) ?? 1) - 1;
+      if (n > 0) this.toolCallsRunning.set(machineId, n);
+      else this.toolCallsRunning.delete(machineId);
+    }
+  }
 
   /**
    * One upstream message from an HTTP link (`POST /agent/events`), handled on whichever instance
@@ -595,9 +632,13 @@ export class MachineHub {
           this.pullResult(frame.id, pull, frame);
           return;
         }
-        // The command may have been sent by any instance: the reply goes to the node in the id.
+        // The command (or pull) may have been sent by any instance: the reply goes to the node in the id.
         const to = routeOf(frame.id);
         if (!to) return;
+        if (frame.id.startsWith('pull_')) {
+          if (to !== this.d.nodeId) await this.publish(to, { k: 'pull', id: frame.id, machineId, frame });
+          return;
+        }
         await this.publish(to, resMsg(machineId, frame));
         return;
       }
@@ -611,37 +652,26 @@ export class MachineHub {
         return;
       }
       case 'tool_call': {
-        // Handler errors become an error `tool_result` here (never a retry): a tool that ran is
-        // not re-run because it failed. Until Task 7's tool-call state, a call whose instance dies
-        // mid-handler is claimed for toolTimeoutMs + grace and then re-run by the agent's retry
-        // (at-least-once after an instance kill; Task 7 makes it at-most-once with an error).
-        const running = this.httpToolCalls.get(machineId) ?? 0;
-        if (running >= this.d.maxConcurrentToolCalls) {
-          const err = new UncageError('tool_failed', {
-            message: `Too many site tool calls at once (at most ${this.d.maxConcurrentToolCalls}).`,
-            details: { reason: 'too_many_concurrent' },
-          });
-          send({ t: 'tool_result', id: frame.id, ok: false, error: err.toBody() });
-          return;
-        }
-        this.httpToolCalls.set(machineId, running + 1);
-        try {
-          const f = await this.d.onToolCall(link.machine, frame, link.signal);
-          if (f) send(f);
-        } catch (err) {
-          send({ t: 'tool_result', id: frame.id, ok: false, error: errorBody(err) });
-        } finally {
-          const n = (this.httpToolCalls.get(machineId) ?? 1) - 1;
-          if (n > 0) this.httpToolCalls.set(machineId, n);
-          else this.httpToolCalls.delete(machineId);
-        }
+        // Exactly-once through the store's tool-call state (`onToolCall`): a retried message of a
+        // finished call is answered with the stored result; one still running on another instance
+        // (or abandoned because its run ended) is retried by the agent until its outcome is stored;
+        // one whose instance died is answered with the interrupted error, never re-run.
+        const f = await this.runToolCall(link.machine, frame);
+        if (!f) throw new UpstreamRetry();
+        send(f);
         return;
       }
       case 'file_chunk':
       case 'file_done': {
         const pull = pullOf(frame.id);
-        if (!pull) return;
-        this.pullFrame(frame.id, pull, frame);
+        if (pull) {
+          this.pullFrame(frame.id, pull, frame);
+          return;
+        }
+        // Started by another instance: forward it there (in order: the agent sends one message at
+        // a time and this resolves only once it is published). A failed publish rejects → retried.
+        const to = routeOf(frame.id);
+        if (to && to !== this.d.nodeId && frame.id.startsWith('pull_')) await this.publish(to, { k: 'pull', id: frame.id, machineId, frame });
         return;
       }
     }
@@ -719,6 +749,20 @@ export class MachineHub {
   }
 
   private async onNodeMessage(msg: NodeMsg): Promise<void> {
+    if (msg.k === 'pull') {
+      // Synchronous on purpose: chunks must reach the assembler in publish order.
+      const p = this.pulls.get(msg.id);
+      if (!p || p.state || p.machineId !== msg.machineId || !PULL_FRAMES.has(msg.frame.t) || msg.frame.id !== msg.id) return;
+      if (msg.frame.t === 'result') this.pullResult(msg.id, p, msg.frame);
+      else this.pullFrame(msg.id, p, msg.frame);
+      return;
+    }
+    if (msg.k === 'deliver') {
+      const s = this.live(msg.machineId);
+      if (s) await s.link.send(msg.frame);
+      else await this.deliver(msg.machineId, msg.frame, { viaOutbox: true }).catch((err: unknown) => this.d.logger.error({ err }, 'delivery failed'));
+      return;
+    }
     if (msg.k === 'up') {
       // Only upload frames of this very upload are forwarded, nothing else.
       if (!UPLOAD_FRAMES.has(msg.frame.t) || !('id' in msg.frame) || msg.frame.id !== msg.id) {
@@ -776,6 +820,28 @@ export class MachineHub {
     }
     s.inflight.add(msg.id);
     void s.link.send({ t: 'command', id: msg.id, op: msg.op, args: msg.args });
+  }
+
+  /**
+   * Durable delivery of a frame to wherever the machine is: its WebSocket on this node, the node
+   * holding its WebSocket (cluster `deliver`), or its outbox (HTTP, and an offline machine: the
+   * frame waits there until `expiresInMs`, read once the machine streams over HTTP; a WebSocket
+   * agent gets a tool result again by resending the call).
+   */
+  async deliver(machineId: string, frame: HubFrame, o: { expiresInMs?: number; viaOutbox?: boolean } = {}): Promise<void> {
+    if (!o.viaOutbox) {
+      const local = this.live(machineId);
+      if (local) {
+        await local.link.send(frame);
+        return;
+      }
+      const node = await this.d.cluster.getPresence(machineId);
+      if (node && node !== HTTP_PRESENCE && node !== this.d.nodeId) {
+        await this.publish(node, { k: 'deliver', machineId, frame });
+        return;
+      }
+    }
+    await this.enqueue(machineId, [{ msgId: `dlv_${randomHex(12)}`, msg: frame, ttlMs: o.expiresInMs ?? DELIVER_OUTBOX_TTL_MS }]);
   }
 
   /** Whether the machine currently has a connection on any node. */
@@ -924,6 +990,19 @@ export class MachineHub {
     if (!s && !http) throw new UncageError('machine_offline');
     if (signal?.aborted) throw new UncageError('tool_failed', { message: 'The tool call was abandoned.' });
     const id = routedId('pull', this.d.nodeId);
+    if (http) {
+      // Its frames may reach any instance, which forwards them on our node channel.
+      await this.acquire();
+      try {
+        return await this.startPull(id, machineId, sessionId, path, maxBytes, undefined, signal);
+      } finally {
+        this.release();
+      }
+    }
+    return this.startPull(id, machineId, sessionId, path, maxBytes, s, signal);
+  }
+
+  private startPull(id: string, machineId: string, sessionId: string, path: string, maxBytes: number, s: LinkState | undefined, signal?: AbortSignal): Promise<PullOutcome> {
     return new Promise<PullOutcome>((resolve, reject) => {
       const onAbort = () => this.endPull(id, new UncageError('tool_failed', { message: 'The tool call was abandoned.' }));
       const timer = setTimeout(() => this.pullIdle(id, path), PULL_IDLE_MS);
