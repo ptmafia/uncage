@@ -82,3 +82,33 @@ export async function probeNode(exec: ExecFn, nodePath: string): Promise<{ nodeE
 
 /** Major version of `v22.23.4` (NaN when unknown). */
 export const nodeMajor = (v: string | null): number => Number(/^v?(\d+)\./.exec(v ?? '')?.[1] ?? NaN);
+
+/**
+ * Values a service definition cannot hold safely. Every manager: no line breaks (a unit file or a
+ * task document would read them as new settings). Windows: no `%` in the program, its arguments or
+ * the working folder, because Task Scheduler expands `%NAME%` there and has no escape for it.
+ */
+export function assertDefinitionValues(spec: ServiceSpec, manager: 'systemd' | 'schtasks'): void {
+  const fields: Array<[string, string]> = [
+    ['Node path', spec.nodePath],
+    ['CLI path', spec.cliEntry],
+    ...spec.args.map((a, i): [string, string] => [`argument ${i + 1}`, a]),
+    ['working folder', spec.workingDir],
+    ['logs folder', spec.logsDir],
+    ['PATH', spec.env.PATH],
+    ['HOME', spec.env.HOME],
+  ];
+  for (const [what, v] of fields) {
+    if (/[\r\n]/.test(v)) throw new Error(`Cannot install the background agent: the ${what} contains a line break (${JSON.stringify(v)}).`);
+  }
+  if (manager === 'schtasks') {
+    for (const [what, v] of fields.slice(0, spec.args.length + 3)) {
+      if (v.includes('%')) {
+        throw new Error(
+          `Cannot install the background agent: the ${what} contains "%" (${v}), which Task Scheduler would expand as a variable. ` +
+            'Install Node / the CLI in a folder without "%", then run "uncage agent install" again.',
+        );
+      }
+    }
+  }
+}

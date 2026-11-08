@@ -55,6 +55,8 @@ export interface ServiceDeps {
   username?: string;
   /** Starts a detached, hidden process (the Windows Run-key fallback starts the agent now). Returns its pid. */
   spawnDetached?: (file: string, args: string[]) => number | undefined;
+  /** Windows: the command line of a running process (ownership check before `taskkill`). Default: PowerShell CIM. */
+  processCommandLine?: (pid: number) => Promise<string | null>;
   /** Windows build number (conhost `--headless` needs 17763+). Default from `os.release()`. */
   windowsBuild?: number;
 }

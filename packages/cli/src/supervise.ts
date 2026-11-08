@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { appendFile, rm, writeFile } from 'node:fs/promises';
+import { closeSync, openSync } from 'node:fs';
+import { appendFile, copyFile, rm, stat, truncate, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 /** Env var naming the supervisor's pid: the agent child exits when that process is gone. */
@@ -30,15 +31,29 @@ export interface SuperviseOptions {
   restartDelayMs?: number;
   /** Wait before restarting after a self-upgrade (exit 75; default 1 s). */
   upgradeDelayMs?: number;
+  /**
+   * Where the child's stdout and stderr go (appended; default `agent.err.log` beside `logFile`): a
+   * crash before the logger is up (a stack trace, a missing module) is not lost on Windows, where a
+   * task has no output redirection.
+   */
+  errLogFile?: string;
   /** Injectable for tests. */
-  start?: (file: string, args: string[], env: NodeJS.ProcessEnv) => SupervisedChild;
+  start?: (file: string, args: string[], env: NodeJS.ProcessEnv, errLogFile?: string) => SupervisedChild;
   sleep?: (ms: number) => Promise<void>;
   /** Called once the supervisor should stop (signal); resolves the loop with 0. */
   stopSignal?: Promise<void>;
 }
 
-function defaultStart(file: string, args: string[], env: NodeJS.ProcessEnv): SupervisedChild {
-  const child = spawn(file, args, { env, stdio: 'ignore', windowsHide: true });
+function defaultStart(file: string, args: string[], env: NodeJS.ProcessEnv, errLogFile?: string): SupervisedChild {
+  let fd: number | undefined;
+  try {
+    if (errLogFile) fd = openSync(errLogFile, 'a');
+  } catch {
+    fd = undefined;
+  }
+  const out = fd ?? 'ignore';
+  const child = spawn(file, args, { env, stdio: ['ignore', out, out], windowsHide: true });
+  if (fd !== undefined) closeSync(fd); // the child holds its own handle
   const exited = new Promise<number | null>((resolve) => {
     child.on('exit', (code) => resolve(code));
     child.on('error', () => resolve(1));
@@ -64,6 +79,8 @@ export async function superviseAgent(o: SuperviseOptions): Promise<number> {
     current?.kill();
   });
   const pidFile = o.pidFile ?? (o.logFile ? supervisorPidPath(dirname(o.logFile)) : undefined);
+  const errLogFile = o.errLogFile ?? (o.logFile ? join(dirname(o.logFile), 'agent.err.log') : undefined);
+  if (errLogFile) await rotateLog(errLogFile);
   if (pidFile) await writeFile(pidFile, `${process.pid}\n`).catch(() => undefined);
   const done = async (): Promise<number> => {
     if (pidFile) await rm(pidFile, { force: true }).catch(() => undefined);
@@ -72,7 +89,7 @@ export async function superviseAgent(o: SuperviseOptions): Promise<number> {
   const note = (msg: string) =>
     o.logFile ? appendFile(o.logFile, `${JSON.stringify({ level: 40, time: Date.now(), msg: `supervisor: ${msg}` })}\n`).catch(() => undefined) : undefined;
   for (;;) {
-    current = start(o.execPath, [o.entry, ...o.args], env);
+    current = start(o.execPath, [o.entry, ...o.args], env, errLogFile);
     const code = await current.exited;
     if (stopping || code === 0) return done();
     const delay = code === UPGRADE_EXIT ? (o.upgradeDelayMs ?? 1_000) : (o.restartDelayMs ?? 10_000);
@@ -96,4 +113,23 @@ export function watchSupervisor(env: NodeJS.ProcessEnv = process.env, exit: (cod
       if ((e as NodeJS.ErrnoException).code !== 'EPERM') exit(0);
     }
   }, 1_000).unref();
+}
+
+/** Logs are capped at 10 MB: the older part is kept once as `<file>.1`. */
+export const MAX_LOG_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Rotates `path` when it is over `max` bytes: copied to `<path>.1` (replacing an older one), then
+ * truncated in place, so a writer that keeps the file open in append mode (systemd, launchd, a pino
+ * stream) goes on writing at the start of the same file. Missing files are fine.
+ */
+export async function rotateLog(path: string, max = MAX_LOG_BYTES): Promise<boolean> {
+  try {
+    if ((await stat(path)).size <= max) return false;
+    await copyFile(path, `${path}.1`);
+    await truncate(path, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }

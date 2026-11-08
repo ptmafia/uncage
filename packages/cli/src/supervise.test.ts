@@ -2,7 +2,8 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { SUPERVISOR_PID_ENV, superviseAgent, watchSupervisor, type SupervisedChild } from './supervise.js';
+import { writeFile } from 'node:fs/promises';
+import { MAX_LOG_BYTES, rotateLog, SUPERVISOR_PID_ENV, superviseAgent, watchSupervisor, type SupervisedChild } from './supervise.js';
 
 /** Children that exit with the given codes, in order. */
 function scripted(codes: Array<number | null>) {
@@ -66,5 +67,35 @@ describe('superviseAgent (the Windows service restarts the agent itself)', () =>
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("appends the agent's stdout and stderr to agent.err.log (a crash before the logger starts is kept)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'uncage-sup-'));
+    const marker = join(dir, 'ran-once');
+    // First run: prints to both streams and crashes; second run: exits cleanly.
+    const code = `const fs=require('fs');if(!fs.existsSync(${JSON.stringify(marker)})){fs.writeFileSync(${JSON.stringify(marker)},'');console.log('starting');console.error('Error: Cannot find module x');process.exit(3)}process.exit(0)`;
+    expect(await superviseAgent({ execPath: process.execPath, entry: '-e', args: [code], logFile: join(dir, 'agent.log'), restartDelayMs: 10 })).toBe(0);
+    const err = await readFile(join(dir, 'agent.err.log'), 'utf8');
+    expect(err).toContain('starting');
+    expect(err).toContain('Error: Cannot find module x');
+    expect(await readFile(join(dir, 'agent.log'), 'utf8')).toContain('agent exited with 3; restarting in 10 ms');
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('rotateLog', () => {
+  it('over the cap: copied to .1 (replacing the older one) and truncated in place; small or missing files are left alone', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'uncage-rot-'));
+    const f = join(dir, 'agent.log');
+    expect(await rotateLog(f)).toBe(false);
+    await writeFile(f, 'small');
+    expect(await rotateLog(f)).toBe(false);
+    await writeFile(`${f}.1`, 'older');
+    await writeFile(f, 'x'.repeat(2048));
+    expect(await rotateLog(f, 1024)).toBe(true);
+    expect((await readFile(`${f}.1`, 'utf8')).length).toBe(2048);
+    expect(await readFile(f, 'utf8')).toBe('');
+    expect(MAX_LOG_BYTES).toBe(10 * 1024 * 1024);
+    await rm(dir, { recursive: true, force: true });
   });
 });

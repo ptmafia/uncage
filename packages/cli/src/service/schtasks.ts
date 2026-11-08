@@ -1,14 +1,18 @@
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { release } from 'node:os';
-import { join } from 'node:path';
+import { join, win32 } from 'node:path';
 import { windowsUser } from '@uncage/agent';
-import { probeNode } from './spec.js';
+import { assertDefinitionValues, probeNode } from './spec.js';
 import type { AgentService, ServiceDeps, ServiceKind, ServiceSpec, ServiceStatus } from './types.js';
 
 export const TASK_NAME = 'UncageAgent';
 export const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
-const CONHOST = 'conhost.exe';
+/** `%SystemRoot%\System32\conhost.exe`, resolved (the Run key and a direct start do not expand variables). */
+export function conhostPath(env: NodeJS.ProcessEnv = process.env): string {
+  const root = env.SystemRoot ?? env.SYSTEMROOT ?? env.windir ?? env.WINDIR ?? 'C:\\Windows';
+  return win32.join(root, 'System32', 'conhost.exe');
+}
 /** conhost `--headless` (no console window) exists from Windows 10 1809 (build 17763). */
 const HEADLESS_MIN_BUILD = 17763;
 
@@ -80,9 +84,9 @@ export function winSplit(line: string): string[] {
 }
 
 /** The program and arguments the task (or Run key) starts. */
-export function taskCommand(spec: ServiceSpec, headless = true): { command: string; args: string[] } {
+export function taskCommand(spec: ServiceSpec, headless = true, conhost = conhostPath()): { command: string; args: string[] } {
   const argv = [spec.nodePath, spec.cliEntry, ...spec.args];
-  return headless ? { command: CONHOST, args: ['--headless', ...argv] } : { command: spec.nodePath, args: argv.slice(1) };
+  return headless ? { command: conhost, args: ['--headless', ...argv] } : { command: spec.nodePath, args: argv.slice(1) };
 }
 
 const tag = (text: string, name: string): string | undefined => {
@@ -94,13 +98,15 @@ const tag = (text: string, name: string): string | undefined => {
  * The scheduled task, as a UTF-16 XML document for `schtasks /create /xml`: runs at `userId`'s logon
  * only (LogonTrigger.UserId), as that user with an interactive token and least privilege (no UAC),
  * one instance, no time limit, restarted every minute on failure (999 times), not stopped on
- * battery, hidden. Exec: `conhost.exe --headless "<node>" "<bin.js>" agent --log-file "<log>"`
+ * battery, hidden. Exec: `%SystemRoot%\\System32\\conhost.exe --headless "<node>" "<bin.js>" agent --log-file "<log>"`
  * (`headless: false` → node.exe directly, for Windows builds whose conhost has no `--headless`).
  * The env and logs folder are kept in `Documentation` so `parseTaskXml` can read the spec back
  * (a task has no environment of its own: the agent inherits the user's).
  */
-export function taskXml(spec: ServiceSpec, userId: string, o: { headless?: boolean } = {}): string {
-  const { command, args } = taskCommand(spec, o.headless ?? true);
+export function taskXml(spec: ServiceSpec, userId: string, o: { headless?: boolean; conhost?: string } = {}): string {
+  assertDefinitionValues(spec, 'schtasks');
+  if (/[\r\n]/.test(userId)) throw new Error('Cannot install the background agent: the Windows user name contains a line break.');
+  const { command, args } = taskCommand(spec, o.headless ?? true, o.conhost);
   const doc = JSON.stringify({ uncage: 1, env: spec.env, logsDir: spec.logsDir });
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -183,8 +189,9 @@ export function parseTaskXml(text: string): ServiceSpec | null {
 }
 
 /** The Run-key value: the same command line as the task. */
-export function runKeyCommand(spec: ServiceSpec, headless = true): string {
-  const { command, args } = taskCommand(spec, headless);
+export function runKeyCommand(spec: ServiceSpec, headless = true, conhost = conhostPath()): string {
+  assertDefinitionValues(spec, 'schtasks');
+  const { command, args } = taskCommand(spec, headless, conhost);
   return [winQuote(command), ...args.map(winQuote)].join(' ');
 }
 
@@ -203,6 +210,19 @@ export function parseTaskCsvStatus(csv: string): string | null {
 }
 
 const errText = (e: unknown): string => `${(e as { stderr?: string }).stderr ?? ''} ${(e as Error).message ?? ''}`;
+
+/** The command line of process `pid` (PowerShell CIM), or null when it is not running. */
+function defaultCommandLine(exec: ServiceDeps['exec']): (pid: number) => Promise<string | null> {
+  return async (pid) => {
+    const { stdout } = await exec('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `(Get-CimInstance Win32_Process -Filter "ProcessId=${Math.trunc(pid)}").CommandLine`,
+    ]);
+    return stdout.trim() || null;
+  };
+}
 
 function defaultSpawnDetached(file: string, args: string[]): number | undefined {
   const child = spawn(file, args, { detached: true, stdio: 'ignore', windowsHide: true });
@@ -223,7 +243,7 @@ export function schtasksService(d: ServiceDeps): AgentService {
   const headless = !(build > 0 && build < HEADLESS_MIN_BUILD);
   const dir = join(d.home, '.uncage', 'service');
   const defPath = join(dir, `${TASK_NAME}.xml`);
-  const pidPath = join(dir, 'agent.pid');
+  const conhost = conhostPath(d.env);
   const spawnDetached = d.spawnDetached ?? defaultSpawnDetached;
   let kind: ServiceKind = 'schtasks';
   const schtasks = (...args: string[]) => d.exec('schtasks', args);
@@ -235,26 +255,32 @@ export function schtasksService(d: ServiceDeps): AgentService {
 
   const taskExists = () => ok(schtasks('/query', '/tn', TASK_NAME));
   const runValueExists = () => ok(d.exec('reg', ['query', RUN_KEY, '/v', TASK_NAME]));
-  const readPid = async (): Promise<number | null> => {
-    const n = Number((await readFile(pidPath, 'utf8').catch(() => '')).trim());
-    return Number.isInteger(n) && n > 0 ? n : null;
-  };
+  const commandLineOf = d.processCommandLine ?? defaultCommandLine(d.exec);
   /**
-   * Stops what we started: the Run-key process, and the `--supervise` process tree (its pid file is
-   * beside the log). Ending a task only stops conhost; the node processes under it would survive.
+   * The live `--supervise` process this install started, from `<logsDir>/supervisor.pid` (written by
+   * the supervisor at every start). The pid is only trusted when that process's command line holds
+   * our CLI entry and `--supervise`; a stale file (the pid now belongs to something else) is removed.
    */
-  const killStarted = async (spec?: ServiceSpec | null) => {
-    const files = [pidPath, ...(spec?.logsDir ? [join(spec.logsDir, 'supervisor.pid')] : [])];
-    for (const file of files) {
-      const n = Number((await readFile(file, 'utf8').catch(() => '')).trim());
-      if (Number.isInteger(n) && n > 0) await d.exec('taskkill', ['/pid', String(n), '/t', '/f']).catch(() => undefined);
-      await rm(file, { force: true });
-    }
+  const ownedSupervisor = async (spec: ServiceSpec | null | undefined): Promise<number | null> => {
+    if (!spec?.logsDir) return null;
+    const file = join(spec.logsDir, 'supervisor.pid');
+    const n = Number((await readFile(file, 'utf8').catch(() => '')).trim());
+    if (!Number.isInteger(n) || n <= 0) return null;
+    const cmd = await commandLineOf(n).catch(() => null);
+    if (cmd && cmd.toLowerCase().includes(spec.cliEntry.toLowerCase()) && cmd.includes('--supervise')) return n;
+    await rm(file, { force: true });
+    return null;
   };
-  const startDetached = async (spec: ServiceSpec) => {
-    const { command, args } = taskCommand(spec, headless);
-    const pid = spawnDetached(command, args);
-    if (pid) await writeFile(pidPath, `${pid}\n`);
+  /** Stops the supervised agent tree: ending a task only stops conhost, the node processes would survive. */
+  const killStarted = async (spec?: ServiceSpec | null) => {
+    const pid = await ownedSupervisor(spec);
+    if (pid !== null) await d.exec('taskkill', ['/pid', String(pid), '/t', '/f']).catch(() => undefined);
+    if (spec?.logsDir) await rm(join(spec.logsDir, 'supervisor.pid'), { force: true });
+  };
+  /** The Run-key start: the same `--supervise` command line as the task, detached and hidden. */
+  const startDetached = (spec: ServiceSpec) => {
+    const { command, args } = taskCommand(spec, headless, conhost);
+    spawnDetached(command, args);
   };
   const readSpec = async (): Promise<ServiceSpec | null> => {
     const raw = await readFile(defPath).catch(() => null);
@@ -268,11 +294,12 @@ export function schtasksService(d: ServiceDeps): AgentService {
       return kind;
     },
     async install(spec) {
+      assertDefinitionValues(spec, 'schtasks');
       const previous = await readSpec();
       await mkdir(spec.logsDir, { recursive: true });
       await mkdir(dir, { recursive: true });
       // schtasks reads the file as UTF-16 (BOM) like the document declares.
-      await writeFile(defPath, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(taskXml(spec, user, { headless }), 'utf16le')]));
+      await writeFile(defPath, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(taskXml(spec, user, { headless, conhost }), 'utf16le')]));
       try {
         await schtasks('/create', '/tn', TASK_NAME, '/xml', defPath, '/f');
       } catch (e) {
@@ -280,9 +307,9 @@ export function schtasksService(d: ServiceDeps): AgentService {
           throw new Error(`schtasks /create failed: ${errText(e).trim()}`, { cause: e });
         }
         kind = 'run-key';
-        await d.exec('reg', ['add', RUN_KEY, '/v', TASK_NAME, '/t', 'REG_SZ', '/d', runKeyCommand(spec, headless), '/f']);
+        await d.exec('reg', ['add', RUN_KEY, '/v', TASK_NAME, '/t', 'REG_SZ', '/d', runKeyCommand(spec, headless, conhost), '/f']);
         await killStarted(previous);
-        await startDetached(spec);
+        startDetached(spec);
         return {
           definitionPath: `${RUN_KEY}\\${TASK_NAME}`,
           notes: [
@@ -317,7 +344,7 @@ export function schtasksService(d: ServiceDeps): AgentService {
       }
       if (spec && (await runValueExists())) {
         await killStarted(spec);
-        await startDetached(spec);
+        startDetached(spec);
         return true;
       }
       return false;
@@ -337,8 +364,7 @@ export function schtasksService(d: ServiceDeps): AgentService {
         if (await runValueExists()) {
           kind = 'run-key';
           installed = true;
-          const pid = await readPid();
-          running = pid === null ? null : processAlive(pid);
+          running = (await ownedSupervisor(await readSpec())) !== null;
         }
       }
       const spec = installed ? await readSpec() : null;
@@ -354,13 +380,4 @@ export function schtasksService(d: ServiceDeps): AgentService {
       };
     },
   };
-}
-
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === 'EPERM';
-  }
 }

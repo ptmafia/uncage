@@ -38,6 +38,9 @@ describe('systemd user unit', () => {
     expect(unit).toContain('\nEnvironment="PATH=/home/u/.local/share/fnm/node-versions/v22.23.4/installation/bin:/usr/bin:/bin" "HOME=/home/u"\n');
     expect(unit).toMatch(/\[Install\]\nWantedBy=default\.target\n$/);
     expect(parseSystemdUnit('[Service]\nExecStart=/bin/true\n')).toBeNull();
+    // A line break would start a new setting (e.g. a second ExecStart): refused.
+    expect(() => systemdUnit({ ...spec('/home/u'), cliEntry: '/x\nExecStartPre=/bin/evil' })).toThrow(/line break/);
+    expect(() => systemdUnit({ ...spec('/home/u'), env: { PATH: '/bin\r', HOME: '/home/u' } })).toThrow(/line break/);
   });
 
   it('lives in $XDG_CONFIG_HOME/systemd/user, else ~/.config/systemd/user', () => {

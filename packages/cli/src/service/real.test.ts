@@ -5,10 +5,10 @@
  * Never on a developer machine: it writes a real task / unit and starts it.
  */
 import { execFile } from 'node:child_process';
-import { appendFile, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import type { ExecFn } from '@uncage/agent';
 import { describe, expect, it } from 'vitest';
@@ -68,6 +68,18 @@ async function beats(dir: string): Promise<Array<{ pid: string; at: number; args
       return { pid: pid!, at: Number(at), args: rest.join(' ') };
     });
 }
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/** The built CLI (CI builds it before the tests). */
+const BIN_JS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist', 'bin.js');
 
 async function until<T>(what: string, fn: () => Promise<T | undefined | false>, ms: number): Promise<T> {
   const end = Date.now() + ms;
@@ -135,4 +147,62 @@ describe.runIf(enabled)('real service (CI only)', () => {
     await report(`${svc.kind}: uninstalled, nothing left running`);
     await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   });
+
+  it.runIf(process.platform === 'win32')(
+    'real Windows task with the built bin.js: agent --supervise starts the real agent (stub website), restart replaces the tree, uninstall stops every process',
+    { timeout: 240_000 },
+    async () => {
+      const dir = await realpath(await mkdtemp(join(tmpdir(), 'uncage real bin ')));
+      const home = join(dir, 'home');
+      const logsDir = join(dir, 'logs');
+      await mkdir(join(home, '.uncage'), { recursive: true });
+      // The stub website: a hub that is never reachable, so the real agent keeps reconnecting (stays up).
+      await writeFile(
+        join(home, '.uncage', 'agent.yaml'),
+        'sites:\n  - id: stub.example\n    name: Stub\n    url: http://127.0.0.1:9/api/uncage\n    machineId: mch_stub\n    token: t\n',
+      );
+      // A task has no environment of its own: this entry sets UNCAGE_HOME, then runs the built bin.js.
+      const wrapper = join(dir, 'uncage-entry.mjs');
+      await writeFile(
+        wrapper,
+        `process.env.UNCAGE_HOME = ${JSON.stringify(home)};\nprocess.argv[1] = ${JSON.stringify(BIN_JS)};\nawait import(${JSON.stringify(pathToFileURL(BIN_JS).href)});\n`,
+      );
+      const spec: ServiceSpec = {
+        nodePath: await realpath(process.execPath),
+        cliEntry: wrapper,
+        args: ['agent', '--supervise', '--log-file', join(logsDir, 'agent.log')],
+        env: { PATH: process.env.PATH ?? process.env.Path ?? '', HOME: homedir() },
+        workingDir: dir,
+        logsDir,
+      };
+      const svc = await agentService({ platform: 'win32', home: dir, env: process.env, exec });
+      const pidFile = join(logsDir, 'supervisor.pid');
+      const supervisorPid = async () => Number((await readFile(pidFile, 'utf8').catch(() => '')).trim()) || 0;
+      /** pids of the agent processes (pino writes `"pid":<n>` on every line). */
+      const agentPids = async () => [...new Set([...(await readFile(join(logsDir, 'agent.log'), 'utf8').catch(() => '')).matchAll(/"pid":(\d+)/g)].map((m) => Number(m[1])))];
+      try {
+        await svc.install(spec);
+        const sup1 = await until('the supervisor pid file', supervisorPid, 60_000);
+        await until('the real agent logging', async () => (await agentPids()).length > 0, 60_000);
+        expect(await svc.status()).toMatchObject({ kind: 'schtasks', installed: true, running: true, spec });
+        expect(alive(sup1)).toBe(true);
+        await report(`built bin.js: supervisor ${sup1}, agent ${(await agentPids()).join(',')}`);
+
+        expect(await svc.restart()).toBe(true);
+        const sup2 = await until('a new supervisor', async () => {
+          const p = await supervisorPid();
+          return p && p !== sup1 ? p : 0;
+        }, 60_000); // prettier-ignore
+        await until('the old supervisor gone', async () => !alive(sup1), 15_000);
+        expect(alive(sup2)).toBe(true);
+      } finally {
+        expect((await svc.uninstall()).removed).toBe(true);
+      }
+      const pids = [await supervisorPid(), ...(await agentPids())].filter((p) => p > 0);
+      await until('every agent process gone', async () => pids.every((p) => !alive(p)), 15_000);
+      await expect(exec('schtasks', ['/query', '/tn', 'UncageAgent'])).rejects.toThrow();
+      await report(`built bin.js: restart replaced the tree; uninstall stopped ${pids.length} processes`);
+      await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    },
+  );
 });

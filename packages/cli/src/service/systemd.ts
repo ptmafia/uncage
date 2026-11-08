@@ -1,6 +1,6 @@
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { posix } from 'node:path';
-import { probeNode } from './spec.js';
+import { assertDefinitionValues, probeNode } from './spec.js';
 import type { AgentService, ServiceDeps, ServiceSpec, ServiceStatus } from './types.js';
 
 export const SYSTEMD_UNIT = 'uncage-agent.service';
@@ -53,6 +53,7 @@ function words(line: string, exec: boolean): string[] {
  * user manager (`WantedBy=default.target`).
  */
 export function systemdUnit(spec: ServiceSpec): string {
+  assertDefinitionValues(spec, 'systemd');
   const exec = [spec.nodePath, spec.cliEntry, ...spec.args].map((a) => quote(a, true)).join(' ');
   return `# Written by "uncage agent install". Remove with "uncage agent uninstall".
 [Unit]

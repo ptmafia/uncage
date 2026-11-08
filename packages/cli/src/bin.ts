@@ -1,6 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { loadConfig } from './config.js';
 import {
@@ -20,7 +20,7 @@ import { agentService, type AgentService } from './service/index.js';
 import { connectedHome, daemonHomeConflict } from './home.js';
 import { installAgentService, runSetup, SETUP_HELP } from './setup.js';
 import { listSites, removeSite, SITES_HELP } from './sites.js';
-import { superviseAgent, watchSupervisor } from './supervise.js';
+import { rotateLog, superviseAgent, watchSupervisor } from './supervise.js';
 import { versionOutput } from './version.js';
 
 const HELP = `uncage - run AI coding agents behind a local, approval-gated API
@@ -223,6 +223,9 @@ async function main(argv: string[]): Promise<number> {
       return 2;
     }
     const logFile = values['log-file'] ? resolve(cwd, values['log-file']) : undefined;
+    // Cap log growth at every start: --log-file, and the files launchd / systemd append to.
+    const logsDir = join(connectedHome(), '.uncage', 'logs');
+    for (const f of new Set([...(logFile ? [logFile] : []), join(logsDir, 'agent.log'), join(logsDir, 'agent.err.log')])) await rotateLog(f);
     if (values.supervise) {
       // Windows service: keep the agent running (Task Scheduler does not restart a non-zero exit).
       let onStop: () => void = () => undefined;

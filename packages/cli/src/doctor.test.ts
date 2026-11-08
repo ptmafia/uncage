@@ -331,6 +331,9 @@ describe('runDoctor: Node, background agent service, Windows token', () => {
     expect(stopped).toMatchObject({ ok: false, warn: true });
     const none = (await run({ service: fakeService({ kind: 'none', installed: false, spec: null, running: null }), sites: [site] })).find((c) => c.id === 'service');
     expect(none).toMatchObject({ ok: false, warn: true, fix: expect.stringContaining('uncage agent') });
+    const noneIdle = (await run({ service: fakeService({ kind: 'none', installed: false, spec: null, running: null }) })).find((c) => c.id === 'service');
+    expect(noneIdle).toMatchObject({ ok: true });
+    expect(noneIdle).not.toHaveProperty('fix');
   });
 
   it('doctor: missing pinned Node → fix uncage agent install', async () => {

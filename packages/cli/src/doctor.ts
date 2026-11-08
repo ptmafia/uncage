@@ -82,7 +82,7 @@ export async function serviceChecks(o: {
       ok: o.activeSites === 0,
       warn: o.activeSites > 0,
       detail: 'no service manager on this computer (systemd --user is not running)',
-      fix: 'uncage agent   # run it in the foreground (tmux / screen)',
+      ...(o.activeSites > 0 ? { fix: 'uncage agent   # run it in the foreground (tmux / screen)' } : {}),
     });
     return checks;
   }
