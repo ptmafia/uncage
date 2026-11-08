@@ -10,7 +10,7 @@ Local 模式适合和 agent 跑在**同一台机器**上的应用：开发者面
 ## 复制给你的 coding agent 的提示词
 
 ```text wrap
-Add Uncage Local Mode to this Next.js (App Router) app, following https://uncage.vercel.app/docs/start/quickstart-local.md exactly.
+Add Uncage Local Mode to this Next.js (App Router) app, following https://uncage-dev.vercel.app/docs/start/quickstart-local.md exactly.
 1. npm i @uncage/server @uncage/react-ui @uncage/cli
 2. Create app/api/uncage/[...path]/route.ts with createUncageHandler from @uncage/server/proxy (runtime 'nodejs', dynamic 'force-dynamic', export GET, POST, PATCH).
 3. Create a page that renders <UncageProvider><AgentChat /></UncageProvider> from @uncage/react-ui inside a full-height container, and import '@uncage/react-ui/styles.css'.

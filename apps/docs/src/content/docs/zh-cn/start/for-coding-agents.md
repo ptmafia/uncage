@@ -12,7 +12,7 @@ description: Claude Code、Codex 等 coding agent 应该如何阅读本站、要
 | Uncage 技能 | [`/skills/uncage/SKILL.md`](/docs/skills/uncage/SKILL.md) | “把 Uncage 集成进一个网站”：什么情况用哪种模式、具体步骤、验证命令、常见陷阱。可以安装为技能，也可以把它的 URL 贴进提示词。 |
 | 索引 | [`/llms.txt`](/docs/llms.txt) | 每个页面一行，附 Markdown 版本的 URL（[llmstxt.org](https://llmstxt.org) 格式）。 |
 | 全部内容 | [`/llms-full.txt`](/docs/llms-full.txt) | 按阅读顺序把所有指南页合成一个 Markdown 文件（自动生成的 API 参考只给链接，不包含正文）。 |
-| 任意页面 | 在网址后面加 `.md` | 例如 `https://uncage.vercel.app/docs/guides/define-tools.md`。每个页面顶部的 **本页 Markdown** 链接就指向这里。 |
+| 任意页面 | 在网址后面加 `.md` | 例如 `https://uncage-dev.vercel.app/docs/guides/define-tools.md`。每个页面顶部的 **本页 Markdown** 链接就指向这里。 |
 
 Markdown 版本里的链接指向其他页面的 Markdown 版本，agent 不用解析 HTML 就能顺着读下去。
 
@@ -22,7 +22,7 @@ Markdown 版本里的链接指向其他页面的 Markdown 版本，agent 不用�
 
 ```sh
 mkdir -p .claude/skills/uncage
-curl -fsSL https://uncage.vercel.app/docs/skills/uncage/SKILL.md -o .claude/skills/uncage/SKILL.md
+curl -fsSL https://uncage-dev.vercel.app/docs/skills/uncage/SKILL.md -o .claude/skills/uncage/SKILL.md
 ```
 
 同一个文件也在仓库里：[`skills/uncage/SKILL.md`](https://github.com/ptmafia/uncage/blob/main/skills/uncage/SKILL.md)。
@@ -36,8 +36,8 @@ curl -fsSL https://uncage.vercel.app/docs/skills/uncage/SKILL.md -o .claude/skil
 和 [Connected 模式快速上手](/docs/zh-cn/start/quickstart-connected/#复制给你的-coding-agent-的提示词)里的提示词相同：
 
 ```text wrap
-Add Uncage Connected Mode to this Next.js (App Router) app, following https://uncage.vercel.app/docs/start/quickstart-connected.md exactly.
-Read https://uncage.vercel.app/docs/skills/uncage/SKILL.md first and follow its rules.
+Add Uncage Connected Mode to this Next.js (App Router) app, following https://uncage-dev.vercel.app/docs/start/quickstart-connected.md exactly.
+Read https://uncage-dev.vercel.app/docs/skills/uncage/SKILL.md first and follow its rules.
 1. Install @uncage/hub, @uncage/react-ui and zod.
 2. Create lib/auth.ts, lib/tools.ts, lib/uncage-hub.ts, lib/hub-registry.ts, server.ts, app/uncage/page.tsx, app/device/page.tsx, app/device/actions.ts, app/device/approve-page.tsx and the headers in next.config.ts, as on that page.
 3. Wire lib/auth.ts to this app's existing sign-in (find how the app reads the current user). Do not keep the development user unless the app has no sign-in at all.
@@ -49,7 +49,7 @@ Verify: start the dev server, then curl -s http://localhost:3000/api/uncage/inst
 ### 给 Next.js 应用加上 Local 模式
 
 ```text wrap
-Add Uncage Local Mode to this Next.js (App Router) app, following https://uncage.vercel.app/docs/start/quickstart-local.md exactly.
+Add Uncage Local Mode to this Next.js (App Router) app, following https://uncage-dev.vercel.app/docs/start/quickstart-local.md exactly.
 1. npm i @uncage/server @uncage/react-ui @uncage/cli
 2. Create app/api/uncage/[...path]/route.ts with createUncageHandler from @uncage/server/proxy (runtime 'nodejs', dynamic 'force-dynamic', export GET, POST, PATCH).
 3. Create a page that renders <UncageProvider><AgentChat /></UncageProvider> from @uncage/react-ui inside a full-height container, and import '@uncage/react-ui/styles.css'.
@@ -61,7 +61,7 @@ Verify: run "npx uncage doctor" and report each line; with "npx uncage serve --w
 
 ```text wrap
 Expose <feature, e.g. "create an invoice draft"> to Uncage as a site tool.
-Read https://uncage.vercel.app/docs/guides/define-tools.md first.
+Read https://uncage-dev.vercel.app/docs/guides/define-tools.md first.
 Use defineTool from @uncage/hub with a zod input schema and a description written for the model. Check ownership with ctx.user.id inside the handler. Throw only user-safe messages. Set requiresConfirmation: true if the tool changes or publishes anything.
 Add it to the hub's tools option and, if this app uses selectManifest, to the runs that need it. Add a unit test that calls the handler with a fake ctx.
 ```
@@ -69,7 +69,7 @@ Add it to the hub's tools option and, if this app uses selectManifest, to the ru
 ### 把 hub 迁移到多个节点
 
 ```text wrap
-Make our Uncage hub run on several nodes, following https://uncage.vercel.app/docs/guides/multi-node.md.
+Make our Uncage hub run on several nodes, following https://uncage-dev.vercel.app/docs/guides/multi-node.md.
 Use postgresHubStore with DATABASE_URL and redisCluster with REDIS_URL; attach 'error' listeners to any pool or client we create ourselves; make sure the load balancer passes WebSocket upgrades on /api/uncage/agent; configure the client IP for rate limits.
 ```
 

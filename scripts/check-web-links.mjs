@@ -2,7 +2,7 @@
 // Crawls apps/site/dist from the entry pages, following same-origin links and resources
 // (directory -> index.html), and fails on any missing target. Checked: a/link/script/img/source/
 // iframe href|src|srcset (so link rel=canonical and rel=alternate too) and meta og:image. Absolute
-// URLs on the canonical origin (SITE_URL, default https://uncage.vercel.app) count as internal.
+// URLs on the canonical origin (SITE_URL, default https://uncage-dev.vercel.app) count as internal.
 // Other origins are ignored. Fragments (#...) are NOT verified, only the page they point into.
 // Usage: node scripts/check-web-links.mjs [--dir apps/site/dist]
 import fs from 'node:fs';
@@ -14,7 +14,7 @@ const args = process.argv.slice(2);
 const dir = path.resolve(root, args.includes('--dir') ? args[args.indexOf('--dir') + 1] : 'apps/site/dist');
 const ORIGIN = 'https://site.invalid';
 /** The canonical origin the builds write into absolute URLs (canonical, hreflang, og:image). */
-const SITE_ORIGIN = new URL(process.env.SITE_URL || 'https://uncage.vercel.app').origin;
+const SITE_ORIGIN = new URL(process.env.SITE_URL || 'https://uncage-dev.vercel.app').origin;
 const ENTRIES = ['/', '/zh/', '/ja/', '/docs/', '/docs/zh-cn/', '/docs/ja/', '/robots.txt', '/sitemap-index.xml', '/docs/sitemap-index.xml'];
 const isInternal = (/** @type {URL} */ u) => u.origin === ORIGIN || u.origin === SITE_ORIGIN;
 
