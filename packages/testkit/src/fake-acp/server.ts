@@ -9,7 +9,7 @@
  *   FAKE_ACP_RECORD          append every received JSON-RPC message (requests, notifications and the client's
  *                            responses) to this JSONL file; the first line is `{"fake":"start","pid":<pid>}`
  */
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, writeSync } from 'node:fs';
 import { Readable, Writable } from 'node:stream';
 import { ndJsonStream } from '@agentclientprotocol/sdk';
 import { createFakeAcpAgent } from './scenarios.js';
@@ -44,6 +44,7 @@ const app = createFakeAcpAgent({
   ignoreCancel: env.FAKE_ACP_IGNORE_CANCEL === '1',
   authRequired: env.FAKE_ACP_AUTH === 'required',
   crash: () => process.exit(1),
+  writeRaw: (messages) => void writeSync(1, `${messages.map((m) => JSON.stringify(m)).join('\n')}\n`),
 });
 
 const input = (Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>).pipeThrough(recorder());

@@ -7,7 +7,9 @@
  *   tools    a dropped thought, a message, an `execute` tool call with output, a plan, a usage update, a message
  *   approval an `edit` tool call that asks `session/request_permission`; allow → completed, reject → failed
  *   slow     50 chunks, 100 ms apart; honours `session/cancel` (stop reason `cancelled`) unless ignoreCancel
- *   crash    one chunk, then the process exits with code 1
+ *   crash    one chunk, then the process exits with code 1 (with writeRaw: the chunk and the exit in one tick)
+ *   burst    one chunk, then (with writeRaw) two more chunks and the session/prompt result in a single
+ *            stdout write, so the client reads the result right behind the last updates
  *   remember "remember <x>" stores x in the session; "recall" answers "remembered <x>"
  *   refusal  one chunk, then stop reason `refusal`
  *   anything else is echoed back as "echo: <prompt>"
@@ -37,6 +39,12 @@ export interface FakeAcpOptions {
   authRequired?: boolean;
   /** Called by the `crash` scenario; must not return. */
   crash(): never;
+  /**
+   * Writes raw JSON-RPC messages to the client in one synchronous write (bypassing the SDK's writer).
+   * Used by `burst` and `crash` to put messages back to back on the wire; without it they fall back
+   * to un-awaited SDK notifications.
+   */
+  writeRaw?(messages: object[]): void;
 }
 
 export const FAKE_ACP_VERSION = '1.0.0';
@@ -61,6 +69,13 @@ function promptText(prompt: ContentBlock[]): string {
   return prompt.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('\n');
 }
 
+/** A complete `session/update` notification carrying an `agent_message_chunk`, for writeRaw. */
+const rawUpdate = (sessionId: string, t: string): object => ({
+  jsonrpc: '2.0',
+  method: 'session/update',
+  params: { sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: t } } },
+});
+
 /** A text chunk in the shape of `agent_message_chunk` content. */
 const text = (t: string): ContentBlock => ({ type: 'text', text: t });
 
@@ -74,7 +89,8 @@ export function createFakeAcpAgent(o: FakeAcpOptions): AgentApp {
     return s;
   };
 
-  async function runTurn(client: AgentContext, s: FakeSession, prompt: ContentBlock[]): Promise<StopReason> {
+  /** `detached`: the prompt result was already written raw; the SDK handler must not answer. */
+  async function runTurn(client: AgentContext, s: FakeSession, prompt: ContentBlock[], requestId: unknown): Promise<StopReason | 'detached'> {
     const send = (update: SessionUpdate): Promise<void> =>
       client.notify(methods.client.session.update, { sessionId: s.id, update });
     let reply = '';
@@ -173,10 +189,28 @@ export function createFakeAcpAgent(o: FakeAcpOptions): AgentApp {
         if (cancelled) stop = 'cancelled';
         break;
       case 'crash':
+        if (o.writeRaw) {
+          o.writeRaw([rawUpdate(s.id, 'about to crash')]);
+          o.crash();
+        }
         await say('about to crash');
         await sleep(20);
         o.crash();
         break;
+      case 'burst': {
+        await say('one ');
+        if (!o.writeRaw) {
+          void say('two ');
+          void say('three');
+          break;
+        }
+        // Let the SDK's own writes drain so the raw write cannot interleave with them.
+        await sleep(20);
+        o.writeRaw([rawUpdate(s.id, 'two '), rawUpdate(s.id, 'three'), { jsonrpc: '2.0', id: requestId, result: { stopReason: 'end_turn' } }]);
+        s.history.push({ user: input, agent: 'one two three' });
+        s.cancel = undefined;
+        return 'detached';
+      }
       case 'remember':
         s.memory = rest.join(' ');
         await say('Noted.');
@@ -232,8 +266,10 @@ export function createFakeAcpAgent(o: FakeAcpOptions): AgentApp {
       getSession(params.sessionId).cwd = params.cwd;
       return {};
     })
-    .onRequest(methods.agent.session.prompt, async ({ params, client }) => {
-      const stopReason = await runTurn(client, getSession(params.sessionId), params.prompt);
+    .onRequest(methods.agent.session.prompt, async ({ params, client, requestId }) => {
+      const stopReason = await runTurn(client, getSession(params.sessionId), params.prompt, requestId);
+      // Already answered on the wire: never answer again.
+      if (stopReason === 'detached') return new Promise<never>(() => undefined);
       return { stopReason };
     })
     .onNotification(methods.agent.session.cancel, ({ params }) => {

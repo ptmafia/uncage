@@ -95,7 +95,9 @@ interface ToolState extends KnownTool {
 
 /**
  * ACP `session/update` → Uncage runtime events, for one turn. Thoughts, user chunks, usage, commands,
- * notices, compaction and mode/config updates are dropped; a `plan` is one synthetic `plan` step.
+ * notices, compaction and mode/config updates are dropped; a `plan` is one synthetic `plan` step,
+ * open while plan updates follow each other and closed by the next message, tool call or the end of
+ * the turn (a later plan opens a new step).
  */
 export function createAcpMapper(newId: () => string): AcpMapper {
   let message: { id: string; native?: string; text: string } | undefined;
@@ -192,12 +194,12 @@ export function createAcpMapper(newId: () => string): AcpMapper {
           return toolEvent(u);
         case 'plan': {
           const output = checklist(u.entries);
-          if (!plan) {
+          if (!plan?.open) {
+            // A plan revised after its step closed starts a new step: a step never completes twice.
             plan = { id: `plan_${newId()}`, open: true, output };
             return [...closeMessage(), { type: 'tool.started', toolId: plan.id, name: 'plan', title: 'Plan', category: 'other' }];
           }
           plan.output = output;
-          plan.open = true;
           return [...closeMessage(), { type: 'tool.updated', toolId: plan.id, output }];
         }
         default:

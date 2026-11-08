@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   methods,
   RequestError,
+  type ClientContext,
   type InitializeResponse,
   type NewSessionResponse,
   type PromptResponse,
@@ -13,6 +14,7 @@ import {
   ERROR_CATALOG,
   type AdapterRunContext,
   type AdapterRunInput,
+  type ApprovalOutcome,
   type ErrorCode,
   type RuntimeAdapter,
   type RuntimeCapabilities,
@@ -43,6 +45,8 @@ export interface AcpAdapterOptions {
   initTimeoutMs?: number;
   /** Timeout for session requests (not `session/prompt`). Defaults to 30 s. */
   requestTimeoutMs?: number;
+  /** Timeout for `session/load`, which replays the whole history first. Defaults to 5 min. */
+  loadTimeoutMs?: number;
   /** After `session/cancel`, kill the agent if the prompt has not resolved within this many ms. Defaults to 10 s. */
   cancelGraceMs?: number;
 }
@@ -118,6 +122,16 @@ interface Connection {
   closed: boolean;
 }
 
+/**
+ * A `session/new` nobody waits for any more (timed out or aborted): if it still resolves, close
+ * the session when the agent supports `session/close`; otherwise it is simply forgotten.
+ */
+function closeOrphan(agent: ClientContext, request: Promise<NewSessionResponse>, canClose: boolean): void {
+  request
+    .then((r) => (canClose ? agent.request(methods.agent.session.close, { sessionId: r.sessionId }) : undefined))
+    .catch(() => undefined);
+}
+
 /** A tiny single-consumer async queue. */
 function createQueue<T>() {
   const items: T[] = [];
@@ -148,6 +162,7 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
   const initTimeoutMs = o.initTimeoutMs ?? 15_000;
   const requestTimeoutMs = o.requestTimeoutMs ?? 30_000;
   const cancelGraceMs = o.cancelGraceMs ?? 10_000;
+  const loadTimeoutMs = o.loadTimeoutMs ?? 300_000;
   let init: InitializeResponse | undefined;
   let current: Promise<Connection> | undefined;
 
@@ -255,7 +270,13 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
     const askApproval = async (req: RequestPermissionRequest, signal: AbortSignal): Promise<RequestPermissionResponse> => {
       if (bypass) return { outcome: chooseOption(req.options, { decision: 'allow' }) };
       const request = approvalInput(req.toolCall, map.tool(req.toolCall.toolCallId), input.cwd);
-      const outcome = await untilAborted(ctx.requestApproval(request), AbortSignal.any([settled, signal]));
+      let outcome: ApprovalOutcome | typeof ABORTED;
+      try {
+        outcome = await untilAborted(ctx.requestApproval(request), AbortSignal.any([settled, signal]));
+      } catch {
+        // The approval could not be asked (e.g. the store failed): deny, never a JSON-RPC error.
+        outcome = { decision: 'deny' };
+      }
       if (outcome === ABORTED) return CANCELLED;
       const chosen = chooseOption(req.options, outcome);
       if (outcome.decision !== 'allow') map.markDeclined(req.toolCall.toolCallId);
@@ -286,9 +307,13 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
       const ref = input.nativeSessionRef;
       const canResume = Boolean(agentCaps.sessionCapabilities?.resume);
       const canLoad = agentCaps.loadSession === true;
+      const canClose = Boolean(agentCaps.sessionCapabilities?.close);
 
       try {
         if (ref !== undefined && (canResume || canLoad)) {
+          // Updates are routed by sessionId, so one turn per native session at a time. Core already
+          // guarantees this (one active run per Uncage session, `session_busy`); this guards misuse.
+          if (conn.sinks.has(ref)) return yield failed('session_busy', `A run is already active on ${o.displayName} session ${ref}.`);
           // Register before the request: `session/load` replays history (dropped) before it resolves.
           sink.replaying = !canResume;
           conn.sinks.set(ref, sink);
@@ -296,7 +321,9 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
           const request = canResume
             ? agent.request(methods.agent.session.resume, { sessionId: ref, ...session })
             : agent.request(methods.agent.session.load, { sessionId: ref, ...session });
-          const r = await untilAborted(withTimeout(request, requestTimeoutMs, canResume ? 'session/resume' : 'session/load'), ctx.signal);
+          // Replaying a long history can take a while: `session/load` gets its own, longer timeout.
+          const timeout = canResume ? requestTimeoutMs : loadTimeoutMs;
+          const r = await untilAborted(withTimeout(request, timeout, canResume ? 'session/resume' : 'session/load'), ctx.signal);
           if (r === ABORTED) return yield ABORTED_EVENT;
           await settle();
           sink.replaying = false;
@@ -309,8 +336,17 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
             };
           }
           const request: Promise<NewSessionResponse> = agent.request(methods.agent.session.new, session);
-          const r = await untilAborted(withTimeout(request, requestTimeoutMs, 'session/new'), ctx.signal);
-          if (r === ABORTED) return yield ABORTED_EVENT;
+          let r: NewSessionResponse | typeof ABORTED;
+          try {
+            r = await untilAborted(withTimeout(request, requestTimeoutMs, 'session/new'), ctx.signal);
+          } catch (err) {
+            closeOrphan(agent, request, canClose);
+            throw err;
+          }
+          if (r === ABORTED) {
+            closeOrphan(agent, request, canClose);
+            return yield ABORTED_EVENT;
+          }
           sessionId = r.sessionId;
           conn.sinks.set(r.sessionId, sink);
         }

@@ -238,6 +238,36 @@ describe('acpAdapter', () => {
     expect((await collect(a.run(input('simple'), ctx))).at(-1)).toEqual({ type: 'run.completed' });
   });
 
+  it('burst: updates written right before the prompt result (one stdout write) all land before run.completed', async () => {
+    for (let i = 0; i < 5; i++) {
+      const events = await collect(make().run(input('burst'), ctx));
+      expect(events.slice(-2)).toEqual([
+        { type: 'message.completed', messageId: expect.any(String), text: 'one two three' },
+        { type: 'run.completed' },
+      ]);
+    }
+  });
+
+  it('crash in the same tick as the last chunk still delivers the chunk before runtime_disconnected', async () => {
+    for (let i = 0; i < 5; i++) {
+      const events = await collect(make().run(input('crash'), ctx));
+      expect(events.slice(-2)).toEqual([
+        { type: 'message.completed', messageId: expect.any(String), text: 'about to crash' },
+        { type: 'run.interrupted', reason: 'runtime_disconnected' },
+      ]);
+    }
+  });
+
+  it('a rejected requestApproval answers the permission with reject_once (never a JSON-RPC error)', async () => {
+    const file = recordFile();
+    const c: AdapterRunContext = { signal: new AbortController().signal, requestApproval: () => Promise.reject(new Error('store down')) };
+    const events = await collect(make({ env: { FAKE_ACP_RECORD: file } }).run(input('approval'), c));
+    expect(events).toContainEqual(expect.objectContaining({ type: 'tool.failed', toolId: 'call_ap', declined: true }));
+    expect(events.at(-1)).toEqual({ type: 'run.completed' });
+    const answers = readRecord(file).filter((m) => 'result' in m || 'error' in m);
+    expect(answers).toEqual([expect.objectContaining({ result: { outcome: { outcome: 'selected', optionId: 'reject' } } })]);
+  });
+
   it('auth scenario (-32000 on session/new) → run.failed auth_required with the auth method in the hint', async () => {
     const events = await collect(make({ env: { FAKE_ACP_AUTH: 'required' } }).run(input('simple'), ctx));
     expect(events).toEqual([

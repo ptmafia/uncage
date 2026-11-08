@@ -76,11 +76,13 @@ export async function startAcpProcess(o: {
   if (!executable) throw new Error('The ACP agent command is empty.');
   const proc = spawn(executable, args, { env: o.env, stdio: ['pipe', 'pipe', 'pipe'] });
 
-  let stderrTail = '';
-  proc.stderr.setEncoding('utf8');
-  proc.stderr.on('data', (chunk: string) => {
-    stderrTail = (stderrTail + chunk).slice(-STDERR_TAIL_BYTES);
+  let stderrBuf = Buffer.alloc(0);
+  proc.stderr.on('data', (chunk: Buffer) => {
+    stderrBuf = Buffer.concat([stderrBuf, chunk]);
+    if (stderrBuf.length > STDERR_TAIL_BYTES) stderrBuf = stderrBuf.subarray(stderrBuf.length - STDERR_TAIL_BYTES);
   });
+  // The tail may start mid-character; the decoder replaces a partial leading sequence.
+  const stderrTail = (): string => stderrBuf.toString('utf8');
   // EPIPE after the child died is reported through 'close'.
   proc.stdin.on('error', () => undefined);
 
@@ -90,7 +92,7 @@ export async function startAcpProcess(o: {
     // 'close' (not 'exit') so every stdout line is read before the exit is reported.
     proc.once('close', (code, signal) => {
       exitedFlag = true;
-      resolve({ code, signal, stderrTail });
+      resolve({ code, signal, stderrTail: stderrTail() });
     });
     // Spawn failures (ENOENT) emit 'error' and no 'close' on some platforms; `on` so a later
     // error (e.g. a failed kill) never goes unhandled.
@@ -98,7 +100,7 @@ export async function startAcpProcess(o: {
       spawnError ??= err;
       if (proc.pid === undefined) {
         exitedFlag = true;
-        resolve({ code: null, signal: null, stderrTail });
+        resolve({ code: null, signal: null, stderrTail: stderrTail() });
       }
     });
   });

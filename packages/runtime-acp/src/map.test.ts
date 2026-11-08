@@ -119,6 +119,13 @@ describe('createAcpMapper', () => {
       { type: 'tool.completed', toolId: 'plan_id_1', output: '- [x] read\n- [x] write' },
       { type: 'message.started', messageId: 'id_2' },
     ]);
+    // A plan revised after its step closed opens a new step; no step completes twice.
+    const later = [...m.update(plan('pending')), ...m.finish('end_turn')];
+    expect(later.filter((e) => e.type !== 'message.completed')).toEqual([
+      { type: 'tool.started', toolId: 'plan_id_3', name: 'plan', title: 'Plan', category: 'other' },
+      { type: 'tool.completed', toolId: 'plan_id_3', output: '- [x] read\n- [ ] write' },
+      { type: 'run.completed' },
+    ]);
   });
 
   it.each([

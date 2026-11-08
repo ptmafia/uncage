@@ -102,6 +102,15 @@ describe('fake ACP agent', () => {
     expect((await prompt).stopReason).toBe('cancelled');
   });
 
+  it('burst without writeRaw falls back to un-awaited notifications and still streams all three chunks', async () => {
+    const conn = connect();
+    await init(conn);
+    const { sessionId } = await conn.agent.request(methods.agent.session.new, { cwd: '/tmp', mcpServers: [] });
+    await conn.agent.request(methods.agent.session.prompt, { sessionId, prompt: [{ type: 'text', text: 'burst' }] });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(texts(sessionId).join('')).toBe('one two three');
+  });
+
   it('auth required fails session/new with -32000', async () => {
     const conn = connect({ authRequired: true });
     await init(conn);
