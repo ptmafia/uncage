@@ -1,5 +1,5 @@
 ---
-title: 快速上手：Connected Mode
+title: 快速上手：Connected 模式
 description: 把 Uncage 接进一个 Next.js 应用，让已登录的用户连接自己的电脑，在你的网站上指挥他们自己的 Claude Code，并调用你的一个网站工具。约 15 分钟。
 ---
 
@@ -14,7 +14,7 @@ description: 把 Uncage 接进一个 Next.js 应用，让已登录的用户连�
 
 ## 复制给你的 coding agent 的提示词
 
-如果你在用 Claude Code、Codex 或其他 coding agent，可以把下面这段直接贴给它，代替手动操作（提示词保持英文，agent 读得最准）：
+如果你在用 Claude Code、Codex 或其他 coding agent，可以把下面这段直接贴给它，代替手动操作：
 
 ```text wrap
 Add Uncage Connected Mode to this Next.js (App Router) app, following https://uncage.vercel.app/docs/start/quickstart-connected.md exactly.
@@ -33,7 +33,7 @@ Verify: start the dev server, then curl -s http://localhost:3000/api/uncage/inst
 - **用户一侧（这次测试就是你自己的 Mac）：** macOS、Node.js 22+，并且已安装并登录 Claude Code：`npm i -g @anthropic-ai/claude-code`，然后运行一次 `claude` 并输入 `/login`。
 
 :::caution[为什么需要自定义服务器]
-hub 要和每台已连接的电脑保持一条 WebSocket，所以它需要一个长期运行、能接触到 HTTP 服务器的 Node 进程。单靠 Next.js 的 route handler 无法接受 WebSocket 升级，Serverless 平台（例如 Vercel Functions）也无法托管 hub。在 Vercel 上，请把 hub 作为单独的 Node 服务运行，见 [Mount the hub](/docs/guides/mount-the-hub/#serverless-hosting-vercel-netlify)（英文）。
+hub 要和每台已连接的电脑保持一条 WebSocket，所以它需要一个长期运行、能接触到 HTTP 服务器的 Node 进程。单靠 Next.js 的 route handler 无法接受 WebSocket 升级，Serverless 平台（例如 Vercel Functions）也无法托管 hub。在 Vercel 上，请把 hub 作为单独的 Node 服务运行，见[挂载 hub](/docs/zh-cn/guides/mount-the-hub/#serverless-托管vercelnetlify)。
 :::
 
 ## 1. 安装
@@ -44,7 +44,7 @@ npm i @uncage/hub @uncage/react-ui zod
 
 ## 2. 谁登录了
 
-hub 在每个浏览器请求上都会问你的应用：当前用户是谁。这个快速上手里先用一个固定的开发用户。[认证指南](/docs/guides/auth-and-device-approval/)（英文）介绍如何接入真正的登录。
+hub 在每个浏览器请求上都会问你的应用：当前用户是谁。这个快速上手里先用一个固定的开发用户。[认证指南](/docs/zh-cn/guides/auth-and-device-approval/)介绍如何接入真正的登录。
 
 ```ts title="lib/auth.ts"
 import type { HubUser } from '@uncage/hub';
@@ -78,8 +78,8 @@ import { defineTool, type SiteTool } from '@uncage/hub';
 import { z } from 'zod';
 
 /** Stand-in for your database. */
-// 放在 globalThis 上：server.ts 和 Next.js 页面各自加载这个模块的一份副本，
-// 普通的模块级 Map 在列出笔记的页面里会是空的。
+// Kept on globalThis: server.ts and Next.js pages load separate copies of this module,
+// so a plain module-level Map would look empty from a page that lists the notes.
 type Notes = Map<string, Array<{ id: string; title: string; text: string }>>;
 const g = globalThis as typeof globalThis & { __demoNotes?: Notes };
 const notes: Notes = (g.__demoNotes ??= new Map());
@@ -155,7 +155,7 @@ import { publishHub } from './lib/hub-registry.ts';
 import { createAppHub } from './lib/uncage-hub.ts';
 
 const dev = process.env.NODE_ENV !== 'production';
-// 改了 PORT 的话，也要把 PUBLIC_URL（lib/uncage-hub.ts）设成用户实际打开的地址。
+// If you change PORT, also set PUBLIC_URL (lib/uncage-hub.ts) to the URL users open.
 const port = Number(process.env.PORT ?? 3000);
 
 const hub = await createAppHub();
@@ -208,7 +208,7 @@ server.listen(port, () => console.log(`ready on http://localhost:${port}`));
 
 ## 6. 对话页面
 
-`<AgentChat>` 默认请求 `/api/uncage`。它会发现对面是 hub（而不是本地的 Uncage 服务），自动切换到 Connected Mode：还没有电脑时，显示带两条命令的 `<ConnectMachine>`；连上之后，标题栏显示这段对话运行在哪台电脑上。
+`<AgentChat>` 默认请求 `/api/uncage`。它会发现对面是 hub（而不是本地的 Uncage 服务），自动切换到 Connected 模式：还没有电脑时，显示带两条命令的 `<ConnectMachine>`；连上之后，标题栏显示这段对话运行在哪台电脑上。
 
 ```tsx title="app/uncage/page.tsx"
 'use client';
@@ -225,8 +225,6 @@ export default function UncagePage() {
   );
 }
 ```
-
-界面默认是英文；中文界面加 `locale="zh-CN"`。
 
 ## 7. 审批页
 
@@ -366,18 +364,18 @@ curl -s http://localhost:3000/api/uncage/install.sh | head -3
 回到对话页，状态从“等待你的电脑上线…”变为**已连接：&lt;你的电脑名&gt;**。
 
 :::tip[纯 http]
-agent 只对 `localhost` 和 `127.0.0.1` 接受 `http://`。其他网站都必须用 `https://`（WebSocket 随之使用 `wss://`）。
+守护进程只对 `localhost` 和 `127.0.0.1` 接受 `http://`。其他网站都必须用 `https://`（WebSocket 随之使用 `wss://`）。
 :::
 
 ## 10. 发一个任务
 
-点击示例提示词，或者输入：“Write a short poem about this website and save it with save_note”（也可以用中文：“写一首关于这个网站的短诗，并用 save_note 保存”）。
+点击示例提示词，或者输入：“Write a short poem about this website and save it with save_note”。
 
 - Claude Code 在你的电脑上、在 `~/Uncage/localhost-3000/<会话 id>/` 里运行。
 - 它调用 `mcp__site__save_note`，handler 以 `dev-user` 身份在你的 Next.js 服务器里运行。
 - 回答以流式显示在对话框里。执行命令和修改文件会弹出审批卡片，按钮是**允许执行 / 拒绝**。
 
-停掉 agent（`uncage agent uninstall`；如果你是在前台运行的 `uncage agent`，直接退出它），再刷新页面：因为配置了 `sessionStorage: 'site'`，对话仍然都在（地址栏保留 `?session=…`，左侧会话列表里也能找到），输入框提示电脑离线。
+停掉守护进程（`uncage agent uninstall`；如果你是在前台运行的 `uncage agent`，直接退出它），再刷新页面：因为配置了 `sessionStorage: 'site'`，对话仍然都在（地址栏保留 `?session=…`，左侧会话列表里也能找到），输入框提示电脑离线。
 
 ## 你做了什么
 
@@ -392,10 +390,10 @@ agent 只对 `localhost` 和 `127.0.0.1` 接受 `http://`。其他网站都必�
 
 仓库里的 [`examples/connected-demo`](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo) 是同样的结构扩展成的完整网站：登录、两个创建并发布落地页的工具（从用户电脑拉取文件）、一个技能、资产展示页，以及基于 Redis 和 Postgres 的双节点模式。它用真实的 Claude Code 做过端到端测试。
 
-## 下一步（英文）
+## 下一步
 
-- [Define tools](/docs/guides/define-tools/)：参数校验、错误、确认、文件通道。
-- [Write skills](/docs/guides/write-skills/) 与[按次选择](/docs/guides/select-manifest/)。
-- [Auth and device approval](/docs/guides/auth-and-device-approval/)：接入你真正的登录。
-- [Multi-node](/docs/guides/multi-node/)：负载均衡后面的 Postgres + Redis。
-- **部署到代理后面之前：** 设置客户端 IP（`trust proxy` 或 `rateLimits.clientIp`），否则所有用户共用一个 `uncage setup` 限流桶（每分钟 20 次）。见 [behind a proxy](/docs/guides/mount-the-hub/#behind-a-reverse-proxy-or-load-balancer)。
+- [定义网站工具](/docs/zh-cn/guides/define-tools/)：参数校验、错误、确认、文件通道。
+- [编写技能](/docs/zh-cn/guides/write-skills/)，并[按运行选择它们](/docs/zh-cn/guides/select-manifest/)。
+- [认证与设备授权](/docs/zh-cn/guides/auth-and-device-approval/)：接入你真正的登录。
+- [多节点](/docs/zh-cn/guides/multi-node/)：负载均衡后面的 Postgres + Redis。
+- **部署到代理后面之前：** 设置客户端 IP（`trust proxy` 或 `rateLimits.clientIp`），否则所有用户共用一个 `uncage setup` 限流桶。见[反向代理或负载均衡之后](/docs/zh-cn/guides/mount-the-hub/#反向代理或负载均衡之后)。

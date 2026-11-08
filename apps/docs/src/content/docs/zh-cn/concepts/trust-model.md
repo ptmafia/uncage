@@ -3,7 +3,7 @@ title: 信任模型
 description: 使用 Uncage 的网站在用户电脑上能做什么、不能做什么，用户在本机能控制什么，以及哪些保障是内置且无法关闭的。
 ---
 
-Connected Mode 让网站可以在用户自己的电脑上启动工作。这就必须清楚回答：“网站到底能做什么？”答案如下。
+Connected 模式让网站可以在用户自己的电脑上启动工作。这就必须清楚回答：“网站到底能做什么？”答案如下。
 
 ## 简短版
 
@@ -33,7 +33,7 @@ Connected Mode 让网站可以在用户自己的电脑上启动工作。这就�
 
 - 在用户电脑上运行除 Claude Code（或 Codex）本身以外的任何东西，而且只能在会话目录里。
 - 打开 `bypassPermissions`，或使用电脑 `allowedPermissionModes` 以外的模式。
-- 决定会话在磁盘上的位置。Connected Mode 下浏览器传来的 `workspace` 字段会被忽略；目录由守护进程创建。
+- 决定会话在磁盘上的位置。Connected 模式下浏览器传来的 `workspace` 字段会被忽略；目录由守护进程创建。
 - 访问其他用户的电脑或会话。每个浏览器请求都会用 `getUser(req)` 校验，别人的会话或电脑会返回 `404`，和不存在的一模一样。
 - 看到机器令牌。hub 只保存令牌的哈希；令牌从不写入日志或事件。
 - 读取用户的 Claude 登录。Claude Code 在那台电脑上使用它自己的凭据。
@@ -50,10 +50,10 @@ Connected Mode 让网站可以在用户自己的电脑上启动工作。这就�
 
 Uncage 无法防止一个网站滥用它自己用户的信任，但它给了你配得上这份信任所需的一切：
 
-- **认证每一个请求。** `getUser(req)` 必须返回真实的已登录用户，或者 `null`。见 [Auth and device approval](/docs/guides/auth-and-device-approval/)（英文）。
+- **认证每一个请求。** `getUser(req)` 必须返回真实的已登录用户，或者 `null`。见[认证与设备授权](/docs/zh-cn/guides/auth-and-device-approval/)。
 - **保护 `/device`。** 批准一个码就是把一台电脑关联到一个账号。只对已登录用户提供这个页面，禁止被嵌入框架，并用带 CSRF 防护的 POST 做决定。
 - **在工具 handler 里检查归属。** `ctx.user` 是会话所属用户；每次查询都用它（`WHERE owner = ctx.user.id`）。
 - **抛出对用户安全的错误信息。** handler 抛出的消息会展示给用户和模型。
 - **对任何发布、发送、付款或删除类的工具使用 `requiresConfirmation`。**
 
-传输、令牌和各项限制见 [Security](/docs/reference/security/)（英文）。
+传输、令牌和各项限制另见[安全](/docs/zh-cn/reference/security/)。
