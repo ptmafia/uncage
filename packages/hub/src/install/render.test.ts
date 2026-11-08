@@ -33,7 +33,7 @@ describe('install messages', () => {
   it('every message key the scripts use exists, and every message is used by one of them', () => {
     const sh = installScript({ cliRange: '^0.3', siteUrl: 'https://site.test' });
     const ps1 = installScriptPs1({ cliRange: '^0.3', siteUrl: 'https://site.test' });
-    const shUsed = [...sh.slice(sh.indexOf('# ---- output')).matchAll(/\b(?:say|warn|ask|uncage_msg) ([a-z_]+)/g)].map((m) => m[1]!);
+    const shUsed = [...sh.slice(sh.indexOf('# ---- output')).matchAll(/\b(?:say|warn|ask|uncage_msg) '?([a-z_]+)/g)].map((m) => m[1]!);
     const ps1Used = [...ps1.slice(ps1.indexOf('# ---- output')).matchAll(/\b(?:Say|Warn|Ask|Get-UMsg) '([a-z_]+)'/g)].map((m) => m[1]!);
     const keys = Object.keys(INSTALL_MESSAGES.en).sort();
     for (const k of [...shUsed, ...ps1Used]) expect(keys, k).toContain(k);

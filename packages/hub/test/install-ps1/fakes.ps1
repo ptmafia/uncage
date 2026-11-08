@@ -8,13 +8,36 @@
 # the fake `npm install -g` drops into the npm prefix. Every fake appends "<name> <args>" to
 # calls.log. The user Path is a file (UNCAGE_TEST_USER_PATH_FILE), never the registry. Nothing
 # here touches the real profile, the registry or the network.
+#
+# On macOS / Linux (pwsh, e.g. the mcr.microsoft.com/powershell image) the same fakes are bash
+# scripts (named <name>.cmd, plus <name> for PATH lookups) and the installer is told it runs on
+# Windows (OS=Windows_NT, PROCESSOR_ARCHITECTURE=AMD64), so its logic runs anywhere pwsh does.
 
 $ErrorActionPreference = 'Stop'
+$FakeUnix = [IO.Path]::DirectorySeparatorChar -eq '/'
 
 function Write-FakeFile([string]$Path, [string[]]$Lines) {
   $dir = Split-Path -Parent $Path
   if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-  [IO.File]::WriteAllText($Path, (($Lines -join "`r`n") + "`r`n"), [Text.Encoding]::ASCII)
+  if ($FakeUnix) {
+    [IO.File]::WriteAllText($Path, (($Lines -join "`n") + "`n"), [Text.Encoding]::ASCII)
+    & chmod +x $Path
+  } else {
+    [IO.File]::WriteAllText($Path, (($Lines -join "`r`n") + "`r`n"), [Text.Encoding]::ASCII)
+  }
+}
+
+# Copies a fake program; on Unix also as <name> (no extension) when $Bare, for PATH lookups.
+function Copy-Fake([string]$From, [string]$To, [bool]$Bare = $false) {
+  Copy-Item -LiteralPath $From -Destination $To
+  if ($FakeUnix) {
+    & chmod +x $To
+    if ($Bare) {
+      $plain = $To.Substring(0, $To.Length - 4)
+      Copy-Item -LiteralPath $From -Destination $plain
+      & chmod +x $plain
+    }
+  }
 }
 
 # Creates a Node.js folder: node.cmd, .node-version and node_modules\npm\bin\npm-cli.js.
@@ -180,12 +203,105 @@ $FakeWinget = @(
   'exit /b 0'
 )
 
+if ($FakeUnix) {
+  $FakeMkNode = @(
+    '#!/bin/bash',
+    'mkdir -p "$1/node_modules/npm/bin"',
+    'cp "$UNCAGE_FAKE_DIR/node.cmd" "$1/node.cmd" && chmod +x "$1/node.cmd"',
+    'printf %s "$2" > "$1/.node-version"',
+    'echo "// fake npm" > "$1/node_modules/npm/bin/npm-cli.js"'
+  )
+  $FakeNode = @(
+    '#!/bin/bash',
+    'd=$(cd "$(dirname "$0")" && pwd)',
+    'NV=$(cat "$d/.node-version")',
+    'case "$1" in',
+    '  *npm-cli.js)',
+    '    shift',
+    '    echo "npm $* @ $d/" >> "$UNCAGE_FAKE_LOG"',
+    '    P=$d',
+    '    if [ -f "$d/.npm-prefix" ]; then P=$(cat "$d/.npm-prefix"); fi',
+    '    if [ -f "$USERPROFILE/.npmrc" ]; then v=$(sed -n "s/^prefix=//p" "$USERPROFILE/.npmrc"); if [ -n "$v" ]; then P=$v; fi; fi',
+    '    case "$1" in',
+    '      --version) echo 10.9.2 ;;',
+    '      prefix) echo "$P" ;;',
+    '      config) echo "prefix=$4" > "$USERPROFILE/.npmrc" ;;',
+    '      install)',
+    '        if [ -f "$UNCAGE_FAKE_DIR/npm-fails" ]; then exit 1; fi',
+    '        mkdir -p "$P"',
+    '        cp "$UNCAGE_FAKE_DIR/uncage.cmd" "$P/uncage.cmd" && chmod +x "$P/uncage.cmd"',
+    '        cp "$UNCAGE_FAKE_DIR/uncage-shim.ps1" "$P/uncage.ps1"',
+    '        echo 0.3.0 > "$P/.uncage-version" ;;',
+    '    esac',
+    '    exit 0 ;;',
+    'esac',
+    'echo "node $*" >> "$UNCAGE_FAKE_LOG"',
+    'case "$1" in --version) echo "v$NV" ;; -p) echo "$0" ;; esac',
+    'exit 0'
+  )
+  $FakeUncage = @(
+    '#!/bin/bash',
+    'echo "uncage $*" >> "$UNCAGE_FAKE_LOG"',
+    'd=$(cd "$(dirname "$0")" && pwd)',
+    'case "$1" in',
+    '  --version) cat "$d/.uncage-version" ;;',
+    '  runtimes) if [ ! -f "$UNCAGE_FAKE_DIR/acp" ]; then exit 1; fi; echo ''{"runtimes":[{"id":"gemini","status": "available"}]}'' ;;',
+    '  setup) if [ -f "$UNCAGE_FAKE_DIR/setup-fails" ]; then exit 1; fi ;;',
+    'esac',
+    'exit 0'
+  )
+  $FakeNvm = @(
+    '#!/bin/bash',
+    'echo "nvm $*" >> "$UNCAGE_FAKE_LOG"',
+    'd=$(cd "$(dirname "$0")" && pwd)',
+    'case "$1" in',
+    '  root) echo; echo "Current Root: $d/" ;;',
+    '  install) "$UNCAGE_FAKE_DIR/mknode.cmd" "$d/v22.23.4" 22.23.4; echo Installation complete. ;;',
+    'esac',
+    'exit 0'
+  )
+  $FakeFnm = @(
+    '#!/bin/bash',
+    'echo "fnm $*" >> "$UNCAGE_FAKE_LOG"',
+    'D="$APPDATA/fnm"',
+    'if [ -d "$USERPROFILE/.fnm" ]; then D="$USERPROFILE/.fnm"; fi',
+    'if [ -n "$FNM_DIR" ]; then D=$FNM_DIR; fi',
+    'N="$D/node-versions/v22.23.4/installation"',
+    'case "$1" in',
+    '  --version) echo fnm 1.39.0 ;;',
+    '  install) "$UNCAGE_FAKE_DIR/mknode.cmd" "$N" 22.23.4; mkdir -p "$D/aliases/default" ;;',
+    '  exec) if [ ! -f "$N/node.cmd" ]; then exit 1; fi; echo "$N/node.cmd" ;;',
+    '  default) mkdir -p "$D/aliases/default"; echo "$2" > "$D/aliases/default/.alias" ;;',
+    '  unalias) rm -rf "$D/aliases/default" ;;',
+    'esac',
+    'exit 0'
+  )
+  $FakeVolta = @(
+    '#!/bin/bash',
+    'echo "volta $*" >> "$UNCAGE_FAKE_LOG"',
+    'N="$LOCALAPPDATA/Volta/tools/image/node/22.23.4"',
+    'case "$1" in fetch | run) "$UNCAGE_FAKE_DIR/mknode.cmd" "$N" 22.23.4 ;; esac',
+    'exit 0'
+  )
+  $FakeWinget = @(
+    '#!/bin/bash',
+    'echo "winget $*" >> "$UNCAGE_FAKE_LOG"',
+    'if [ "$1" != install ]; then exit 0; fi',
+    'L="$LOCALAPPDATA/Microsoft/WinGet/Links"',
+    'mkdir -p "$L"',
+    'cp "$UNCAGE_FAKE_DIR/fnm.cmd" "$L/fnm.cmd" && chmod +x "$L/fnm.cmd"',
+    'echo Successfully installed'
+  )
+}
+
 function New-FakeAgent([string]$Name) {
+  if ($FakeUnix) { return @('#!/bin/bash', ('echo "' + $Name + ' $*" >> "$UNCAGE_FAKE_LOG"')) }
   return @('@echo off', ('>>"%UNCAGE_FAKE_LOG%" echo ' + $Name + ' %*'), 'exit /b 0')
 }
 
 $UncageSandboxEnv = @('NVM_HOME', 'NVM_SYMLINK', 'FNM_DIR', 'FNM_MULTISHELL_PATH', 'VOLTA_HOME', 'npm_config_prefix',
-  'UNCAGE_YES', 'UNCAGE_NO_SETUP', 'UNCAGE_LANG', 'UNCAGE_ANSWERS', 'UNCAGE_CLI_SPEC', 'UNCAGE_TEST_FNM_ZIP')
+  'UNCAGE_YES', 'UNCAGE_NO_SETUP', 'UNCAGE_LANG', 'UNCAGE_ANSWERS', 'UNCAGE_CLI_SPEC', 'UNCAGE_TEST_FNM_ZIP',
+  'UNCAGE_TEST_MACHINE_PATH_FILE')
 
 function New-UncageSandbox {
   $root = Join-Path ([IO.Path]::GetTempPath()) ('uncage ps1 ' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -198,8 +314,8 @@ function New-UncageSandbox {
     UserPath = (Join-Path $root 'userpath.txt')
     Tmp = (Join-Path $root 'tmp')
   }
-  $sb.Local = Join-Path $sb.Home 'AppData\Local'
-  $sb.Roaming = Join-Path $sb.Home 'AppData\Roaming'
+  $sb.Local = [IO.Path]::Combine($sb.Home, 'AppData', 'Local')
+  $sb.Roaming = [IO.Path]::Combine($sb.Home, 'AppData', 'Roaming')
   foreach ($d in @($sb.Home, $sb.Bin, $sb.Fakes, $sb.Local, $sb.Roaming, $sb.Tmp)) {
     New-Item -ItemType Directory -Force -Path $d | Out-Null
   }
@@ -224,9 +340,18 @@ function New-UncageSandbox {
   $env:UNCAGE_FAKE_DIR = $sb.Fakes
   $env:UNCAGE_TEST_USER_PATH_FILE = $sb.UserPath
   $env:CI = 'true'
-  $sys = $env:SystemRoot
-  $sb.SysPath = "$sys\System32;$sys;$sys\System32\WindowsPowerShell\v1.0"
-  $env:PATH = $sb.Bin + ';' + $sb.SysPath
+  if ($FakeUnix) {
+    # The installer under test believes it runs on Windows.
+    $env:OS = 'Windows_NT'
+    $env:PROCESSOR_ARCHITECTURE = 'AMD64'
+    Remove-Item -Path Env:PROCESSOR_ARCHITEW6432 -ErrorAction SilentlyContinue
+    $env:PATH = $sb.Bin + ':/usr/bin:/bin'
+    # Environment names are case-sensitive here; the installer reads $env:Path.
+    $env:Path = $env:PATH
+  } else {
+    $sys = $env:SystemRoot
+    $env:PATH = $sb.Bin + ';' + "$sys\System32;$sys;$sys\System32\WindowsPowerShell\v1.0"
+  }
   return $sb
 }
 
@@ -237,34 +362,52 @@ function Remove-UncageSandbox($Sb) {
 # Node.js $Version in $Dir (default: bin, i.e. on PATH).
 function Add-FakeNode($Sb, [string]$Version = '22.23.4', [string]$Dir = '') {
   if (-not $Dir) { $Dir = $Sb.Bin }
-  New-Item -ItemType Directory -Force -Path (Join-Path $Dir 'node_modules\npm\bin') | Out-Null
-  Copy-Item -LiteralPath (Join-Path $Sb.Fakes 'node.cmd') -Destination (Join-Path $Dir 'node.cmd')
+  $npmBin = [IO.Path]::Combine($Dir, 'node_modules', 'npm', 'bin')
+  New-Item -ItemType Directory -Force -Path $npmBin | Out-Null
+  Copy-Fake (Join-Path $Sb.Fakes 'node.cmd') (Join-Path $Dir 'node.cmd') $true
   [IO.File]::WriteAllText((Join-Path $Dir '.node-version'), $Version)
-  [IO.File]::WriteAllText((Join-Path $Dir 'node_modules\npm\bin\npm-cli.js'), '// fake npm')
+  [IO.File]::WriteAllText((Join-Path $npmBin 'npm-cli.js'), '// fake npm')
 }
 
 function Add-FakeTool($Sb, [string]$Name) {
-  Copy-Item -LiteralPath (Join-Path $Sb.Fakes ($Name + '.cmd')) -Destination (Join-Path $Sb.Bin ($Name + '.cmd'))
+  Copy-Fake (Join-Path $Sb.Fakes ($Name + '.cmd')) (Join-Path $Sb.Bin ($Name + '.cmd')) $true
 }
 
 function Add-FakeAgent($Sb, [string]$Name) {
   Write-FakeFile (Join-Path $Sb.Bin ($Name + '.cmd')) (New-FakeAgent $Name)
+  if ($FakeUnix) { Write-FakeFile (Join-Path $Sb.Bin $Name) (New-FakeAgent $Name) }
 }
 
 # nvm-windows in %LOCALAPPDATA%\nvm (NVM_HOME, on PATH).
 function Add-FakeNvm($Sb) {
   $nvmHome = Join-Path $Sb.Local 'nvm'
   New-Item -ItemType Directory -Force -Path $nvmHome | Out-Null
-  Copy-Item -LiteralPath (Join-Path $Sb.Fakes 'nvm.cmd') -Destination (Join-Path $nvmHome 'nvm.cmd')
+  Copy-Fake (Join-Path $Sb.Fakes 'nvm.cmd') (Join-Path $nvmHome 'nvm.cmd') $true
   $env:NVM_HOME = $nvmHome
-  $env:PATH = $nvmHome + ';' + $env:PATH
+  $env:PATH = $nvmHome + [IO.Path]::PathSeparator + $env:PATH
+  if ($FakeUnix) { $env:Path = $env:PATH }
   return $nvmHome
 }
 
 # A local stand-in for fnm-windows.zip (UNCAGE_TEST_FNM_ZIP).
 function Add-FakeFnmZip($Sb) {
   $zip = Join-Path $Sb.Root 'fnm-windows.zip'
-  Compress-Archive -LiteralPath (Join-Path $Sb.Fakes 'fnm.cmd') -DestinationPath $zip -Force
+  if ($FakeUnix) {
+    # Compress-Archive drops the executable bit; store rwxr-xr-x in the entry so it survives.
+    Add-Type -AssemblyName System.IO.Compression
+    $fs = [IO.File]::Open($zip, 'Create')
+    try {
+      $archive = New-Object System.IO.Compression.ZipArchive($fs, [System.IO.Compression.ZipArchiveMode]::Create)
+      try {
+        $entry = $archive.CreateEntry('fnm.cmd')
+        $entry.ExternalAttributes = 0x81ED -shl 16
+        $w = New-Object IO.StreamWriter($entry.Open())
+        try { $w.Write([IO.File]::ReadAllText((Join-Path $Sb.Fakes 'fnm.cmd'))) } finally { $w.Dispose() }
+      } finally { $archive.Dispose() }
+    } finally { $fs.Dispose() }
+  } else {
+    Compress-Archive -LiteralPath (Join-Path $Sb.Fakes 'fnm.cmd') -DestinationPath $zip -Force
+  }
   $env:UNCAGE_TEST_FNM_ZIP = $zip
   return $zip
 }

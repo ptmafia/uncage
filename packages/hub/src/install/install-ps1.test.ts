@@ -10,13 +10,44 @@ import { installScript, installScriptPs1, type InstallScriptExtension } from './
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const SITE = 'https://site.test';
 const opts = { cliRange: '^0.3', siteUrl: SITE };
+const GUARD = 'if ($PSCommandPath) { exit $uncageState.Code } else { $global:LASTEXITCODE = $uncageState.Code; Remove-Variable -Name uncageState, Yes, NoSetup, Lang -ErrorAction SilentlyContinue }';
 const render = (extend?: InstallScriptExtension) => installScriptPs1({ ...opts, ...(extend ? { extend } : {}) });
 
 const has = (cmd: string): boolean => spawnSync(cmd, ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.Major'], { encoding: 'utf8', timeout: 60_000 }).status === 0;
 const isWin = process.platform === 'win32';
-const hasPwsh = has('pwsh');
-/** PowerShell hosts available here: Windows PowerShell 5.1 (Windows only) and pwsh 7. */
-const shells: string[] = [...(isWin && has('powershell.exe') ? ['powershell.exe'] : []), ...(hasPwsh ? ['pwsh'] : [])];
+
+/** A PowerShell to run things with: `argv` turns pwsh arguments into a command line. */
+interface PsHost {
+  name: string;
+  argv(args: string[], env: Record<string, string>, mounts: string[]): [string, string[]];
+}
+const nativeHost = (cmd: string): PsHost => ({ name: cmd, argv: (args) => [cmd, args] });
+
+/**
+ * Without a native pwsh, a local Docker image with pwsh runs the same scripts
+ * (UNCAGE_PWSH_DOCKER_IMAGE, default mcr.microsoft.com/powershell:latest). The tests never pull:
+ * the image must already exist and match this machine's architecture (amd64 images crash under
+ * emulation on arm64 Macs; build an arm64 one from the pwsh linux-arm64 tarball there).
+ */
+function dockerHost(): PsHost | null {
+  const image = process.env.UNCAGE_PWSH_DOCKER_IMAGE ?? 'mcr.microsoft.com/powershell:latest';
+  const r = spawnSync('docker', ['image', 'inspect', '-f', '{{.Architecture}}', image], { encoding: 'utf8', timeout: 30_000 });
+  const arch = process.arch === 'x64' ? 'amd64' : process.arch;
+  if (r.status !== 0 || r.stdout.trim() !== arch) return null;
+  return {
+    name: `docker ${image}`,
+    argv: (args, env, mounts) => [
+      'docker',
+      ['run', '--rm', ...mounts.flatMap((m) => ['-v', `${m}:${m}`]), ...Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]), image, 'pwsh', ...args],
+    ],
+  };
+}
+
+/** PowerShell hosts here: Windows PowerShell 5.1 (Windows), pwsh 7 (native, else Docker). */
+const hosts: PsHost[] = [
+  ...(isWin && has('powershell.exe') ? [nativeHost('powershell.exe')] : []),
+  ...(has('pwsh') ? [nativeHost('pwsh')] : isWin ? [] : [dockerHost()].filter((h): h is PsHost => h !== null)),
+];
 
 /** Decoded message tables embedded in a rendered install.ps1: locale → key → text. */
 function ps1Tables(s: string): Record<string, Record<string, string>> {
@@ -104,8 +135,7 @@ describe('install.ps1 (static, every OS)', () => {
     const s = installScriptPs1(opts);
     expect(s).not.toMatch(/\?\?|\s&&\s|\s\|\|\s|-Parallel|\$PSStyle/);
     expect(s.match(/\bexit\b/g)).toHaveLength(1);
-    expect(s).toContain('if ($PSCommandPath) { exit $uncageCode } else { $global:LASTEXITCODE = $uncageCode }');
-    expect(s.trimEnd().split('\n').at(-1)).toBe('if ($PSCommandPath) { exit $uncageCode } else { $global:LASTEXITCODE = $uncageCode }');
+    expect(s.trimEnd().split('\n').at(-1)).toBe(GUARD);
     // PowerShell 7 makes $IsWindows / $IsLinux / $IsMacOS read-only.
     expect(s).not.toMatch(/\$(IsWindows|IsLinux|IsMacOS)\s*=/i);
     expect(s).toContain('param([switch]$Yes, [switch]$NoSetup, [string]$Lang)');
@@ -175,7 +205,7 @@ describe('install.ps1 (static, every OS)', () => {
     expect(t.en!.node_ok).toBe('✓ Node.js {0} ({1})');
     expect(t.ja!.cli_old).toBe('✗ Uncage CLI {0} は {1} に一致しません');
     expect(t.en!.no_agent).toBe(INSTALL_MESSAGES_PS1.en.no_agent);
-    expect(t.en!.not_default_hint).toBe('Node.js 22 is not your default, so run the Uncage CLI with: $env:Path = "{0};$env:Path"; & {1}');
+    expect(t.en!.not_default_hint).toBe('Node.js 22 is not your default, so run the Uncage CLI with: $env:Path = {0} + $env:Path; & {1}');
     expect(t.zh!.os_unsupported).toContain('Windows');
     const custom = ps1Tables(render({ agentHelp: { en: 'Install {an} agent: 100%', zh: '先安装一个助手' } }));
     expect(custom.en!.no_agent).toBe('Install {{an}} agent: 100%');
@@ -211,7 +241,7 @@ describe('install.ps1 (static, every OS)', () => {
     expect(() => installScriptPs1({ ...opts, extend: { ps1AfterCli: 'Write-Host "é"' } })).toThrow(/ps1AfterCli/);
   });
 
-  it.runIf(shells.length > 0)('install.ps1 and the test scripts parse in every PowerShell here', () => {
+  it.runIf(hosts.length > 0)('install.ps1 and the test scripts parse in every PowerShell here', { timeout: 120_000 }, () => {
     const dir = mkdtempSync(join(tmpdir(), 'uncage-ps1-parse-'));
     try {
       const file = join(dir, 'install.ps1');
@@ -226,9 +256,10 @@ describe('install.ps1 (static, every OS)', () => {
         '}',
         'exit $bad',
       ].join('\n');
-      for (const sh of shells) {
-        const r = spawnSync(sh, ['-NoProfile', '-NonInteractive', '-Command', cmd], { encoding: 'utf8', timeout: 60_000 });
-        expect(r.status, `${sh}: ${r.stdout}${r.stderr}`).toBe(0);
+      for (const h of hosts) {
+        const [exe, args] = h.argv(['-NoProfile', '-NonInteractive', '-Command', cmd], {}, [dir, pkgDir]);
+        const r = spawnSync(exe, args, { encoding: 'utf8', timeout: 120_000 });
+        expect(r.status, `${h.name}: ${r.stdout}${r.stderr}`).toBe(0);
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -255,9 +286,12 @@ const SCENARIOS = [
   'extension',
 ] as const;
 
-// The scenarios drive the Windows script with .cmd fakes, so they need Windows (the CI
-// `platform (windows-latest)` job runs them under Windows PowerShell 5.1 and pwsh 7).
-describe.runIf(isWin && shells.length > 0)('install.ps1 scenarios (Windows)', { timeout: 180_000 }, () => {
+// On Windows the fakes are .cmd files and the scenarios run under Windows PowerShell 5.1 and pwsh 7
+// (the CI `platform (windows-latest)` job). Elsewhere pwsh (native, or Docker) runs them with bash
+// fakes while the script believes it is on Windows: the same logic, minus cmd.exe and the registry.
+// UNCAGE_PS1_LOG_DIR keeps one log per scenario and shell (CI uploads it when a run fails).
+const logDir = join(pkgDir, 'test-results/install-ps1');
+describe.runIf(hosts.length > 0)('install.ps1 scenarios', { timeout: 180_000 }, () => {
   let dir = '';
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), 'uncage-ps1-'));
@@ -271,19 +305,26 @@ describe.runIf(isWin && shells.length > 0)('install.ps1 scenarios (Windows)', { 
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
-  const runPs1Scenario = (shell: string, name: string) =>
+  const runPs1Scenario = (h: PsHost, name: string) =>
     new Promise<{ code: number | null; output: string }>((resolve) => {
-      const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(pkgDir, 'test/install-ps1/run.ps1'), '-Scenario', name, '-ScriptDir', dir];
-      const child = spawn(shell, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      const env = { UNCAGE_PS1_LOG_DIR: logDir };
+      const [exe, args] = h.argv(
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(pkgDir, 'test/install-ps1/run.ps1'), '-Scenario', name, '-ScriptDir', dir],
+        env,
+        [dir, pkgDir],
+      );
+      const child = spawn(exe, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } });
       let output = '';
       child.stdout.on('data', (d: Buffer) => (output += d.toString('utf8')));
       child.stderr.on('data', (d: Buffer) => (output += d.toString('utf8')));
       child.on('close', (code) => resolve({ code, output }));
     });
 
-  describe.each(shells)('%s', (shell) => {
+  describe.each(hosts.map((h) => [h.name, h] as const))('%s', (_name, h) => {
     it.each(SCENARIOS)('install.ps1 scenario %s', async (name) => {
-      const r = await runPs1Scenario(shell, name);
+      const r = await runPs1Scenario(h, name);
+      // Printed in full so a CI log shows it without the artifact.
+      if (r.code !== 0) console.log(`--- install.ps1 scenario ${name} (${h.name}) failed ---\n${r.output}`);
       expect(r.code, r.output).toBe(0);
       expect(r.output).toContain(`PASS ${name}`);
     });

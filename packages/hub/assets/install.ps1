@@ -207,6 +207,11 @@ function Invoke-UNative([string]$Exe, [string[]]$Argv) {
   }
 }
 
+# A PowerShell single-quoted literal, for printed commands.
+function Format-ULiteral([string]$Text) {
+  return ("'" + $Text.Replace("'", "''") + "'")
+}
+
 function Get-UFirstLine([string]$Text) {
   foreach ($l in ($Text -split "`r?`n")) {
     if ($l.Trim() -ne '') { return $l.Trim() }
@@ -313,7 +318,30 @@ function Add-UUserPath([string]$Dir) {
   }
   $parts += $Dir
   Set-UUserPath ($parts -join ';')
+  $U.AddedPaths += $Dir
   Say 'path_added' $Dir
+}
+
+# The Machine Path comes before the user Path in every new terminal.
+function Get-UMachinePath {
+  if ($env:UNCAGE_TEST_MACHINE_PATH_FILE) {
+    if (-not (Test-UFile $env:UNCAGE_TEST_MACHINE_PATH_FILE)) { return '' }
+    return ([string](Get-Content -LiteralPath $env:UNCAGE_TEST_MACHINE_PATH_FILE -Raw)).Trim()
+  }
+  try { return [string][Environment]::GetEnvironmentVariable('Path', 'Machine') } catch { return '' }
+}
+
+# A node.exe in a Machine Path folder other than Node.js 22's own, or ''.
+function Find-UMachineNode {
+  $mine = (Split-Path -Parent $U.NewNode).TrimEnd('\')
+  foreach ($p in ((Get-UMachinePath) -split ';')) {
+    if (-not $p) { continue }
+    $d = [Environment]::ExpandEnvironmentVariables($p).TrimEnd('\')
+    if ($d -ieq $mine) { continue }
+    $n = Find-UExe $d 'node'
+    if ($n) { return $n }
+  }
+  return ''
 }
 
 # ---- step 1: checks ---------------------------------------------------------------------------
@@ -349,7 +377,7 @@ function Invoke-UNpmQuery([string[]]$Argv) {
 function Use-UNode([string]$Node) {
   $U.Node = $Node
   $U.NodeDir = Split-Path -Parent $Node
-  $env:Path = $U.NodeDir + ';' + $U.BasePath
+  $env:Path = $U.NodeDir + [IO.Path]::PathSeparator + $U.BasePath
   $U.NpmCli = Join-Path $U.NodeDir 'node_modules\npm\bin\npm-cli.js'
   $U.NpmVer = ''
   $U.NpmPrefix = ''
@@ -494,7 +522,7 @@ function Get-UFnmZipManualCmds {
 function Get-UNodeManualCmds {
   $m = [string]$U.NodeMajor
   if ($U.Mgr -eq 'nvm') { return @('nvm install ' + $m) }
-  if ($U.Mgr -eq 'fnm') { return @('fnm install ' + $m) }
+  if ($U.Mgr -eq 'fnm') { return @('& ' + (Format-ULiteral $U.Fnm) + ' install ' + $m) }
   if ($U.Mgr -eq 'volta') { return @('volta install node@' + $m) }
   if ($U.Winget) { return @($U.WingetFnm, ('fnm install ' + $m)) }
   return (Get-UFnmZipManualCmds)
@@ -502,8 +530,14 @@ function Get-UNodeManualCmds {
 
 # npm through cmd.exe would drop the ^ of the range unless it is quoted for cmd.exe as well.
 function Get-UNpmInstallCmd([string]$Spec) {
-  if ($U.NpmCli) { return ('& "' + $U.Node + '" "' + $U.NpmCli + '" install -g "' + $Spec + '"') }
+  if ($U.NpmCli) { return ('& ' + (Format-ULiteral $U.Node) + ' ' + (Format-ULiteral $U.NpmCli) + ' install -g ' + (Format-ULiteral $Spec)) }
   return ("cmd /c 'npm install -g " + '"' + $Spec + '"' + "'")
+}
+
+# Adds a folder to the user Path by hand without flattening %VARIABLES% in it (the registry value
+# is read raw and written back as REG_EXPAND_SZ).
+function Get-UPathManualCmd([string]$Dir) {
+  return ('$k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey(''Environment''); $k.SetValue(''Path'', $k.GetValue(''Path'', '''', ''DoNotExpandEnvironmentNames'') + '';' + $Dir + ''', ''ExpandString''); $k.Close()')
 }
 
 # No terminal and no -Yes: list what is missing and how to do it by hand; change nothing.
@@ -522,7 +556,7 @@ function Assert-UTerminal {
   if ($U.NodeOk -and -not $U.NpmWritable) {
     Say 'item_npm'
     Write-UCmd 'npm.cmd config set prefix "$env:USERPROFILE\.npm-global"'
-    Write-UCmd '[Environment]::SetEnvironmentVariable(''Path'', [Environment]::GetEnvironmentVariable(''Path'', ''User'') + '';'' + "$env:USERPROFILE\.npm-global", ''User'')'
+    Write-UCmd (Get-UPathManualCmd '%USERPROFILE%\.npm-global')
   }
   if (-not $U.NodeOk -or -not (Test-UCliOk)) {
     Say 'item_cli' $U.CliSpec
@@ -576,33 +610,39 @@ function Restore-UDefault {
   Say 'default_restored' 'fnm'
 }
 
+# node.exe in the newest <Root>\<Prefix>22.x.y folder, or ''.
+function Find-UNewestNode([string]$Root, [string]$Prefix) {
+  if (-not (Test-UDir $Root)) { return '' }
+  $best = ''
+  $bestVer = $null
+  foreach ($d in @(Get-ChildItem -LiteralPath $Root -Directory -ErrorAction SilentlyContinue)) {
+    if ($d.Name -match ('^' + $Prefix + $U.NodeMajor + '\.(\d+)\.(\d+)$')) {
+      $ver = [version]([string]$U.NodeMajor + '.' + $Matches[1] + '.' + $Matches[2])
+      if ($null -eq $bestVer -or $ver -gt $bestVer) {
+        $bestVer = $ver
+        $best = $d.FullName
+      }
+    }
+  }
+  if (-not $best) { return '' }
+  return (Find-UExe $best 'node')
+}
+
 # Sets NewNode / NodeVer to the manager's Node.js 22 without activating it.
 function Find-UMgrNode {
   $U.NewNode = ''
   $p = ''
   if ($U.Mgr -eq 'nvm') {
-    $root = Get-UNvmRoot
-    if (Test-UDir $root) {
-      $best = ''
-      $bestVer = $null
-      foreach ($d in @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue)) {
-        if ($d.Name -match ('^v?' + $U.NodeMajor + '\.(\d+)\.(\d+)$')) {
-          $ver = [version]([string]$U.NodeMajor + '.' + $Matches[1] + '.' + $Matches[2])
-          if ($null -eq $bestVer -or $ver -gt $bestVer) {
-            $bestVer = $ver
-            $best = $d.FullName
-          }
-        }
-      }
-      if ($best) {
-        $p = Find-UExe $best 'node'
-        $U.NvmVersion = $bestVer.ToString()
-      }
-    }
+    $p = Find-UNewestNode (Get-UNvmRoot) 'v'
+    if ($p) { $U.NvmVersion = Split-Path -Leaf (Split-Path -Parent $p) }
+    if ($U.NvmVersion) { $U.NvmVersion = $U.NvmVersion.TrimStart('v') }
   } elseif ($U.Mgr -eq 'fnm') {
     $p = Get-UFirstLine (Invoke-UQuery $U.Fnm @('exec', ('--using=' + $U.NodeMajor), 'node', '-p', 'process.execPath'))
   } elseif ($U.Mgr -eq 'volta') {
-    $p = Get-UFirstLine (Invoke-UQuery $U.Volta @('run', '--node', [string]$U.NodeMajor, 'node', '-p', 'process.execPath'))
+    # Not `volta run --node 22`: it would download Node.js before the user said Y.
+    $vh = $env:VOLTA_HOME
+    if (-not $vh) { $vh = Join-Path $env:LOCALAPPDATA 'Volta' }
+    $p = Find-UNewestNode (Join-Path $vh 'tools\image\node') ''
   }
   if (Test-UFile $p) {
     $v = Get-UNodeVersion $p
@@ -696,7 +736,7 @@ function Install-UOwnFnm {
   $U.Fnm = $fnm
   Save-UDefault
   Invoke-UNative $U.Fnm @('install', [string]$U.NodeMajor)
-  if ($LASTEXITCODE -ne 0) { Stop-UStep ('fnm install ' + $U.NodeMajor) @('"' + $fnm + '" install ' + $U.NodeMajor) }
+  if ($LASTEXITCODE -ne 0) { Stop-UStep ('fnm install ' + $U.NodeMajor) @('& ' + (Format-ULiteral $fnm) + ' install ' + $U.NodeMajor) }
 }
 
 function Set-UMgrDefault {
@@ -728,7 +768,14 @@ function Set-UDefaultNode {
   }
   if ($make) {
     Set-UMgrDefault
-    Say 'default_done'
+    $other = Find-UMachineNode
+    if ($other) {
+      # The Machine Path comes first, so new terminals would still start that Node.js.
+      $U.NodeIsDefault = $false
+      Warn 'default_shadowed' $other
+    } else {
+      Say 'default_done'
+    }
   } else {
     $U.NodeIsDefault = $false
     Restore-UDefault
@@ -767,6 +814,7 @@ function Invoke-UNpmPrefixStep {
   if (-not (Ask 'ask_npm_prefix' $U.NpmPrefix $U.NpmGlobal)) {
     Say 'declined'
     Write-UCmd 'npm.cmd config set prefix "$env:USERPROFILE\.npm-global"'
+    Write-UCmd (Get-UPathManualCmd '%USERPROFILE%\.npm-global')
     Write-UCmd (Get-UNpmInstallCmd $U.CliSpec)
     Stop-Uncage 0
   }
@@ -846,9 +894,9 @@ function Test-UAcp {
 
 function Write-UWhere {
   if ($U.NodeIsDefault) {
-    Say 'uncage_path' ('"' + $U.Uncage + '"')
+    Say 'uncage_path' (Format-ULiteral $U.Uncage)
   } else {
-    Say 'not_default_hint' $U.NodeDir ('"' + $U.Uncage + '"')
+    Say 'not_default_hint' (Format-ULiteral ($U.NodeDir + ';')) (Format-ULiteral $U.Uncage)
   }
 }
 
@@ -859,8 +907,8 @@ function Invoke-USetupStep {
     Write-UWhere
     Stop-Uncage 0
   }
-  $setup = '& "' + $U.Uncage + '" setup ' + $U.SiteUrl
-  if (-not $U.NodeIsDefault) { $setup = '$env:Path = "' + $U.NodeDir + ';$env:Path"; ' + $setup }
+  $setup = '& ' + (Format-ULiteral $U.Uncage) + ' setup ' + $U.SiteUrl
+  if (-not $U.NodeIsDefault) { $setup = '$env:Path = ' + (Format-ULiteral ($U.NodeDir + ';')) + ' + $env:Path; ' + $setup }
   $later = $U.NoSetup -or (-not $U.Yes -and -not $U.Interactive)
   if ($later -or -not (Ask 'ask_setup' $U.SiteUrl)) {
     Write-UWhere
@@ -887,6 +935,7 @@ function Invoke-UncageSteps {
 
 function Invoke-UncageMain {
   $U.Code = 0
+  $U.AddedPaths = @()
   $prevPath = $env:Path
   $prevEnc = $null
   try {
@@ -907,7 +956,11 @@ function Invoke-UncageMain {
       $U.Code = 1
     }
   } finally {
+    # This window keeps its Path, plus the folders just added to the user Path.
     $env:Path = $prevPath
+    foreach ($d in $U.AddedPaths) {
+      if (-not (@($env:Path -split ';') -contains $d)) { $env:Path = $env:Path + ';' + $d }
+    }
     if ($null -ne $prevEnc) {
       try { [Console]::OutputEncoding = $prevEnc } catch { }
     }
@@ -918,6 +971,5 @@ function Invoke-UncageMain {
 Invoke-UncageMain
 } ([bool]$Yes) ([bool]$NoSetup) ([string]$Lang)
 
-$uncageCode = $uncageState.Code
-Remove-Variable -Name uncageState -ErrorAction SilentlyContinue
-if ($PSCommandPath) { exit $uncageCode } else { $global:LASTEXITCODE = $uncageCode }
+# Under `irm | iex` this runs in the caller's session: leave only $LASTEXITCODE behind.
+if ($PSCommandPath) { exit $uncageState.Code } else { $global:LASTEXITCODE = $uncageState.Code; Remove-Variable -Name uncageState, Yes, NoSetup, Lang -ErrorAction SilentlyContinue }

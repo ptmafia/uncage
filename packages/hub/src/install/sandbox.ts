@@ -264,7 +264,8 @@ esac`,
         fake(
           join(fakebin, 'volta'),
           `. "$TPL/lib.sh"; d="$HOME/.volta/tools/image/node/22.23.4/bin"
-case "\${1:-}" in fetch) put_node "$d" 22.23.4 ;; run) [ -x "$d/node" ] || exit 1; shift 3; PATH="$d:$PATH" "$@" ;; esac`,
+# Like the real volta, \`run --node 22\` downloads Node.js when it is missing.
+case "\${1:-}" in fetch | run) put_node "$d" 22.23.4 ;; esac`,
         );
         break;
       case 'n':

@@ -78,6 +78,14 @@ describe.skipIf(process.platform === 'win32')('install.sh', { timeout: 90_000 },
     expect(sb.log().find((l) => / setup /.test(l))).toBeUndefined();
   });
 
+  it('volta: looking for Node 22 never runs `volta run` (it downloads before the Y)', async () => {
+    const sb = sandbox();
+    const r = await sb.run({ manager: 'volta', node: null, answers: 'n\n' });
+    expect(r.code, r.stderr).toBe(0);
+    expect(sb.rawLog().filter((l) => /volta (run|fetch|install)/.test(l))).toEqual([]);
+    expect(sb.read('.volta/tools/image/node/22.23.4/bin/node')).toBeNull();
+  });
+
   it.each<[FakeManager, RegExp]>([
     ['nvm', /^nvm alias default 22$/],
     ['volta', /volta install node@22$/],

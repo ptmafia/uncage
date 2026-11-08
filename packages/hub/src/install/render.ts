@@ -117,7 +117,8 @@ function shMessages(agentHelp: InstallScriptExtension['agentHelp']): string {
   for (const l of locales) {
     const table: Record<string, string> = { ...INSTALL_MESSAGES[l] };
     if (agentHelp) table['no_agent' satisfies InstallMessageKey] = printfLiteral(agentHelp[l] ?? agentHelp.en);
-    out.push('', `uncage_msg_${l}() {`, '  case "$1" in');
+    // The messages are literal text: `$PATH` in a hint is printed, never expanded.
+    out.push('', '# shellcheck disable=SC2016', `uncage_msg_${l}() {`, '  case "$1" in');
     for (const [k, v] of Object.entries(table)) out.push(`    ${k}) M=${shQuote(v)} ;;`);
     out.push('    *) M="$1" ;;', '  esac', '}');
   }

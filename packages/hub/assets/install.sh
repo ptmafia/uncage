@@ -203,6 +203,22 @@ semver_of() {
   fi
 }
 
+# Is version $1 (x.y.z) newer than $2?
+version_gt() {
+  local a=$1 b=$2 ai="" bi=""
+  for _ in 1 2 3; do
+    ai="${a%%.*}"
+    bi="${b%%.*}"
+    is_number "$ai" || ai=0
+    is_number "$bi" || bi=0
+    if [ "$ai" -gt "$bi" ]; then return 0; fi
+    if [ "$ai" -lt "$bi" ]; then return 1; fi
+    case "$a" in *.*) a="${a#*.}" ;; *) a=0 ;; esac
+    case "$b" in *.*) b="${b#*.}" ;; *) b=0 ;; esac
+  done
+  return 1
+}
+
 # Does installed version $1 satisfy the major.minor of CLI_RANGE?
 range_ok() {
   local v=$1 r="$CLI_RANGE" op=''
@@ -648,7 +664,19 @@ EOF
         [ -n "$d" ] && p="$d/bin/node"
       fi
       ;;
-    volta) p="$("$VOLTA" run --node "$NODE_MAJOR" node -p process.execPath 2>/dev/null </dev/null 3<&- || true)" ;;
+    # Not `volta run --node 22`: it would download Node.js before the user said Y.
+    volta)
+      local cand='' v='' best='' bestv=''
+      for cand in "${VOLTA_HOME:-$HOME/.volta}/tools/image/node/$NODE_MAJOR".*; do
+        [ -x "$cand/bin/node" ] || continue
+        v="${cand##*/}"
+        if [ -z "$best" ] || version_gt "$v" "$bestv"; then
+          best=$cand
+          bestv=$v
+        fi
+      done
+      [ -n "$best" ] && p="$best/bin/node"
+      ;;
     n) p="$("$N_CMD" which "$NODE_MAJOR" 2>/dev/null </dev/null 3<&- || true)" ;;
   esac
   p="${p%%$'\n'*}"
@@ -889,7 +917,7 @@ step_setup() {
     with_node "$UNCAGE" setup "$SITE_URL" </dev/null 3<&- || fail_step "uncage setup" "$setup_cmd"
   fi
   print_where
-  say done
+  say 'done'
 }
 
 main() {

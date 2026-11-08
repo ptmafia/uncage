@@ -39,6 +39,14 @@ jobs:
         run: pnpm --dir e2e exec playwright install --with-deps chromium
       - name: E2E (mock daemon)
         run: pnpm e2e:mock
+      # install.ps1 scenarios also run here under the runner's pwsh (bash fakes).
+      - name: Upload installer scenario logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: install-ps1-logs-node${{ matrix.node }}
+          path: packages/hub/test-results/install-ps1
+          if-no-files-found: ignore
       - name: Upload Playwright traces
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -65,7 +73,15 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Installer tests (static checks; install.ps1 scenarios under powershell.exe and pwsh)
-        run: pnpm --filter @uncage/hub exec vitest run src/install
+        # Verbose: every scenario and shell is listed; a failing one prints its full output.
+        run: pnpm --filter @uncage/hub exec vitest run src/install --reporter=verbose
+      - name: Upload installer scenario logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: install-ps1-logs-${{ matrix.os }}
+          path: packages/hub/test-results/install-ps1
+          if-no-files-found: ignore
 
   docs:
     name: Docs

@@ -553,7 +553,7 @@ describe('browser API → machine', () => {
     expect(ps1).toContain(`npm install -g "@uncage/cli@${defaultCliRange(HUB_VERSION)}"`);
     expect(ps1).toContain("$U.CliSpec = '@uncage/cli@");
     expect(ps1).not.toContain('@@');
-    expect(ps1.trimEnd().endsWith('if ($PSCommandPath) { exit $uncageCode } else { $global:LASTEXITCODE = $uncageCode }')).toBe(true);
+    expect(ps1.trimEnd().split('\n').at(-1)).toMatch(/^if \(\$PSCommandPath\) \{ exit \$uncageState\.Code \} else \{ \$global:LASTEXITCODE = \$uncageState\.Code; /);
   });
 
   it('install info and install.sh', async () => {

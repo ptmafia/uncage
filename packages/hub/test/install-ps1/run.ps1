@@ -62,9 +62,11 @@ function Assert-NoCall([string]$Pattern) {
   Assert-That (-not (Test-Call $Pattern)) ("a call matches /" + $Pattern + "/")
 }
 
+# Entries equal to $Dir (separators and a trailing one ignored).
 function Get-PathCount([string]$Dir) {
+  $want = ($Dir -replace '[\\/]+', '/').TrimEnd('/')
   $n = 0
-  foreach ($p in (Get-UserPathEntries $script:sb)) { if ($p.TrimEnd('\') -ieq $Dir.TrimEnd('\')) { $n++ } }
+  foreach ($p in (Get-UserPathEntries $script:sb)) { if ((($p -replace '[\\/]+', '/').TrimEnd('/')) -ieq $want) { $n++ } }
   return $n
 }
 
@@ -93,7 +95,8 @@ $scenarios = @{
     Assert-Call ('^uncage setup ' + [regex]::Escape($Site) + '$')
     Assert-That (((Get-UserPathEntries $sb) -join ';') -eq 'C:\Existing\Tools') 'the user Path changed'
     # The P4 troubleshooting entry: under the default Restricted policy a bare `uncage` resolves to
-    # npm's uncage.ps1 shim and is refused; uncage.cmd works.
+    # npm's uncage.ps1 shim and is refused; uncage.cmd works. (Execution policy is Windows-only.)
+    if ($FakeUnix) { return }
     $exe = (Get-Process -Id $PID).Path
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
@@ -134,7 +137,7 @@ $scenarios = @{
     Assert-Out 'Node\.js not found'
     Assert-Call '^nvm install 22$'
     Assert-NoCall '^nvm use'
-    Assert-Call ($InstallLine + '.*' + [regex]::Escape('nvm\v22.23.4'))
+    Assert-Call ($InstallLine + '.*nvm[\\/]v22\.23\.4')
     Assert-Out 'nvm use 22\.23\.4'
     Assert-Out 'Node\.js 22 is not your default'
     Assert-NoCall '^uncage setup'
@@ -151,7 +154,7 @@ $scenarios = @{
     Assert-Call '^fnm unalias default$'
     Assert-That (-not (Test-Path -LiteralPath (Join-Path $sb.Roaming 'fnm\aliases\default'))) 'the fnm default alias is still there'
     Assert-Out 'Undid the default fnm sets'
-    Assert-Call ($InstallLine + '.*' + [regex]::Escape('node-versions\v22.23.4\installation'))
+    Assert-Call ($InstallLine + '.*node-versions[\\/]v22\.23\.4[\\/]installation')
     Assert-That ((Get-UserPathEntries $sb).Count -eq 1) 'the user Path changed'
   }
 
@@ -162,7 +165,9 @@ $scenarios = @{
     Assert-Code 0
     Assert-Call '^volta fetch node@22$'
     Assert-NoCall '^volta install'
-    Assert-Call ($InstallLine + '.*' + [regex]::Escape('Volta\tools\image\node\22.23.4'))
+    # `volta run --node 22` would download before the Y: never used.
+    Assert-NoCall '^volta run'
+    Assert-Call ($InstallLine + '.*Volta[\\/]tools[\\/]image[\\/]node[\\/]22\.23\.4')
   }
 
   'winget-fnm' = {
@@ -208,7 +213,7 @@ $scenarios = @{
     Assert-Code 0
     Assert-Out 'is not writable without admin rights'
     $npmGlobal = Join-Path $sb.Home '.npm-global'
-    Assert-Call ('^npm config set prefix ".*' + [regex]::Escape('home dir\.npm-global"'))
+    Assert-Call ('^npm config set prefix "?.*home dir[\\/]\.npm-global')
     Assert-That ((Get-PathCount $npmGlobal) -eq 1) 'the npm folder is not on the user Path once'
     Assert-That (Test-Path -LiteralPath (Join-Path $npmGlobal 'uncage.cmd')) 'uncage.cmd is not in the new npm folder'
     Assert-Call $InstallLine
@@ -220,7 +225,7 @@ $scenarios = @{
     Run | Out-Null
     Assert-Code 2
     Assert-Out 'no terminal to ask'
-    Assert-Out 'fnm install 22'
+    Assert-Out "fnm(\.cmd)?' install 22"
     Assert-Out ('uncage\.cmd setup ' + [regex]::Escape($Site))
     Assert-Out 'UNCAGE_YES'
     Assert-NoCall ('^(fnm|npm|uncage) ' + $ChangeLine)
@@ -237,7 +242,7 @@ $scenarios = @{
     Run -Answers 'n' | Out-Null
     Assert-Code 0
     Assert-Out 'Skipped'
-    Assert-Out ('npm-cli\.js" install -g "@uncage/cli@\^0\.3"')
+    Assert-Out ("npm-cli\.js' install -g '@uncage/cli@\^0\.3'")
     Assert-NoCall 'npm install'
     Assert-NoCall '^uncage setup'
   }
@@ -245,12 +250,22 @@ $scenarios = @{
   'yes' = {
     Add-FakeFnmZip $sb | Out-Null
     Add-FakeAgent $sb 'claude'
+    # An old Node.js in a Machine Path folder (not on this PATH) wins in new terminals.
+    $machineNode = Join-Path $sb.Root 'program files node'
+    Add-FakeNode $sb '18.20.0' $machineNode
+    $machineFile = Join-Path $sb.Root 'machinepath.txt'
+    [IO.File]::WriteAllText($machineFile, 'C:\Windows\System32;' + $machineNode)
+    $env:UNCAGE_TEST_MACHINE_PATH_FILE = $machineFile
     Run -Arguments @('-Yes') -Mode 'scriptblock' | Out-Null
     Assert-Out 'AFTER 0'
     Assert-Out 'Y \(-Yes\)'
     Assert-Call '^fnm install 22$'
-    # No Node.js at all before: -Yes also makes Node.js 22 the default.
+    # No Node.js at all before: -Yes also makes Node.js 22 the default...
     Assert-Call '^fnm default 22$'
+    # ...but the Machine Path one still comes first, so it says so and prints the Path hint.
+    Assert-Out 'Another Node\.js'
+    Assert-NoOut 'is now your default'
+    Assert-Out 'Node\.js 22 is not your default'
     Assert-Call $InstallLine
     Assert-Call ('^uncage setup ' + [regex]::Escape($Site))
   }
@@ -272,7 +287,7 @@ $scenarios = @{
     Run -Answers 'y' | Out-Null
     Assert-Code 1
     Assert-Out 'npm install -g @uncage/cli@\^0\.3 failed'
-    Assert-Out 'npm-cli\.js" install -g "@uncage/cli@\^0\.3"'
+    Assert-Out "npm-cli\.js' install -g '@uncage/cli@\^0\.3'"
     Assert-NoCall '^uncage setup'
   }
 
@@ -306,7 +321,7 @@ $scenarios = @{
     $marker = Join-Path $sb.Home 'extension.txt'
     Assert-That (Test-Path -LiteralPath $marker) 'the extension did not run'
     $text = [string](Get-Content -LiteralPath $marker -Raw)
-    Assert-That ($text -match [regex]::Escape('bin\uncage.cmd')) ("UNCAGE_BIN: " + $text)
+    Assert-That ($text -match 'bin[\\/]uncage\.cmd') ("UNCAGE_BIN: " + $text)
     Assert-That ($text -match [regex]::Escape($Site)) ("UNCAGE_SITE_URL: " + $text)
     # Its own `exit 0` ended only its own process: the setup question still came.
     Assert-Out ('Connect this computer to ' + [regex]::Escape($Site) + ' now\?')
@@ -314,11 +329,35 @@ $scenarios = @{
 }
 
 if (-not $scenarios.ContainsKey($Scenario)) { throw ("unknown scenario " + $Scenario) }
+$shellName = [IO.Path]::GetFileNameWithoutExtension((Get-Process -Id $PID).Path)
+Write-Host ('=== install.ps1 scenario ' + $Scenario + ' under ' + $shellName + ' ' + $PSVersionTable.PSVersion)
 $script:sb = New-UncageSandbox
 $sb = $script:sb
+$failure = $null
 try {
   & $scenarios[$Scenario]
-  Write-Output ('PASS ' + $Scenario)
+} catch {
+  $failure = $_
 } finally {
+  # UNCAGE_PS1_LOG_DIR (set by the vitest driver): one log per scenario and shell, kept for CI.
+  $logDir = [Environment]::GetEnvironmentVariable('UNCAGE_PS1_LOG_DIR')
+  if ($logDir) {
+    $out = ''
+    if ($script:last) { $out = [string]$script:last.Out }
+    $status = 'PASS'
+    if ($failure) { $status = 'FAIL: ' + [string]$failure }
+    $text = @('scenario: ' + $Scenario, 'shell: ' + $shellName + ' ' + $PSVersionTable.PSVersion, 'status: ' + $status, '--- last installer output ---', $out, '--- calls.log ---', ((Get-Calls $sb) -join "`n")) -join "`n"
+    try {
+      New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+      [IO.File]::WriteAllText((Join-Path $logDir ($shellName + '-' + $Scenario + '.log')), $text)
+    } catch { }
+  }
   Remove-UncageSandbox $script:sb
 }
+if ($failure) {
+  Write-Host ('FAIL ' + $Scenario)
+  Write-Host ([string]$failure)
+  if ($failure.InvocationInfo) { Write-Host $failure.InvocationInfo.PositionMessage }
+  exit 1
+}
+Write-Output ('PASS ' + $Scenario)
