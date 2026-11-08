@@ -1,6 +1,6 @@
 {
   "name": "@uncage/agent",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Uncage agent: the Connected Mode daemon on the user's machine. Dials out to one or more website hubs and runs their sessions through @uncage/core",
   "type": "module",
   "engines": {

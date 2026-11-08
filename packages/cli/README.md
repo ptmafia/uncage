@@ -12,7 +12,7 @@ npx uncage doctor --export-events <sessionId> [--out file] [--include-content]
 
 Prerequisite: Claude Code installed and logged in (`npm i -g @anthropic-ai/claude-code`, then `claude` → `/login`).
 
-## Connected Mode (0.2)
+## Connected Mode (0.2+)
 
 End users install the CLI globally, either with the website's installer (`curl -fsSL https://your.site/api/uncage/install.sh | bash` on macOS and Linux, `irm https://your.site/api/uncage/install.ps1 | iex` on Windows) or with `npm i -g @uncage/cli`, then:
 

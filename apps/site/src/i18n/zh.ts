@@ -41,7 +41,7 @@ export const zh: Dict = {
     dismiss: '关闭',
   },
   hero: {
-    eyebrow: 'v0.2 · Connected 模式已上线',
+    eyebrow: 'v0.3 · 现已支持 Serverless',
     title: '你的 coding agent，|*无处不在。*',
     lede: '你的用户手里早就有一套强大的环境：他们自己的 Claude Code、自己的账号、自己的工具。Uncage 把这套本地 harness 变成你的产品可以调用的服务。任务在用户的电脑上运行，结果回到你的网站上。',
     primary: '体验在线演示',
@@ -189,7 +189,7 @@ export const zh: Dict = {
   },
   final: {
     title: '让用户的 agent 在你的产品里开工。',
-    sub: 'MIT 许可 · npm 上的 11 个包 · 为开发者和 coding agent 打造',
+    sub: 'MIT 许可 · npm 上的 12 个包 · 为开发者和 coding agent 打造',
     primary: '体验在线演示',
     secondary: '阅读文档',
   },

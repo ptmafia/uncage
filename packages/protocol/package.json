@@ -1,6 +1,6 @@
 {
   "name": "@uncage/protocol",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Uncage wire protocol: types and Zod schemas",
   "type": "module",
   "engines": {

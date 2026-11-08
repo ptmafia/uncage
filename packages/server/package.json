@@ -1,6 +1,6 @@
 {
   "name": "@uncage/server",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Uncage local daemon: REST + SSE over @uncage/core, and a same-origin proxy for Next.js",
   "type": "module",
   "engines": {

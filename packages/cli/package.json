@@ -1,6 +1,6 @@
 {
   "name": "@uncage/cli",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "The `uncage` command: serve the local daemon, run doctor, export events, and connect this computer to websites (Connected Mode)",
   "type": "module",
   "engines": {

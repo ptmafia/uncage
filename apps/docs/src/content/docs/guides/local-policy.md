@@ -115,4 +115,4 @@ If a website revokes the computer, the agent marks the site `revoked` in `agent.
 
 ## Local extensions
 
-Executable extensions (for example a hook that deploys a project when a run completes) may only ever come from **this computer**: an npm package the user installs or a local configuration the user writes. A website can only send data (tool schemas, skill text and templates), never code to run here. Uncage 0.2 does not ship a local extension API yet; `localPolicy` is the local control surface today.
+Executable extensions (for example a hook that deploys a project when a run completes) may only ever come from **this computer**: an npm package the user installs or a local configuration the user writes. A website can only send data (tool schemas, skill text and templates), never code to run here. Uncage 0.3 does not ship a local extension API yet; `localPolicy` is the local control surface today.

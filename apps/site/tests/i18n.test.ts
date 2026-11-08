@@ -64,7 +64,7 @@ function leaves(v: unknown, path = ''): Map<string, unknown> {
  * - `flow.browserTitle`: the example domain "your.site" (a URL, not copy).
  * - ja `flow.allow` / `flow.deny`: the approval buttons as the real UI shows them. @uncage/react-ui has
  *   no Japanese strings, so a Japanese visitor sees "Allow once" / "Deny" (zh has 允许执行 / 拒绝).
- * - `hero.eyebrow` is NOT allowed: "v0.2" stays, but the sentence is translated.
+ * - `hero.eyebrow` is NOT allowed: "v0.3" stays, but the sentence is translated.
  * - Brand names, "GitHub", "npm", "MIT", commands and code are not in the dictionaries at all
  *   (they live in the components), so they need no entry here.
  */

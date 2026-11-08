@@ -33,7 +33,7 @@ export const en: Dict = {
     dismiss: 'Dismiss',
   },
   hero: {
-    eyebrow: 'v0.2 · Connected Mode is live',
+    eyebrow: 'v0.3 · Now runs on serverless',
     title: 'Run your coding agent *everywhere.*',
     lede: 'Your users already have a powerful setup: their own Claude Code, their logins, their tools. Uncage turns that local harness into a service your product can call. The work runs on their machine; the results land on your site.',
     primary: 'Try the live demo',
@@ -186,7 +186,7 @@ export const en: Dict = {
   },
   final: {
     title: 'Put your users’ agents to work in your product.',
-    sub: 'MIT licensed · 11 packages on npm · built for developers and coding agents',
+    sub: 'MIT licensed · 12 packages on npm · built for developers and coding agents',
     primary: 'Try the live demo',
     secondary: 'Read the docs',
   },
