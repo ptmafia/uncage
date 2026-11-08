@@ -13,7 +13,7 @@ description: Connected 模式（传输、机器令牌、设备登录、用户之
 - **HTTPS 流式传输**（FaaS 模式，以及回退方式）：`POST <basePath>/agent/connect` 建立一条链路，`GET <basePath>/agent/stream` 返回 NDJSON 行（每行一个 JSON 对象：带序号的 hub 帧，以及每 10 秒一次的 `{"ctl":"ping"}`），守护进程用 `POST <basePath>/agent/events` 发送它的消息。每个请求都在 `Bearer` 头里带上机器令牌。流在 `stream.maxDurationMs` 之后结束，守护进程立即重连。带着 `cursor` 重新打开流，就等于确认了它之前的所有帧，所以断开的流既不会丢帧，也不会重复已确认的帧；上行消息有幂等 id，重试不会被应用两次。
 - 除非 hub 位于 `localhost`、`127.0.0.1` 或 `[::1]`（开发环境），否则拒绝纯 `ws://` / `http://`。
 - 帧和请求体都是 JSON，双方都会对照协议 schema 校验，每个最大 1 MiB。版本低于 `minAgentVersion` 的守护进程会被 hub 拒绝（WebSocket：`upgrade_required`；HTTP：`426 upgrade_required`）。
-- 对 `/agent/*` 的请求如果机器令牌缺失或错误，会按客户端 IP 限流（`rateLimits.agentAuthFailuresPerMinute`，60 次），计数保存在存储里。
+- 缺少机器令牌或令牌错误的 HTTP `/agent/*` 请求、WebSocket 升级请求和 `/machine/revoke` 请求，会按客户端 IP 限流（`rateLimits.agentAuthFailuresPerMinute`，60 次），计数保存在存储里。
 - 在线状态：无论哪种传输方式，一台电脑静默超过两次 ping 的间隔（约 30 秒）就会显示为离线。
 
 ## 机器令牌

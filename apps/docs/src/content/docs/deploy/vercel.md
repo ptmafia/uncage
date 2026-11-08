@@ -294,7 +294,7 @@ Vercel refuses request bodies over about 4.5 MB with its own `413` before the hu
 
 ### Uploads fail on slow connections with `400`
 
-A request body must arrive within `bodyTimeoutMs` (30 s by default). Raise it (`bodyTimeoutMs: 120_000`) if your users upload attachments over slow links; keep it below `maxDuration`.
+A request body is refused with `400` when no bytes arrive for `bodyTimeoutMs` (30 s by default), or when it takes more than 4 times that in total. The timer restarts on every chunk, so a slow but steady upload gets through and you rarely need to change it; keep it below `maxDuration`.
 
 ### Neon: which driver?
 

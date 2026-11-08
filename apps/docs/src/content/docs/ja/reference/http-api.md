@@ -57,14 +57,14 @@ CLIとエージェントが使います。これらは`getUser`を呼びませ�
 | `POST /device/code` | デバイスログインを開始します。ユーザーコード、検証用リンク、ポーリング間隔（2秒）、有効期限（600秒）を返します。クライアントIPごとにレート制限があります |
 | `POST /device/token` | `{ deviceCode }`：ユーザーが承認するまでポーリングし、承認後にマシントークンを1回だけ、提供されるトランスポートとともに返します |
 | `POST /machine/revoke` | `Authorization: Bearer <machine token>`：コンピュータが自身を取り消します（`uncage sites remove`） |
-| `GET /agent/info` | `{ protocol, minAgentVersion, transports: [{ kind, url }] }`：エージェントが使うべきもの。`kind`は`ws`（`attachWebSocket`が実行されている場合か、`transports`に含まれている場合のみ）または`http` |
+| `GET /agent/info` | `{ protocol, minAgentVersion, transports: [{ kind, url }] }`：エージェントが使うべきもの。`kind`は`ws`（`attachWebSocket`が実行されている場合か、`transports`に含まれている場合のみ）または`http`。エージェントは、提示された`url`がサイト自身のホスト（ポートも同じ）にあり、認証情報を含まず、`wss`/`https`である場合にだけそれを使います（`ws`/`http`は`localhost`、`127.0.0.1`、`[::1]`のみ）。それ以外は`<site url>/agent`を使います。 |
 | `GET /agent`（WebSocketのアップグレード） | WebSocketのトランスポート（`Authorization: Bearer <machine token>`）。`attachWebSocket(hub, server)`が処理します。フレームはJSONで、各1MiBまでです。WebSocketサーバーが動いていない環境（FaaS モード）では、アップグレードのリクエストに`426 upgrade_required`が返ります |
 | `/agent/connect`、`/agent/stream`、`/agent/events`、`/agent/disconnect` | HTTPストリーミングのトランスポート（後述） |
 | `GET\|POST /maintenance` | `maintenance.secret`を設定した場合のみ：`Authorization: Bearer <secret>`を付けると、その場でメンテナンスを実行し、`{ ran, pruned, interruptedToolCalls }`を返します（`maintenance.intervalMs`以内に別のインスタンスが実行済みなら`ran: false`）。シークレットがなければ`404` |
 
 ## エージェントのトランスポート（HTTPストリーミング）
 
-ハブが`http`しか提供していない場合（FaaS モード）や、WebSocketの失敗が続く場合に、エージェントはこれを使います。すべてのリクエストには`Authorization: Bearer <machine token>`が付きます。トークンがない、または誤っている場合は`401`が返り、同じIPからそれが多すぎると`429`になります（`rateLimits.agentAuthFailuresPerMinute`）。状態はストアにあるため、これらのリクエストはどのハブのインスタンスでも処理できます。型は`@uncage/protocol`にあります（`HttpConnectResponse`、`StreamLine`、`HttpEventsRequest`、`HttpEventsResponse`）。
+ハブが`http`しか提供していない場合（FaaS モード）や、WebSocketの失敗が続く場合に、エージェントはこれを使います。すべてのリクエストには`Authorization: Bearer <machine token>`が付きます。トークンがない、または誤っている場合は`401`が返り、同じIPからそれが多すぎると`429`になります（`rateLimits.agentAuthFailuresPerMinute`）。状態はストアにあるため、これらのリクエストはどのハブのインスタンスでも処理できます。型は`@uncage/protocol`にあります（`HttpConnectResponse`、`StreamLine`、`HttpEventsRequest`、`HttpEventsResponse`）。ハブのシャットダウン中は、`/agent/info`を除くすべての`/agent/*`ルートが再試行可能な`500 internal_error`を返し（WebSocketのアップグレードには`503`）、`401`は返しません。コンピュータが取り消されるのは、ボディがハブ自身の`{ "error": { "code": "unauthorized" } }`である`401`だけです。サイトの手前にあるプロキシや保護ページからの`401`は再試行されます。
 
 ```mermaid
 sequenceDiagram

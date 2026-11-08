@@ -57,14 +57,14 @@ Local 模式的 Uncage 服务在 `/v1` 下有同样的路由，但没有 `/machi
 | `POST /device/code` | 发起设备登录。返回验证码、验证链接、轮询间隔（2 秒）和过期时间（600 秒）。按客户端 IP 限流 |
 | `POST /device/token` | `{ deviceCode }`：轮询直到用户批准；然后返回一次机器令牌，同时列出 hub 提供的传输方式 |
 | `POST /machine/revoke` | `Authorization: Bearer <machine token>`：电脑吊销自己（`uncage sites remove`） |
-| `GET /agent/info` | `{ protocol, minAgentVersion, transports: [{ kind, url }] }`：守护进程应该使用的协议。`kind` 为 `ws`（仅当运行了 `attachWebSocket`，或 `transports` 中列出了它）或 `http` |
+| `GET /agent/info` | `{ protocol, minAgentVersion, transports: [{ kind, url }] }`：守护进程应该使用的协议。`kind` 为 `ws`（仅当运行了 `attachWebSocket`，或 `transports` 中列出了它）或 `http`。只有当提供的 `url` 位于网站自己的主机上（端口相同）、不带凭据，并且是 `wss`/`https`（只有 `localhost`、`127.0.0.1` 或 `[::1]` 才允许 `ws`/`http`）时，守护进程才会使用它；否则使用 `<site url>/agent`。 |
 | `GET /agent`（WebSocket 升级） | WebSocket 传输方式（`Authorization: Bearer <machine token>`），由 `attachWebSocket(hub, server)` 提供。帧为 JSON，每帧最大 1 MiB。在没有运行 WebSocket 服务器的地方（FaaS 模式），升级请求会得到 `426 upgrade_required` |
 | `/agent/connect`、`/agent/stream`、`/agent/events`、`/agent/disconnect` | HTTP 流式传输，见下文 |
 | `GET\|POST /maintenance` | 仅在设置了 `maintenance.secret` 时存在：带上 `Authorization: Bearer <secret>` 会立即运行维护任务，并返回 `{ ran, pruned, interruptedToolCalls }`（如果另一个实例在 `maintenance.intervalMs` 内已经运行过，则 `ran: false`）。没有设置 secret 时返回 `404` |
 
 ## 守护进程的传输方式（HTTP 流式传输）
 
-当 hub 只提供 `http`（FaaS 模式），或者 WebSocket 连续失败时，守护进程使用这种方式。每个请求都带 `Authorization: Bearer <machine token>`；令牌缺失或错误时返回 `401`，同一 IP 的这类请求过多时返回 `429`（`rateLimits.agentAuthFailuresPerMinute`）。任何 hub 实例都能处理其中任何一个请求：状态存在 store 里。类型在 `@uncage/protocol` 中（`HttpConnectResponse`、`StreamLine`、`HttpEventsRequest`、`HttpEventsResponse`）。
+当 hub 只提供 `http`（FaaS 模式），或者 WebSocket 连续失败时，守护进程使用这种方式。每个请求都带 `Authorization: Bearer <machine token>`；令牌缺失或错误时返回 `401`，同一 IP 的这类请求过多时返回 `429`（`rateLimits.agentAuthFailuresPerMinute`）。任何 hub 实例都能处理其中任何一个请求：状态存在 store 里。类型在 `@uncage/protocol` 中（`HttpConnectResponse`、`StreamLine`、`HttpEventsRequest`、`HttpEventsResponse`）。hub 正在关闭时，除 `/agent/info` 之外的每个 `/agent/*` 路由都会返回可重试的 `500 internal_error`（WebSocket 升级则返回 `503`），绝不会返回 `401`。只有响应体是 hub 自己的 `{ "error": { "code": "unauthorized" } }` 的 `401` 才会吊销这台电脑；来自网站前面的代理或防护页面的 `401` 会被重试。
 
 ```mermaid
 sequenceDiagram

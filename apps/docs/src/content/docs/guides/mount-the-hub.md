@@ -218,7 +218,8 @@ Add `.uncage-hub/` to `.gitignore`, and keep that folder on a persistent disk in
 | `heartbeat` | `{ pingIntervalMs: 10000, missedPings: 2 }` | A silent computer shows offline after about 30 s. |
 | `sseHeartbeatMs` | `15000` | Keep-alive comments on browser event streams. |
 | `commandTimeoutMs` | `30000` | How long a browser request waits for the computer. |
-| `bodyTimeoutMs` | `30000` | A request body not fully received within this long is refused with `400`. |
+| `bodyTimeoutMs` | `30000` | A request body is refused with `400` if no bytes arrive for this long, or if it takes more than 4 times this long in total. Slow but steady uploads get through. |
+| `logger` | the console | Where the hub reports warnings and errors (`{ warn(obj, msg), error(obj, msg) }`; pino and most loggers fit). The default writes `[uncage] …` lines with `console.warn` and `console.error`. Pass `{ warn() {}, error() {} }` to silence it. On Vercel and Workers, `toNextHandlers` and `fetchOnce` log a one-time warning when the hub has no `cluster` (presence is then per instance); see [serverless hosting](#serverless-hosting-vercel-netlify-workers). |
 | `toolTimeoutMs` | `120000` | A tool handler still running after this fails with `tool_failed`. In FaaS mode keep it inside the platform’s time limit. |
 | `toolDrainMs` | `5000` | `hub.close()` lets running tool handlers finish for this long, then aborts them. |
 | `maxConcurrentToolCalls` | `8` | Tool calls one computer may have running at once on one hub instance. |

@@ -110,7 +110,7 @@ hub 要求守护进程是 0.3 或更新版本（`minAgentVersion`）。
 
 - **守护进程的流和浏览器的事件流：** 把 `stream.maxDurationMs` 设在上限以下并留出余量（Vercel `maxDuration = 300` → `250_000`，即默认值）。这样 hub 会自己结束它们，客户端立即重连。
 - **网站工具调用：** 每次调用都在一个请求里执行，所以 `toolTimeoutMs`（120 秒）也必须放得进上限。被平台停止的 handler 会以“Site tool "<name>" timed out on the website. Please try again.”失败，并且不会重新执行。
-- **上传：** 请求体必须在 `bodyTimeoutMs`（30 秒）内传完；上传太慢会被以 `400` 拒绝。如果要通过慢速网络上传大附件，请调高它（并保持在上限以下）。
+- **上传：** 如果在 `bodyTimeoutMs`（30 秒）内没有收到任何字节，或者整个请求体用时超过它的 4 倍，请求体会被以 `400` 拒绝。慢但持续的上传可以顺利完成；只有停滞的连接才会失败。
 - **在 Vercel 上超过约 4.5 MB 的附件**会在 hub 运行之前收到 Vercel 自己的 `413`。见 [Vercel → 常见问题](/docs/zh-cn/deploy/vercel/#超过约-4-mb-的附件发送失败)。
 
 ### 电脑反复重连，或者流被切断
@@ -120,7 +120,8 @@ hub 要求守护进程是 0.3 或更新版本（`minAgentVersion`）。
 - 守护进程日志里**每隔几分钟出现一次 `http stream rotated`** 是正常的（hub 在 `stream.maxDurationMs` 时结束流）。
 - **每隔几秒就报错**：有东西过早关闭了长请求（代理或 CDN 的超时）。把那个超时调到 `stream.maxDurationMs` 以上，或者把 `stream.maxDurationMs` 调到它以下。
 - **响应一次性全部到达**（提示词的回复到最后才出现）：有代理缓冲了流。为 `<basePath>/sessions/*/events` 和 `<basePath>/agent/stream` 关闭缓冲（nginx：`proxy_buffering off;`）；hub 会在守护进程的流上发送 `X-Accel-Buffering: no`，但并非所有代理都会遵守。
-- **`/agent/*` 返回 `429`**：某个带错误令牌的守护进程（例如一台已被吊销但仍在运行的电脑）触发了 `agentAuthFailuresPerMinute`。在那台电脑上，`uncage sites` 会列出这个网站；重新运行 `uncage setup <url>`。
+- **`/agent/*` 返回 `429`**：某个带错误令牌的守护进程（例如一台已被吊销但仍在运行的电脑）触发了 `agentAuthFailuresPerMinute`。响应带有 `Retry-After` 头，守护进程会等待相应的时长。在那台电脑上，`uncage sites` 会列出这个网站；重新运行 `uncage setup <url>`。
+- **电脑一直在重试，不显示 `revoked`，守护进程日志里有“HTTP 401 that is not the hub refusing the token; retrying”**：网站前面有东西用自己的 401 回复了守护进程，例如预览部署上的 Vercel Deployment Protection 或 Cloudflare Access。只有响应体是 hub 自己的 `{ "error": { "code": "unauthorized" } }` 的 401 才会吊销电脑。放行守护进程（为 `/api/uncage/agent` 设置绕过，或改用正式环境的 URL），它就会自动重连。
 
 ### Postgres：连接池和 Serverless 驱动
 

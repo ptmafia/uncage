@@ -16,13 +16,13 @@ Reactでは、`useUncageError()`がこれを`{ error: { code, message, hint, …
 | `unauthorized` | 401 | 不可 | サインイン中のユーザーがいない（`getUser`が`null`を返した）、デーモンのトークンがないか間違っている、マシントークンが不明か取り消されている、またはメンテナンスのシークレットが間違っています。サインインしてください。Local モードでは`UNCAGE_TOKEN`を確認してください。コンピュータ上では`uncage setup <url>`をもう一度実行してください。 |
 | `forbidden_origin` | 403 | 不可 | ハブへのクロスサイトリクエスト、またはプロキシの`Host` / `Origin`チェックの失敗です。メッセージに該当するヘッダーが示されます。[トラブルシューティング](/docs/ja/reference/troubleshooting/#403-forbidden_origin)を参照してください。 |
 | `not_found` | 404 | 不可 | そのようなセッション、実行、承認、添付ファイルが存在しない、**または他のユーザーのものです**。`ctx.files.read`で存在しないパスを指定した場合や、ハブが知らない実行からのツール呼び出し（`details.reason: 'run_not_indexed'`）でも返ります。 |
-| `invalid_request` | 400 | 不可 | ボディまたはパラメーターがスキーマに合致しない、リクエストボディが上限を超えている（エージェントのルートでは1MiB）、または`bodyTimeoutMs`以内に届かなかった場合です。サイトツールでは、引数が`input`に合致しなかった（ハンドラーは実行されていません）か、ファイルチャネルのパスがワークスペースの外に出た、または`read`にフォルダを指定した場合（`details.reason: 'is_directory'`）です。エージェントのトランスポートでは、`details.reason`が`link_replaced`、`link_closed`、`hub_too_old`のいずれかになります（後述）。 |
+| `invalid_request` | 400 | 不可 | ボディまたはパラメーターがスキーマに合致しない、リクエストボディが上限を超えている（エージェントのルートでは1MiB）、または`bodyTimeoutMs`の間バイトが1つも届かなかった（またはその4倍を超える時間がかかった）場合です。サイトツールでは、引数が`input`に合致しなかった（ハンドラーは実行されていません）か、ファイルチャネルのパスがワークスペースの外に出た、または`read`にフォルダを指定した場合（`details.reason: 'is_directory'`）です。エージェントのトランスポートでは、`details.reason`が`link_replaced`、`link_closed`、`hub_too_old`のいずれかになります（後述）。 |
 | `machine_offline` | 409 | 可 | ユーザーのコンピュータが接続されていません。UIは接続を待ちます。ユーザーはエージェントを起動する（`uncage agent`、またはバックグラウンドサービスを確認する）必要があります。 |
 | `machine_not_found` | 404 | 不可 | このユーザーにそのようなコンピュータがないか、まだ1台も接続していません（「Connect your computer first」）。 |
 | `upgrade_required` | 426 | 不可 | エージェントがハブの`minAgentVersion`（デフォルトは0.3.0）より古いか、WebSocketが提供されていない環境（FaaS モード）で0.2のエージェントがWebSocketで接続しようとしました。WebSocketの場合、エージェントは自分でアップグレードし（`npm i -g @uncage/cli@latest`）、再接続します。FaaS モードでは、ウェブサイトに「Agent update needed」（エージェントの更新が必要）と表示され、ユーザーがそのコマンドを実行してから`uncage setup <url>`を実行します。 |
 | `tool_failed` | 502 | 可 | サイトツールの呼び出しが失敗しました。ハンドラーが例外を投げた（そのメッセージが伝えられます）、タイムアウトした（`toolTimeoutMs`）、キャンセルされた（実行が終了した）、結果が大きすぎた、または`details.reason`が`not_in_manifest`、`too_many_concurrent`、`interrupted`のいずれかです（`interrupted`は、実行していたインスタンスが停止した場合です。メッセージは「Site tool "<name>" timed out on the website. Please try again.」で、自動的に再実行されることはありません）。 |
 | `policy_denied` | 403 | 不可 | ポリシーにより拒否されました。`localPolicy.allowBypass`（Connected）または`security.allowBypass`（Local）なしでの`bypassPermissions`、あるいは`localPolicy.allowedPermissionModes`にないモードです。 |
-| `rate_limited` | 429 | 可 | 1つのIPからのデバイスコードが多すぎる、1人のユーザーによる間違ったユーザーコードが多すぎる、または1つのIPからの誤ったマシントークンによるリクエストが多すぎます（`details.retryAfterSec`）。カウントはストアで、全インスタンス合計として行われます。 |
+| `rate_limited` | 429 | 可 | 1つのIPからのデバイスコードが多すぎる、1人のユーザーによる間違ったユーザーコードが多すぎる、または1つのIPからの誤ったマシントークンによるリクエストが多すぎます（`details.retryAfterSec`）。レスポンスには`Retry-After`ヘッダー（秒、同じ値）が付き、エージェントはその時間だけ待ちます。カウントはストアで、全インスタンス合計として行われます。 |
 | `device_code_expired` | 410 | 不可 | セットアップのコードが10分以上前のものです。`uncage setup <url>`をもう一度実行してください。 |
 | `session_busy` | 409 | 可 | セッションにはすでにアクティブな実行があります。待つか、停止してください。 |
 | `session_read_only` | 409 | 不可 | セッションをこれ以上続けられません（たとえばClaude Codeがネイティブのセッションを失った場合）。新しいセッションを開始してください。 |

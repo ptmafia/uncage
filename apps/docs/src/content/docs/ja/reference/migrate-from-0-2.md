@@ -124,7 +124,8 @@ Fetch → Nodeのアダプターは専用のサブパスに移動しました：
 | `polling` | `{ activeMs: 300, idleMs: 2000, activeWindowMs: 30000 }` | エージェントのHTTPストリームがアウトボックスをポーリングする頻度。 |
 | `rateLimits.agentAuthFailuresPerMinute` | `60` | マシントークンがない、または誤っている`/agent/*`へのリクエストの上限（クライアントIPごと）。 |
 | `maintenance` | `{ intervalMs: 60000 }` | 保持期間を過ぎたデータの削除と、停止したインスタンスのツール呼び出しを失敗として処理すること。全インスタンスを通じて間隔ごとに最大1回実行します。`secret`を指定すると`GET\|POST <basePath>/maintenance`が有効になります（Vercel Cron用）。`onRun`で独自の後始末を追加できます。 |
-| `bodyTimeoutMs` | `30000` | 時間内に受信しきれなかったリクエストボディは`400`で拒否されます。 |
+| `bodyTimeoutMs` | `30000` | この時間バイトが1つも届かない場合、またはボディ全体の受信にこの時間の4倍を超える時間がかかった場合、リクエストボディは`400`で拒否されます。 |
+| `logger` | コンソール | ハブが警告とエラーを報告する先。`{ warn() {}, error() {} }`を渡すと出力しなくなります。 |
 | `toolDrainMs` | `5000` | `hub.close()`が実行中のサイトツールのハンドラーの完了を待つ時間。 |
 | `installScript` | なし | `install.sh` / `install.ps1`に追加する静的な手順。 |
 | `postgresCluster({ pool \| connectionString })` | | Postgres上の`ClusterAdapter`。複数ノードやFaaSでもRedisが不要になります。 |
@@ -136,6 +137,7 @@ Fetch → Nodeのアダプターは専用のサブパスに移動しました：
 - **サイトツールの呼び出しは接続が切れても失われません**。呼び出しとその結果が保存されるため、エージェントが再試行すると、2回目の実行ではなく保存済みの結果を受け取ります（ちょうど1回。FaaSプラットフォームでは、ハブにプラットフォームの`waitUntil`を渡した場合。[Workers → FAQ](/docs/ja/deploy/cloudflare-workers/#workersでサイトツールはちょうど1回実行されますか)を参照）。ハンドラーを実行中のインスタンスが停止した場合、呼び出しは「Site tool "<name>" timed out on the website. Please try again.」というエラーで失敗し、再実行されることはありません（最大1回）。`ctx.signal`は、タイムアウト時、Runの終了時、ハブを閉じたときに中断されますが、コンピュータの接続が切れたときには中断されなくなりました。詳しくは[ツールを定義する](/docs/ja/guides/define-tools/#接続が切れたときインスタンスが停止したとき)を参照してください。
 - **ブラウザのイベントストリームは、`stream.maxDurationMs`ごとに開き直されます**（`event: reconnect`フレーム）。`@uncage/client`は`Last-Event-ID`を使って自動的に再開します。独自のSSEクライアントは、このフレームを受け取ったら再接続してください。
 - **WebSocketが失敗した場合（3回失敗した場合）、コンピュータはHTTPストリーミングで接続できます**。その後、30分ごとにWebSocketを再試行します。
+- **ハブがコンソールにログを出力するようになりました。** 0.2のハブは何も出力しませんでした。0.3は警告とエラー（先頭に`[uncage]`が付きます）を`console.warn`と`console.error`で出力します。対象は、500で失敗したリクエスト、メンテナンスの失敗、IPごとの制限に使うクライアントIPが取れない場合、そしてFaaSでハブに`cluster`がない場合の1回限りの警告です。新しい`logger`オプションに独自のロガーを渡すか、`{ warn() {}, error() {} }`を渡すと出力しなくなります。
 - **ACPエージェントは既定で検出・起動されます。** `uncage serve`、`uncage doctor`、`uncage agent`は、コマンドがPATH上にあるACPプリセットを登録し、インストール済みのエージェントをACPレジストリから検出するようになりました（`presets: auto`、`autoDetect: true`）。起動のたびに、これらのプログラム（例：`opencode acp`）をACPの`initialize`ハンドシェイクのために1回実行します。無効にするには、`~/.uncage/agent.yaml`（Localモードでは`uncage.config.yaml`）で`runtimes.acp.autoDetect: false`（検出もハンドシェイクもしない）と`presets: off`を設定します。[任意のACPエージェントを使う](/docs/ja/guides/use-any-acp-agent/)を参照してください。
 - **レジストリを1日1回ダウンロードします。** エージェントは、ACPレジストリとそのアイコンを`cdn.agentclientprotocol.com`から最大で1日1回ダウンロードします。無効にするには、エージェントの環境で`UNCAGE_ACP_REGISTRY_REFRESH=0`を設定します（Uncageに同梱のコピーを使います）。
 - **新しいランタイムIDと新しい`skills`の値。** ランタイム一覧に`acp-*`ランタイム（`acp-claude`、`acp-gemini`など）が含まれることがあり、`RuntimeCapabilities.skills`は0.2の値に加えて`'prompt'`（スキルを`.uncage/skills/`に書き出し、最初のプロンプトで一覧にする）になることがあります。ランタイムIDや`skills`の値で分岐するカスタムUIは、どちらにも対応してください。

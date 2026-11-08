@@ -218,7 +218,8 @@ curl -s http://localhost:3000/api/uncage/health                 # needs a signed
 | `heartbeat` | `{ pingIntervalMs: 10000, missedPings: 2 }` | 応答のないコンピュータは約30秒後にオフライン表示になります。 |
 | `sseHeartbeatMs` | `15000` | ブラウザのイベントストリームに送るキープアライブのコメントの間隔。 |
 | `commandTimeoutMs` | `30000` | ブラウザのリクエストがコンピュータの応答を待つ時間。 |
-| `bodyTimeoutMs` | `30000` | この時間内に受信しきれなかったリクエストボディは`400`で拒否されます。 |
+| `bodyTimeoutMs` | `30000` | この時間バイトが1つも届かない場合、またはボディ全体の受信に、この時間の4倍を超える時間がかかった場合、リクエストボディは`400`で拒否されます。遅くても途切れずに続くアップロードは通ります。 |
+| `logger` | コンソール | ハブが警告とエラーを報告する先（`{ warn(obj, msg), error(obj, msg) }`。pinoなど多くのロガーが使えます）。既定では`console.warn`と`console.error`で`[uncage] …`の行を出力します。`{ warn() {}, error() {} }`を渡すと出力しなくなります。VercelやWorkersでは、ハブに`cluster`がない場合（接続状況がインスタンスごとになります）、`toNextHandlers`と`fetchOnce`が警告を1回だけ出力します。[サーバーレスでのホスティング](#サーバーレスでのホスティングvercelnetlifyworkers)を参照してください。 |
 | `toolTimeoutMs` | `120000` | この時間を過ぎても実行中のツールハンドラーは`tool_failed`で失敗します。FaaS モードでは、プラットフォームの制限時間内に収めてください。 |
 | `toolDrainMs` | `5000` | `hub.close()`が実行中のツールハンドラーの完了を待つ時間。過ぎると中断します。 |
 | `maxConcurrentToolCalls` | `8` | 1つのハブのインスタンス上で、1台のコンピュータが同時に実行できるツール呼び出しの数。 |

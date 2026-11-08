@@ -13,7 +13,7 @@ description: Connected モード（通信、マシントークン、デバイス
 - **HTTPSストリーミング**（FaaSモード、およびフォールバック）：`POST <basePath>/agent/connect`でリンクを開き、`GET <basePath>/agent/stream`がNDJSONの行（1行に1つのJSONオブジェクト。シーケンス番号付きのハブのフレームと、10秒ごとの`{"ctl":"ping"}`）を返し、エージェントは`POST <basePath>/agent/events`でメッセージを送ります。すべてのリクエストは、マシントークンを`Bearer`ヘッダーで送ります。ストリームは`stream.maxDurationMs`の後に終了し、エージェントはすぐに再接続します。`cursor`を付けてストリームを開き直すと、そこまでのすべてのフレームが確認済みになるため、切れたストリームでフレームが失われることも、確認済みのフレームが繰り返されることもありません。上りのメッセージには冪等なIDが付くので、再試行が二重に適用されることはありません。
 - ハブが`localhost`、`127.0.0.1`、`[::1]`（開発用）にある場合を除き、平文の`ws://` / `http://`は拒否されます。
 - フレームとリクエストボディはJSONで、両側でプロトコルのスキーマに照らして検証され、それぞれ1 MiBまでです。ハブは`minAgentVersion`より古いエージェントを拒否します（WebSocket：`upgrade_required`、HTTP：`426 upgrade_required`）。
-- マシントークンがない、または誤っている`/agent/*`へのリクエストは、クライアントIPごとにレート制限されます（`rateLimits.agentAuthFailuresPerMinute`、60回）。カウントはストアで行われます。
+- マシントークンがない、または誤っている、HTTPの`/agent/*`へのリクエスト、WebSocketのアップグレード、`/machine/revoke`は、クライアントIPごとにレート制限されます（`rateLimits.agentAuthFailuresPerMinute`、60回）。カウントはストアで行われます。
 - プレゼンス：どちらのトランスポートでも、pingの間隔の2回分（約30秒）を超えて無応答のコンピュータはオフラインと表示されます。
 
 ## マシントークン

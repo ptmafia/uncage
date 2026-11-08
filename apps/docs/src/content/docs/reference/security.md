@@ -13,7 +13,7 @@ Protocol version `2`. The agent always connects **out**, so users need no open p
 - **HTTPS streaming** (FaaS mode, and the fallback): `POST <basePath>/agent/connect` opens a link, `GET <basePath>/agent/stream` returns NDJSON lines (one JSON object per line: hub frames with a sequence number, and `{"ctl":"ping"}` every 10 s), and the agent sends its messages with `POST <basePath>/agent/events`. Every request carries the machine token as a `Bearer` header. The stream ends after `stream.maxDurationMs` and the agent reconnects at once. Reopening with a `cursor` acknowledges everything up to it, so a cut stream never loses a frame and never repeats an acknowledged one; upstream messages have idempotent ids, so a retry is not applied twice.
 - Plain `ws://` / `http://` is refused unless the hub is on `localhost`, `127.0.0.1` or `[::1]` (development).
 - Frames and request bodies are JSON, validated against the protocol schemas on both sides, at most 1 MiB each. The hub refuses agents older than `minAgentVersion` (WebSocket: `upgrade_required`; HTTP: `426 upgrade_required`).
-- Requests to `/agent/*` with a missing or wrong machine token are rate limited per client IP (`rateLimits.agentAuthFailuresPerMinute`, 60), counted in the store.
+- HTTP requests to `/agent/*`, WebSocket upgrades and `/machine/revoke` with a missing or wrong machine token are rate limited per client IP (`rateLimits.agentAuthFailuresPerMinute`, 60), counted in the store.
 - Presence: a computer that stays silent for longer than two missed pings (about 30 s) is shown offline, on either transport.
 
 ## Machine tokens

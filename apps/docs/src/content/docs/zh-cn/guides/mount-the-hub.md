@@ -218,7 +218,8 @@ curl -s http://localhost:3000/api/uncage/health                 # needs a signed
 | `heartbeat` | `{ pingIntervalMs: 10000, missedPings: 2 }` | 失去响应的电脑约 30 秒后显示为离线。 |
 | `sseHeartbeatMs` | `15000` | 浏览器事件流上的保活注释间隔。 |
 | `commandTimeoutMs` | `30000` | 浏览器请求等待电脑响应的时长。 |
-| `bodyTimeoutMs` | `30000` | 请求体在这个时长内没有完整收到，就以 `400` 拒绝。 |
+| `bodyTimeoutMs` | `30000` | 如果在这个时长内没有收到任何字节，或者整个请求体用时超过这个时长的 4 倍，就以 `400` 拒绝。慢但持续的上传可以顺利完成。 |
+| `logger` | 控制台 | hub 报告警告和错误的位置（`{ warn(obj, msg), error(obj, msg) }`；pino 和大多数日志库都适用）。默认用 `console.warn` 和 `console.error` 输出以 `[uncage] …` 开头的行。传入 `{ warn() {}, error() {} }` 可以静音。在 Vercel 和 Workers 上，如果 hub 没有 `cluster`（此时在线状态按实例各自保存），`toNextHandlers` 和 `fetchOnce` 会输出一次警告，见 [Serverless 托管](#serverless-托管vercelnetlifyworkers)。 |
 | `toolTimeoutMs` | `120000` | 工具 handler 超过这个时长仍在运行，就以 `tool_failed` 失败。在 FaaS 模式下，请让它不超过平台的时间上限。 |
 | `toolDrainMs` | `5000` | `hub.close()` 让正在运行的工具 handler 在这个时长内收尾，之后中止它们。 |
 | `maxConcurrentToolCalls` | `8` | 一台电脑在一个 hub 实例上同时可以进行的工具调用数。 |

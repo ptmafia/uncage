@@ -110,7 +110,7 @@ A request outlived the platform’s time limit.
 
 - **Agent streams and browser event streams:** set `stream.maxDurationMs` below the limit, with a margin (Vercel `maxDuration = 300` → `250_000`, the default). The hub then ends them itself and clients reconnect at once.
 - **Site tool calls:** each runs inside one request, so `toolTimeoutMs` (120 s) must fit inside the limit too. A handler stopped by the platform fails with “Site tool "<name>" timed out on the website. Please try again.” and is not re-run.
-- **Uploads:** a request body must arrive within `bodyTimeoutMs` (30 s); a slow upload is refused with `400`. Raise it for large attachments over slow links (and keep it under the limit).
+- **Uploads:** a request body is refused with `400` when no bytes arrive for `bodyTimeoutMs` (30 s), or when it takes more than 4 times that in total. Slow but steady uploads get through; only a stalled connection fails.
 - **Attachments over about 4.5 MB on Vercel** get Vercel’s own `413` before the hub runs. See [Vercel → FAQ](/docs/deploy/vercel/#attachments-over-about-4-mb-fail).
 
 ### The computer keeps reconnecting, or streams are cut
@@ -120,7 +120,8 @@ Cut connections are expected and harmless: the agent reconnects with its cursor,
 - **`http stream rotated` every few minutes** in the agent log is normal (the hub ends streams at `stream.maxDurationMs`).
 - **Errors every few seconds**: something closes long requests early (a proxy or CDN timeout). Raise that timeout above `stream.maxDurationMs`, or lower `stream.maxDurationMs` below it.
 - **Responses arrive all at once** (a prompt’s answer appears only at the end): a proxy buffers streams. Turn buffering off for `<basePath>/sessions/*/events` and `<basePath>/agent/stream` (nginx: `proxy_buffering off;`); the hub sends `X-Accel-Buffering: no` on agent streams, but not every proxy honours it.
-- **`429` on `/agent/*`**: an agent with a wrong token (for example a revoked computer still running) hit `agentAuthFailuresPerMinute`. On that computer, `uncage sites` shows the site; run `uncage setup <url>` again.
+- **`429` on `/agent/*`**: an agent with a wrong token (for example a revoked computer still running) hit `agentAuthFailuresPerMinute`. The answer carries a `Retry-After` header and the agent waits that long. On that computer, `uncage sites` shows the site; run `uncage setup <url>` again.
+- **A computer keeps retrying instead of showing `revoked`, with “HTTP 401 that is not the hub refusing the token; retrying” in the agent log**: something in front of the site answers the agent with its own 401, such as Vercel Deployment Protection on a preview deployment or Cloudflare Access. Only a 401 with the hub's own `{ "error": { "code": "unauthorized" } }` body revokes a computer. Let the agent through (a bypass for `/api/uncage/agent`, or use the production URL) and it reconnects by itself.
 
 ### Postgres: poolers and serverless drivers
 

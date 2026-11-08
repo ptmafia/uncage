@@ -124,7 +124,8 @@ Fetch → Node 适配器移到了独立的子路径：`import { toNodeHandler } 
 | `polling` | `{ activeMs: 300, idleMs: 2000, activeWindowMs: 30000 }` | 守护进程的 HTTP 流轮询其 outbox 的频率。 |
 | `rateLimits.agentAuthFailuresPerMinute` | `60` | 每个客户端 IP 每分钟向 `/agent/*` 发出的、缺少机器令牌或令牌错误的请求数上限。 |
 | `maintenance` | `{ intervalMs: 60000 }` | 按保留期清理，并把已挂掉实例上的工具调用标为失败；所有实例加起来每个间隔最多运行一次。`secret` 启用 `GET\|POST <basePath>/maintenance`（Vercel Cron）；`onRun` 用于加入你自己的清理逻辑。 |
-| `bodyTimeoutMs` | `30000` | 请求体没有按时完整收到时，以 `400` 拒绝。 |
+| `bodyTimeoutMs` | `30000` | 如果在这个时长内没有收到任何字节，或者整个请求体用时超过这个时长的 4 倍，就以 `400` 拒绝。 |
+| `logger` | 控制台 | hub 报告警告和错误的位置。传入 `{ warn() {}, error() {} }` 可以静音。 |
 | `toolDrainMs` | `5000` | `hub.close()` 给正在运行的网站工具 handler 留出的收尾时间。 |
 | `installScript` | 无 | 为 `install.sh` / `install.ps1` 追加的固定步骤。 |
 | `postgresCluster({ pool \| connectionString })` | | 基于 Postgres 的 `ClusterAdapter`：多节点或 FaaS 都不再需要 Redis。 |
@@ -136,6 +137,7 @@ Fetch → Node 适配器移到了独立的子路径：`import { toNodeHandler } 
 - **网站工具调用能挺过连接断开**：调用和结果都会存储，所以守护进程重试时拿到的是已存储的结果，而不是再执行一次（恰好一次；在 FaaS 平台上的前提是把平台的 `waitUntil` 交给 hub，见 [Workers → 常见问题](/docs/zh-cn/deploy/cloudflare-workers/#在-workers-上网站工具会恰好执行一次吗)）。如果运行 handler 的实例挂掉，这次调用会以“Site tool "<name>" timed out on the website. Please try again.”失败，并且不会重试（最多执行一次）。`ctx.signal` 现在会在超时、运行结束或 hub 关闭时中止，但电脑的连接断开时不再中止。详见[定义网站工具](/docs/zh-cn/guides/define-tools/#连接断开或实例停止时)。
 - **浏览器的事件流会轮换**，每 `stream.maxDurationMs` 一次（发送一个 `event: reconnect` 帧）。`@uncage/client` 会自动带着 `Last-Event-ID` 续接；自定义的 SSE 客户端收到它时应当重连。
 - **WebSocket 连不上时（连续失败三次），电脑可以改用 HTTP 流式传输连接**，之后每 30 分钟重试一次 WebSocket。
+- **hub 现在会向控制台输出日志。** 0.2 的 hub 是静默的。0.3 会用 `console.warn` 和 `console.error` 输出警告和错误（以 `[uncage]` 开头）：以 500 失败的请求、维护任务失败、按 IP 限流时拿不到客户端 IP，以及在 FaaS 上 hub 没有 `cluster` 时的一次性警告。可以通过新的 `logger` 选项换成你自己的日志库，或传入 `{ warn() {}, error() {} }` 来静音。
 - **默认会检测并启动 ACP agent。** `uncage serve`、`uncage doctor` 和 `uncage agent` 现在会注册命令在 PATH 上的 ACP 预设，并从 ACP 注册表中检测已安装的 agent（`presets: auto`、`autoDetect: true`）。每次启动时，它们都会把这些程序（例如 `opencode acp`）运行一次，用来做 ACP `initialize` 握手。要关闭，请在 `~/.uncage/agent.yaml`（Local 模式下是 `uncage.config.yaml`）中设置 `runtimes.acp.autoDetect: false`（不检测、不握手）和 `presets: off`。见[使用任意 ACP agent](/docs/zh-cn/guides/use-any-acp-agent/)。
 - **每天一次注册表下载。** 守护进程最多每天一次从 `cdn.agentclientprotocol.com` 下载 ACP 注册表及其图标。要关闭，请在守护进程的环境中设置 `UNCAGE_ACP_REGISTRY_REFRESH=0`（此时使用 Uncage 自带的那一份）。
 - **新的运行时 id 和新的 `skills` 取值。** 运行时列表里现在可能出现 `acp-*` 运行时（`acp-claude`、`acp-gemini` 等），`RuntimeCapabilities.skills` 在 0.2 的取值之外还可能是 `'prompt'`（技能写入 `.uncage/skills/`，并在第一条提示中列出）。按运行时 id 或 `skills` 取值做分支的自定义 UI 需要同时处理这两种情况。

@@ -57,14 +57,14 @@ Used by the CLI and the agent. They do not call `getUser`.
 | `POST /device/code` | Starts a device login. Answers the user code, the verification link, the polling interval (2 s) and the expiry (600 s). Rate limited per client IP |
 | `POST /device/token` | `{ deviceCode }`: polls until the user approves; then answers the machine token once, with the offered transports |
 | `POST /machine/revoke` | `Authorization: Bearer <machine token>`: the computer revokes itself (`uncage sites remove`) |
-| `GET /agent/info` | `{ protocol, minAgentVersion, transports: [{ kind, url }] }`: what the agent should speak. `kind` is `ws` (only when `attachWebSocket` runs, or `transports` lists it) or `http` |
+| `GET /agent/info` | `{ protocol, minAgentVersion, transports: [{ kind, url }] }`: what the agent should speak. `kind` is `ws` (only when `attachWebSocket` runs, or `transports` lists it) or `http`. The agent uses an offered `url` only if it is on the site's own host (same port), has no credentials, and is `wss`/`https` (`ws`/`http` only on `localhost`, `127.0.0.1` or `[::1]`); otherwise it uses `<site url>/agent`. |
 | `GET /agent` (WebSocket upgrade) | The WebSocket transport (`Authorization: Bearer <machine token>`), served by `attachWebSocket(hub, server)`. Frames are JSON, at most 1 MiB each. Where no WebSocket server runs (FaaS mode), an upgrade request gets `426 upgrade_required` |
 | `/agent/connect`, `/agent/stream`, `/agent/events`, `/agent/disconnect` | The HTTP streaming transport, below |
 | `GET\|POST /maintenance` | Only with `maintenance.secret`: `Authorization: Bearer <secret>` runs maintenance now and answers `{ ran, pruned, interruptedToolCalls }` (`ran: false` when another instance ran it within `maintenance.intervalMs`). Without the secret: `404` |
 
 ## Agent transport (HTTP streaming)
 
-The agent uses this when the hub offers only `http` (FaaS mode) or WebSockets keep failing. Every request carries `Authorization: Bearer <machine token>`; a missing or wrong token answers `401`, and too many of those from one IP `429` (`rateLimits.agentAuthFailuresPerMinute`). Any hub instance can serve any of these requests: the state lives in the store. The types are in `@uncage/protocol` (`HttpConnectResponse`, `StreamLine`, `HttpEventsRequest`, `HttpEventsResponse`).
+The agent uses this when the hub offers only `http` (FaaS mode) or WebSockets keep failing. Every request carries `Authorization: Bearer <machine token>`; a missing or wrong token answers `401`, and too many of those from one IP `429` (`rateLimits.agentAuthFailuresPerMinute`). Any hub instance can serve any of these requests: the state lives in the store. The types are in `@uncage/protocol` (`HttpConnectResponse`, `StreamLine`, `HttpEventsRequest`, `HttpEventsResponse`). While the hub is shutting down, every `/agent/*` route except `/agent/info` answers a retryable `500 internal_error` (and a WebSocket upgrade `503`), never `401`. Only a `401` whose body is the hub's own `{ "error": { "code": "unauthorized" } }` revokes the computer; a `401` from a proxy or a protection page in front of the site is retried.
 
 ```mermaid
 sequenceDiagram
