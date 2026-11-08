@@ -7,7 +7,7 @@ import type { ClusterAdapter } from './cluster/cluster.js';
 import { memoryCluster } from './cluster/memory.js';
 import { deviceFlow, randomSecret } from './device.js';
 import { DEFAULT_PULL_MAX_BYTES, DEFAULT_READ_MAX_BYTES, filePull } from './files.js';
-import { assertInstallExtension, assertScriptUrl, assertVersionRange, defaultCliRange, installScript } from './install/index.js';
+import { assertInstallExtension, assertScriptUrl, assertVersionRange, defaultCliRange, installScript, installScriptPs1 } from './install/index.js';
 import { newNodeId } from './ids.js';
 import { compareVersions, MachineHub, sessionChannel, type HubLogger } from './machines.js';
 import { applyEvent, emptySnapshot, indexPatch } from './replica.js';
@@ -428,7 +428,8 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
 
   const setupUrl = assertScriptUrl(basePath === DEFAULT_BASE_PATH ? origin : hubUrl);
   // Rendered once: the scripts only vary by the CLI range, the site URL and the static extension.
-  const installScripts = { sh: installScript({ cliRange: range, siteUrl: setupUrl, extend: installExtension }), ps1: '' };
+  const installOptions = { cliRange: range, siteUrl: setupUrl, extend: installExtension };
+  const installScripts = { sh: installScript(installOptions), ps1: installScriptPs1(installOptions) };
   const api = browserApi({
     store,
     minAgentVersion,
@@ -441,7 +442,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     skills,
     sessionStorage,
     publicOrigin: origin,
-    install: { install: `curl -fsSL ${hubUrl}/install.sh | bash`, setup: `uncage setup ${setupUrl}`, windows: null },
+    install: { install: `curl -fsSL ${hubUrl}/install.sh | bash`, setup: `uncage setup ${setupUrl}`, windows: `irm ${hubUrl}/install.ps1 | iex` },
     installScripts,
     version: HUB_VERSION,
     sseHeartbeatMs: o.sseHeartbeatMs ?? DEFAULT_SSE_HEARTBEAT_MS,

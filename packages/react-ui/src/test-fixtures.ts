@@ -135,7 +135,7 @@ export const machine = (over: Partial<MachineInfo> = {}): MachineInfo => ({
 export const INSTALL = {
   install: 'curl -fsSL https://site.test/api/uncage/install.sh | bash',
   setup: 'uncage setup https://site.test/api/uncage',
-  windows: null,
+  windows: 'irm https://site.test/api/uncage/install.ps1 | iex' as string | null,
 };
 
 export const clientError = (code: ErrorCode, status: number, message: string = code, hint?: string) =>

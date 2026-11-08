@@ -60,8 +60,8 @@ export interface ApiContext {
   publicOrigin: string;
   /** Agents older than this are reported as `agentOutdated` in `MachineInfo`. */
   minAgentVersion: string;
-  install: { install: string; setup: string; windows: null };
-  /** Rendered installers (`install.ps1` arrives with Task P2; empty until then). */
+  install: { install: string; setup: string; windows: string };
+  /** Rendered installers (`install.sh` for macOS / Linux, `install.ps1` for Windows). */
   installScripts: { sh: string; ps1: string };
   version: string;
   sseHeartbeatMs: number;
@@ -309,11 +309,12 @@ export function browserApi(ctx: ApiContext) {
   };
 
   // ---- Machine side (no website session) -------------------------------------------------------
-  add('GET', '/install.sh', async () =>
-    new Response(ctx.installScripts.sh, {
+  const script = (text: string) => async () =>
+    new Response(text, {
       headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-cache', 'x-content-type-options': 'nosniff' },
-    }),
-  { public: true });
+    });
+  add('GET', '/install.sh', script(ctx.installScripts.sh), { public: true });
+  add('GET', '/install.ps1', script(ctx.installScripts.ps1), { public: true });
 
   add('POST', '/device/code', async ({ req, clientKey }) => {
     const body = parse(DeviceCodeRequestSchema, (await readJson(req)) ?? {});

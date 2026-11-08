@@ -33,7 +33,9 @@ export { HUB_ATTACHMENT_MAX_BYTES, SINGLE_FRAME_ATTACHMENT_BYTES } from './brows
 export {
   assertScriptUrl,
   installScript,
+  installScriptPs1,
   INSTALL_MESSAGES,
+  INSTALL_MESSAGES_PS1,
   type InstallLocale,
   type InstallMessageKey,
   type InstallScriptExtension,

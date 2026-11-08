@@ -532,13 +532,32 @@ describe('browser API → machine', () => {
     await store.close();
   });
 
-  it('install info and install.sh', async () => {
+  it('install info has the Windows command and GET /install.ps1 serves the script', async () => {
     const t = await start();
     expect(await (await t.as('alice', '/machines/install')).json()).toEqual({
       install: `curl -fsSL ${t.api}/install.sh | bash`,
       setup: `uncage setup ${t.origin}`,
-      windows: null,
+      windows: `irm ${t.api}/install.ps1 | iex`,
     });
+    // Public (no website session), like install.sh.
+    const res = await fetch(`${t.api}/install.ps1`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/plain; charset=utf-8');
+    expect(res.headers.get('cache-control')).toBe('no-cache');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    const ps1 = await res.text();
+    // eslint-disable-next-line no-control-regex
+    expect(ps1).toMatch(/^[\x00-\x7f]*$/);
+    expect(ps1).toContain('param([switch]$Yes, [switch]$NoSetup, [string]$Lang)');
+    expect(ps1).toContain(`$U.SiteUrl = '${t.origin}'`);
+    expect(ps1).toContain(`npm install -g "@uncage/cli@${defaultCliRange(HUB_VERSION)}"`);
+    expect(ps1).toContain("$U.CliSpec = '@uncage/cli@");
+    expect(ps1).not.toContain('@@');
+    expect(ps1.trimEnd().endsWith('if ($PSCommandPath) { exit $uncageCode } else { $global:LASTEXITCODE = $uncageCode }')).toBe(true);
+  });
+
+  it('install info and install.sh', async () => {
+    const t = await start();
     const res = await fetch(`${t.api}/install.sh`);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('text/plain');
@@ -571,6 +590,22 @@ describe('browser API → machine', () => {
     expect(ext).toContain('echo EXTRA-STEP');
     const withoutExtension = (x: string) => x.replace(/# The website's own install step[^\n]*\nuncage_extension\(\) \{[\s\S]*?\n\}\n/, '');
     expect(withoutExtension(ext)).toBe(withoutExtension(a));
+    // install.ps1 follows the same rule, with its own extension text.
+    const ps1 = async (o: Partial<HubOptions> & { publicUrl: string }) => {
+      const hub = await createHub({ getUser: async () => null, store, ...o });
+      try {
+        return await (await hub.fetch(new Request(`${o.publicUrl}/api/uncage/install.ps1`))).text();
+      } finally {
+        await hub.close();
+      }
+    };
+    const pa = await ps1({ publicUrl: 'https://one.example', cliVersionRange: '~0.2.1' });
+    const pb = await ps1({ publicUrl: 'https://two.example:8443', cliVersionRange: '^0.3', site: { id: 'x', name: 'X' } });
+    expect(pb.replaceAll('https://two.example:8443', 'https://one.example').replaceAll('^0.3', '~0.2.1')).toBe(pa);
+    const pext = await ps1({ publicUrl: 'https://one.example', cliVersionRange: '~0.2.1', installScript: { ps1AfterCli: "Write-Host 'EXTRA-STEP'" } });
+    expect(pext).toContain("$UncageExt = 'Write-Host ''EXTRA-STEP'''");
+    const withoutPs1Extension = (x: string) => x.replace(/# The website's own install step[^\n]*\n\$UncageExt = '[^\n]*\n/, '');
+    expect(withoutPs1Extension(pext)).toBe(withoutPs1Extension(pa));
     await expect(createHub({ publicUrl: 'https://x.example', getUser: async () => null, store, cliVersionRange: '1; rm -rf /' })).rejects.toThrow(/cliVersionRange/);
     // Review Focus 10: a site URL that is not inert in a shell never reaches the script.
     await expect(createHub({ publicUrl: 'http://lan.example:3000', getUser: async () => null, store })).rejects.toThrow(/site URL/);

@@ -12,7 +12,7 @@ export interface HubUser {
 
 export interface HubOptions {
   /**
-   * The website's public origin, e.g. `https://app.example.com`. It is embedded in install.sh for
+   * The website's public origin, e.g. `https://app.example.com`. It is embedded in install.sh and install.ps1 for
    * `uncage setup`, so it must be https (plain http only for localhost / 127.0.0.1 / [::1]) with no
    * IPv6 literal other than `[::1]`: `createHub` refuses a plain-http LAN address.
    */
@@ -61,10 +61,10 @@ export interface HubOptions {
   attachmentRetentionDays?: number;
   /** Agents older than this are told to upgrade. Defaults to this package's version. */
   minAgentVersion?: string;
-  /** `install.sh` installs `@uncage/cli@<range>`. Defaults to `^<major.minor>` of this package. */
+  /** `install.sh` and `install.ps1` install `@uncage/cli@<range>`. Defaults to `^<major.minor>` of this package. */
   cliVersionRange?: string;
   /**
-   * Extends the installers served at `install.sh` (and `install.ps1`): a step run after the CLI
+   * Extends the installers served at `install.sh` and `install.ps1`: a step run after the CLI
    * install and/or your own "no agent found" help. Static text only, fixed when the hub starts
    * (never request data); validated by `createHub`.
    */
@@ -137,7 +137,7 @@ export interface Hub {
   /** Normalized mount path, e.g. `/api/uncage`. */
   readonly basePath: string;
   /**
-   * Browser API, device endpoints and `install.sh`, all under `basePath`, as a Fetch handler.
+   * Browser API, device endpoints, `install.sh` and `install.ps1`, all under `basePath`, as a Fetch handler.
    * Pass `info.clientIp` (the client address) when known; `toNodeHandler` does. `info.waitUntil`
    * is the platform's hook for work that may outlive the response (e.g. Workers' `ctx.waitUntil`).
    */

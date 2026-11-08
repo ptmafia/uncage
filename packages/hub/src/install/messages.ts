@@ -1,7 +1,9 @@
 /**
  * Every line the installers print, in English, Chinese and Japanese. `install.sh` gets them as a
  * generated `uncage_msg` function (printf formats: `%s` placeholders in order, `%%` for a literal
- * percent sign, no backslashes). Every locale has every key with the same number of `%s`.
+ * percent sign, no backslashes). `install.ps1` gets the same keys as base64 UTF-8 .NET format
+ * strings, with the Windows wording from `INSTALL_MESSAGES_PS1` laid over them. Every locale has
+ * every key with the same number of `%s`.
  */
 const en = {
   help: [
@@ -39,6 +41,7 @@ const en = {
   ask_node_mgr: 'Install Node.js 22 with %s? Your default Node.js stays as it is.',
   ask_node_brew: 'Install Node.js 22 with Homebrew (brew install node@22)? It does not replace your current node.',
   ask_node_fnm: 'Install fnm (a Node.js version manager) into %s and Node.js 22 with it? No admin rights needed.',
+  ask_node_winget: 'Install fnm (a Node.js version manager) with winget, just for you, and Node.js 22 with it? No admin rights needed.',
   node_found_mgr: '✓ Node.js 22 is already installed with %s (%s)',
   node_installed: '✓ Node.js %s is ready (%s)',
   ask_default: 'Use Node.js 22 as your default Node.js?',
@@ -46,6 +49,7 @@ const en = {
   default_kept: 'Your default Node.js is unchanged. Uncage uses %s.',
   default_kept_yes: 'Your default Node.js is unchanged (--yes never replaces an existing Node.js).',
   default_restored: '✓ Undid the default %s sets for its first Node.js, so your default stays as it was.',
+  nvm_use_hint: 'Your default Node.js is unchanged. To switch to it later, run: nvm use %s (Windows may ask for admin rights)',
   node_required: 'Uncage needs Node.js 22. Nothing else was changed. To install it yourself:',
   need_unzip: 'uncage: installing fnm needs unzip, which is not installed. This installer never runs your system package manager.',
   need_curl: 'uncage: installing fnm needs curl, which is not installed.',
@@ -115,6 +119,7 @@ const zh: Record<InstallMessageKey, string> = {
   ask_node_mgr: '用 %s 安装 Node.js 22？不会改变你的默认 Node.js。',
   ask_node_brew: '用 Homebrew 安装 Node.js 22（brew install node@22）？不会替换你现有的 node。',
   ask_node_fnm: '把 fnm（Node.js 版本管理器）安装到 %s，并用它安装 Node.js 22？不需要管理员权限。',
+  ask_node_winget: '用 winget 为当前用户安装 fnm（Node.js 版本管理器），并用它安装 Node.js 22？不需要管理员权限。',
   node_found_mgr: '✓ 已通过 %s 安装 Node.js 22（%s）',
   node_installed: '✓ Node.js %s 已就绪（%s）',
   ask_default: '把 Node.js 22 设为你的默认 Node.js？',
@@ -122,6 +127,7 @@ const zh: Record<InstallMessageKey, string> = {
   default_kept: '你的默认 Node.js 保持不变。Uncage 使用 %s。',
   default_kept_yes: '你的默认 Node.js 保持不变（--yes 不会替换已有的 Node.js）。',
   default_restored: '✓ 已撤销 %s 为首个 Node.js 自动设置的默认版本，你的默认版本保持原样。',
+  nvm_use_hint: '你的默认 Node.js 保持不变。以后要切换过去，请运行：nvm use %s（Windows 可能会要求管理员权限）',
   node_required: 'Uncage 需要 Node.js 22。未做其他更改。自行安装：',
   need_unzip: 'uncage：安装 fnm 需要 unzip，但它没有安装。本安装脚本不会调用系统包管理器。',
   need_curl: 'uncage：安装 fnm 需要 curl，但它没有安装。',
@@ -188,6 +194,7 @@ const ja: Record<InstallMessageKey, string> = {
   ask_node_mgr: '%s で Node.js 22 をインストールしますか？既定の Node.js は変わりません。',
   ask_node_brew: 'Homebrew で Node.js 22 をインストールしますか（brew install node@22）？今の node は置き換えません。',
   ask_node_fnm: 'fnm（Node.js のバージョン管理ツール）を %s にインストールし、それで Node.js 22 をインストールしますか？管理者権限は不要です。',
+  ask_node_winget: 'winget で fnm（Node.js のバージョン管理ツール）をこのユーザー用にインストールし、それで Node.js 22 をインストールしますか？管理者権限は不要です。',
   node_found_mgr: '✓ Node.js 22 は %s でインストール済みです（%s）',
   node_installed: '✓ Node.js %s の準備ができました（%s）',
   ask_default: 'Node.js 22 を既定の Node.js にしますか？',
@@ -195,6 +202,7 @@ const ja: Record<InstallMessageKey, string> = {
   default_kept: '既定の Node.js は変更していません。Uncage は %s を使います。',
   default_kept_yes: '既定の Node.js は変更していません（--yes は既存の Node.js を置き換えません）。',
   default_restored: '✓ %s が最初の Node.js に自動で設定した既定を元に戻しました。既定はこれまでのままです。',
+  nvm_use_hint: '既定の Node.js は変更していません。あとで切り替えるには nvm use %s を実行してください（Windows が管理者権限を求めることがあります）',
   node_required: 'Uncage には Node.js 22 が必要です。ほかは何も変更していません。自分でインストールするには：',
   need_unzip: 'uncage：fnm のインストールには unzip が必要ですが、インストールされていません。このインストーラーはシステムのパッケージマネージャーを実行しません。',
   need_curl: 'uncage：fnm のインストールには curl が必要ですが、インストールされていません。',
@@ -226,3 +234,49 @@ const ja: Record<InstallMessageKey, string> = {
 };
 
 export const INSTALL_MESSAGES: Record<InstallLocale, Record<InstallMessageKey, string>> = { en, zh, ja };
+
+/** Keys whose wording differs on Windows (install.ps1). Every locale overrides the same keys. */
+export type InstallPs1MessageKey = 'os_unsupported' | 'rerun_yes' | 'default_kept_yes' | 'path_added' | 'not_default_hint' | 'no_agent';
+
+/** The Windows wording laid over `INSTALL_MESSAGES` for install.ps1 (same printf rules). */
+export const INSTALL_MESSAGES_PS1: Record<InstallLocale, Record<InstallPs1MessageKey, string>> = {
+  en: {
+    os_unsupported: 'uncage: this installer supports Windows on x64 or arm64 (this is %s %s). On macOS and Linux, use install.sh.',
+    rerun_yes: 'Or run this installer in a PowerShell window, or confirm every step at once: set $env:UNCAGE_YES = 1, then run it again.',
+    default_kept_yes: 'Your default Node.js is unchanged (-Yes never replaces an existing Node.js).',
+    path_added: '✓ Added %s to your user Path (open a new terminal to use it)',
+    not_default_hint: 'Node.js 22 is not your default, so run the Uncage CLI with: $env:Path = "%s;$env:Path"; & %s',
+    no_agent: [
+      'No AI coding agent found. Uncage needs one, for example Claude Code:',
+      '    irm https://claude.ai/install.ps1 | iex',
+      '    https://code.claude.com/docs/en/setup',
+      'Install it, then run this command again.',
+    ].join('\n'),
+  },
+  zh: {
+    os_unsupported: 'uncage：本安装脚本支持 x64 或 arm64 上的 Windows（当前为 %s %s）。macOS 和 Linux 请使用 install.sh。',
+    rerun_yes: '也可以在 PowerShell 窗口里运行本安装脚本，或一次确认所有步骤：先设置 $env:UNCAGE_YES = 1，再重新运行。',
+    default_kept_yes: '你的默认 Node.js 保持不变（-Yes 不会替换已有的 Node.js）。',
+    path_added: '✓ 已把 %s 加入你的用户 Path（打开新终端生效）',
+    not_default_hint: 'Node.js 22 不是默认版本，请这样运行 Uncage CLI：$env:Path = "%s;$env:Path"; & %s',
+    no_agent: [
+      '未找到 AI 编程助手。Uncage 需要一个，例如 Claude Code：',
+      '    irm https://claude.ai/install.ps1 | iex',
+      '    https://code.claude.com/docs/en/setup',
+      '安装后重新运行这条命令即可。',
+    ].join('\n'),
+  },
+  ja: {
+    os_unsupported: 'uncage：このインストーラーは x64 または arm64 の Windows に対応しています（このコンピューターは %s %s）。macOS と Linux では install.sh を使ってください。',
+    rerun_yes: 'PowerShell ウィンドウでこのインストーラーを実行するか、すべての手順を一度に承認できます：$env:UNCAGE_YES = 1 を設定してから再実行してください。',
+    default_kept_yes: '既定の Node.js は変更していません（-Yes は既存の Node.js を置き換えません）。',
+    path_added: '✓ %s をユーザーの Path に追加しました（新しいターミナルで有効になります）',
+    not_default_hint: 'Node.js 22 は既定ではないので、Uncage CLI は次のように実行してください：$env:Path = "%s;$env:Path"; & %s',
+    no_agent: [
+      'AI コーディングエージェントが見つかりません。Uncage には、たとえば Claude Code が必要です：',
+      '    irm https://claude.ai/install.ps1 | iex',
+      '    https://code.claude.com/docs/en/setup',
+      'インストールしてから、このコマンドをもう一度実行してください。',
+    ].join('\n'),
+  },
+};

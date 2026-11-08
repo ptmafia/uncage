@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { INSTALL_MESSAGES } from './messages.js';
-import { assertInstallExtension, assertScriptUrl, assertVersionRange, defaultCliRange, installScript } from './render.js';
+import { assertInstallExtension, assertScriptUrl, assertVersionRange, defaultCliRange, installScript, installScriptPs1 } from './render.js';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const placeholders = (s: string) => (s.match(/%[s%]/g) ?? []).filter((p) => p === '%s').length;
@@ -30,11 +30,14 @@ describe('install messages', () => {
     }
   });
 
-  it('every message key the script uses exists, and every message is used', () => {
+  it('every message key the scripts use exists, and every message is used by one of them', () => {
     const sh = installScript({ cliRange: '^0.3', siteUrl: 'https://site.test' });
-    const body = sh.slice(sh.indexOf('# ---- output'));
-    const used = new Set([...body.matchAll(/\b(?:say|warn|ask|uncage_msg) ([a-z_]+)/g)].map((m) => m[1]!));
-    expect([...used].sort()).toEqual(Object.keys(INSTALL_MESSAGES.en).sort());
+    const ps1 = installScriptPs1({ cliRange: '^0.3', siteUrl: 'https://site.test' });
+    const shUsed = [...sh.slice(sh.indexOf('# ---- output')).matchAll(/\b(?:say|warn|ask|uncage_msg) ([a-z_]+)/g)].map((m) => m[1]!);
+    const ps1Used = [...ps1.slice(ps1.indexOf('# ---- output')).matchAll(/\b(?:Say|Warn|Ask|Get-UMsg) '([a-z_]+)'/g)].map((m) => m[1]!);
+    const keys = Object.keys(INSTALL_MESSAGES.en).sort();
+    for (const k of [...shUsed, ...ps1Used]) expect(keys, k).toContain(k);
+    expect([...new Set([...shUsed, ...ps1Used])].sort()).toEqual(keys);
   });
 });
 

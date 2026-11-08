@@ -12,7 +12,10 @@ import { fileURLToPath } from 'node:url';
 
 const pkgDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 const out = join(pkgDir, 'src/install/embedded.ts');
-const ASSETS = [['install.sh', 'INSTALL_SH_TEMPLATE']];
+const ASSETS = [
+  ['install.sh', 'INSTALL_SH_TEMPLATE'],
+  ['install.ps1', 'INSTALL_PS1_TEMPLATE'],
+];
 
 export function renderEmbedded() {
   const lines = [

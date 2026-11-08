@@ -1,5 +1,5 @@
-import { INSTALL_SH_TEMPLATE } from './embedded.js';
-import { INSTALL_MESSAGES, type InstallLocale, type InstallMessageKey } from './messages.js';
+import { INSTALL_PS1_TEMPLATE, INSTALL_SH_TEMPLATE } from './embedded.js';
+import { INSTALL_MESSAGES, INSTALL_MESSAGES_PS1, type InstallLocale, type InstallMessageKey } from './messages.js';
 
 /** npm version ranges accepted for `cliVersionRange` (no shell metacharacters can get through). */
 const RANGE = /^(latest|next|[\^~]?\d+(\.\d+){0,2}(-[0-9A-Za-z.]+)?)$/;
@@ -44,7 +44,12 @@ export interface InstallScriptExtension {
    * `UNCAGE_SITE_URL` set. A non-zero exit fails the install (exit 1) before the setup prompt.
    */
   shAfterCli?: string;
-  /** PowerShell for install.ps1 at the same point (ASCII only, ≤ 16 KiB). */
+  /**
+   * PowerShell for install.ps1 at the same point (static text, ASCII only, ≤ 16 KiB). It runs as
+   * its own script (`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File`), with
+   * Node 22 first on PATH and `$env:UNCAGE_BIN` (the full path of `uncage.cmd`), `UNCAGE_NODE`,
+   * `UNCAGE_SITE_URL` set. A non-zero exit code fails the install (1) before the setup prompt.
+   */
   ps1AfterCli?: string;
   /** Replaces the "no agent found" help (one line per locale; en required). */
   agentHelp?: { en: string; zh?: string; ja?: string };
@@ -151,5 +156,65 @@ export function installScript(o: InstallScriptOptions): string {
   s = replaceOnce(s, '@@SITE_URL@@', url);
   s = replaceOnce(s, '# @@MESSAGES@@', shMessages(ext.agentHelp));
   s = replaceOnce(s, '# @@EXTENSION@@', shExtension(ext.shAfterCli));
+  return s;
+}
+
+/** PowerShell single-quoted literal. */
+const psQuote = (s: string): string => `'${s.replace(/'/g, "''")}'`;
+/** .NET composite format text: braces doubled. */
+const netLiteral = (s: string): string => s.replace(/[{}]/g, (c) => c + c);
+/** printf format (`%s` in order, `%%`) → .NET composite format (`{0}`, `{1}`, braces doubled). */
+const printfToNet = (s: string): string => {
+  let i = 0;
+  return netLiteral(s).replace(/%[s%]/g, (m) => (m === '%%' ? '%' : `{${i++}}`));
+};
+/** Base64 of the UTF-8 bytes (Web-standard: no Buffer). */
+const base64Utf8 = (s: string): string => {
+  let bin = '';
+  for (const b of new TextEncoder().encode(s)) bin += String.fromCharCode(b);
+  return btoa(bin);
+};
+
+function ps1Messages(agentHelp: InstallScriptExtension['agentHelp']): string {
+  const locales: InstallLocale[] = ['en', 'zh', 'ja'];
+  const out: string[] = [
+    '# Messages (generated from packages/hub/src/install/messages.ts): base64 of UTF-8 .NET format',
+    '# strings, so this file stays ASCII (Windows PowerShell 5.1 may read a download as Latin-1).',
+    '$UncageMsgs = @{',
+  ];
+  for (const l of locales) {
+    const table: Record<string, string> = {};
+    for (const [k, v] of Object.entries({ ...INSTALL_MESSAGES[l], ...INSTALL_MESSAGES_PS1[l] })) table[k] = printfToNet(v);
+    if (agentHelp) table['no_agent' satisfies InstallMessageKey] = netLiteral(agentHelp[l] ?? agentHelp.en);
+    out.push(`  '${l}' = @{`);
+    for (const [k, v] of Object.entries(table)) out.push(`    '${k}' = '${base64Utf8(v)}'`);
+    out.push('  }');
+  }
+  out.push('}');
+  return out.join('\n');
+}
+
+function ps1Extension(text: string | undefined): string {
+  if (!text) return ["# The website's own install step (HubOptions.installScript.ps1AfterCli): none.", "$UncageExt = ''"].join('\n');
+  return [
+    "# The website's own install step (HubOptions.installScript.ps1AfterCli), run after the CLI install.",
+    `$UncageExt = ${psQuote(text.replace(/\r\n/g, '\n'))}`,
+  ].join('\n');
+}
+
+/**
+ * The PowerShell installer served at `<basePath>/install.ps1` (Windows PowerShell 5.1 and
+ * PowerShell 7; ASCII only). Like `installScript`, it only varies by the validated CLI range, the
+ * validated site URL and the developer's static extension text.
+ */
+export function installScriptPs1(o: InstallScriptOptions): string {
+  const range = assertVersionRange(o.cliRange);
+  const url = assertScriptUrl(o.siteUrl);
+  const ext = assertInstallExtension(o.extend);
+  let s = INSTALL_PS1_TEMPLATE;
+  s = replaceOnce(s, '@@CLI_RANGE@@', range);
+  s = replaceOnce(s, '@@SITE_URL@@', url);
+  s = replaceOnce(s, '# @@MESSAGES@@', ps1Messages(ext.agentHelp));
+  s = replaceOnce(s, '# @@EXTENSION@@', ps1Extension(ext.ps1AfterCli));
   return s;
 }
