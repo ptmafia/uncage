@@ -71,7 +71,7 @@ export interface SessionRecord {
   activeRun?: ActiveRunRecord;
   lastSequence: number;
   snapshot?: ReplicaSnapshot;
-  /** The session's runtime id (`claude-code`, `codex`, …); absent on rows written by older hubs. */
+  /** The session's runtime id (`claude`, `codex`, …); absent on rows written by older hubs. */
   runtime?: string;
 }
 

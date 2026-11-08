@@ -39,7 +39,7 @@ export interface HubOptions {
   skills?: SkillSpec[];
   /**
    * Picks the tools and skills (by name) offered to a run. Defaults to all. `runtime` is the
-   * session's runtime id (`claude-code`, `codex`, …). Whatever you pick, tools are dropped for a
+   * session's runtime id (`claude`, `codex`, …). Whatever you pick, tools are dropped for a
    * runtime the machine reports without `capabilities.siteTools` (Codex today): the run still
    * starts, with its skills, and shows a `system.warning` with code `site_tools_unsupported`.
    */

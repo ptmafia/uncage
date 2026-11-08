@@ -9,7 +9,7 @@ description: 用 selectManifest 根据用户、提示词或会话，为每次运
 selectManifest?(ctx: { user: HubUser; prompt: string; sessionId: string; runtime: string }): Promise<{ tools: string[]; skills: string[] }>;
 ```
 
-每次运行开始时（`POST <basePath>/sessions/:id/runs`），hub 会在向电脑发送任何内容之前调用它。`runtime` 是会话的运行时 id（`claude-code`、`codex`……）。返回要提供的工具和技能的**名称**。
+每次运行开始时（`POST <basePath>/sessions/:id/runs`），hub 会在向电脑发送任何内容之前调用它。`runtime` 是会话的运行时 id（`claude`、`codex`……）。返回要提供的工具和技能的**名称**。
 
 ## 示例：按套餐和按任务选择
 

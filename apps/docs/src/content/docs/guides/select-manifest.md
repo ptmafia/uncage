@@ -9,7 +9,7 @@ By default every run is offered every tool and skill you registered. `selectMani
 selectManifest?(ctx: { user: HubUser; prompt: string; sessionId: string; runtime: string }): Promise<{ tools: string[]; skills: string[] }>;
 ```
 
-The hub calls it each time a run starts (`POST <basePath>/sessions/:id/runs`), before anything is sent to the computer. `runtime` is the session's runtime id (`claude-code`, `codex`, …). Return the **names** of the tools and skills to offer.
+The hub calls it each time a run starts (`POST <basePath>/sessions/:id/runs`), before anything is sent to the computer. `runtime` is the session's runtime id (`claude`, `codex`, …). Return the **names** of the tools and skills to offer.
 
 ## Example: by plan and by task
 

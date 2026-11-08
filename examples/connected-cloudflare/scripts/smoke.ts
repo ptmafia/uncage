@@ -1,12 +1,12 @@
 /**
  * End-to-end smoke test of a running Worker (`pnpm dev`, or a deployed URL):
  *
- *   UNCAGE_HOME=$(mktemp -d) node scripts/smoke.ts [--url http://localhost:8787] [--runtime claude-code|fake] [--user smoke]
+ *   UNCAGE_HOME=$(mktemp -d) node scripts/smoke.ts [--url http://localhost:8787] [--runtime claude|fake] [--user smoke]
  *
  * 1. `install.sh` is served and `GET /api/uncage/agent/info` offers only the `http` transport.
  * 2. Signs in (`POST /login`, the demo sign-in: local hosts only unless ALLOW_DEMO_LOGIN=1), connects a computer with the real `uncage setup <url> --no-daemon
  *    --no-browser` and approves its code on `/device`.
- * 3. Starts the agent: `--runtime claude-code` (default) runs the real `uncage agent` with your
+ * 3. Starts the agent: `--runtime claude` (default) runs the real `uncage agent` with your
  *    Claude Code; `--runtime fake` runs the agent in this process with a scripted runtime instead.
  * 4. Creates a session, starts a run asking it to call `save_note`, reads the session's SSE events
  *    to `run.completed` (approving any approval card), then checks `GET /notes` for the note.
@@ -24,7 +24,7 @@ const { values } = parseArgs({
   allowPositionals: true, // tolerate a stray `--` from `pnpm smoke -- …`
   options: {
     url: { type: 'string', default: 'http://localhost:8787' },
-    runtime: { type: 'string', default: 'claude-code' },
+    runtime: { type: 'string', default: 'claude' },
     user: { type: 'string', default: `smoke-${Date.now().toString(36)}` },
     timeout: { type: 'string', default: '300' },
   },
