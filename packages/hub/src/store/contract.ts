@@ -368,6 +368,28 @@ export function hubStoreContract(make: () => Promise<{ store: HubStore; cleanup?
   const ok = { status: 'ok' as const, finishedAt: t(11), durationMs: 11_000 };
 
   it(
+    'getToolCall reads without writing; pruneToolCallResults drops old results and keeps the status',
+    withStore(async (store) => {
+      expect(await store.getToolCall('m1', 'tc_1')).toBeNull();
+      await store.claimToolCall(rec, { leaseUntil: t(10), now: t(0) });
+      expect(await store.getToolCall('m1', 'tc_1')).toEqual({ ...rec, leaseUntil: t(10) });
+      expect(await store.getToolCall('m2', 'tc_1')).toBeNull();
+      await store.finishToolCall(rec.id, { ...ok, result });
+      await store.claimToolCall({ ...rec, id: 'tcl_2', callId: 'tc_2' }, { leaseUntil: t(10), now: t(0) });
+      await store.finishToolCall('tcl_2', { ...ok, finishedAt: t(50), result: { ...result, id: 'tc_2' } });
+      expect(await store.getToolCall('m1', 'tc_1')).toMatchObject({ status: 'ok', result });
+      expect(await store.pruneToolCallResults(t(20))).toBe(1);
+      const old = await store.getToolCall('m1', 'tc_1');
+      expect(old).toMatchObject({ status: 'ok' });
+      expect(old!.result).toBeUndefined();
+      expect(await store.getToolCall('m1', 'tc_2')).toMatchObject({ result: { id: 'tc_2' } });
+      expect(await store.pruneToolCallResults(t(20))).toBe(0);
+      // A resend of the pruned call still reads as done (generic answer), never re-runs.
+      expect(await store.claimToolCall({ ...rec, id: 'tcl_3' }, { leaseUntil: t(99), now: t(60) })).toMatchObject({ kind: 'done', record: { status: 'ok' } });
+    }),
+  );
+
+  it(
     'tool calls: new, running, stale after lease, done with the stored result; finish is CAS on running',
     withStore(async (store) => {
       expect(await store.claimToolCall(rec, { leaseUntil: t(10), now: t(0) })).toEqual({ kind: 'new' });

@@ -195,8 +195,6 @@ export interface MachineHubDeps {
   pingIntervalMs: number;
   missedPings: number;
   commandTimeoutMs: number;
-  /** Site tool calls one machine may have executing at once on this instance; more fail with `too_many_concurrent`. */
-  maxConcurrentToolCalls: number;
   logger: HubLogger;
   /** After `welcome`: e.g. send replication `ack`s. */
   onConnected(machine: MachineRecord, send: (f: HubFrame) => void): Promise<void>;
@@ -570,32 +568,16 @@ export class MachineHub {
     this.endPull(id, err);
   }
 
-  /** Site tool calls executing on this instance per machine (either transport). */
-  private readonly toolCallsRunning = new Map<string, number>();
-
   /**
-   * Runs one tool call under the per-machine, per-instance concurrency cap. Handler errors become an
-   * error `tool_result` (never a retry: a tool that ran is not re-run because it failed).
+   * Runs one tool call (`onToolCall`: claim, the per-machine concurrency cap, execution). An
+   * unexpected failure becomes an error `tool_result` (never a retry: a tool that ran is not re-run
+   * because it failed).
    */
   private async runToolCall(machine: MachineRecord, frame: Extract<AgentFrame, { t: 'tool_call' }>): Promise<ToolResultFrame | null> {
-    const machineId = machine.id;
-    const running = this.toolCallsRunning.get(machineId) ?? 0;
-    if (running >= this.d.maxConcurrentToolCalls) {
-      const err = new UncageError('tool_failed', {
-        message: `Too many site tool calls at once (at most ${this.d.maxConcurrentToolCalls}).`,
-        details: { reason: 'too_many_concurrent' },
-      });
-      return { t: 'tool_result', id: frame.id, ok: false, error: err.toBody() };
-    }
-    this.toolCallsRunning.set(machineId, running + 1);
     try {
       return await this.d.onToolCall(machine, frame);
     } catch (err) {
       return { t: 'tool_result', id: frame.id, ok: false, error: errorBody(err) };
-    } finally {
-      const n = (this.toolCallsRunning.get(machineId) ?? 1) - 1;
-      if (n > 0) this.toolCallsRunning.set(machineId, n);
-      else this.toolCallsRunning.delete(machineId);
     }
   }
 

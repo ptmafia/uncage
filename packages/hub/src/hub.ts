@@ -44,6 +44,8 @@ export const DEFAULT_STREAM_MAX_DURATION_MS = 250_000;
 export const DEFAULT_POLLING = { activeMs: 300, idleMs: 2_000, activeWindowMs: 30_000 } as const;
 /** A tool call's lease (store claim and inbox claim) outlives its handler's timeout by this much. */
 const DEFAULT_TOOL_LEASE_GRACE_MS = 10_000;
+/** `close()` lets running site tool handlers finish for this long (`toolDrainMs`). */
+const DEFAULT_TOOL_DRAIN_MS = 5_000;
 /** How long a tool call for a run whose startRun result is still in flight waits for it. */
 const DEFAULT_RUN_INDEX_WAIT_MS = 10_000;
 /** Hub copies of attachments are deleted after this many days (`attachmentRetentionDays`). */
@@ -57,6 +59,8 @@ const DEFAULT_MAINTENANCE_INTERVAL_MS = 60_000;
  * far beyond that window.
  */
 const INBOX_RETENTION_MS = 24 * 3_600_000;
+/** Stored tool results (redelivered to a resent call) are dropped after a day, like inbox rows. */
+const TOOL_RESULT_RETENTION_MS = 24 * 3_600_000;
 const DEFAULT_USER_CODE_WINDOW_MS = 600_000;
 const DEVICE_CODE_WINDOW_MS = 60_000;
 /** Window of `rateLimits.agentAuthFailuresPerMinute`. */
@@ -120,6 +124,8 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   const toolTimeoutMs = o.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
   const runIndexWaitMs = o.runIndexWaitMs ?? DEFAULT_RUN_INDEX_WAIT_MS;
   const toolLeaseGraceMs = o.toolLeaseGraceMs ?? DEFAULT_TOOL_LEASE_GRACE_MS;
+  const toolDrainMs = o.toolDrainMs ?? DEFAULT_TOOL_DRAIN_MS;
+  if (!(toolDrainMs >= 0)) throw new Error(`createHub: toolDrainMs must be >= 0 (got ${toolDrainMs})`);
   if (!(toolLeaseGraceMs >= 0)) throw new Error(`createHub: toolLeaseGraceMs must be >= 0 (got ${toolLeaseGraceMs})`);
   const defaults = siteDefaults(publicUrl);
   const site = { id: o.site?.id ?? defaults.id, name: o.site?.name ?? defaults.name, url: hubUrl };
@@ -291,7 +297,6 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     pingIntervalMs: o.heartbeat?.pingIntervalMs ?? DEFAULT_PING_MS,
     missedPings: o.heartbeat?.missedPings ?? DEFAULT_MISSED_PINGS,
     commandTimeoutMs: o.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
-    maxConcurrentToolCalls: o.maxConcurrentToolCalls ?? 8,
     logger,
     async onConnected(machine, send) {
       if (sessionStorage !== 'site') return;
@@ -319,8 +324,8 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     toolTimeoutMs,
     leaseGraceMs: toolLeaseGraceMs,
     runIndexWaitMs,
+    maxConcurrentToolCalls: o.maxConcurrentToolCalls ?? 8,
     logger,
-    shutdown: shutdown.signal,
   });
 
   const sweep = {
@@ -361,6 +366,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
         });
       },
       async () => ({ interruptedToolCalls: await calls.interruptStale() }),
+      async () => ({ toolResults: await store.pruneToolCallResults(new Date(Date.now() - TOOL_RESULT_RETENTION_MS).toISOString()) }),
     ],
   });
 
@@ -443,6 +449,8 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     maintain: () => upkeep.runNow(),
     close: () =>
       (closing ??= (async () => {
+        // Running site tool handlers get a bounded drain; the rest are finished as interrupted.
+        await calls.close(toolDrainMs);
         shutdown.abort();
         upkeep.stop();
         await upkeep.idle();

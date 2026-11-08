@@ -98,8 +98,19 @@ export interface HubOptions {
    * A site tool handler still running after this fails with `tool_failed`. Defaults to 120 000 ms.
    * Keep it below your platform's function duration limit: a call whose instance is stopped mid-handler
    * fails with "Site tool "<name>" timed out on the website. Please try again." (it is never re-run).
+   *
+   * Over HTTP a tool call runs inside the agent's upstream POST. On runtimes that cancel a request's
+   * work when the client disconnects (Cloudflare Workers without `ctx.waitUntil`), a dropped POST
+   * stops the handler: the call is then at-most-once (interrupted error) instead of exactly-once.
+   * Pass the platform's `waitUntil` to `hub.fetch` so the call outlives the request.
+   * TODO(Task 14 docs): document this on the Workers / Vercel pages.
    */
   toolTimeoutMs?: number;
+  /**
+   * `hub.close()` lets site tool handlers still running finish for up to this long, then aborts
+   * them (they fail with the "timed out on the website" error). Defaults to 5 000 ms.
+   */
+  toolDrainMs?: number;
   /**
    * Site tool calls one machine may have executing at once on one hub instance. Further calls fail at
    * once with `tool_failed` (`details.reason: 'too_many_concurrent'`). Defaults to 8.
@@ -145,7 +156,9 @@ export interface HubOptions {
    * Retention (old run manifests, attachment copies, expired outbox items, finished inbox rows,
    * old rate-limit windows, expired device codes), and failing site tool calls whose instance died
    * mid-handler (their lease, `toolTimeoutMs` + 10 s, ran out: the machine gets the "timed out on
-   * the website" error; reported as `interruptedToolCalls`). It runs at most once per `intervalMs` across
+   * the website" error; reported as `interruptedToolCalls`), and dropping stored tool results a
+   * day after their call finished (the audit row and status stay; a resend that late gets a
+   * generic "already finished" error). It runs at most once per `intervalMs` across
    * every instance (a store lease): `attachWebSocket` runs it on a timer in a long-running process;
    * otherwise requests trigger it (in the background through `info.waitUntil` when the platform
    * provides it). A platform cron can also call `GET|POST <basePath>/maintenance`.

@@ -118,7 +118,7 @@ describe('hub.maintain()', () => {
     const h = await hub();
     expect(await h.maintain()).toEqual({
       ran: true,
-      pruned: { runManifests: 1, attachments: 1, outbox: 1, inbox: 1, rateLimits: 1, deviceCodes: 0 },
+      pruned: { runManifests: 1, attachments: 1, outbox: 1, inbox: 1, rateLimits: 1, deviceCodes: 0, toolResults: 0 },
       interruptedToolCalls: 0,
     });
     expect((await store.pollLink('m1', 'l1', { after: 0, limit: 10, now: iso(-2000) })).items.map((i) => i.msgId)).toEqual(['live']);

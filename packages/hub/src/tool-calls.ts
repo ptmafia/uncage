@@ -74,10 +74,21 @@ export interface ToolCallsDeps {
   leaseGraceMs: number;
   /** How long a call for a run whose startRun result is still in flight waits for it. */
   runIndexWaitMs: number;
+  /** Handlers one machine may have running on this instance; a new call over it fails with `too_many_concurrent`. */
+  maxConcurrentToolCalls: number;
   logger: HubLogger;
-  /** The hub is closing: running handlers are aborted and their calls finished as interrupted. */
-  shutdown?: AbortSignal;
 }
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** A finished call's stored result; one pruned by retention (or never stored) is rebuilt generically. */
+const finishedResult = (rec: ToolCallRecord): ToolResultFrame =>
+  rec.result ?? {
+    t: 'tool_result',
+    id: rec.callId,
+    ok: false,
+    error: new UncageError('tool_failed', { message: rec.errorMessage ?? `Site tool "${rec.tool}" already finished (${rec.status}).` }).toBody(),
+  };
 
 export function toolCalls(d: ToolCallsDeps): {
   /** Claims, executes (once), stores and delivers the result. Resolves the tool_result to reply on the calling link, or null (running elsewhere: agent retries). */
@@ -86,10 +97,18 @@ export function toolCalls(d: ToolCallsDeps): {
   interruptStale(): Promise<number>;
   /** A run of `machineId` ended (events ingested on this instance): abandons its calls running here. */
   runEnded(machineId: string, runId: string): void;
+  /**
+   * The hub is closing: lets running handlers finish for up to `drainMs`, then aborts the rest; they
+   * are finished as interrupted (at-most-once, like an instance stop).
+   */
+  close(drainMs: number): Promise<void>;
 } {
   const { store, machines, logger } = d;
   /** Calls executing on this instance (local fast path of run end; the channel covers the rest). */
-  const active = new Set<{ machineId: string; runId: string; abort(): void }>();
+  const active = new Set<{ machineId: string; runId: string; abort(): void; done: Promise<void> }>();
+  /** Handlers running on this instance per machine (the concurrency cap). */
+  const running = new Map<string, number>();
+  const stopping = new AbortController();
 
   /** Finishes a stale call as interrupted; resolves its frame if this caller won the compare-and-set. */
   async function interrupt(rec: ToolCallRecord): Promise<ToolResultFrame | null> {
@@ -107,6 +126,11 @@ export function toolCalls(d: ToolCallsDeps): {
 
   async function handle(machine: MachineRecord, call: Extract<AgentFrame, { t: 'tool_call' }>): Promise<ToolResultFrame | null> {
     const fail = (e: UncageError): ToolResultFrame => ({ t: 'tool_result', id: call.id, ok: false, error: e.toBody() });
+    // A resend of a call that already finished gets its stored result first, whatever changed since
+    // (the cap, the session, the run): the machine's own call id, so nothing else is checked.
+    const existing = await store.getToolCall(machine.id, call.id);
+    if (existing && existing.status !== 'running') return finishedResult(existing);
+
     const rec = await store.getSession(call.sessionId);
     // The session must be this machine's, and its owner the machine's user (ctx.user).
     if (!rec || rec.machineId !== machine.id || rec.userId !== machine.userId) {
@@ -115,8 +139,8 @@ export function toolCalls(d: ToolCallsDeps): {
     // Only runs started through this hub, and only the tools their manifest offered. The startRun
     // result (which binds the run id) may still be in flight: wait for it briefly.
     let runTools = await store.getRunTools(call.runId);
-    for (const until = Date.now() + d.runIndexWaitMs; !runTools && Date.now() < until && !d.shutdown?.aborted; ) {
-      await new Promise((r) => setTimeout(r, 50));
+    for (const until = Date.now() + d.runIndexWaitMs; !runTools && Date.now() < until && !stopping.signal.aborted; ) {
+      await sleep(50);
       runTools = await store.getRunTools(call.runId);
     }
     if (!runTools || runTools.sessionId !== rec.id) {
@@ -125,52 +149,36 @@ export function toolCalls(d: ToolCallsDeps): {
     if (!d.tools.has(call.tool) || !runTools.tools.includes(call.tool)) {
       return fail(new UncageError('tool_failed', { message: `Site tool "${call.tool}" is not available in this run.`, details: { reason: 'not_in_manifest' } }));
     }
-
-    // Claim the call: the store decides whether it runs here, ran already, or runs elsewhere.
-    const auditId = `tcl_${randomHex(12)}`;
-    const startedAt = Date.now();
-    const argsJson = JSON.stringify(call.args ?? null);
-    const record: ToolCallRecord = {
-      id: auditId,
-      callId: call.id,
-      sessionId: rec.id,
-      runId: call.runId,
-      userId: rec.userId,
-      machineId: machine.id,
-      tool: call.tool,
-      args: utf8Length(argsJson) <= MAX_AUDIT_ARGS_BYTES ? (call.args ?? null) : null,
-      status: 'running',
-      startedAt: new Date(startedAt).toISOString(),
-    };
-    const claimed = async () =>
-      store.claimToolCall(record, { leaseUntil: new Date(Date.now() + d.toolTimeoutMs + d.leaseGraceMs).toISOString(), now: new Date().toISOString() });
-    let claim = await claimed();
-    if (claim.kind === 'stale') {
-      // Its instance died mid-handler: fail it (at-most-once), never run it again.
-      const frame = await interrupt(claim.record);
-      if (frame) return frame;
-      claim = await claimed(); // someone else finished it meanwhile: answer with that
+    // The cap only refuses calls that would start a handler (a known call is answered or interrupted
+    // without one). Not stored: the call never ran.
+    const machineId = machine.id;
+    const n = running.get(machineId) ?? 0;
+    if (!existing && n >= d.maxConcurrentToolCalls) {
+      return fail(new UncageError('tool_failed', { message: `Too many site tool calls at once (at most ${d.maxConcurrentToolCalls}).`, details: { reason: 'too_many_concurrent' } }));
     }
-    if (claim.kind === 'done') return claim.record.result;
-    if (claim.kind !== 'new') return null; // running elsewhere: its result follows
+    running.set(machineId, n + 1);
+    try {
+      return await claimAndRun(machine, call, rec.id, rec.userId);
+    } finally {
+      const left = (running.get(machineId) ?? 1) - 1;
+      if (left > 0) running.set(machineId, left);
+      else running.delete(machineId);
+    }
+  }
 
+  async function claimAndRun(machine: MachineRecord, call: Extract<AgentFrame, { t: 'tool_call' }>, sessionId: string, userId: string): Promise<ToolResultFrame | null> {
+    const fail = (e: UncageError): ToolResultFrame => ({ t: 'tool_result', id: call.id, ok: false, error: e.toBody() });
     const ac = new AbortController();
     let why: 'timeout' | 'cancelled' | 'shutdown' | undefined;
     const abort = (reason: 'timeout' | 'cancelled' | 'shutdown') => {
       why ??= reason;
       ac.abort();
     };
-    const entry = { machineId: machine.id, runId: call.runId, abort: () => abort('cancelled') };
-    active.add(entry);
-    const onShutdown = () => abort('shutdown');
-    d.shutdown?.addEventListener('abort', onShutdown, { once: true });
-    if (d.shutdown?.aborted) abort('shutdown');
-    const timer = setTimeout(() => abort('timeout'), d.toolTimeoutMs);
-    unrefTimer(timer);
-    // Run end on any instance: its events are published on the session channel after ingestion.
+    // Listen for run end (published on the session channel by whichever instance ingested it)
+    // before claiming, so a run that ends while the call is being claimed is not missed.
     let unsubscribe: (() => void) | undefined;
     try {
-      unsubscribe = await d.cluster.subscribe(sessionChannel(rec.id), (raw) => {
+      unsubscribe = await d.cluster.subscribe(sessionChannel(sessionId), (raw) => {
         try {
           const { events } = JSON.parse(raw) as { events?: UncageEvent[] };
           if (events?.some((e) => RUN_END.has(e.type) && e.runId === call.runId)) abort('cancelled');
@@ -179,94 +187,158 @@ export function toolCalls(d: ToolCallsDeps): {
         }
       });
     } catch (err) {
-      logger.error({ err, sessionId: rec.id }, 'session channel subscribe failed; run end on other instances will not abort this tool call');
+      logger.error({ err, sessionId }, 'session channel subscribe failed; run end on other instances will not abort this tool call');
+    }
+    let settle!: () => void;
+    const entry = { machineId: machine.id, runId: call.runId, abort: () => abort('cancelled'), done: new Promise<void>((r) => (settle = r)) };
+    active.add(entry);
+    try {
+      return await claimed();
+    } finally {
+      active.delete(entry);
+      settle();
+      unsubscribe?.();
     }
 
-    /** Stores the outcome; if the call was meanwhile interrupted (lease over), answers with that instead. */
-    const finish = async (status: ToolCallStatus, result: ToolResultFrame, err?: { code?: string; message?: string }): Promise<ToolResultFrame> => {
-      try {
-        const ok = await store.finishToolCall(auditId, {
-          status,
-          ...(err?.code ? { errorCode: err.code } : {}),
-          ...(err?.message ? { errorMessage: err.message.slice(0, 2000) } : {}),
-          finishedAt: new Date().toISOString(),
-          durationMs: Date.now() - startedAt,
-          result,
-        });
-        if (ok) return result;
-        const now = await claimed();
-        return now.kind === 'done' ? now.record.result : result;
-      } catch (e) {
-        logger.error({ err: e, tool: call.tool }, 'tool-call result could not be stored');
-        return result;
+    async function claimed(): Promise<ToolResultFrame | null> {
+      // Claim the call: the store decides whether it runs here, ran already, or runs elsewhere.
+      const auditId = `tcl_${randomHex(12)}`;
+      const startedAt = Date.now();
+      const leaseEnd = startedAt + d.toolTimeoutMs + d.leaseGraceMs;
+      const argsJson = JSON.stringify(call.args ?? null);
+      const record: ToolCallRecord = {
+        id: auditId,
+        callId: call.id,
+        sessionId,
+        runId: call.runId,
+        userId,
+        machineId: machine.id,
+        tool: call.tool,
+        args: utf8Length(argsJson) <= MAX_AUDIT_ARGS_BYTES ? (call.args ?? null) : null,
+        status: 'running',
+        startedAt: new Date(startedAt).toISOString(),
+      };
+      const claim = () => store.claimToolCall(record, { leaseUntil: new Date(leaseEnd).toISOString(), now: new Date().toISOString() });
+      let c = await claim();
+      if (c.kind === 'stale') {
+        // Its instance died mid-handler: fail it (at-most-once), never run it again.
+        const frame = await interrupt(c.record);
+        if (frame) return frame;
+        c = await claim(); // someone else finished it meanwhile: answer with that
       }
-    };
+      if (c.kind === 'done') return c.record.result;
+      if (c.kind !== 'new') return null; // running elsewhere: its result follows
 
-    const files: ToolContext['files'] = {
-      pull: (raw, opts) =>
-        filePull(async () => {
-          const path = normalizeWorkspacePath(raw);
-          const max = opts?.maxBytes ?? DEFAULT_PULL_MAX_BYTES;
-          if (!Number.isInteger(max) || max < 1) throw new UncageError('invalid_request', { message: 'maxBytes must be a positive integer.' });
-          return machines.pull(machine.id, rec.id, path, Math.min(max, DEFAULT_PULL_MAX_BYTES), ac.signal);
-        }),
-      read: async (raw) => {
-        const path = normalizeWorkspacePath(raw);
-        let r;
-        try {
-          r = await machines.pull(machine.id, rec.id, path, DEFAULT_READ_MAX_BYTES, ac.signal);
-        } catch (err) {
-          if (err instanceof UncageError && err.code === 'not_found') {
-            throw new UncageError('not_found', { message: `"${path}" does not exist in the session workspace.` });
+      /** The stored outcome of this call (after a lost compare-and-set), retried like the write. */
+      const storedOutcome = async (): Promise<ToolResultFrame | null> => {
+        for (let delay = 50; ; delay = Math.min(delay * 2, 1_000)) {
+          try {
+            const now = await store.getToolCall(machine.id, call.id);
+            return now && now.status !== 'running' ? finishedResult(now) : null;
+          } catch (e) {
+            logger.error({ err: e, tool: call.tool }, 'tool-call outcome could not be read');
+            if (Date.now() + delay >= leaseEnd) return null;
+            await sleep(delay);
           }
-          throw err;
         }
-        const f = r.files.length === 1 && r.files[0]!.path === path ? r.files[0]! : undefined;
-        if (!f) throw new UncageError('invalid_request', { message: `"${path}" is a directory, not a file.`, details: { reason: 'is_directory' } });
-        return f.data;
-      },
-    };
-    const abandoned = new Promise<never>((_, reject) =>
-      ac.signal.addEventListener('abort', () => reject(new UncageError('tool_failed')), { once: true }),
-    );
-    abandoned.catch(() => undefined);
-    try {
-      const result: ToolCallResult = await Promise.race([
-        d.executor.execute(
-          { user: { id: rec.userId }, machineId: machine.id, sessionId: rec.id, runId: call.runId, tool: call.tool, args: call.args, callId: call.id },
-          { signal: ac.signal, files },
-        ),
-        abandoned,
-      ]);
-      const frame: ToolResultFrame = { t: 'tool_result', id: call.id, ok: true, result };
-      const bytes = utf8Length(JSON.stringify(frame));
-      if (bytes > TOOL_RESULT_BUDGET) {
-        const e = new UncageError('tool_failed', { message: `The result of site tool "${call.tool}" is too large (${bytes} bytes, max ${TOOL_RESULT_BUDGET}).` });
-        return await finish('error', fail(e), e);
+      };
+      /**
+       * A result is sent only once it is stored: the stored row is the call's one outcome. A failed
+       * write is retried with backoff until the lease ends; a lost compare-and-set (the call was
+       * interrupted meanwhile) answers with the stored outcome. If the write never succeeds,
+       * nothing is sent — the row stays running, and once its lease ends a resend or the sweep
+       * finishes it as interrupted, the only result the machine ever sees.
+       */
+      const finish = async (status: ToolCallStatus, result: ToolResultFrame, err?: { code?: string; message?: string }): Promise<ToolResultFrame | null> => {
+        for (let delay = 50; ; delay = Math.min(delay * 2, 1_000)) {
+          try {
+            const ok = await store.finishToolCall(auditId, {
+              status,
+              ...(err?.code ? { errorCode: err.code } : {}),
+              ...(err?.message ? { errorMessage: err.message.slice(0, 2000) } : {}),
+              finishedAt: new Date().toISOString(),
+              durationMs: Date.now() - startedAt,
+              result,
+            });
+            // Lost (also: an earlier attempt committed but its reply was lost): the stored row decides.
+            return ok ? result : await storedOutcome();
+          } catch (e) {
+            logger.error({ err: e, tool: call.tool }, 'tool-call result could not be stored; retrying');
+            if (Date.now() + delay >= leaseEnd) return null;
+            await sleep(delay);
+          }
+        }
+      };
+
+      const onStop = () => abort('shutdown');
+      stopping.signal.addEventListener('abort', onStop, { once: true });
+      if (stopping.signal.aborted) abort('shutdown');
+      const timer = setTimeout(() => abort('timeout'), d.toolTimeoutMs);
+      unrefTimer(timer);
+      const files: ToolContext['files'] = {
+        pull: (raw, opts) =>
+          filePull(async () => {
+            const path = normalizeWorkspacePath(raw);
+            const max = opts?.maxBytes ?? DEFAULT_PULL_MAX_BYTES;
+            if (!Number.isInteger(max) || max < 1) throw new UncageError('invalid_request', { message: 'maxBytes must be a positive integer.' });
+            return machines.pull(machine.id, sessionId, path, Math.min(max, DEFAULT_PULL_MAX_BYTES), ac.signal);
+          }),
+        read: async (raw) => {
+          const path = normalizeWorkspacePath(raw);
+          let r;
+          try {
+            r = await machines.pull(machine.id, sessionId, path, DEFAULT_READ_MAX_BYTES, ac.signal);
+          } catch (err) {
+            if (err instanceof UncageError && err.code === 'not_found') {
+              throw new UncageError('not_found', { message: `"${path}" does not exist in the session workspace.` });
+            }
+            throw err;
+          }
+          const f = r.files.length === 1 && r.files[0]!.path === path ? r.files[0]! : undefined;
+          if (!f) throw new UncageError('invalid_request', { message: `"${path}" is a directory, not a file.`, details: { reason: 'is_directory' } });
+          return f.data;
+        },
+      };
+      const abandoned = new Promise<never>((_, reject) => {
+        if (ac.signal.aborted) reject(new UncageError('tool_failed'));
+        else ac.signal.addEventListener('abort', () => reject(new UncageError('tool_failed')), { once: true });
+      });
+      abandoned.catch(() => undefined);
+      try {
+        const result: ToolCallResult = await Promise.race([
+          d.executor.execute(
+            { user: { id: userId }, machineId: machine.id, sessionId, runId: call.runId, tool: call.tool, args: call.args, callId: call.id },
+            { signal: ac.signal, files },
+          ),
+          abandoned,
+        ]);
+        const frame: ToolResultFrame = { t: 'tool_result', id: call.id, ok: true, result };
+        const bytes = utf8Length(JSON.stringify(frame));
+        if (bytes > TOOL_RESULT_BUDGET) {
+          const e = new UncageError('tool_failed', { message: `The result of site tool "${call.tool}" is too large (${bytes} bytes, max ${TOOL_RESULT_BUDGET}).` });
+          return await finish('error', fail(e), e);
+        }
+        return await finish(result.isError ? 'error' : 'ok', frame);
+      } catch (err) {
+        if (why === 'cancelled') {
+          // The run ended: the machine no longer waits for it. Stored so a resend gets an answer.
+          await finish('cancelled', fail(new UncageError('tool_failed', { message: `Site tool "${call.tool}" was cancelled.` })));
+          return null;
+        }
+        if (why === 'shutdown') {
+          return finish('interrupted', interruptedFrame({ callId: call.id, tool: call.tool }), { code: 'tool_failed', message: TOOL_INTERRUPTED_MESSAGE(call.tool) });
+        }
+        if (why === 'timeout') {
+          const e = new UncageError('tool_failed', { message: `Site tool "${call.tool}" did not finish within ${Math.round(d.toolTimeoutMs / 1000)} s.` });
+          return await finish('timeout', fail(e), e);
+        }
+        const e = err instanceof UncageError ? err : new UncageError('tool_failed', { message: err instanceof Error ? err.message : String(err) });
+        return await finish(e.code === 'invalid_request' ? 'invalid' : 'error', fail(e), e);
+      } finally {
+        clearTimeout(timer);
+        stopping.signal.removeEventListener('abort', onStop);
+        ac.abort();
       }
-      return await finish(result.isError ? 'error' : 'ok', frame);
-    } catch (err) {
-      if (why === 'cancelled') {
-        // The run ended: the machine no longer waits for it. Stored so a resend gets an answer.
-        await finish('cancelled', fail(new UncageError('tool_failed', { message: `Site tool "${call.tool}" was cancelled.` })));
-        return null;
-      }
-      if (why === 'shutdown') {
-        const frame = interruptedFrame({ callId: call.id, tool: call.tool });
-        return finish('interrupted', frame, { code: 'tool_failed', message: TOOL_INTERRUPTED_MESSAGE(call.tool) });
-      }
-      if (why === 'timeout') {
-        const e = new UncageError('tool_failed', { message: `Site tool "${call.tool}" did not finish within ${Math.round(d.toolTimeoutMs / 1000)} s.` });
-        return await finish('timeout', fail(e), e);
-      }
-      const e = err instanceof UncageError ? err : new UncageError('tool_failed', { message: err instanceof Error ? err.message : String(err) });
-      return await finish(e.code === 'invalid_request' ? 'invalid' : 'error', fail(e), e);
-    } finally {
-      clearTimeout(timer);
-      active.delete(entry);
-      d.shutdown?.removeEventListener('abort', onShutdown);
-      unsubscribe?.();
-      ac.abort();
     }
   }
 
@@ -289,6 +361,17 @@ export function toolCalls(d: ToolCallsDeps): {
     interruptStale,
     runEnded(machineId, runId) {
       for (const call of active) if (call.machineId === machineId && call.runId === runId) call.abort();
+    },
+    async close(drainMs) {
+      const all = Promise.all([...active].map((c) => c.done));
+      if (active.size > 0 && drainMs > 0) {
+        let t: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([all, new Promise<void>((r) => (t = setTimeout(r, drainMs)))]);
+        clearTimeout(t);
+      }
+      stopping.abort();
+      // Aborted handlers store their interrupted outcome (bounded by the store's own timeouts).
+      await Promise.race([all, sleep(1_000)]);
     },
   };
 }

@@ -41,6 +41,7 @@ const json = (body: unknown, headers: Record<string, string> = {}): RequestInit 
 const machinesOf = async (hubs: FaasHubs, user: string) => (await (await hubs.as(user, '/machines')).json()) as MachineInfo[];
 const isEvents = (req: Request) => new URL(req.url).pathname.endsWith('/agent/events');
 const INTERRUPTED = { code: 'tool_failed', message: 'Site tool "slow" timed out on the website. Please try again.', details: { reason: 'interrupted' } };
+const INTERRUPTED_QUICK = { ...INTERRUPTED, message: 'Site tool "quick" timed out on the website. Please try again.' };
 
 /** FaaS hubs with `tools`, an HTTP fake agent paired to u1, one session and one run started through the hub. */
 async function httpSetup(
@@ -398,4 +399,149 @@ describe('approvals', () => {
     // Each command the hub sent was dispatched once (no redelivery past the agent's cursor).
     expect(new Set(commandIds).size).toBe(commandIds.length);
   }, 30_000);
+});
+
+/** One WebSocket hub with `tools`, a fake machine paired to alice, a session and a run. */
+async function wsSetup(tools: SiteTool[], hub: Partial<Parameters<typeof startTestHub>[0]> = {}) {
+  const t = await startTestHub({ tools, runIndexWaitMs: 500, maintenance: { intervalMs: 600_000 }, ...hub });
+  closers.push(() => t.close());
+  const fm = fakeMachine();
+  const { machineToken, machineId } = await t.pair('alice');
+  const a = await connectFakeAgent({ url: t.wsUrl, token: machineToken, onCommand: fm.handler });
+  closers.push(() => a.close());
+  const s = (await (await t.as('alice', '/sessions', json({ runtime: 'fake' }))).json()) as Session;
+  const run = (await (await t.as('alice', `/sessions/${s.id}/runs`, json({ prompt: 'go' }, { 'idempotency-key': `k-${Math.random()}` }))).json()) as Run;
+  const frame = (id: string, tool: string, args: unknown = {}) => ({ t: 'tool_call' as const, id, sessionId: s.id, runId: run.id, tool, args });
+  const resultsFor = (id: string) => a.frames.filter((f): f is ToolResultFrame => f.t === 'tool_result' && f.id === id);
+  return { t, a, fm, s, run, machineId, machineToken, frame, resultsFor };
+}
+
+describe('stored results come first; one outcome per call', () => {
+  it('a resend of a finished call gets its stored result while 8 calls run on the instance, and after its session is gone', async () => {
+    let quick = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const tools = [
+      defineTool({ name: 'quick', description: 'x', input: z.object({}), handler: async () => `quick ${++quick}` }),
+      defineTool({ name: 'gated', description: 'x', input: z.object({}), handler: async () => ((await gate), 'gated') }),
+    ];
+    const { t, a, s, frame } = await wsSetup(tools);
+    a.send(frame('tc_done', 'quick'));
+    const stored = await a.waitFor((f) => f.t === 'tool_result' && f.id === 'tc_done');
+    for (let i = 0; i < 8; i++) a.send(frame(`tc_g${i}`, 'gated'));
+    await until(async () => (await t.store.listToolCalls(s.id)).filter((r) => r.status === 'running').length === 8);
+    a.send(frame('tc_over', 'gated'));
+    expect(await a.waitFor((f) => f.t === 'tool_result' && f.id === 'tc_over')).toMatchObject({ ok: false, error: { details: { reason: 'too_many_concurrent' } } });
+    a.frames.length = 0;
+    a.send(frame('tc_done', 'quick'));
+    expect(await a.waitFor((f) => f.t === 'tool_result' && f.id === 'tc_done')).toEqual(stored);
+    release();
+    await until(async () => (await t.store.listToolCalls(s.id)).every((r) => r.status !== 'running'));
+    await t.store.deleteSession(s.id);
+    a.frames.length = 0;
+    a.send(frame('tc_done', 'quick'));
+    expect(await a.waitFor((f) => f.t === 'tool_result' && f.id === 'tc_done')).toEqual(stored);
+    expect(quick).toBe(1);
+  });
+
+  it('a failed result write is retried: fails twice, then stored and sent once', async () => {
+    const tool = defineTool({ name: 'quick', description: 'x', input: z.object({}), handler: async () => 'done' });
+    const { t, a, s, frame, resultsFor } = await wsSetup([tool]);
+    const finish = t.store.finishToolCall.bind(t.store);
+    let failures = 0;
+    t.store.finishToolCall = async (id, r) => {
+      if (failures < 2) {
+        failures++;
+        throw new Error('store down');
+      }
+      return finish(id, r);
+    };
+    a.send(frame('tc_w', 'quick'));
+    expect(await a.waitFor((f) => f.t === 'tool_result' && f.id === 'tc_w')).toMatchObject({ ok: true, result: { content: [{ type: 'text', text: 'done' }] } });
+    expect(failures).toBe(2);
+    expect(await t.store.listToolCalls(s.id)).toMatchObject([{ status: 'ok' }]);
+    await sleep(200);
+    expect(resultsFor('tc_w')).toHaveLength(1);
+  });
+
+  it('a result that can never be stored is never sent: the call ends interrupted, its only outcome', async () => {
+    const tool = defineTool({ name: 'quick', description: 'x', input: z.object({}), handler: async () => 'done' });
+    const { t, a, s, frame, resultsFor } = await wsSetup([tool], { toolTimeoutMs: 200, toolLeaseGraceMs: 200 });
+    const finish = t.store.finishToolCall.bind(t.store);
+    t.store.finishToolCall = async (id, r) => {
+      if (r.status !== 'interrupted') throw new Error('store down');
+      return finish(id, r);
+    };
+    a.send(frame('tc_never', 'quick'));
+    await until(async () => (await t.store.listToolCalls(s.id))[0]?.status === 'running');
+    await sleep(500); // past the lease (400 ms): the handler gave up
+    expect(resultsFor('tc_never')).toEqual([]);
+    expect((await t.hub.maintain()).interruptedToolCalls).toBe(1);
+    expect(await a.waitFor((f) => f.t === 'tool_result' && f.id === 'tc_never')).toMatchObject({ ok: false, error: INTERRUPTED_QUICK });
+    await sleep(100);
+    expect(resultsFor('tc_never').every((f) => !f.ok)).toBe(true);
+  });
+
+  it('lease over while the handler still runs on a live instance: its late result loses to the interrupted one', async () => {
+    const tool = defineTool({ name: 'quick', description: 'x', input: z.object({}), handler: async () => 'late ok' });
+    const { t, a, s, frame, resultsFor } = await wsSetup([tool], { toolTimeoutMs: 100, toolLeaseGraceMs: 100 });
+    const finish = t.store.finishToolCall.bind(t.store);
+    t.store.finishToolCall = async (id, r) => {
+      if (r.status !== 'interrupted') await sleep(500); // the live instance is slow to store its result
+      return finish(id, r);
+    };
+    a.send(frame('tc_late', 'quick'));
+    await until(async () => (await t.store.listToolCalls(s.id))[0]?.status === 'running');
+    await sleep(300);
+    expect((await t.hub.maintain()).interruptedToolCalls).toBe(1);
+    await sleep(500);
+    const got = resultsFor('tc_late');
+    expect(got.length).toBeGreaterThanOrEqual(1);
+    expect(got.every((f) => !f.ok && f.error.details?.reason === 'interrupted')).toBe(true);
+    expect(await t.store.listToolCalls(s.id)).toMatchObject([{ status: 'interrupted' }]);
+  });
+
+  it('cross-node deliver: an interrupted error swept on node A reaches the WebSocket held by node B', async () => {
+    const { pgliteHubStore } = await import('./node/index.js');
+    const { memoryCluster } = await import('./cluster/memory.js');
+    const store = await pgliteHubStore({ dataDir: 'memory://' });
+    const cluster = memoryCluster();
+    closers.push(() => store.close());
+    const A = await startTestHub({ store, cluster, maintenance: { intervalMs: 600_000 } });
+    closers.push(() => A.close());
+    const B = await startTestHub({ store, cluster, maintenance: { intervalMs: 600_000 } });
+    closers.push(() => B.close());
+    const { machineToken, machineId } = await A.pair('alice');
+    const b = await connectFakeAgent({ url: B.wsUrl, token: machineToken });
+    closers.push(() => b.close());
+    const past = new Date(Date.now() - 60_000).toISOString();
+    await store.claimToolCall(
+      { id: 'tcl_xnode000001', callId: 'tc_xnode', sessionId: 'ses_x', runId: 'run_x', userId: 'alice', machineId, tool: 'slow', args: null, status: 'running', startedAt: past },
+      { leaseUntil: past, now: past },
+    );
+    expect(await A.hub.maintain()).toMatchObject({ ran: true, interruptedToolCalls: 1 });
+    expect(await b.waitFor((f) => f.t === 'tool_result' && f.id === 'tc_xnode')).toMatchObject({ ok: false, error: INTERRUPTED });
+    // Nothing went to the outbox: B sent it on the socket.
+    expect((await store.pollLink(machineId, '', { after: 0, limit: 10, now: new Date().toISOString() })).items).toEqual([]);
+  });
+
+  it('hub.close() lets a running handler finish within toolDrainMs; past it the call ends interrupted', async () => {
+    const tools = [
+      defineTool({ name: 'quick', description: 'x', input: z.object({}), handler: async () => ((await sleep(200)), 'drained') }),
+      defineTool({ name: 'slow', description: 'x', input: z.object({}), handler: () => new Promise(() => undefined) }),
+    ];
+    const one = await wsSetup(tools, { toolDrainMs: 2_000 });
+    one.a.send(one.frame('tc_drain', 'quick'));
+    await until(async () => (await one.t.store.listToolCalls(one.s.id))[0]?.status === 'running');
+    await one.t.hub.close();
+    expect(await one.t.store.listToolCalls(one.s.id)).toMatchObject([{ status: 'ok', result: { ok: true } }]);
+
+    const two = await wsSetup(tools, { toolDrainMs: 100 });
+    two.a.send(two.frame('tc_cut', 'slow'));
+    await until(async () => (await two.t.store.listToolCalls(two.s.id))[0]?.status === 'running');
+    const started = Date.now();
+    await two.t.hub.close();
+    expect(Date.now() - started).toBeLessThan(1_500);
+    expect(await two.t.store.listToolCalls(two.s.id)).toMatchObject([{ status: 'interrupted', result: { ok: false, error: INTERRUPTED } }]);
+  });
 });

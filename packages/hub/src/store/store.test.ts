@@ -107,7 +107,7 @@ describe('postgresHubStore migration fast path', () => {
   it('migrates a database left at an older version under the lock', async () => {
     const pg = new PGlite('memory://');
     await pg.query('CREATE TABLE uncage_hub_migrations (id integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())');
-    for (const m of HUB_MIGRATIONS.slice(0, -1)) {
+    for (const m of HUB_MIGRATIONS.filter((x) => x.id < 7)) {
       for (const stmt of m.sql.split(';').map((x) => x.trim()).filter(Boolean)) await pg.query(stmt);
       await pg.query('INSERT INTO uncage_hub_migrations (id) VALUES ($1)', [m.id]);
     }

@@ -157,6 +157,9 @@ export type ToolCallFinish = Required<Pick<ToolCallRecord, 'status' | 'finishedA
  *
  * Timestamps are ISO strings from `Date.prototype.toISOString()` (UTC, millisecond precision):
  * leases, expiries and pruning compare them as text, which is only correct in that one format.
+ * They come from the instances' clocks, not the database's: instances must keep their clocks in
+ * sync (NTP) to well within the shortest lease grace (tool calls: `toolLeaseGraceMs`, 10 s), or a
+ * skewed instance could see another's lease as expired early.
  */
 export interface HubStore {
   insertMachine(m: MachineRecord): Promise<void>;
@@ -250,6 +253,13 @@ export interface HubStore {
   claimToolCall(r: ToolCallRecord, o: { leaseUntil: string; now: string }): Promise<ToolCallClaim>;
   /** Compare-and-set: finishes the call only while it is `running`; resolves whether it did. */
   finishToolCall(id: string, r: ToolCallFinish & { result: ToolResultFrame }): Promise<boolean>;
+  /** The call `(machineId, callId)` as stored (any status), or `null`. Never writes. */
+  getToolCall(machineId: string, callId: string): Promise<ToolCallRecord | null>;
+  /**
+   * Retention: drops the stored `result` of calls finished before `before` (status and the rest of
+   * the audit row stay). A resend of such a call is answered with a generic "already finished" error.
+   */
+  pruneToolCallResults(before: string): Promise<number>;
   /** Running calls whose lease ended before `now`, oldest lease first. */
   listStaleToolCalls(now: string, limit: number): Promise<ToolCallRecord[]>;
   /** A session's tool calls in start order, at most `limit` (default 1000). */

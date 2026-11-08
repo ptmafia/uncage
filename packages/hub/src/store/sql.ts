@@ -206,6 +206,11 @@ CREATE INDEX uncage_hub_device_codes_expires_idx ON uncage_hub_device_codes (exp
 ALTER TABLE uncage_hub_machines ADD outdated_at text
 `,
   },
+  {
+    // Stored tool results are dropped a day after the call finished (maintenance; status stays).
+    id: 8,
+    sql: `CREATE INDEX uncage_hub_tool_calls_result_idx ON uncage_hub_tool_calls (finished_at) WHERE result IS NOT NULL`,
+  },
 ];
 
 /** Postgres `unique_violation` (PGlite reports the same SQLSTATE). */
@@ -691,6 +696,22 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
         [id, r.status, r.errorCode ?? null, r.errorMessage ?? null, r.finishedAt, Math.round(r.durationMs), json(r.result)],
       );
       return rows.length > 0;
+    },
+    getToolCall: (machineId, callId) =>
+      one<ToolCallRow, ToolCallRecord>('SELECT * FROM uncage_hub_tool_calls WHERE machine_id = $1 AND call_id = $2', [machineId, callId], toToolCall),
+    async pruneToolCallResults(before) {
+      let total = 0;
+      for (;;) {
+        const { rows } = await db.query<{ n: number }>(
+          `WITH u AS (UPDATE uncage_hub_tool_calls SET result = NULL WHERE ctid IN (
+             SELECT ctid FROM uncage_hub_tool_calls WHERE result IS NOT NULL AND finished_at < $1 LIMIT ${PRUNE_BATCH}) RETURNING 1)
+           SELECT count(*)::int AS n FROM u`,
+          [before],
+        );
+        const n = Number(rows[0]?.n ?? 0);
+        total += n;
+        if (n < PRUNE_BATCH) return total;
+      }
     },
     async listStaleToolCalls(now, limit) {
       const { rows } = await db.query<ToolCallRow>(
