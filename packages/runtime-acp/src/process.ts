@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { basename } from 'node:path';
+import { win32 } from 'node:path';
+import { relativeWindowsExecutable } from './which.js';
 import { Readable, Writable } from 'node:stream';
 import {
   client,
@@ -45,6 +46,32 @@ export interface AcpClientHandlers {
   onPermission(req: RequestPermissionRequest, signal: AbortSignal): Promise<RequestPermissionResponse>;
 }
 
+/** Process groups of agents still possibly alive (POSIX). */
+const liveGroups = new Set<number>();
+let exitHooked = false;
+
+/** SIGKILLs every agent process group still known. Synchronous: runs from `process.on('exit')`. */
+export function killAllAgentGroups(): void {
+  for (const pgid of liveGroups) {
+    try {
+      process.kill(-pgid, 'SIGKILL');
+    } catch {
+      // Already gone.
+    }
+  }
+  liveGroups.clear();
+}
+
+function trackGroup(pgid: number): void {
+  liveGroups.add(pgid);
+  if (!exitHooked) {
+    exitHooked = true;
+    // However this process ends (process.exit included), no agent or grandchild outlives it.
+    process.on('exit', killAllAgentGroups);
+  }
+}
+const untrackGroup = (pgid: number): void => void liveGroups.delete(pgid);
+
 /** `initialize` answered with a protocol version this client does not speak. */
 export class AcpProtocolError extends Error {
   constructor(readonly version: unknown) {
@@ -75,6 +102,8 @@ export async function startAcpProcess(o: {
 }): Promise<AcpProcess> {
   const [executable, ...args] = o.command;
   if (!executable) throw new Error('The ACP agent command is empty.');
+  const relative = relativeWindowsExecutable(executable);
+  if (relative) throw relative;
   const windows = process.platform === 'win32';
   const proc = spawn(executable, args, {
     env: o.env,
@@ -82,7 +111,7 @@ export async function startAcpProcess(o: {
     // POSIX: its own process group, so stopping the agent also stops whatever it started.
     detached: !windows,
     // `cmd.exe /d /s /c "<line>"` (see spawnableCommand): the line is already quoted.
-    windowsVerbatimArguments: windows && /^cmd(\.exe)?$/i.test(basename(executable)),
+    windowsVerbatimArguments: windows && win32.basename(executable).toLowerCase() === 'cmd.exe',
   });
 
   let stderrBuf = Buffer.alloc(0);
@@ -114,28 +143,40 @@ export async function startAcpProcess(o: {
     });
   });
 
-  /** Signals the agent's whole process group (POSIX), else just the agent. */
-  const signal = (sig: NodeJS.Signals): void => {
-    if (!windows && proc.pid !== undefined) {
+  // POSIX: the agent leads its own process group; remember it until the group has been killed.
+  const pgid = !windows && proc.pid !== undefined ? proc.pid : undefined;
+  if (pgid !== undefined) trackGroup(pgid);
+  /** Signals the agent's whole process group (POSIX; even after the leader exited), else the agent. */
+  const signalGroup = (sig: NodeJS.Signals): void => {
+    if (pgid !== undefined) {
       try {
-        process.kill(-proc.pid, sig);
-        return;
+        process.kill(-pgid, sig);
       } catch {
-        // The group is gone (or was never created): fall back to the process itself.
+        // The whole group is gone.
       }
+      return;
     }
-    proc.kill(sig);
+    if (!exitedFlag) proc.kill(sig);
   };
   let killTimer: NodeJS.Timeout | undefined;
+  /**
+   * SIGTERM to the group, then SIGKILL to the group after a grace period. The SIGKILL is sent even
+   * when the leader exited meanwhile (its children may still run); a process exit before that is
+   * covered by the exit hook.
+   */
   const kill = (): void => {
-    if (exitedFlag || killTimer) return;
-    signal('SIGTERM');
+    if (killTimer) return;
+    signalGroup('SIGTERM');
     killTimer = setTimeout(() => {
-      if (!exitedFlag) signal('SIGKILL');
+      signalGroup('SIGKILL');
+      if (pgid !== undefined) untrackGroup(pgid);
     }, KILL_GRACE_MS);
     killTimer.unref();
   };
-  void exited.then(() => clearTimeout(killTimer));
+  // The agent exited by itself: whatever it left behind in its group goes too.
+  void exited.then(() => {
+    if (pgid !== undefined) kill();
+  });
 
   const app = client({ name: 'uncage' })
     .onNotification(methods.client.session.update, ({ params }) => o.handlers.onUpdate(params))

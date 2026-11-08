@@ -65,8 +65,8 @@ export interface AcpAgentsConfig {
   autoDetect?: boolean;
   /** Registry ids the user consented to run although they are not detected (e.g. npx/uvx). */
   enable?: string[];
-  /** Per registry id, what a download consent covers: `npx:<package>` / `uvx:<package>` (no version). */
-  consented?: Record<string, string>;
+  /** Per registry id, exactly what `enable` consented to run (runner, package or command, args, env). */
+  consented?: Record<string, { runner: 'local' | 'npx' | 'uvx'; package?: string; cmd?: string; args: string[]; env: Record<string, string> }>;
   /** Registry, preset or runtime ids never registered. */
   disable?: string[];
 }

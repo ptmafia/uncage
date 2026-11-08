@@ -70,11 +70,31 @@ export const AcpRuntimesSchema = z
     /** Registry ids the user consented to run (`uncage runtimes enable <id>`), e.g. npx/uvx agents. */
     enable: z.array(z.string().regex(ACP_REF)).default([]),
     /**
-     * What each download consent covers: `npx:<package>` or `uvx:<package>` (no version), written by
-     * `uncage runtimes enable`. If the registry later runs another package or runner, the agent
-     * needs `enable` again.
+     * Exactly what each `uncage runtimes enable` consented to run: the runner (`local` command,
+     * `npx`, `uvx`), the command or package name (any version), args and env. If the registry later
+     * changes any of these, the agent needs `enable` again.
      */
-    consented: z.record(z.string().regex(ACP_REF), z.string().regex(/^(npx|uvx):[@A-Za-z0-9][\w./@-]{0,199}$/)).default({}),
+    consented: z
+      .record(
+        z.string().regex(ACP_REF),
+        z
+          .object({
+            runner: z.enum(['local', 'npx', 'uvx']),
+            package: z
+              .string()
+              .regex(/^(@[a-z0-9][\w.-]*\/)?[A-Za-z0-9][\w.-]*$/)
+              .optional(),
+            cmd: z
+              .string()
+              .regex(/^[\w.-]+$/)
+              .optional(),
+            args: z.array(z.string()).default([]),
+            env: z.record(z.string(), z.string()).default({}),
+          })
+          .strict()
+          .refine((c) => (c.runner === 'local' ? c.cmd !== undefined : c.package !== undefined), { message: 'local needs cmd; npx/uvx need package' }),
+      )
+      .default({}),
     /** Registry, preset or runtime ids never registered (`uncage runtimes disable <id>`). */
     disable: z.array(z.string().regex(ACP_REF)).default([]),
     agents: z.array(AcpAgentEntrySchema).default([]),

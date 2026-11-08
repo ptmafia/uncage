@@ -81,6 +81,8 @@ export async function serve(o: ServeOptions): Promise<void> {
   const warn = (m: string) => logger.warn(m);
   const { token, path } = await (o.tokenFile ? ensureTokenAt(o.tokenFile, warn) : ensureToken(home, warn));
   const { config } = o;
+  // Commands the project's uncage.config.yaml makes Uncage run, shown before any is started.
+  for (const line of projectAcpCommands(config.runtimes.acp)) out(`! uncage.config.yaml: ${line}`);
   const adapters = await buildAllAdapters(config, home);
 
   const uncage = await createUncage({
@@ -122,8 +124,6 @@ export async function serve(o: ServeOptions): Promise<void> {
   );
   out(formatBanner(url, config.workspace.default, runtimes, { allowBypass: config.security.allowBypass }));
   out(`Token file: ${path}`);
-  // Commands the project's uncage.config.yaml makes Uncage run.
-  for (const line of projectAcpCommands(config.runtimes.acp)) out(`! uncage.config.yaml: ${line}`);
 
   let stopping = false;
   const stop = (signal: string) => {

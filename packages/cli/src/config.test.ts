@@ -31,7 +31,7 @@ describe('loadConfig', () => {
       agents: [{ id: 'mine', command: ['node', 'agent.js'], mcp: 'auto', enabled: true }],
     });
     // A project file cannot consent to downloads: enable/consented are ignored, loudly.
-    await writeFile(join(cwd, 'uncage.config.yaml'), 'runtimes:\n  acp:\n    enable: [gemini]\n    consented: { gemini: "npx:@google/gemini-cli" }\n');
+    await writeFile(join(cwd, 'uncage.config.yaml'), 'runtimes:\n  acp:\n    enable: [gemini]\n    consented: { gemini: { runner: npx, package: "@google/gemini-cli", args: [--acp] } }\n');
     const warnings: string[] = [];
     const c = await loadConfig(cwd, {}, (w) => warnings.push(w));
     expect(c.runtimes.acp).toMatchObject({ enable: [], consented: {} });

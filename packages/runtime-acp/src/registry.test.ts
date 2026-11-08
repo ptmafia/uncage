@@ -53,14 +53,15 @@ describe('ACP registry', () => {
   it('refuses interpreter, shell and package-runner binaries and sensitive env names', () => {
     const bin = (cmd: string, env: Record<string, string> = {}) => ({ binary: { 'linux-x86_64': { archive: 'x', cmd, args: ['acp'], env } } });
     const entry = (id: string, distribution: unknown) => ({ id, name: id, version: '1.0.0', distribution });
-    const refused = ['node', './node.exe', 'bun', 'deno', 'python3', 'python3.12', 'ruby', 'perl', 'sh', 'bash', 'zsh', 'fish', 'env', 'cmd.exe', 'powershell', 'pwsh', 'npx', 'uvx', 'bunx', 'pnpm', 'npm', 'osascript', 'Bash'];
-    const envs = ['LD_PRELOAD', 'LD_LIBRARY_PATH', 'DYLD_INSERT_LIBRARIES', 'NODE_OPTIONS', 'NODE_PATH', 'PYTHONPATH', 'PYTHONSTARTUP', 'PATH', 'HOME', 'MY_PRELOAD'];
+    const refused = ['node', './node.exe', 'bun', 'deno', 'python3', 'python3.12', 'ruby', 'perl', 'sh', 'bash', 'zsh', 'fish', 'env', 'cmd.exe', 'powershell', 'pwsh', 'npx', 'uvx', 'bunx', 'pnpm', 'npm', 'osascript', 'Bash', 'pythonw', 'awk', 'find', 'ssh', 'git', 'mshta', 'rundll32', 'wsl', 'cscript', 'wscript', 'Git.exe'];
+    const envs = ['LD_PRELOAD', 'LD_LIBRARY_PATH', 'DYLD_INSERT_LIBRARIES', 'NODE_OPTIONS', 'NODE_PATH', 'PYTHONPATH', 'PYTHONSTARTUP', 'PATH', 'HOME', 'MY_PRELOAD', 'BASH_ENV', 'ENV', 'env', 'npm_config_registry', 'NPM_CONFIG_USERCONFIG', 'UV_INDEX_URL', 'uv_python', 'PIP_INDEX_URL', 'NODE_EXTRA_CA_CERTS', 'node_extra_ca_certs'];
     const r = parseRegistry({
       version: '1',
       agents: [
         ...refused.map((c, i) => entry(`r${i}`, bin(c))),
         ...envs.map((e, i) => entry(`e${i}`, bin('agent', { [e]: 'x' }))),
         entry('npxenv', { npx: { package: 'a', env: { NODE_OPTIONS: '--require /tmp/x.js' } } }),
+        entry('ctlarg', { binary: { 'linux-x86_64': { archive: 'x', cmd: 'agent', args: ['acp\u001b[2J'] } } }),
         entry('ok', bin('agent', { AGENT_MODE: 'acp' })),
       ],
     });

@@ -4,16 +4,21 @@ import {
   ACP_PRESETS,
   acpName,
   bundledRegistry,
-  consentRef,
+  describeConsent,
+  downloadConsent,
+  localConsent,
   createWhich,
   hostPlatform,
   localCommand,
-  packageName,
   registryRuntimeId,
   type AcpCatalogEntry,
+  type AcpConsent,
   type AcpRegistry,
   type Which,
 } from '@uncage/runtime-acp';
+
+/** Terminal-safe text: control characters (escape sequences) become spaces. */
+const clean = (s: string): string => s.replace(/\p{Cc}+/gu, ' ');
 
 export const RUNTIMES_HELP = `uncage runtimes - the agents this computer offers to websites
 
@@ -114,12 +119,12 @@ export async function runRuntimes(o: {
     const yes = (b: boolean) => (b ? 'yes' : 'no');
     for (const line of table([
       ['ID', 'NAME', 'STATUS', 'VERSION', 'SITE TOOLS', 'RESUME'],
-      ...rows.map((r) => [r.id, r.displayName, STATUS_TEXT[r.status], r.version ?? '-', yes(r.siteTools), yes(r.resume)]),
+      ...rows.map((r) => [r.id, clean(r.displayName), STATUS_TEXT[r.status], clean(r.version ?? '-'), yes(r.siteTools), yes(r.resume)]),
     ])) {
       o.out(line);
     }
     for (const r of rows.filter((x) => x.status !== 'available' && (x.message || x.hint))) {
-      o.out(`  ${r.id}: ${[r.message, r.hint].filter(Boolean).join(' ')}`);
+      o.out(`  ${r.id}: ${clean([r.message, r.hint].filter(Boolean).join(' '))}`);
     }
   }
   const shown = o.all ? catalog : catalog.filter((c) => NOTEWORTHY.has(c.status));
@@ -127,7 +132,7 @@ export async function runRuntimes(o: {
     o.out('');
     o.out('ACP registry agents not registered (uncage runtimes enable <id>):');
     for (const line of table(
-      shown.map((c) => [`  ${c.registryId}`, c.name, `${c.status.replace('_', ' ')} (${c.distribution})`, c.message ?? '']),
+      shown.map((c) => [`  ${c.registryId}`, clean(c.name), `${c.status.replace('_', ' ')} (${c.distribution})`, clean(c.message ?? '')]),
     )) {
       o.out(line);
     }
@@ -162,22 +167,26 @@ export async function toggleRuntime(o: {
   // Every spelling of this agent, so a stale entry in the other list never wins.
   const forms = new Set([name, ref, acpName(registryRuntimeId(ref)), ...(preset ? [preset.id, preset.registryId] : [])]);
   const drop = (list: string[]) => list.filter((x) => !forms.has(acpName(x)));
-  const dropConsent = (c: Record<string, string>) => Object.fromEntries(Object.entries(c).filter(([k]) => !forms.has(acpName(k))));
+  const dropConsent = <T>(c: Record<string, T>): Record<string, T> => Object.fromEntries(Object.entries(c).filter(([k]) => !forms.has(acpName(k))));
   const undo = `Undo: uncage runtimes disable ${ref}.`;
 
-  let consent: string | undefined;
+  // Exactly what is consented to: the installed command, else the npx/uvx package, with args and env.
+  let consent: AcpConsent | undefined;
   if (o.enable) {
     const local = agent ? localCommand(agent, hostPlatform()) : undefined;
-    const installed = local ? await which(local.cmd) : preset ? await which(preset.command[0]!) : null;
-    consent = agent ? consentRef(agent) : undefined;
-    if (installed) {
-      const args = local?.args ?? preset?.command.slice(1) ?? [];
-      o.out(`Uncage will run ${[installed, ...args].join(' ')} whenever the agent starts. ${undo}`);
-      consent = undefined;
-    } else if (consent) {
-      const from = consent.startsWith('npx:') ? 'npm' : 'PyPI';
-      const pkg = packageName(agent!.distribution.npx?.package ?? agent!.distribution.uvx!.package);
-      o.out(`Uncage will download and run ${pkg} from ${from} now and whenever the agent starts. ${undo}`);
+    const installed = local ? await which(local.cmd) : null;
+    const download = agent ? downloadConsent(agent) : undefined;
+    if (local && installed) {
+      consent = localConsent(local);
+      o.out(`Uncage will run ${clean([installed, ...local.args].join(' '))} whenever the agent starts. ${undo}`);
+    } else if (download) {
+      consent = download;
+      const from = download.runner === 'npx' ? 'npm' : 'PyPI';
+      o.out(`Uncage will download and run ${download.package} from ${from} now and whenever the agent starts. ${undo}`);
+      o.out(`  Command: ${describeConsent(download)}`);
+    } else if (local) {
+      consent = localConsent(local);
+      o.out(`Uncage will run ${describeConsent(consent)} once it is installed. ${undo}`);
     } else {
       o.out(`Uncage will run ${agent?.name ?? preset?.displayName ?? ref} once it is installed. ${undo}`);
     }

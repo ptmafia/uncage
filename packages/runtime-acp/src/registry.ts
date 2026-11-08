@@ -74,12 +74,15 @@ const CONTROL = /\p{Cc}/u;
 const REFUSED_COMMANDS = new Set([
   'node', 'nodejs', 'bun', 'deno', 'ruby', 'perl', 'php', 'lua', 'sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'csh', 'tcsh',
   'env', 'cmd', 'powershell', 'pwsh', 'wscript', 'cscript', 'npx', 'uvx', 'bunx', 'pnpm', 'pnpx', 'npm', 'yarn', 'uv', 'pip', 'pipx',
-  'osascript', 'sudo', 'doas', 'xargs', 'exec', 'nohup', 'open', 'start',
+  'osascript', 'sudo', 'doas', 'xargs', 'exec', 'nohup', 'open', 'start', 'pythonw', 'awk', 'gawk', 'find', 'ssh', 'git',
+  'mshta', 'rundll32', 'regsvr32', 'wsl', 'bash.exe',
 ]);
 const isRefusedCommand = (name: string): boolean => REFUSED_COMMANDS.has(name.toLowerCase()) || /^python[\d.]*$/i.test(name);
 /** Env vars that change how a process loads code or finds programs. */
 const isSensitiveEnv = (name: string): boolean =>
-  /^(LD_|DYLD_|PYTHON)/i.test(name) || /_PRELOAD$/i.test(name) || ['NODE_OPTIONS', 'NODE_PATH', 'PATH', 'HOME', 'PATHEXT', 'COMSPEC'].includes(name.toUpperCase());
+  /^(LD_|DYLD_|PYTHON|NPM_CONFIG_|UV_|PIP_)/i.test(name) ||
+  /_PRELOAD$/i.test(name) ||
+  ['NODE_OPTIONS', 'NODE_PATH', 'NODE_EXTRA_CA_CERTS', 'PATH', 'HOME', 'PATHEXT', 'COMSPEC', 'BASH_ENV', 'ENV', 'SYSTEMROOT'].includes(name.toUpperCase());
 
 const optionalText = (max: number) =>
   z
@@ -105,7 +108,7 @@ const Env = z
     z.string().max(4096),
   )
   .default({});
-const Args = z.array(z.string().max(1000)).max(50).default([]);
+const Args = z.array(z.string().max(1000).refine((a) => !CONTROL.test(a), { message: 'control characters' })).max(50).default([]);
 
 /** `./opencode`, `.\\goose-package\\goose.exe`, `gemini.cmd` → `opencode`, `goose`, `gemini`. */
 export function commandName(cmd: string): string {

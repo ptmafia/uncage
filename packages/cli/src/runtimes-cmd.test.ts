@@ -104,6 +104,17 @@ describe('uncage runtimes', () => {
     expect(text).toMatch(/1 more .*not installed/);
   });
 
+  it('terminal output is sanitized: control characters never reach the table', async () => {
+    const lines: string[] = [];
+    await runRuntimes({
+      adapters: [stub('acp-x', 'Evil\u001b[2J', { status: 'error', message: 'boom\u001b]8;;http://x\u0007' }, caps(), [])],
+      json: false,
+      out: (l) => lines.push(l),
+      catalog: [{ registryId: 'y', runtimeId: 'acp-y', name: 'Y\u001b[31m', version: '1', distribution: 'npx', status: 'available', message: 'm\u009b1m' }],
+    });
+    expect(lines.join('\n')).not.toMatch(/\p{Cc}(?<!\n)/u);
+  });
+
   it('enable/disable write runtimes.acp in agent.yaml (registry, preset and runtime ids); unknown ids are refused', async () => {
     const home = await tmp('uncage-rt-home-');
     await updateAgentSites(home, () => []);
@@ -121,18 +132,23 @@ describe('uncage runtimes', () => {
     expect(events[0]).toBe(
       'Uncage will download and run @google/gemini-cli from npm now and whenever the agent starts. Undo: uncage runtimes disable gemini. [written: false]',
     );
-    expect((await loadAgentConfig(home)).runtimes?.acp).toMatchObject({ enable: ['gemini'], consented: { gemini: 'npx:@google/gemini-cli' }, disable: [] });
+    expect(events[1]).toMatch(/^ {2}Command: npx @google\/gemini-cli --acp/);
+    expect((await loadAgentConfig(home)).runtimes?.acp).toMatchObject({
+      enable: ['gemini'],
+      consented: { gemini: { runner: 'npx', package: '@google/gemini-cli', args: ['--acp'], env: {} } },
+      disable: [],
+    });
     await toggleRuntime({ home, id: 'acp-gemini', enable: false, which: none, out: () => undefined });
     expect((await loadAgentConfig(home)).runtimes?.acp).toMatchObject({ enable: [], consented: {}, disable: ['gemini'] });
     await toggleRuntime({ home, id: 'acp-claude', enable: true, which: none, out: () => undefined });
-    expect((await loadAgentConfig(home)).runtimes?.acp).toMatchObject({ enable: ['claude-acp'], consented: { 'claude-acp': 'npx:@agentclientprotocol/claude-agent-acp' } });
+    expect((await loadAgentConfig(home)).runtimes?.acp).toMatchObject({ enable: ['claude-acp'], consented: { 'claude-acp': { runner: 'npx', package: '@agentclientprotocol/claude-agent-acp', args: [] } } });
     await expect(toggleRuntime({ home, id: 'no-such-agent', enable: true, which: none, out: () => undefined })).rejects.toThrow(/Unknown ACP agent/);
     expect((await loadAgentConfig(home)).runtimes?.acp.disable).toEqual(['gemini']);
-    // Installed locally: no download is mentioned, and nothing is recorded as a download consent.
+    // Installed locally: no download is mentioned; the consent is for that command, args and env.
     const out: string[] = [];
     await toggleRuntime({ home, id: 'goose', enable: true, which: async (c) => (c === 'goose' ? '/usr/local/bin/goose' : null), out: (s) => out.push(s) });
     expect(out[0]).toBe('Uncage will run /usr/local/bin/goose acp whenever the agent starts. Undo: uncage runtimes disable goose.');
-    expect((await loadAgentConfig(home)).runtimes?.acp.consented).not.toHaveProperty('goose');
+    expect((await loadAgentConfig(home)).runtimes?.acp.consented.goose).toEqual({ runner: 'local', cmd: 'goose', args: ['acp'], env: {} });
   });
 
   it('projectAcpCommands lists the commands uncage.config.yaml makes Uncage run', () => {

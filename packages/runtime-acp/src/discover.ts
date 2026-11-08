@@ -106,13 +106,37 @@ export function localCommand(a: AcpRegistryAgent, platform: AcpPlatform | null):
   return npx && npmBin ? { cmd: npmBin, args: npx.args, env: npx.env } : undefined;
 }
 
-/** What a consent to download is bound to: the runner and package name (not the version). */
-export function consentRef(a: Pick<AcpRegistryAgent, 'distribution'>): string | undefined {
-  const { npx, uvx } = a.distribution;
-  if (npx) return `npx:${packageName(npx.package)}`;
-  if (uvx) return `uvx:${packageName(uvx.package)}`;
-  return undefined;
+/**
+ * What `uncage runtimes enable` consented to: the runner, the package name (any version) or local
+ * command, and the exact args and env. A registry that changes any of these needs enable again.
+ */
+export interface AcpConsent {
+  runner: 'local' | 'npx' | 'uvx';
+  /** npx/uvx: package name without version. */
+  package?: string;
+  /** local: the command name looked up on PATH. */
+  cmd?: string;
+  args: string[];
+  env: Record<string, string>;
 }
+
+/** The consent for running the agent's npx/uvx distribution. */
+export function downloadConsent(a: Pick<AcpRegistryAgent, 'distribution'>): AcpConsent | undefined {
+  const { npx, uvx } = a.distribution;
+  const d = npx ?? uvx;
+  if (!d) return undefined;
+  return { runner: npx ? 'npx' : 'uvx', package: packageName(d.package), args: [...d.args], env: { ...d.env } };
+}
+
+/** The consent for running an installed command. */
+export const localConsent = (l: LocalCommand): AcpConsent => ({ runner: 'local', cmd: l.cmd, args: [...l.args], env: { ...l.env } });
+
+export const consentKey = (c: AcpConsent): string =>
+  JSON.stringify([c.runner, c.package ?? c.cmd ?? '', c.args, Object.entries(c.env).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0))]);
+
+/** One line for messages: `npx @google/gemini-cli --acp`. */
+export const describeConsent = (c: AcpConsent): string =>
+  clean([c.runner === 'local' ? c.cmd : `${c.runner} ${c.package}`, ...c.args, ...Object.entries(c.env).map(([k, v]) => `${k}=${v}`)].join(' '));
 
 /** The command that downloads and runs the agent (npx/uvx): only with the user's consent. */
 function downloadCommand(a: AcpRegistryAgent): { command: string[]; env: Record<string, string> } | undefined {
@@ -125,7 +149,7 @@ function downloadCommand(a: AcpRegistryAgent): { command: string[]; env: Record<
 const primaryDistribution = (a: AcpRegistryAgent): AcpCatalogEntry['distribution'] =>
   a.distribution.binary ? 'binary' : a.distribution.npx ? 'npx' : 'uvx';
 
-const specKey = (l: LocalCommand): string => JSON.stringify([l.cmd, l.args, Object.entries(l.env).sort()]);
+const specKey = (l: LocalCommand): string => consentKey(localConsent(l));
 
 interface DetectRecord {
   ok: boolean;
@@ -181,6 +205,8 @@ export interface DiscoverOptions {
   platform?: AcpPlatform | null;
   /** Operating system for spawning (`win32`: PATHEXT, npm `.cmd` shims). Defaults to process.platform. */
   os?: NodeJS.Platform;
+  /** Environment for Windows spawning (SystemRoot / ComSpec). Defaults to process.env. */
+  env?: NodeJS.ProcessEnv;
   /** Where handshake results are cached (per agent path and file version). */
   cacheDir?: string;
   /**
@@ -205,7 +231,8 @@ type Result = { entry: AcpCatalogEntry; adapter?: AcpAdapterOptions };
  *   handshake → enabled. After a registry refresh, only when the command (cmd, args, env) equals the
  *   bundled snapshot's or the one last handshaken; otherwise it waits for `enable`.
  * - npx/uvx distributions download code: never run here; enabled only by `config.enable` with a
- *   matching `config.consented` (runner + package name).
+ *   matching `config.consented` (runner, package, args, env). An enabled installed agent runs only
+ *   with the exact command it was enabled with.
  * - `config.disable` wins; `autoDetect: false` handshakes nothing (only `enable`d agents register).
  */
 export async function discoverAcpAgents(o: DiscoverOptions): Promise<{ adapters: AcpAdapterOptions[]; catalog: AcpCatalogEntry[] }> {
@@ -254,14 +281,23 @@ export async function discoverAcpAgents(o: DiscoverOptions): Promise<{ adapters:
 
     const local = localCommand(a, platform);
     const resolved = local ? await o.which(local.cmd) : null;
+    const given = consented[a.id];
     if (local && resolved) {
-      const command = await spawnableCommand([resolved, ...local.args], { which: o.which, platform: os });
-      if (!command) return { entry: { ...entry, message: 'Its arguments cannot be passed safely to cmd.exe.' } };
+      const spawnable = await spawnableCommand([resolved, ...local.args], { which: o.which, platform: os, ...(o.env ? { env: o.env } : {}) });
+      if ('error' in spawnable) return { entry: { ...entry, message: spawnable.error } };
+      const { command } = spawnable;
       const adapter = options(command, local.env);
-      const found = { ...entry, command };
-      if (isEnabled) return { entry: { ...found, status: 'enabled', via: 'consent' }, adapter };
-      if (!autoDetect) return { entry: { ...found, status: 'available', message: 'autoDetect is off.', hint: enableHint } };
+      const found = { ...entry, command: command.map(clean) };
       const spec = specKey(local);
+      // Enabled: only for exactly the command the user consented to.
+      if (isEnabled && given && consentKey(given) === spec) return { entry: { ...found, status: 'enabled', via: 'consent' }, adapter };
+      const changedSinceEnable =
+        isEnabled && given
+          ? `Its command changed since you enabled it (was: ${describeConsent(given)}; now: ${describeConsent(localConsent(local))}). Enable it again to allow that.`
+          : isEnabled
+            ? 'Enabled without a recorded command; enable it again.'
+            : undefined;
+      if (!autoDetect) return { entry: { ...found, status: 'available', message: changedSinceEnable ?? 'autoDetect is off.', hint: enableHint } };
       const bundledEntry = bundled?.agents.find((b) => b.id === a.id);
       const bundledLocal = bundledEntry ? localCommand(bundledEntry, platform) : undefined;
       const trusted = !fromRefresh || (bundledLocal !== undefined && specKey(bundledLocal) === spec) || cache.trusted[a.id] === spec;
@@ -270,7 +306,7 @@ export async function discoverAcpAgents(o: DiscoverOptions): Promise<{ adapters:
           entry: {
             ...found,
             status: 'available',
-            message: `Its command changed in the refreshed ACP registry (now: ${clean([local.cmd, ...local.args].join(' '))}).`,
+            message: changedSinceEnable ?? `Its command changed in the refreshed ACP registry (now: ${describeConsent(localConsent(local))}).`,
             hint: enableHint,
           },
         };
@@ -305,24 +341,23 @@ export async function discoverAcpAgents(o: DiscoverOptions): Promise<{ adapters:
     }
 
     const download = downloadCommand(a);
-    const ref = consentRef(a);
+    const ref = downloadConsent(a);
     if (download && ref) {
-      const kind = download.command[0] === 'npx' ? 'npx' : 'uvx';
+      const kind = ref.runner === 'npx' ? 'npx' : 'uvx';
       const pkg = a.distribution.npx?.package ?? a.distribution.uvx?.package;
-      const given = consented[a.id];
-      if (isEnabled && given === ref) {
-        const command = await spawnableCommand(download.command, { which: o.which, platform: os });
-        if (!command) return { entry: { ...entry, message: 'Its arguments cannot be passed safely to cmd.exe.' } };
-        const adapter = options(command, download.env);
-        return { entry: { ...entry, distribution: kind, status: 'enabled', via: 'consent', command }, adapter };
+      if (isEnabled && given && consentKey(given) === consentKey(ref)) {
+        const spawnable = await spawnableCommand(download.command, { which: o.which, platform: os, ...(o.env ? { env: o.env } : {}) });
+        if ('error' in spawnable) return { entry: { ...entry, distribution: kind, status: 'not_installed', message: spawnable.error } };
+        const adapter = options(spawnable.command, download.env);
+        return { entry: { ...entry, distribution: kind, status: 'enabled', via: 'consent', command: spawnable.command.map(clean) }, adapter };
       }
       const cli = UNDERLYING_CLI[a.id];
       const cliFound = cli ? await o.which(cli.cmd) : null;
       const why =
         isEnabled && given !== undefined
-          ? `You enabled ${given}; the registry now runs ${ref}. Enable it again to allow that.`
+          ? `You enabled "${describeConsent(given)}"; the registry now runs "${describeConsent(ref)}". Enable it again to allow that.`
           : isEnabled
-            ? 'Enabled without a recorded package; enable it again to allow the download.'
+            ? 'Enabled without a recorded command; enable it again to allow the download.'
             : `Runs with ${kind} (downloads ${pkg}).${cliFound ? ` ${cli!.name} is installed.` : ''}`;
       return { entry: { ...entry, distribution: kind, status: 'available', message: why, hint: enableHint } };
     }
@@ -370,8 +405,10 @@ export async function buildAcpAgents(
   const manual: AcpAdapterOptions[] = [];
   const takenCommands = new Set<string>();
   for (const a of await resolveAcpAgents(cfg, { allowBypass: o.allowBypass, which: o.which, registry })) {
-    const command = await spawnableCommand(a.command, { which: o.which, platform: os });
-    if (!command) continue;
+    const spawnable = await spawnableCommand(a.command, { which: o.which, platform: os, ...(o.env ? { env: o.env } : {}) });
+    // Not resolvable (Windows): keep the entry; spawning a relative command is refused, so it
+    // reports "not installed" instead of being looked up in the current directory.
+    const command = 'error' in spawnable ? a.command : spawnable.command;
     manual.push({ ...a, command });
     // Compare by resolved executable so `opencode` and `/usr/local/bin/opencode` match.
     const first = (await o.which(command[0]!)) ?? command[0]!;

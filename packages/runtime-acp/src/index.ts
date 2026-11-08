@@ -38,7 +38,10 @@ export {
 export {
   acpHandshake,
   buildAcpAgents,
-  consentRef,
+  consentKey,
+  describeConsent,
+  downloadConsent,
+  localConsent,
   discoverAcpAgents,
   localCommand,
   packageName,
@@ -47,6 +50,7 @@ export {
   type AcpCatalogEntry,
   type AcpCatalogStatus,
   type DiscoverOptions,
+  type AcpConsent,
   type LocalCommand,
 } from './discover.js';
-export { cmdLine, createWhich, spawnableCommand, type Which } from './which.js';
+export { cmdLine, createWhich, relativeWindowsExecutable, spawnableCommand, systemCmd, type Spawnable, type Which } from './which.js';

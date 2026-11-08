@@ -72,25 +72,51 @@ export function cmdLine(argv: string[]): string | undefined {
 }
 
 /**
- * Makes an argv spawnable without a shell on Windows: `command[0]` is resolved with PATHEXT; a
- * `.exe`/`.com` runs directly; an npm `.cmd` shim becomes `node <script>`; any other `.cmd`/`.bat`
- * runs through `cmd.exe /d /s /c` with every argument quoted (undefined, refused, when an argument
- * cannot be quoted safely). Elsewhere the argv is returned unchanged; an unresolvable command too
- * (the spawn reports ENOENT: not installed).
+ * The absolute cmd.exe: `%SystemRoot%\System32\cmd.exe`, else `%ComSpec%` when it is an absolute
+ * path to a `cmd.exe`. Never a bare `cmd.exe` (that would be looked up in the current directory).
+ */
+export function systemCmd(env: NodeJS.ProcessEnv): string | undefined {
+  const root = env.SystemRoot ?? env.SYSTEMROOT ?? env.windir;
+  if (root && win32.isAbsolute(root) && !CMD_UNSAFE.test(root)) return win32.join(root, 'System32', 'cmd.exe');
+  const spec = env.ComSpec ?? env.COMSPEC;
+  if (spec && win32.isAbsolute(spec) && win32.basename(spec).toLowerCase() === 'cmd.exe' && !CMD_UNSAFE.test(spec)) return spec;
+  return undefined;
+}
+
+export type Spawnable = { command: string[] } | { error: string };
+
+/**
+ * Makes an argv spawnable without a shell on Windows: `command[0]` is resolved with PATHEXT (not
+ * found → an error, never the bare name, which Windows would also look up in the current
+ * directory); a `.exe`/`.com` runs directly; an npm `.cmd` shim becomes `node <script>`; any other
+ * `.cmd`/`.bat` runs through the absolute cmd.exe (`/d /s /c`) with every argument quoted, refused
+ * when an argument cannot be quoted safely. Elsewhere the argv is returned unchanged.
  */
 export async function spawnableCommand(
   command: string[],
-  o: { which: Which; platform?: NodeJS.Platform; node?: string },
-): Promise<string[] | undefined> {
-  if ((o.platform ?? process.platform) !== 'win32' || command.length === 0) return command;
+  o: { which: Which; platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; node?: string },
+): Promise<Spawnable> {
+  if ((o.platform ?? process.platform) !== 'win32' || command.length === 0) return { command };
   const [first, ...rest] = command;
   const resolved = await o.which(first!);
-  if (!resolved) return command;
+  if (!resolved) return { error: `${first} was not found on PATH.` };
   if (/\.(cmd|bat)$/i.test(resolved)) {
     const script = await npmShimScript(resolved);
-    if (script) return [o.node ?? process.execPath, script, ...rest];
+    if (script) return { command: [o.node ?? process.execPath, script, ...rest] };
+    const cmd = systemCmd(o.env ?? process.env);
+    if (!cmd) return { error: 'cmd.exe was not found (SystemRoot / ComSpec are not set to an absolute path).' };
     const line = cmdLine([resolved, ...rest]);
-    return line === undefined ? undefined : ['cmd.exe', '/d', '/s', '/c', `"${line}"`];
+    if (line === undefined) return { error: 'Its arguments cannot be passed safely to cmd.exe.' };
+    return { command: [cmd, '/d', '/s', '/c', `"${line}"`] };
   }
-  return [resolved, ...rest];
+  return { command: [resolved, ...rest] };
+}
+
+/**
+ * On Windows a relative executable would also be searched in the current directory: refuse it
+ * (spawning gives ENOENT, reported as not installed). Undefined when the spawn may go ahead.
+ */
+export function relativeWindowsExecutable(executable: string, platform: NodeJS.Platform = process.platform): NodeJS.ErrnoException | undefined {
+  if (platform !== 'win32' || win32.isAbsolute(executable)) return undefined;
+  return Object.assign(new Error(`spawn ${executable} ENOENT (not resolved to an absolute path)`), { code: 'ENOENT' });
 }

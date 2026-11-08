@@ -12,4 +12,15 @@ export default async function setup(): Promise<void> {
     silent: true,
     target: 'node22',
   });
+  // process.test.ts runs startAcpProcess in a child Node process that then calls process.exit().
+  await build({
+    config: false,
+    entry: { process: 'src/process.ts' },
+    format: ['esm'],
+    outDir: 'node_modules/.cache/uncage-acp-test',
+    clean: false,
+    dts: false,
+    silent: true,
+    target: 'node22',
+  });
 }
