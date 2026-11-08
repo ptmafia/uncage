@@ -28,7 +28,9 @@ export interface AgentExecutables {
 
 /** Resolves `claude` and `codex` on PATH (`resolveCommand`). */
 export async function resolveAgentExecutables(o: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv } = {}): Promise<AgentExecutables> {
-  const [claude, codex] = await Promise.all([resolveCommand('claude', [], o), resolveCommand('codex', [], o)]);
+  // A `.cmd` that cannot be started safely (no absolute cmd.exe) counts as not found: the default applies.
+  const find = (name: string) => resolveCommand(name, [], o).catch(() => null);
+  const [claude, codex] = await Promise.all([find('claude'), find('codex')]);
   return { claude, codex };
 }
 

@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
-import { win32 } from 'node:path';
-import { relativeWindowsExecutable } from './which.js';
+import { isCmdLine, resolveCommand } from '@uncage/protocol/node';
 import { Readable, Writable } from 'node:stream';
 import {
   client,
@@ -90,9 +89,29 @@ export class AcpExitError extends Error {
 }
 
 /**
- * Spawns an ACP agent (`command[0]` resolved on PATH, or absolute), connects the official SDK
- * client over its stdio and completes `initialize`. Rejects with the spawn error (e.g. `ENOENT`),
- * an `AcpProtocolError`, an `AcpExitError`, or a timeout; the process is killed in every case.
+ * The argv to spawn. POSIX: unchanged (`command[0]` is found on `env.PATH` by the spawn). Windows:
+ * through `resolveCommand`: PATH × PATHEXT, never the current directory; an npm `.cmd` shim becomes
+ * node + its JS file; any other `.cmd`/`.bat` runs as the absolute `cmd.exe /d /s /c "<line>"` with
+ * every argument quoted (an argument cmd.exe would interpret is refused). Never `shell: true`.
+ */
+export async function acpSpawnArgv(
+  command: string[],
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): Promise<{ file: string; args: string[]; verbatim: boolean }> {
+  const [executable, ...args] = command;
+  if (!executable) throw new Error('The ACP agent command is empty.');
+  if (platform !== 'win32') return { file: executable, args, verbatim: false };
+  const r = await resolveCommand(executable, args, { platform, env });
+  if (!r) throw Object.assign(new Error(`spawn ${executable} ENOENT (not found on PATH)`), { code: 'ENOENT', path: executable });
+  // `cmd.exe /d /s /c "<line>"`: the line is already quoted; Node must not quote it again.
+  return { file: r.file, args: r.args, verbatim: isCmdLine(r.file, r.args) };
+}
+
+/**
+ * Spawns an ACP agent (`acpSpawnArgv`), connects the official SDK client over its stdio and
+ * completes `initialize`. Rejects with the spawn error (e.g. `ENOENT`), an `AcpProtocolError`, an
+ * `AcpExitError`, or a timeout; the process is killed in every case.
  */
 export async function startAcpProcess(o: {
   command: string[];
@@ -100,18 +119,15 @@ export async function startAcpProcess(o: {
   handlers: AcpClientHandlers;
   initTimeoutMs: number;
 }): Promise<AcpProcess> {
-  const [executable, ...args] = o.command;
-  if (!executable) throw new Error('The ACP agent command is empty.');
-  const relative = relativeWindowsExecutable(executable);
-  if (relative) throw relative;
+  const { file, args, verbatim } = await acpSpawnArgv(o.command, o.env);
   const windows = process.platform === 'win32';
-  const proc = spawn(executable, args, {
+  const proc = spawn(file, args, {
     env: o.env,
     stdio: ['pipe', 'pipe', 'pipe'],
     // POSIX: its own process group, so stopping the agent also stops whatever it started.
     detached: !windows,
-    // `cmd.exe /d /s /c "<line>"` (see spawnableCommand): the line is already quoted.
-    windowsVerbatimArguments: windows && win32.basename(executable).toLowerCase() === 'cmd.exe',
+    windowsHide: true,
+    windowsVerbatimArguments: verbatim,
   });
 
   let stderrBuf = Buffer.alloc(0);

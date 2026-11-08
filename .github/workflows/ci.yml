@@ -105,6 +105,10 @@ jobs:
         run: pnpm --filter @uncage/cli exec vitest run --reporter=verbose --reporter=github-actions --silent=false
       - name: Runtime tests (Windows not-found mapping, resolved executables)
         run: pnpm --filter @uncage/runtime-claude --filter @uncage/runtime-codex test
+      - name: Starting commands without a shell (the shared resolveCommand)
+        run: pnpm --filter @uncage/protocol exec vitest run src/node --reporter=default --reporter=github-actions
+      - name: ACP agents started through resolveCommand (npm .cmd shims, cmd.exe, exact argv)
+        run: pnpm --filter @uncage/runtime-acp exec vitest run src/spawn.test.ts --reporter=verbose --reporter=github-actions
       - name: Installer tests (static checks; install.ps1 scenarios under powershell.exe and pwsh)
         # Verbose: every scenario and shell is listed; a failing one prints its full output.
         run: pnpm --filter @uncage/hub exec vitest run src/install --reporter=verbose --reporter=github-actions

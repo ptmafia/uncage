@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { homedir, hostname, release } from 'node:os';
 import { promisify } from 'node:util';
 import type { RuntimeAdapter, TransportKind } from '@uncage/protocol';
+import { isCmdLine } from '@uncage/protocol/node';
 import pino from 'pino';
 import pkg from '../package.json' with { type: 'json' };
 import { readFile, writeFile } from 'node:fs/promises';
@@ -31,7 +32,7 @@ const execFileAsync = promisify(execFile);
  * "<line>"` from `resolveCommand` is passed verbatim (Node would otherwise re-quote the line).
  */
 export const defaultExec: ExecFn = async (file, args) => {
-  const verbatim = process.platform === 'win32' && /(^|[\\/])cmd(\.exe)?$/i.test(file) && args[2] === '/c';
+  const verbatim = process.platform === 'win32' && isCmdLine(file, args);
   const r = await execFileAsync(file, args, { encoding: 'utf8', windowsHide: true, ...(verbatim ? { windowsVerbatimArguments: true } : {}) });
   return { stdout: r.stdout, stderr: r.stderr };
 };
