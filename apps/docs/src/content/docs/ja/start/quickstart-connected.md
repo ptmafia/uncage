@@ -30,10 +30,10 @@ Verify: start the dev server, then curl -s http://localhost:3000/api/uncage/inst
 ## 始める前に
 
 - **ウェブサイト側**：Nodeで動かすNext.js 16アプリ（App Router）。Node.jsは**22.18以降**が必要です。後述のカスタムサーバーは、Nodeが直接実行する`.ts`ファイルだからです。新規に始める場合：`npx create-next-app@latest my-site`（TypeScript、App Router）。
-- **ユーザー側（このテストではあなた自身のMac）**：macOS、Node.js 22以降、インストール済みでサインインしたClaude Code：`npm i -g @anthropic-ai/claude-code`を実行し、`claude`を一度起動して`/login`と入力します。
+- **ユーザー側（このテストではあなた自身のコンピュータ）**：Node.js 22以降（後述のインストーラーで用意できます）と、インストール済みでサインインしたClaude Code：`npm i -g @anthropic-ai/claude-code`を実行し、`claude`を一度起動して`/login`と入力します。エージェントはmacOSで動作します。LinuxとWindowsはCIで検証済みで、実機での確認を待っている段階です。
 
-:::caution[カスタムサーバーが必要な理由]
-ハブは接続中のすべてのコンピュータとWebSocketを開いたままにするため、HTTPサーバーにアクセスできる常駐のNodeプロセスが必要です。Next.jsのルートハンドラーだけではWebSocketのアップグレードを受け付けられず、サーバーレスプラットフォーム（Vercel Functionsなど）ではハブをホストできません。Vercelでは、ハブを独立したNodeサービスとして動かしてください。[ハブをマウントする：サーバーレスでのホスティング](/docs/ja/guides/mount-the-hub/#サーバーレスでのホスティングvercelnetlify)を参照してください。
+:::note[カスタムサーバーを使う理由]
+このクイックスタートでは**従来モード（常駐プロセス）**を使います。ハブは接続中のすべてのコンピュータとWebSocketを開いたままにし、データを組み込みデータベースのフォルダに保存するため、他に何も用意する必要がありません。そのためには、HTTPサーバーにアクセスできる常駐のNodeプロセスが必要ですが、Next.jsのルートハンドラーだけではそれが得られません。代わりに**Vercel**などのサーバーレスプラットフォームにデプロイする場合は、[VercelでNext.js](/docs/ja/deploy/vercel/)を参照してください（ルートハンドラーとPostgresを使い、カスタムサーバーは不要です）。どちらを選ぶべきかは、[デプロイモードを選ぶ](/docs/ja/start/choose-deployment-mode/)で説明しています。
 :::
 
 ## 1. インストールする
@@ -144,11 +144,11 @@ export function getHub(): Hub {
 }
 ```
 
-`store`オプションを指定しない場合、ハブはデータを`./.uncage-hub`（組み込みのPGlite）に保存します。このフォルダを`.gitignore`に追加してください。
+`pgliteHubStore`は、ハブのデータを`./.uncage-hub`（組み込みのPGlite。1つのフォルダにつきプロセスは1つ）に保存します。このフォルダを`.gitignore`に追加し、デプロイ時には永続ディスク上に置いてください。
 
 ## 5. カスタムサーバー
 
-1つのNode HTTPサーバーがすべてを担います。`/api/uncage`配下のハブのHTTP API、`/api/uncage/agent`でのコンピュータとのWebSocket、それ以外のすべてのパスに対するNext.jsアプリです。
+1つのNode HTTPサーバーがすべてを担います。`/api/uncage`配下のハブのHTTP API、`/api/uncage/agent`でのコンピュータとのWebSocket、それ以外のすべてのパスに対するNext.jsアプリです。`toNodeHandler`と`attachWebSocket`は、ハブのNode専用部分である`@uncage/hub/node`から読み込みます。
 
 ```ts title="server.ts"
 import { createServer } from 'node:http';
@@ -355,14 +355,14 @@ curl -s http://localhost:3000/api/uncage/install.sh | head -3
 
 `http://localhost:3000/uncage`を開きます。チャットに**Connect your computer**（コンピュータを接続）と2つのコマンドが表示されます。本番環境ではユーザーが両方をコピーします。このローカルテストでは次のようにします：
 
-1. **CLIをインストールします**。`curl -fsSL http://localhost:3000/api/uncage/install.sh | bash`でも、直接`npm i -g @uncage/cli`でインストールしてもかまいません。
+1. **CLIをインストールします**。macOSまたはLinuxでは`curl -fsSL http://localhost:3000/api/uncage/install.sh | bash`、Windows（PowerShell）では`irm http://localhost:3000/api/uncage/install.ps1 | iex`を実行します。インストーラーはまずコンピュータの状態（Node.js 22以降、npm、コーディングエージェント）を確認し、必要な手順ごとに`[Y/n]`で確認を求め（Nodeのバージョンマネージャーがあればそれを使い、`sudo`や管理者権限は一切使いません）、`@uncage/cli`をインストールして、セットアップコマンドを代わりに実行するかどうかを尋ねます。直接`npm i -g @uncage/cli`でインストールしてもかまいません。
 2. **接続します**。ページに表示されているsetupコマンドを実行します：
 
    ```sh
    uncage setup http://localhost:3000
    ```
 
-   コードが表示され、`http://localhost:3000/device?code=…`が開きます。コードが一致していることを確認し、**Approve**（承認）をクリックします。setupはマシントークンを`~/.uncage/agent.yaml`に保存し、バックグラウンドのエージェント（launchdサービス）を起動します。
+   コードが表示され、`http://localhost:3000/device?code=…`が開きます。コードが一致していることを確認し、**Approve**（承認）をクリックします。setupはマシントークンを`~/.uncage/agent.yaml`に保存し、バックグラウンドのエージェント（ユーザー単位のサービス。macOSではlaunchd、Linuxではsystemd、Windowsではスケジュールされたタスク。`uncage agent status`で確認できます）を起動します。
 
 チャットページに戻ると、ステータスが「Waiting for your computer…」（コンピュータを待機中）から**Connected: &lt;コンピュータ名&gt;**（接続済み）に変わります。
 
@@ -398,5 +398,6 @@ curl -s http://localhost:3000/api/uncage/install.sh | head -3
 - [ツールを定義する](/docs/ja/guides/define-tools/)：バリデーション、エラー、確認、ファイルチャネル。
 - [スキルを書く](/docs/ja/guides/write-skills/)、[実行ごとに選ぶ](/docs/ja/guides/select-manifest/)。
 - [認証とデバイスの承認](/docs/ja/guides/auth-and-device-approval/)：実際のサインインを接続します。
+- [デプロイ](/docs/ja/deploy/node/)：サーバーに載せる（従来モード）か、[Vercel](/docs/ja/deploy/vercel/)に移行します（FaaS モード）。
 - [マルチノード](/docs/ja/guides/multi-node/)：ロードバランサーの背後でPostgres + Redisを使います。
 - **プロキシの背後にデプロイする前に**：クライアントIPを設定してください（`trust proxy`または`rateLimits.clientIp`）。設定しないと、すべてのユーザーが`uncage setup`のレート制限を1つの枠で共有することになります。[プロキシの背後で](/docs/ja/guides/mount-the-hub/#リバースプロキシやロードバランサーの背後で)を参照してください。

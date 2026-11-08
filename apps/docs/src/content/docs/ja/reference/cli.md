@@ -1,9 +1,26 @@
 ---
 title: CLIリファレンス
-description: Connected モード（setup、agent、sites、activity）とLocal モード（serve、doctor）のすべてのuncageコマンドとフラグ、およびそれらが読み取る環境変数。
+description: Connected モード（setup、agent install / uninstall / status、sites、runtimes、activity）とLocal モード（serve、doctor）のすべてのuncageコマンドとフラグ、uncage --version、1行で実行できるインストーラー、およびそれらが読み取る環境変数。
 ---
 
-`@uncage/cli`をインストールすると`uncage`コマンドが使えるようになります。エンドユーザーはサイトの`install.sh`（または`npm i -g @uncage/cli`）から入手し、Local モードのアプリは`npx uncage …`で使います。どのコマンドにも`--help`があります。
+`@uncage/cli`をインストールすると`uncage`コマンドが使えるようになります。エンドユーザーはサイトの1行で実行できるインストーラーか、`npm i -g @uncage/cli`で入手し、Local モードのアプリは`npx uncage …`で使います。どのコマンドにも`--help`があります。
+
+```sh
+curl -fsSL https://your.site/api/uncage/install.sh | bash        # macOS, Linux
+irm https://your.site/api/uncage/install.ps1 | iex               # Windows PowerShell
+```
+
+インストーラーはコンピュータの状態（Node.js 22以降、npm、インストール済みのコーディングエージェント）を確認し、各手順の前に`[Y/n]`で確認を求め（Node.jsは、ユーザーのバージョンマネージャーがあればそれを使ってインストールします。`sudo`や管理者権限は一切使いません）、`@uncage/cli`をインストールして、そのウェブサイト向けに`uncage setup`を実行するかどうかを尋ねます。
+
+### `uncage --version`
+
+```text
+uncage --version
+0.3.0
+node v22.18.0 (/Users/ada/.local/share/fnm/node-versions/v22.18.0/installation/bin/node)
+```
+
+1行目はCLIのバージョン、2行目はCLIを実行しているNode.jsとそのパスです（`uncage agent install`がバックグラウンドのエージェントを固定するのは、このNode.jsです）。
 
 ## Connected モード（ユーザーのコンピュータ上）
 
@@ -18,7 +35,7 @@ uncage setup <url> [--no-daemon] [--no-browser]
 1. デバイスコードを要求し、リンクとコードを表示します。
 2. ブラウザでリンクを開きます（`open`）。サインイン中のユーザーがそこで承認します。
 3. 承認を待ち、サイトとマシントークンを`~/.uncage/agent.yaml`（モード0600）に保存します。
-4. バックグラウンドのエージェントをインストールし、起動（または再起動）します（launchd：`~/Library/LaunchAgents/dev.uncage.agent.plist`）。
+4. `uncage agent install`と同様に、このユーザーのバックグラウンドのエージェントをインストールし、起動（または再起動）します。macOSではlaunchd（`~/Library/LaunchAgents/dev.uncage.agent.plist`）、Linuxではsystemdのユーザーサービス、Windowsではスケジュールされたタスクを使います。サービスマネージャーがない環境では、`uncage agent`をフォアグラウンドで実行する方法を表示します。
 
 | フラグ | |
 | --- | --- |
@@ -30,11 +47,23 @@ uncage setup <url> [--no-daemon] [--no-browser]
 ### `uncage agent`
 
 ```text
-uncage agent              # run in the foreground
-uncage agent uninstall    # stop and remove the background agent; config and data stay
+uncage agent [--log-file <path>]   # run in the foreground
+uncage agent install               # install and start the background agent for this user
+uncage agent uninstall             # stop and remove the background agent; config and data stay
+uncage agent status [--json]       # installed? running? which Node.js?
 ```
 
-`~/.uncage/agent.yaml`にあるすべてのウェブサイトに接続し、それらに応答します。ウェブサイトが1つもなければ正常終了します。手動で実行したい場合は、先にバックグラウンドサービスを停止してください。
+`uncage agent`は、`~/.uncage/agent.yaml`にあるすべてのウェブサイトに、それぞれが提供するWebSocketまたはHTTPストリーミングで接続し、それらに応答します。ウェブサイトが1つもなければ正常終了します。手動で実行したい場合は、先にバックグラウンドサービスを停止してください。
+
+| フラグ / サブコマンド | |
+| --- | --- |
+| `--log-file <path>` | ログをstderrではなくこのファイルに追記します。ログファイルのサイズは起動のたびに上限内に抑えられます。 |
+| `install` | ユーザー単位のバックグラウンドサービスをインストールして起動します。サービスは**このコマンドを実行しているNode.jsに固定されます**（バージョンマネージャーのシムではなく、実際のパス）。macOSではlaunchd、Linuxではsystemdのユーザーサービス、Windowsではスケジュールされたタスク（現在のユーザー、最小権限。タスクを作成できない場合はレジストリのRunエントリ）を使います。管理者権限は不要です。そのNode.jsを変更または削除した後は、もう一度実行してください。`UNCAGE_HOME`が設定されている間は拒否されます。 |
+| `uninstall` | サービスを停止して削除します。`~/.uncage/agent.yaml`とデータは残ります。 |
+| `status` | サービスの種類、インストール済みか、実行中か、定義ファイル、固定されたNode.js（とそれがまだ存在するか）、CLIのエントリ、ログのフォルダ（`~/.uncage/logs`）を表示します。`--json`を付けると同じ内容をJSONで出力します。 |
+| `--supervise` | 内部用：Windowsのスケジュールされたタスクは`uncage agent --supervise`を実行し、クラッシュや自己アップグレードの後にエージェントを再起動します（タスクスケジューラはこれを行わないためです）。macOSとLinuxでは不要です。 |
+
+Linuxでは、lingeringが有効でない限り、ユーザーサービスはログアウト時に停止します。`uncage doctor`がこれを知らせ、`loginctl enable-linger $USER`で解決できます。LinuxとWindowsはCIで検証済みで、実機での確認を待っている段階です。macOSは実機で検証済みです。
 
 ### `uncage sites`
 
@@ -103,7 +132,7 @@ uncage doctor [--port <n> | --url <url>] [--workspace <dir>] [--data-dir <dir>] 
 uncage doctor --export-events <sessionId> [--out <file>] [--include-content] [--port <n> | --url <url>]
 ```
 
-Node、データディレクトリ、トークン、実行中のデーモン、ランタイム（Claude Code、Codex、そしてACP エージェントごとに1行の`runtime.acp-<id>`。`uncage.config.yaml`の`runtimes.acp`で設定したものか、自動検出したもの）をチェックします。各行は ✓ か ✗ で、✗ の行には必ず`fix:`コマンドが表示されます。ACPの行は任意扱いで、✗（たとえば未インストールで、fixはインストールのヒント）でも終了コードは変わりません。`uncage.config.yaml`が独自の`command`で追加したACP エージェントには、実行するコマンドを示す警告行も表示されます。デーモンのワークスペースが`.uncage/`を無視していないgitリポジトリである場合と、ループバック以外のURLにトークンを送る前には、警告（`!`、致命的ではない）を出します。
+Node、データディレクトリ、トークン、実行中のデーモン、Connected モードのバックグラウンドのエージェント（インストール済みで実行中か、固定されたNode.jsがまだ存在するか、Linuxのlingering、接続中の各ウェブサイトのエージェントのバージョン）、ランタイム（Claude Code、Codex、そしてACP エージェントごとに1行の`runtime.acp-<id>`。`uncage.config.yaml`の`runtimes.acp`で設定したものか、自動検出したもの）をチェックします。各行は ✓ か ✗ で、✗ の行には必ず`fix:`コマンドが表示されます。ACPの行は任意扱いで、✗（たとえば未インストールで、fixはインストールのヒント）でも終了コードは変わりません。`uncage.config.yaml`が独自の`command`で追加したACP エージェントには、実行するコマンドを示す警告行も表示されます。デーモンのワークスペースが`.uncage/`を無視していないgitリポジトリである場合と、ループバック以外のURLにトークンを送る前には、警告（`!`、致命的ではない）を出します。
 
 `--export-events`は、バグ報告用にセッションのイベントをJSONで書き出します。`--include-content`を付けない限り、内容は秘匿化されます。
 

@@ -82,7 +82,7 @@ Claude Codeは、パーミッションモードが自動では許可しないス
 ## データの扱い
 
 - デモにはゲストとしてサインインしており、使っているブラウザで識別されます。別のブラウザからは、あなたの会話やページは一切見えません。
-- デモは公開の共有環境です。運営者が永続ボリュームに保存していない限り、すべてのデータはデプロイや再起動のたびに消去されます。アセット（あなたが作ったページ）は、最後に作成または公開されてから24時間後に削除されます。
+- デモは公開の共有環境です。永続ボリュームのない単一サーバーで動かしている場合、すべてのデータはデプロイや再起動のたびに消去されます。Vercelで動かしている場合はPostgresに保存されます。いずれの場合も、アセット（あなたが作ったページ）は、最後に作成または公開されてから24時間後に削除されます。
 - 公開ページへのリクエストは所有者限定で、開けるのはあなたのゲストアカウントだけです。ページが読み込むファイルは、推測できないページのIDで保護されています。
 - デモには個人的な情報を入力しないでください。
 
@@ -90,4 +90,4 @@ Claude Codeは、パーミッションモードが自動では許可しないス
 
 ## デモを自分で動かす
 
-デモのソースは、通常のUncage Connected モードのサイトです。自分のマシンで動かすには、[サンプルのREADME](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo#run-it-single-node)に従ってください。自分のサイトを構築するには、[クイックスタート：Connected モード](/docs/ja/start/quickstart-connected/)に進んでください。
+デモのソースは、通常のUncage Connected モードのサイトです。同じツール、スキル、ページの上に2つのエントリポイントがあります。従来モード用の`server.ts`（Nodeプロセス1つ。たとえばRailwayで動かします）と、FaaS モード用のNext.jsのルートハンドラー（Vercel、Postgresを使用）です。自分のマシンで動かすには、[サンプルのREADME](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo#run-it-single-node)に従ってください。自分のサイトを構築するには、[クイックスタート：Connected モード](/docs/ja/start/quickstart-connected/)に進み、ホスティング先については[デプロイモードを選ぶ](/docs/ja/start/choose-deployment-mode/)を参照してください。
