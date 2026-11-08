@@ -74,8 +74,10 @@ uncage setup http://localhost:8787
 1. Create the Hyperdrive config and put the printed id into `wrangler.toml` (`[[hyperdrive]] id`):
    ```bash
    pnpm exec wrangler login
-   pnpm exec wrangler hyperdrive create uncage --connection-string="postgres://USER:PASSWORD@HOST:5432/DB"
+   pnpm exec wrangler hyperdrive create uncage --connection-string="postgres://USER:PASSWORD@HOST:5432/DB" --caching-disabled
    ```
+   Keep `--caching-disabled`: the hub polls with repeated identical queries, and Hyperdrive's query
+   cache would answer them with stale rows (missed commands, stuck streams).
 2. Deploy once to create the Worker and learn its URL (requests answer a 500 setup message until
    the secret exists):
    ```bash

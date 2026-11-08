@@ -36,8 +36,10 @@ const deadline = Date.now() + Number(values.timeout) * 1000;
 const cliBin = join(dirname(fileURLToPath(import.meta.url)), '../../../packages/cli/dist/bin.js');
 
 const home = process.env.UNCAGE_HOME;
-if (!home || resolve(home) === resolve(homedir(), '.uncage')) {
-  console.error('Set UNCAGE_HOME to a throwaway directory (e.g. UNCAGE_HOME=$(mktemp -d)); never your real ~/.uncage.');
+// UNCAGE_HOME replaces HOME for Connected state (<UNCAGE_HOME>/.uncage/agent.yaml): refuse the real
+// home itself as well as ~/.uncage.
+if (!home || resolve(home) === resolve(homedir()) || resolve(home) === resolve(homedir(), '.uncage')) {
+  console.error('Set UNCAGE_HOME to a throwaway directory (e.g. UNCAGE_HOME=$(mktemp -d)); never your real home or ~/.uncage.');
   process.exit(2);
 }
 

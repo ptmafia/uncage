@@ -143,7 +143,7 @@ export class Stack {
     const secret = randomBytes(32).toString('hex');
     const proc = await this.spawn(
       'wrangler',
-      [join(dir, 'node_modules/wrangler/bin/wrangler.js'), 'dev', '--port', String(port), '--ip', '127.0.0.1', '--var', `PUBLIC_URL:${url}`, '--var', `DEMO_SECRET:${secret}`, '--persist-to', this.tmp('wrangler-state')],
+      [join(dir, 'node_modules/wrangler/bin/wrangler.js'), 'dev', '--port', String(port), '--ip', '127.0.0.1', '--inspector-port', '0', '--var', `PUBLIC_URL:${url}`, '--var', `DEMO_SECRET:${secret}`, '--persist-to', this.tmp('wrangler-state')],
       {
         cwd: dir,
         env: {
