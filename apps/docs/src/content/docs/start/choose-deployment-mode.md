@@ -33,6 +33,7 @@ flowchart TD
   Q -- "Next.js on Vercel" --> V["FaaS mode<br/>Deploy → Next.js on Vercel"]
   Q -- "Cloudflare Workers" --> W["FaaS mode<br/>Deploy → Cloudflare Workers"]
   Q -- "Netlify, Deno Deploy, Bun,<br/>another Fetch platform" --> O["FaaS mode<br/>Deploy → Other Fetch platforms"]
+  Q -- "Vercel without Next.js<br/>(plain Vercel Functions)" --> O
   N --> R{"More than one node?"}
   R -- "yes" --> M["Postgres + Redis<br/>Guides → Multi-node"]
   V --> C{"Many computers online all day,<br/>or commands must arrive instantly?"}
@@ -50,9 +51,9 @@ Rules of thumb:
 
 ## What FaaS mode costs
 
-FaaS platforms bill for the time functions run (and some for CPU time). In FaaS mode:
+FaaS platforms bill for the time your functions run, in one form or another. Vercel (Fluid compute) bills active CPU time plus the memory provisioned for as long as an instance runs, so an open stream that mostly waits costs memory-time but little CPU. Cloudflare Workers bills CPU time only. In FaaS mode:
 
-- **Each online computer keeps one request open**: its HTTP stream. The hub ends it after `stream.maxDurationMs` (250 s by default, below Vercel’s 300 s limit) and the agent reopens it at once. So a computer that stays online all day uses about a day of function duration, whether or not it does any work. On Cloudflare Workers you pay for CPU time, and waiting for I/O does not count.
+- **Each online computer keeps one request open**: its HTTP stream. The hub ends it after `stream.maxDurationMs` (250 s by default, below Vercel’s 300 s limit) and the agent reopens it at once. So a computer that stays online all day keeps a function instance busy all day, whether or not it does any work (on Vercel, several streams can share one instance). On Cloudflare Workers waiting for I/O does not count as CPU time.
 - **Each open stream polls its computer’s outbox** in Postgres: every 300 ms while something happened in the last 30 s or a run is active, backing off to every 2 s when idle (`polling: { activeMs, idleMs, activeWindowMs }`). Measured on Postgres 16: about **0.5 queries per second per idle computer** and **2.3 per second while a run is active**.
 - **`postgresCluster` polls too** (every 300 ms while busy, every 2 s when quiet, per instance), to pass wake-ups between instances.
 - **Your database never sleeps while a computer is online.** A scale-to-zero Postgres (Neon’s free tier, for example) stays awake as long as any stream or instance is polling.
@@ -71,7 +72,7 @@ You can also keep your site on Vercel and run only the hub as a small Node servi
 ## What is the same in both modes
 
 - `createHub` options, `defineTool`, skills, `selectManifest`, `sessionStorage`, `getUser`, `<AgentChat>` and the `/device` approval page.
-- **Guarantees.** A tool call runs **exactly once** when a connection drops (the call and its result are stored, ids are idempotent, the agent re-sends). If the instance running your handler is stopped mid-call (a crash, a deploy, a platform time limit), the call runs **at most once**: it fails with “Site tool "<name>" timed out on the website. Please try again.” and is never re-run by itself. Events, approvals and file pulls are neither lost nor duplicated across drops, stream rotations and retries. Details: [Define tools → When connections drop](/docs/guides/define-tools/#when-connections-drop-or-instances-stop).
+- **Guarantees.** A tool call runs **exactly once** when a connection drops (the call and its result are stored, ids are idempotent, the agent re-sends) (on FaaS platforms: when the hub is given the platform's `waitUntil`; see [Workers → FAQ](/docs/deploy/cloudflare-workers/#do-site-tools-run-exactly-once-on-workers)). If the instance running your handler is stopped mid-call (a crash, a deploy, a platform time limit), the call runs **at most once**: it fails with “Site tool "<name>" timed out on the website. Please try again.” and is never re-run by itself. Events, approvals and file pulls are neither lost nor duplicated across drops, stream rotations and retries. Details: [Define tools → When connections drop](/docs/guides/define-tools/#when-connections-drop-or-instances-stop).
 - **Security.** Rate limits and failed-code counters are stored in the hub’s store, so every node and every function instance shares one count.
 
 ## Switching later

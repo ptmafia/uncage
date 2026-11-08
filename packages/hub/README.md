@@ -87,7 +87,9 @@ instance gets the agent's HTTP POST):
   ends first, the call is cancelled. In both cases, and when `hub.close()` runs out of `toolDrainMs`,
   `ctx.signal` aborts.
 - **Exactly once on connection drop**: the call and its result are stored under the call's id, and a
-  re-sent call gets the stored result (kept 24 h) instead of a second run. **At most once on instance
+  re-sent call gets the stored result (kept 24 h) instead of a second run (on FaaS platforms: when
+  the hub is given the platform's `waitUntil`, which `toNextHandlers` and `fetchOnce` pass on; see
+  the [Workers FAQ](https://uncage.vercel.app/docs/deploy/cloudflare-workers/#do-site-tools-run-exactly-once-on-workers)). **At most once on instance
   kill**: if the instance running the handler dies, the call fails with "Site tool "<name>" timed out
   on the website. Please try again." (`details.reason: 'interrupted'`) and is never re-run. Keep
   handlers within your platform's request time limit and idempotent where you can.

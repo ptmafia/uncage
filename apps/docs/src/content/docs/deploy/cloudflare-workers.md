@@ -36,7 +36,7 @@ PUBLIC_URL = "http://localhost:8787" # set your deployed origin before going liv
 
 [[hyperdrive]]
 binding = "HYPERDRIVE"
-id = "<your Hyperdrive id>" # wrangler hyperdrive create … prints it
+id = "<your Hyperdrive id>" # wrangler hyperdrive create … --caching-disabled prints it
 localConnectionString = "postgres://postgres:uncage@127.0.0.1:5432/postgres" # used by wrangler dev
 
 # Maintenance (retention cleanup) once a day; requests also run it opportunistically.
@@ -206,7 +206,7 @@ What matters here:
 
 - **One hub per request.** `fetchOnce(create, req, …)` calls `create(defer)` for every request. Register cleanups with `defer` as you open things; return the hub, or `{ hub, close }`. After the response body has finished or was cancelled (never earlier, so streams keep working), it runs `hub.close()`, then `close`, then the deferred cleanups.
 - **Migrations are checked once per isolate**: a fresh pool costs one cheap `SELECT max(id)`, no lock and no DDL.
-- **`waitUntil: ctx.waitUntil.bind(ctx)`** keeps the isolate alive for the hub’s background work and the cleanup.
+- **`waitUntil: ctx.waitUntil.bind(ctx)`** keeps the isolate alive for site tool calls whose request dropped, the hub’s background work and the cleanup. Always pass it.
 - **`clientIp` from `cf-connecting-ip`**, which Cloudflare sets, for per-IP rate limits.
 - Your sign-in goes in `getUser` (`src/auth.ts`). The repository example has a demo sign-in that lets anyone become any user; it refuses to work on a public host, and it is **not** something to copy into a real site.
 
@@ -229,11 +229,11 @@ No `CRON_SECRET` is needed: the Cron Trigger calls `scheduled` directly. (If you
    npx wrangler dev        # http://localhost:8787
    ```
 
-2. **Create the Hyperdrive configuration** and put its id in `wrangler.toml`:
+2. **Create the Hyperdrive configuration** with query caching off (the hub polls with repeated identical queries and needs fresh results) and put its id in `wrangler.toml`:
 
    ```sh
    npx wrangler login
-   npx wrangler hyperdrive create my-site-db --connection-string="postgres://user:password@host:5432/db"
+   npx wrangler hyperdrive create my-site-db --connection-string="postgres://user:password@host:5432/db" --caching-disabled
    ```
 
 3. **Deploy once** to learn your Worker’s URL: `npx wrangler deploy`.
@@ -253,7 +253,7 @@ Replace `https://my-site.example.workers.dev` with your `PUBLIC_URL` (or use `ht
 - [ ] `curl -s https://my-site.example.workers.dev/api/uncage/install.sh | head -2` prints the installer’s first lines.
 - [ ] `npx wrangler tail` while you connect a computer (`uncage setup https://my-site.example.workers.dev`, approve on `/device`): no errors, and the computer shows online.
 - [ ] Run a prompt that calls one of your site tools; the tool step completes.
-- [ ] `npx wrangler deploy --dry-run --outdir dist` succeeds: the bundle has no Node-only hub code (the root `@uncage/hub` entry is Web-standard; only `pg` uses `nodejs_compat`).
+- [ ] `npx wrangler deploy --dry-run --outdir dist` bundles without errors. (The root `@uncage/hub` entry is Web-standard and `@uncage/hub/node` is never imported here; only `pg` needs `nodejs_compat`.)
 
 ## FAQ
 
@@ -263,7 +263,7 @@ Workers forbid sharing sockets between requests, so a shared pool is not an opti
 
 ### Do site tools run exactly once on Workers?
 
-Yes, when you pass `waitUntil: ctx.waitUntil.bind(ctx)` as above. Workers may cancel a request’s remaining work when its client disconnects, so the hub runs each tool call’s handler under `waitUntil`: if the agent’s POST drops mid-call, the handler still finishes, its result is stored, and the agent’s retry gets it — **exactly once**, as on Node and Vercel (`toNextHandlers` uses the platform’s `waitUntil`, or pass Next’s `after`). A connected agent still gets the result in the same response. Without `waitUntil` a dropped POST can stop the handler: it stores no result, and once its lease runs out (`toolTimeoutMs` + 10 s) the call fails with “Site tool "<name>" timed out on the website. Please try again.” — never run twice (**at most once**). The same happens if the isolate itself is stopped mid-handler (an instance kill, or a handler outliving the platform’s `waitUntil` limit), so keep handlers short and make them idempotent where you can (a retry by the model then does no harm).
+On Workers the hub runs each tool call under the `waitUntil` you pass to `fetchOnce`, so a dropped POST does not stop the handler: its result is stored and the agent's resend gets it (exactly once). Workers keeps `waitUntil` work alive for only about 30 s after the client disconnects. A handler still running after that is cancelled. Once its lease runs out (`toolTimeoutMs` + 10 s), the call fails with "Site tool "<name>" timed out on the website. Please try again." and is never re-run (at most once). Without `waitUntil`, any dropped POST leads to this. So: always pass `waitUntil: ctx.waitUntil.bind(ctx)`, keep handlers well under 30 s, and make them idempotent where you can.
 
 ### 504s or streams cut early?
 
@@ -271,7 +271,7 @@ HTTP Workers have no wall-clock limit while the client stays connected, and wait
 
 ### Neon or Supabase without Hyperdrive?
 
-Use Hyperdrive: it pools and caches connections close to the Worker. Without it, Neon’s `@neondatabase/serverless` `Pool` (WebSockets) also works with `postgresHubStore({ pool })`; its HTTP-only `neon()` function does not (the hub needs transactions on one connection).
+Use Hyperdrive: it pools connections close to the Worker. Create it with `--caching-disabled`: the hub polls with repeated identical queries and needs fresh results, which Hyperdrive's query cache would serve stale. Without it, Neon’s `@neondatabase/serverless` `Pool` (WebSockets) also works with `postgresHubStore({ pool })`; its HTTP-only `neon()` function does not (the hub needs transactions on one connection).
 
 ### Why `nodejs_compat`?
 

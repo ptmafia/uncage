@@ -223,7 +223,7 @@ Connections between computers and your hub drop all the time (laptops sleep, net
 - **Connection drop: exactly once.** Every call has an id, and the hub stores the call and, once the handler returns, its result. When the computer reconnects it sends the call again with the same id; the hub answers with the stored result instead of running your handler a second time. A call still running elsewhere is waited for, not started again. Stored results are kept for 24 h.
 - **Instance stopped mid-handler: at most once.** If the hub process or function instance running your handler dies (a crash, a deploy, a platform time limit), nothing can know how far it got. The call is then failed, once its lease (`toolTimeoutMs` + 10 s) runs out, with exactly this message: “Site tool "<name>" timed out on the website. Please try again.” (`tool_failed`, `details.reason: 'interrupted'`). It is never re-run by itself; the model sees the error and usually tries again, which is a new call.
 - **`hub.close()`** (a graceful shutdown) lets running handlers finish for `toolDrainMs` (5 s), then aborts them with the same error.
-- **Cloudflare Workers** may cancel a request’s work when its client disconnects, which turns a dropped connection into the at-most-once case. See [Workers → FAQ](/docs/deploy/cloudflare-workers/#do-site-tools-run-exactly-once-on-workers).
+- **Cloudflare Workers** may cancel a request's work when its client disconnects. Pass `waitUntil` (`ctx.waitUntil.bind(ctx)`) and the hub keeps the handler running, so a dropped connection stays exactly once. Without it, it becomes the at-most-once case. See [Workers → FAQ](/docs/deploy/cloudflare-workers/#do-site-tools-run-exactly-once-on-workers).
 
 What this means for your handlers:
 

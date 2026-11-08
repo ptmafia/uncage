@@ -57,12 +57,14 @@ import { userFromRequest } from './auth.ts';
 async function createAppHub(): Promise<Hub> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL is not set: add your Postgres connection string to the project’s environment variables.');
+  const publicUrl = process.env.PUBLIC_URL ?? (process.env.VERCEL ? undefined : 'http://localhost:3000');
+  if (!publicUrl) throw new Error('PUBLIC_URL is not set: add your site’s https:// origin to the project’s environment variables.');
   // One small pool per function instance, shared by the store and the cluster.
   const pool = new pg.Pool({ connectionString: url, max: 5 });
   pool.on('error', (err) => console.error('postgres pool error:', err.message)); // required for your own pool
   const store = await postgresHubStore({ pool });
   return createHub({
-    publicUrl: process.env.PUBLIC_URL ?? 'http://localhost:3000',
+    publicUrl, // what users open; localhost only outside Vercel
     getUser: userFromRequest,
     store,
     cluster: postgresCluster({ pool }), // wake-ups between function instances, through Postgres
@@ -109,7 +111,7 @@ export const runtime = 'nodejs';
 `toNextHandlers` passes each request to `hub.fetch` with:
 
 - **the client IP** for per-IP rate limits: on Vercel (the `VERCEL` environment variable is set) the address Vercel’s edge puts in `x-real-ip`, which clients cannot spoof there. Anywhere else, pass `clientIp: (req) => …` yourself;
-- **`waitUntil`**: Next’s `after`, so maintenance runs after the response.
+- **`waitUntil`**: Next's `after`, so maintenance runs after the response and a site tool call finishes even if the agent's request drops.
 
 ### The chat page
 
@@ -284,7 +286,7 @@ A request ran longer than `maxDuration`. Keep **`stream.maxDurationMs` below `ma
 
 - `maxDuration` (seconds, in `route.ts`) is Vercel’s hard limit for any request to the route.
 - `stream.maxDurationMs` is when the hub itself ends its long responses (agent streams and browser event streams) so clients reconnect cleanly. It must be below `maxDuration`.
-- `toolTimeoutMs` is how long one site tool handler may run. Each tool call runs inside one request from the agent, so it must also fit inside `maxDuration`, including any file pull. If Vercel stops the function mid-handler, the call fails with “Site tool "<name>" timed out on the website. Please try again.” and is never re-run (at most once).
+- `toolTimeoutMs` is how long one site tool handler may run. Each tool call is handled during one request from the agent, under `after` (or Vercel's request-context `waitUntil`), so a dropped request does not stop it; but that work is still bounded by `maxDuration`, so `toolTimeoutMs` must fit inside it, including any file pull. If Vercel stops the function mid-handler, the call fails with “Site tool "<name>" timed out on the website. Please try again.” and is never re-run (at most once).
 
 ### Attachments over about 4 MB fail
 

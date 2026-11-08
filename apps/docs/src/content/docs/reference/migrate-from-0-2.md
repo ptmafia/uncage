@@ -3,10 +3,10 @@ title: Migrate from 0.2
 description: Every breaking change in Uncage 0.3 with before/after code — @uncage/hub is Web-standard, Node parts move to @uncage/hub/node, store is required, hub.fetch and attachWebSocket replace hub.handler and hub.attach, agents must be 0.3 or newer — plus the new options and HubStore additions.
 ---
 
-Uncage 0.3 makes the hub platform-agnostic: the same hub runs in a Node process (traditional mode) or on serverless and Fetch platforms (FaaS mode), see [Choose a deployment mode](/docs/start/choose-deployment-mode/). There is no compatibility layer for 0.2, so a 0.2 website needs the small changes below. Update every `@uncage/*` package to 0.3 together (they share one version).
+Uncage 0.3 makes the hub platform-agnostic: the same hub runs in a Node process (traditional mode) or on serverless and Fetch platforms (FaaS mode), see [Choose a deployment mode](/docs/start/choose-deployment-mode/). There is no compatibility layer for 0.2, so a 0.2 website needs the small changes below. Update every `@uncage/*` package you depend on to 0.3 together (they share one version; also `@uncage/server`, `@uncage/core`, `@uncage/agent` and the runtimes if you use them; users update `@uncage/cli` themselves).
 
 ```sh
-npm i @uncage/hub@^0.3 @uncage/react-ui@^0.3
+npm i @uncage/hub@^0.3 @uncage/react-ui@^0.3 @uncage/react@^0.3 @uncage/client@^0.3 @uncage/protocol@^0.3 # every @uncage/* package you use, together
 ```
 
 ## A traditional-mode server, before and after
@@ -96,7 +96,11 @@ Device-code, failed-code and the new failed-machine-token limits are now counted
 
 ### `HubStore` gained methods
 
-Only relevant if you wrote your own `HubStore` (the built-in `pgliteHubStore`, `postgresHubStore` and `sqlHubStore` have them). New: the per-machine **links** (`openLink`, `pollLink`, `updateLink`, `closeLink`), the durable **outbox** (`enqueueOutbox`), the upstream **inbox** for deduplication (`claimInbox`, `completeInbox`, `releaseInbox`), **tool-call state** (`claimToolCall`, `finishToolCall`, `getToolCall`, `listStaleToolCalls`, `pruneToolCallResults`), **shared counters** (`hitRateLimit`, `releaseRateLimit`), the **maintenance lease** (`tryLease`), retention (`pruneTransport`) and `markMachineOutdated`, `recordDevicePoll`. The SQL stores apply their new migrations on start; on Postgres the migrations take a transaction-scoped advisory lock, so they work behind PgBouncer / Neon `-pooler`.
+Only relevant if you wrote your own `HubStore` (the built-in `pgliteHubStore`, `postgresHubStore` and `sqlHubStore` have them). New: the per-machine **links** (`openLink`, `pollLink`, `updateLink`, `closeLink`), the durable **outbox** (`enqueueOutbox`), the upstream **inbox** for deduplication (`claimInbox`, `completeInbox`, `releaseInbox`), **tool-call state** (`claimToolCall`, `finishToolCall`, `getToolCall`, `listStaleToolCalls`, `pruneToolCallResults`), **shared counters** (`hitRateLimit`, `releaseRateLimit`), the **maintenance lease** (`tryLease`), retention (`pruneTransport`) and `markMachineOutdated`, `recordDevicePoll`. Changed: `finishToolCall(id, finish)` now takes the result too (`ToolCallFinish & { result }`) and resolves `boolean` (whether this call's finish won; it used to resolve `void`). `MachineRecord` has a new optional `outdatedAt`. The SQL stores apply their new migrations on start; on Postgres the migrations take a transaction-scoped advisory lock, so they work behind PgBouncer / Neon `-pooler`.
+
+### `hub.maintain()` (new)
+
+`hub.maintain()` runs maintenance now (unless another instance holds the lease) and resolves `{ ran, pruned, interruptedToolCalls }`. You rarely need it: `attachWebSocket` runs it on a timer, and in FaaS mode requests or `GET <basePath>/maintenance` trigger it. A Workers Cron Trigger can call it from `scheduled`.
 
 ### `ClusterAdapter.refreshPresence` (optional)
 
@@ -129,7 +133,7 @@ Retention done by maintenance: run manifests never answered 1 h, others 7 days; 
 
 ## Behavior changes to know
 
-- **Site tool calls survive dropped connections**: the call and its result are stored, so an agent’s retry gets the stored result instead of a second run (exactly once). If the instance running a handler dies, the call fails with “Site tool "<name>" timed out on the website. Please try again.” and is never re-run (at most once). `ctx.signal` now aborts on timeout, when the run ends, or when the hub closes, but no longer when the computer’s connection drops. Details: [Define tools](/docs/guides/define-tools/#when-connections-drop-or-instances-stop).
+- **Site tool calls survive dropped connections**: the call and its result are stored, so an agent’s retry gets the stored result instead of a second run (exactly once (on FaaS platforms: when the hub is given the platform's `waitUntil`; see [Workers → FAQ](/docs/deploy/cloudflare-workers/#do-site-tools-run-exactly-once-on-workers))). If the instance running a handler dies, the call fails with “Site tool "<name>" timed out on the website. Please try again.” and is never re-run (at most once). `ctx.signal` now aborts on timeout, when the run ends, or when the hub closes, but no longer when the computer’s connection drops. Details: [Define tools](/docs/guides/define-tools/#when-connections-drop-or-instances-stop).
 - **Browser event streams rotate** every `stream.maxDurationMs` (an `event: reconnect` frame). `@uncage/client` resumes with `Last-Event-ID` by itself; custom SSE clients should reconnect on it.
 - **Computers can connect over HTTP streaming** when WebSockets fail (three failed attempts), and try WebSocket again every 30 minutes.
 

@@ -9,6 +9,10 @@ description: Run the hub on any platform that speaks Fetch Request/Response — 
 The hub runs on these platforms through the same `hub.fetch` that Vercel and Workers use, but the Uncage team has not verified each platform end to end. The checklist below tells you within minutes whether yours works.
 :::
 
+:::caution[Netlify: short limit]
+Netlify documents a **60-second execution limit for streaming functions** (and 20 MB per streamed response). The hub works within it, with caveats: set `UNCAGE_STREAM_MAX_MS` to about `50000` (streams rotate every ~50 s, so more reconnects and more invocations than on Vercel), and keep `toolTimeoutMs` well under 60 s (for example `40_000`), because every site tool call must finish inside one invocation. If your tools need longer, use [Vercel](/docs/deploy/vercel/) or [traditional mode](/docs/deploy/node/).
+:::
+
 ## Prerequisites
 
 The platform must:
@@ -18,7 +22,7 @@ The platform must:
 3. **Reach Postgres** through `pg` or a pg-compatible `Pool` (Neon’s `@neondatabase/serverless` `Pool` works; HTTP-only query functions do not, because the hub needs transactions).
 4. Tell you the **client IP** (a header or a context field), for per-IP rate limits.
 
-Helpful, not required: a `waitUntil(promise)` hook (background maintenance and cleanup run after the response instead of before it), and a cron feature (for the maintenance endpoint).
+**Strongly recommended**: a `waitUntil(promise)` hook. Tool calls run under it, so a dropped connection cannot cut a handler off, and maintenance and cleanup run after the response. Helpful: a cron feature (for the maintenance endpoint).
 
 If the platform forbids sharing sockets between requests (like Workers), create the hub per request with `fetchOnce`, as on the [Workers page](/docs/deploy/cloudflare-workers/#code).
 
@@ -48,8 +52,10 @@ async function createAppHub(): Promise<Hub> {
   const pool = new pg.Pool({ connectionString: url, max: 5 });
   pool.on('error', (err) => console.error('postgres pool error:', err.message));
   const ipHeader = process.env.CLIENT_IP_HEADER?.toLowerCase();
+  const publicUrl = process.env.PUBLIC_URL ?? (process.env.VERCEL ? undefined : 'http://localhost:3000');
+  if (!publicUrl) throw new Error('PUBLIC_URL is not set: set it to your site’s https:// origin.');
   return createHub({
-    publicUrl: process.env.PUBLIC_URL ?? 'http://localhost:3000',
+    publicUrl, // what users open; localhost only for local development
     getUser,
     store: await postgresHubStore({ pool }),
     cluster: postgresCluster({ pool }),
@@ -94,17 +100,33 @@ export const config = { path: '/api/uncage/*' };
 
 ### Bun or Deno (a long-running Fetch server)
 
-Both run a file whose default export has a `fetch` handler (`bun server.ts`, `deno serve server.ts`). The process keeps running, so the hub lives as long as it does:
+Both run a file whose default export has a `fetch` handler: `bun server.ts` (Bun reads `port` from the export) or `deno serve --port 3000 server.ts`. The process keeps running, so the hub lives as long as it does:
 
 ```ts title="server.ts"
 import { getHub } from './hub.ts';
 
+/** Bun passes its server as the second argument, `deno serve` a connection info object. */
+interface BunServer {
+  requestIP(req: Request): { address: string } | null;
+}
+interface DenoServeInfo {
+  remoteAddr: { hostname: string };
+}
+
+function clientIpOf(req: Request, second: unknown): string | undefined {
+  const s = second as Partial<BunServer & DenoServeInfo> | undefined;
+  if (typeof s?.requestIP === 'function') return s.requestIP(req)?.address;
+  return s?.remoteAddr?.hostname;
+}
+
 export default {
   port: 3000,
-  async fetch(req: Request): Promise<Response> {
+  async fetch(req: Request, second?: unknown): Promise<Response> {
     if (new URL(req.url).pathname.startsWith('/api/uncage/')) {
       const hub = await getHub();
-      return hub.fetch(req); // client IP: set CLIENT_IP_HEADER (behind a proxy) — see hub.ts
+      // The socket address; behind a proxy set CLIENT_IP_HEADER instead (it wins, see hub.ts).
+      const clientIp = clientIpOf(req, second);
+      return hub.fetch(req, clientIp ? { clientIp } : {});
     }
     return new Response('Your website');
   },
@@ -129,7 +151,7 @@ The names are this page’s choice; the hub reads no environment variables itsel
 
 1. **Create the database** and set `DATABASE_URL` and `PUBLIC_URL` on the platform.
 2. **Find the request time limit** of your plan in the platform’s docs, and set `UNCAGE_STREAM_MAX_MS` below it (skip if it is 300 s or more).
-3. **Deploy** the way the platform expects (for Netlify, `netlify deploy --prod` with the function above; for Bun or Deno, run `server.ts` on your host).
+3. **Deploy** the way the platform expects (for Netlify, `netlify deploy --prod` with the function above; for Bun or Deno, run `bun server.ts` or `deno serve --port 3000 server.ts` on your host).
 4. **Optional:** schedule a daily call to `/api/uncage/maintenance` with the `CRON_SECRET` bearer token. Without it, maintenance still runs opportunistically on requests.
 
 ## Verify

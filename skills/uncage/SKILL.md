@@ -42,6 +42,12 @@ Comparison: https://uncage.vercel.app/docs/start/choose-deployment-mode.md
 FaaS rules: never import `@uncage/hub/node` there; set `stream.maxDurationMs` below the platform's
 request limit (250 000 for Vercel's 300 s) and keep `toolTimeoutMs` inside it; give the hub the client
 IP; Postgres via `pg` or a pg-compatible `Pool` (not Neon's HTTP-only `neon()`); pooled URLs are fine.
+Always pass the platform's `waitUntil` (`after` on Next.js, `ctx.waitUntil.bind(ctx)` on Workers):
+site tool calls run under it, so a dropped request does not cut a handler off. Vercel: add
+`vercel.json` `{ "crons": [{ "path": "/api/uncage/maintenance", "schedule": "0 4 * * *" }] }` and set
+`maintenance: { secret: process.env.CRON_SECRET }` (Vercel Cron sends `Authorization: Bearer $CRON_SECRET`).
+Workers: create Hyperdrive with `--caching-disabled` (the hub polls with repeated identical queries
+and needs fresh results). Throw when `PUBLIC_URL` is unset in production instead of defaulting to localhost.
 If unsure, ask: "Where is this website deployed?"
 
 ### Traditional mode steps (Next.js App Router with a custom server)
@@ -133,5 +139,5 @@ curl -s http://localhost:3000/api/uncage/runtimes   # JSON array containing "cla
   (no Redis), same config on every node, attach `'error'` listeners to pools/clients you create,
   configure the client IP for rate limits.
 - `hub.close()` never closes the store, and closes the cluster only if the hub created it; close yours after it.
-- Next.js: start with `node server.ts`, not `next dev` (otherwise `getHub()` throws "The Uncage hub is not running").
+- Next.js **with a custom server (traditional mode)**: start with `node server.ts`, not `next dev` (otherwise `getHub()` throws "The Uncage hub is not running"). Next.js on Vercel (FaaS): `next dev` / `next build && next start` work as usual.
 - Use the UI words: the user's machine is a "computer" (电脑), the background process is "the agent" (守护进程).

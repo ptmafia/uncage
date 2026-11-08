@@ -7,7 +7,7 @@ Traditional mode is the hub inside a Node.js process that keeps running: a VM, a
 
 ## Prerequisites
 
-- Node.js **22.18 or newer** (it runs the `.ts` server below directly).
+- Node.js **22.18 or newer**: it runs the `.ts` server below directly, without a build step (older versions need `--experimental-strip-types`, or compile with `tsc` first).
 - A host that keeps the process running and gives it a **persistent disk** for the hub’s data folder (`.uncage-hub`). Without one, every restart forgets the paired computers and users must run `uncage setup` again.
 - In front of it, a proxy or load balancer that forwards **WebSocket upgrades** on `/api/uncage/agent` (most hosts do by default) and serves `https://`.
 - Your app’s sign-in, readable from a Fetch `Request` (a session cookie).
@@ -95,6 +95,7 @@ These names are this page’s choice; the hub itself reads no environment variab
 1. **Build and start** with `node server.ts` (Node 22.18+). In a container, for example:
 
    ```dockerfile title="Dockerfile"
+   # Node 22.18 or newer runs server.ts directly (type stripping); node:22 is the latest 22.x.
    FROM node:22-slim
    WORKDIR /app
    COPY package*.json ./
