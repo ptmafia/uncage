@@ -12,7 +12,7 @@ function run(cmd, args) {
   console.log(`\n$ ${cmd} ${args.join(' ')}`);
   const r = spawnSync(cmd, args, { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
   if (r.status !== 0) {
-    console.error(`build-web: \`${cmd} ${args.join(' ')}\` failed (${r.status ?? r.signal})`);
+    console.error(`build-web: \`${cmd} ${args.join(' ')}\` failed (${r.error?.message ?? r.status ?? r.signal})`);
     process.exit(r.status ?? 1);
   }
 }

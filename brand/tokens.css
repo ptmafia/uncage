@@ -24,7 +24,9 @@
   color-scheme: light;
 }
 
-/* Warm dark: contrast on --uc-paper is ink 15.1, ink-2 10.2, ink-3 5.9, accent 6.9 (all AA). */
+/* Warm dark: contrast on --uc-paper is ink 15.1, ink-2 10.2, ink-3 5.9, accent 6.9 (all AA).
+   Keep in sync with the prefers-color-scheme block below: CSS cannot share one declaration block
+   between a selector and a media query, so the dark values are written twice. */
 [data-theme='dark'] {
   --uc-paper: #171512;
   --uc-paper-2: #211e1a;
@@ -39,6 +41,7 @@
   color-scheme: dark;
 }
 
+/* Keep in sync with [data-theme='dark'] above. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     --uc-paper: #171512;

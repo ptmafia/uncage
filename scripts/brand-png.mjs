@@ -37,7 +37,8 @@ try {
       `<html><body style="margin:0;width:${t.size}px;height:${t.size}px;display:grid;place-items:center;background:${t.bg ?? 'transparent'}">` +
         `<img src="${markUri}" width="${t.mark}" height="${t.mark}" style="display:block"></body></html>`,
     );
-    await page.waitForFunction(() => document.images[0]?.complete);
+    // A string so it is evaluated in the page (where `document` exists), not linted as Node code.
+    await page.waitForFunction('document.images[0]?.complete');
     await page.screenshot({ path: path.join(outDir, t.file), omitBackground: t.bg === null });
     await page.close();
     console.log(`wrote brand/png/${t.file}`);

@@ -31,5 +31,4 @@ jobs:
       - run: pnpm build:web
       - run: pnpm check:web
       - run: pnpm --filter docs check:snippets
-      # --allow-missing until every locale is fully translated (Tasks 7-9 of the website plan).
-      - run: pnpm --filter docs exec node scripts/check-i18n.ts --allow-missing
+      - run: pnpm --filter docs exec node scripts/check-i18n.ts
