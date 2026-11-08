@@ -32,18 +32,27 @@ function leaves(v: unknown, path = ''): Map<string, unknown> {
 }
 
 /**
- * Keys whose translation may legitimately equal the English text. Decided per key:
+ * Keys whose translation may legitimately equal the English text. Decided per key and locale:
  * - `flow.browserTitle`: the example domain "your.site" (a URL, not copy).
+ * - ja `flow.allow` / `flow.deny`: the approval buttons as the real UI shows them. @uncage/react-ui has
+ *   no Japanese strings, so a Japanese visitor sees "Allow once" / "Deny" (zh has 允许执行 / 拒绝).
  * - `hero.eyebrow` is NOT allowed: "v0.2" stays, but the sentence is translated.
  * - Brand names, "GitHub", "npm", "MIT", commands and code are not in the dictionaries at all
  *   (they live in the components), so they need no entry here.
  */
-const sameAsEnglishAllowed = new Set(['flow.browserTitle']);
+const sameAsEnglishAllowed: Record<Exclude<Locale, 'en'>, Set<string>> = {
+  zh: new Set(['flow.browserTitle']),
+  ja: new Set(['flow.browserTitle', 'flow.allow', 'flow.deny']),
+};
 
 const english = leaves(getDict('en'));
 
-describe.each(locales.filter((l) => l !== 'en') as Locale[])('%s dictionary', (locale) => {
+describe.each(locales.filter((l) => l !== 'en') as Exclude<Locale, 'en'>[])('%s dictionary', (locale) => {
   const dict = leaves(getDict(locale));
+
+  it('is not marked pending (an English placeholder)', () => {
+    expect(pendingLocales).not.toContain(locale);
+  });
 
   it('has every English key, as a non-empty string', () => {
     for (const key of english.keys()) {
@@ -54,10 +63,8 @@ describe.each(locales.filter((l) => l !== 'en') as Locale[])('%s dictionary', (l
     expect([...dict.keys()].sort()).toEqual([...english.keys()].sort());
   });
 
-  // Skipped while the dictionary is an English placeholder (zh.ts / ja.ts export `pending = true`
-  // until the translation lands in Task 5 of the website plan).
-  it.skipIf(pendingLocales.includes(locale))('is translated: no value equals the English one (allow-list aside)', () => {
-    const untranslated = [...english].filter(([k, v]) => !sameAsEnglishAllowed.has(k) && dict.get(k) === v).map(([k]) => k);
+  it('is translated: no value equals the English one (allow-list aside)', () => {
+    const untranslated = [...english].filter(([k, v]) => !sameAsEnglishAllowed[locale].has(k) && dict.get(k) === v).map(([k]) => k);
     expect(untranslated).toEqual([]);
   });
 });

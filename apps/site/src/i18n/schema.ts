@@ -63,7 +63,10 @@ export interface Dict {
   };
   hero: {
     eyebrow: string;
-    /** The h1. The part between `*asterisks*` is emphasised (accent colour). */
+    /**
+     * The h1. The part between `*asterisks*` is emphasised (accent colour). `|` marks the only places
+     * the line may break (CJK: phrases are kept whole); it renders as `<wbr>`, not as text.
+     */
     title: string;
     lede: string;
     primary: string;

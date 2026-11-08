@@ -56,6 +56,9 @@ const t = getDict(locale).final;
   }
   .sub {
     margin: 0 auto 32px;
+    /* A short centred line: wrap it evenly, and at phrase boundaries in ja (no 「のた / めに」 orphans). */
+    text-wrap: balance;
+    word-break: auto-phrase;
   }
   .ctas {
     display: flex;

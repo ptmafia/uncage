@@ -67,3 +67,26 @@ export const TRY_DEMO = 'start/try-the-demo/';
 
 export const GITHUB_URL = 'https://github.com/ptmafia/uncage';
 export const NPM_URL = 'https://www.npmjs.com/org/uncage';
+
+export interface HeadlinePart {
+  text: string;
+  em: boolean;
+}
+
+/**
+ * Splits `hero.title` into unbreakable phrases (separated by `|`), each a list of parts with
+ * `*emphasis*` resolved: `headline('A |*b c.*')` → `[[{A , em:false}], [{b c., em:true}]]`.
+ * The page and the OG image render each phrase as a no-wrap span with `<wbr>` between phrases.
+ */
+export function headline(title: string): HeadlinePart[][] {
+  let em = false;
+  return title.split('|').map((phrase) =>
+    phrase
+      .split('*')
+      .map((text, i) => {
+        if (i > 0) em = !em;
+        return { text, em };
+      })
+      .filter((p) => p.text),
+  );
+}

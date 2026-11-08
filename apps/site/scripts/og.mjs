@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
-import { getDict, localeInfo, locales } from '../src/i18n/index.ts';
+import { getDict, headline, localeInfo, locales } from '../src/i18n/index.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const siteDir = path.resolve(here, '..');
@@ -20,7 +20,10 @@ const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, 
 
 function html(locale) {
   const t = getDict(locale);
-  const title = esc(t.hero.title).replace(/\*([^*]+)\*/, '<em>$1</em>');
+  const phrases = headline(t.hero.title);
+  const title = phrases
+    .map((phrase) => `<span${phrases.length > 1 ? ' class="ph"' : ''}>${phrase.map((p) => (p.em ? `<em>${esc(p.text)}</em>` : esc(p.text))).join('')}</span>`)
+    .join('<wbr>');
   return `<!doctype html><html lang="${localeInfo[locale].lang}"><head><meta charset="utf-8"><style>
   * { box-sizing: border-box; }
   html, body { margin: 0; width: 1200px; height: 630px; }
@@ -33,6 +36,9 @@ function html(locale) {
   h1 { margin: auto 0 22px; font-size: 92px; line-height: 1.0; letter-spacing: -0.04em; font-weight: 760; max-width: 900px; }
   :lang(zh-CN) h1, :lang(ja) h1 { letter-spacing: -0.01em; line-height: 1.12; font-size: 84px; }
   em { font-style: normal; color: #c4651a; }
+  .ph { white-space: nowrap; }
+  :lang(ja) body { font-family: -apple-system, BlinkMacSystemFont, system-ui, 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', 'Noto Sans JP', sans-serif; }
+  :lang(ja) h1 { font-feature-settings: 'palt'; }
   p { margin: 0; font-size: 34px; color: #4a4f57; }
   .foot { position: absolute; right: 80px; top: 84px; font: 600 22px ui-monospace, 'SF Mono', Menlo, monospace; color: #a14f0c;
     background: #fbe7d3; border: 1px solid rgba(196,101,26,.25); border-radius: 999px; padding: 8px 18px; }

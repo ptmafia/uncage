@@ -49,16 +49,39 @@ test('no horizontal scroll at 375x812', async ({ page }) => {
   expect(scrollWidth).toBeLessThanOrEqual(innerWidth);
 });
 
-test('zh and ja pages exist with their language and docs links', async ({ page }) => {
-  for (const [path, lang, docs] of [
-    ['/zh/', 'zh-CN', '/docs/zh-cn/'],
-    ['/ja/', 'ja', '/docs/ja/'],
+test('zh and ja homepages: language, translated copy, docs links, switcher, OG image', async ({ page }) => {
+  const errors = trackErrors(page);
+  for (const c of [
+    { path: '/zh/', lang: 'zh-CN', docs: '/docs/zh-cn/', og: 'zh', h1: '你的 coding agent，无处不在。', secondary: '几分钟完成接入', soon: '即将推出' },
+    { path: '/ja/', lang: 'ja', docs: '/docs/ja/', og: 'ja', h1: 'あなたのコーディングエージェントを、どこでも。', secondary: '数分で組み込み', soon: '近日公開' },
   ] as const) {
-    await page.goto(path);
-    await expect(page.locator('html')).toHaveAttribute('lang', lang);
-    await expect(page.locator('a[data-nav="nav-docs"]')).toHaveAttribute('href', docs);
-    await expect(page.locator('[data-cta="primary"]')).toHaveAttribute('href', `${docs}start/try-the-demo/`);
+    await page.goto(c.path);
+    await expect(page.locator('html')).toHaveAttribute('lang', c.lang);
+    await expect(page.locator('h1')).toHaveText(c.h1);
+    await expect(page.locator('[data-cta="secondary"]')).toHaveText(c.secondary);
+    await expect(page.locator('a[data-nav="nav-docs"]')).toHaveAttribute('href', c.docs);
+    for (const sel of ['header a.cta', '[data-cta="primary"]', '[data-cta="final"]']) {
+      await expect(page.locator(sel)).toHaveAttribute('href', `${c.docs}start/try-the-demo/`);
+    }
+    await expect(page.locator('[data-soon-badge]', { hasText: new RegExp(`^${c.soon}$`) })).toHaveCount(4);
+    await expect(page.locator('#features li.feat:not(.soon)')).toHaveCount(6);
+    await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', new RegExp(`${c.path}$`));
+    await expect(page.locator('meta[property="og:image"]')).toHaveAttribute('content', new RegExp(`/og/og-${c.og}\\.png$`));
+    await expect(page.locator('meta[name="twitter:image"]')).toHaveAttribute('content', new RegExp(`/og/og-${c.og}\\.png$`));
+    const og = await page.request.get(`/og/og-${c.og}.png`);
+    expect(og.status()).toBe(200);
+    expect(og.headers()['content-type']).toContain('image/png');
   }
+
+  // The language switcher on /ja/ offers English (/) and Chinese (/zh/), and marks Japanese as current.
+  await page.goto('/ja/');
+  const picks = page.locator('header [data-lang-pick]');
+  await expect(picks.and(page.locator('[data-lang-pick="en"]'))).toHaveAttribute('href', '/');
+  await expect(picks.and(page.locator('[data-lang-pick="zh"]'))).toHaveAttribute('href', '/zh/');
+  await expect(picks.and(page.locator('[data-lang-pick="ja"]'))).toHaveAttribute('aria-current', 'true');
+
+  await page.waitForLoadState('networkidle');
+  expect(errors).toEqual([]);
 });
 
 test('copy button copies the setup command', async ({ page, context }) => {
@@ -92,8 +115,6 @@ test('robots.txt, sitemap and 404', async ({ request, page }) => {
 });
 
 test('the language hint offers Japanese to a Japanese browser, and remembers dismissal', async ({ browser }) => {
-  const { pendingLocales } = await import('../src/i18n/index.ts');
-  test.skip(pendingLocales.includes('ja'), 'ja copy is still the English placeholder (Task 5), so no hint is offered yet');
   const context = await browser.newContext({ locale: 'ja-JP' });
   const page = await context.newPage();
   await page.goto('/');
