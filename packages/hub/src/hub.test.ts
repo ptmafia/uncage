@@ -497,7 +497,7 @@ describe('browser API → machine', () => {
   });
 
   it('attachment bytes: swept after attachmentRetentionDays; revoking the machine deletes them', async () => {
-    const t = await start({ attachmentRetentionDays: 1, manifestSweep: { intervalMs: 50 } });
+    const t = await start({ attachmentRetentionDays: 1, maintenance: { intervalMs: 50 } });
     const fm = fakeMachine();
     const { machineToken, machineId } = await t.pair('alice');
     let n = 0;

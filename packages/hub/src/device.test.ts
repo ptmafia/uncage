@@ -2,7 +2,7 @@ import { DeviceCodeResponseSchema } from '@uncage/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { deviceFlow, generateUserCode, normalizeUserCode, USER_CODE_ALPHABET } from './device.js';
 import { sha256Hex } from './web.js';
-import { SlidingWindow } from './rate-limit.js';
+import { storeRateLimiter } from './rate-limit.js';
 import { pgliteHubStore } from './node/index.js';
 import type { HubStore } from './store/store.js';
 
@@ -31,8 +31,8 @@ describe('deviceFlow', () => {
   const flow = (limits = { failures: 10, codes: 1000 }) =>
     deviceFlow({
       limits: {
-        userFailures: new SlidingWindow(limits.failures, 600_000, () => now),
-        codesPerClient: new SlidingWindow(limits.codes, 60_000, () => now),
+        userFailures: storeRateLimiter(store, { name: 'user_code', max: limits.failures, windowMs: 600_000, now: () => now }),
+        codesPerClient: storeRateLimiter(store, { name: 'device_code', max: limits.codes, windowMs: 60_000, now: () => now }),
       },
       store,
       verificationUri: 'https://app.example.com/device',

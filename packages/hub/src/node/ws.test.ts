@@ -9,7 +9,7 @@ import type { HubStore } from '../store/store.js';
 import { WebSocket } from 'ws';
 import { createHub } from '../hub.js';
 import { connectFakeAgent, fakeMachine, sleep, until } from '../test-utils.js';
-import type { Hub } from '../types.js';
+import type { Hub, HubOptions } from '../types.js';
 import { attachWebSocket, pgliteHubStore, toNodeHandler } from './index.js';
 
 const closers: Array<() => Promise<unknown>> = [];
@@ -17,7 +17,7 @@ afterEach(async () => {
   for (const c of closers.splice(0).reverse()) await c().catch(() => undefined);
 });
 
-async function setup(o: { cluster?: ClusterAdapter } & HubInternals = {}): Promise<{ hub: Hub; server: Server; origin: string; store: HubStore }> {
+async function setup(o: { cluster?: ClusterAdapter; maintenance?: HubOptions['maintenance'] } & HubInternals = {}): Promise<{ hub: Hub; server: Server; origin: string; store: HubStore }> {
   const store = await pgliteHubStore({ dataDir: 'memory://' });
   closers.push(() => store.close());
   const server = createServer();
@@ -123,7 +123,7 @@ describe('attachWebSocket', () => {
   });
 
   it('runs the retention sweep on a timer while attached, and stops after detach', async () => {
-    const { hub, server, store } = await setup({ manifestSweep: { intervalMs: 30 } });
+    const { hub, server, store } = await setup({ maintenance: { intervalMs: 30 } });
     const prune = vi.spyOn(store, 'pruneRunManifests');
     await sleep(100);
     expect(prune).not.toHaveBeenCalled(); // createHub alone runs nothing

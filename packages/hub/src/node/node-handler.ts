@@ -27,9 +27,11 @@ function requestPath(req: IncomingMessage & { originalUrl?: string }): string {
  * socket address.
  */
 export function toNodeHandler(h: Hub): UncageNodeHandler {
+  // A Node process outlives the response: background work (opportunistic maintenance) just runs.
+  const waitUntil = (p: Promise<unknown>) => void p.catch(() => undefined);
   const handle = (req: Request) => {
     const clientIp = req.headers.get(CLIENT_IP_HEADER);
-    return h.fetch(req, clientIp ? { clientIp } : {});
+    return h.fetch(req, clientIp ? { clientIp, waitUntil } : { waitUntil });
   };
   const inner = fetchToNode({ GET: handle, POST: handle, PATCH: handle, DELETE: handle });
   return (req, res, next) => {

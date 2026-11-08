@@ -62,6 +62,8 @@ export interface ApiContext {
   minAgentVersion: string;
   install: { install: string; setup: string; windows: null };
   installScript: string;
+  /** `secret` set: `GET|POST /maintenance` with `Authorization: Bearer <secret>` runs maintenance. */
+  maintenance: { secret: string | undefined; run(): Promise<unknown> };
   version: string;
   sseHeartbeatMs: number;
   shutdown: AbortSignal;
@@ -313,6 +315,22 @@ export function browserApi(ctx: ApiContext) {
       headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-cache', 'x-content-type-options': 'nosniff' },
     }),
   { public: true });
+
+  // Platform cron (e.g. Vercel Cron with CRON_SECRET). Without a secret there is no such route.
+  const maintenanceSecret = ctx.maintenance.secret;
+  if (maintenanceSecret) {
+    const expected = sha256Hex(maintenanceSecret);
+    const runMaintenance = async ({ req }: Call) => {
+      const m = /^Bearer (.+)$/.exec(req.headers.get('authorization') ?? '');
+      // Compare digests, so the comparison time does not depend on how much of the secret matched.
+      if (!m?.[1] || (await sha256Hex(m[1])) !== (await expected)) {
+        throw new UncageError('unauthorized', { message: 'Missing or invalid maintenance secret.' });
+      }
+      return json(await ctx.maintenance.run());
+    };
+    add('GET', '/maintenance', runMaintenance, { public: true });
+    add('POST', '/maintenance', runMaintenance, { public: true });
+  }
 
   add('POST', '/device/code', async ({ req, clientKey }) => {
     const body = parse(DeviceCodeRequestSchema, (await readJson(req)) ?? {});

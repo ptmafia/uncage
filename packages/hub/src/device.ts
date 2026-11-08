@@ -1,5 +1,5 @@
 import type { DeviceCodeRequest, DeviceCodeResponse, DeviceTokenResponse, TransportOffer } from '@uncage/protocol';
-import type { SlidingWindow } from './rate-limit.js';
+import type { RateLimiter } from './rate-limit.js';
 import type { HubStore } from './store/store.js';
 import type { HubUser } from './types.js';
 import { randomInt, randomToken, sha256Hex } from './web.js';
@@ -37,11 +37,12 @@ export interface DeviceFlowDeps {
    * resolves its id and (one-time) token.
    */
   createMachine(o: { userId: string; name?: string; os?: string; machineKeyHash?: string }): Promise<{ machineId: string; machineToken: string }>;
+  /** Shared through the store, so every hub instance counts together. */
   limits: {
     /** Failed approve/deny/lookup attempts per user (user-code guessing). */
-    userFailures: SlidingWindow;
+    userFailures: RateLimiter;
     /** `POST /device/code` per client. */
-    codesPerClient: SlidingWindow;
+    codesPerClient: RateLimiter;
   };
   now?: () => number;
 }
@@ -66,23 +67,21 @@ const clipLabel = (v: string | undefined): string | undefined =>
 export function deviceFlow(d: DeviceFlowDeps) {
   const now = d.now ?? Date.now;
   const expired = (r: { expiresAt: string }) => Date.parse(r.expiresAt) <= now();
-  /** Last poll time per device-code hash (for `slow_down`). */
-  const lastPoll = new Map<string, number>();
 
   /** Rate-limited per user: unknown codes count as failed guesses. Throws `rate_limited`. */
   async function guarded<T>(user: HubUser, fn: () => Promise<T>, failed: (r: T) => boolean): Promise<T> {
     const limit = d.limits.userFailures;
-    // Reserve the attempt synchronously (check + record) so parallel guesses cannot overshoot the
-    // limit; give it back if it turns out not to be a failure.
-    limit.take(user.id);
+    // Reserve the attempt first (one atomic count in the store) so parallel guesses, on any
+    // instance, cannot overshoot the limit; give it back if it turns out not to be a failure.
+    await limit.take(user.id);
     let r: T;
     try {
       r = await fn();
     } catch (e) {
-      limit.release(user.id);
+      await limit.release(user.id);
       throw e;
     }
-    if (!failed(r)) limit.release(user.id);
+    if (!failed(r)) await limit.release(user.id);
     return r;
   }
 
@@ -103,20 +102,17 @@ export function deviceFlow(d: DeviceFlowDeps) {
     );
   }
 
-  function tooFast(hash: string): boolean {
+  /** Records this poll in the store (shared by every instance); `true` when it came too soon after the last one. */
+  async function tooFast(hash: string): Promise<boolean> {
     const t = now();
-    if (lastPoll.size > 10_000) {
-      for (const [k, at] of lastPoll) if (t - at > DEVICE_EXPIRES_IN_SEC * 1000) lastPoll.delete(k);
-    }
-    const prev = lastPoll.get(hash);
-    lastPoll.set(hash, t);
-    return prev !== undefined && t - prev < DEVICE_INTERVAL_SEC * 1000 - POLL_TOLERANCE_MS;
+    const prev = await d.store.recordDevicePoll(hash, new Date(t).toISOString());
+    return prev !== null && t - Date.parse(prev) < DEVICE_INTERVAL_SEC * 1000 - POLL_TOLERANCE_MS;
   }
 
   return {
     /** `clientKey` identifies the caller for rate limiting (normally its IP). Throws `rate_limited`. */
     async createCode(body: DeviceCodeRequest, clientKey: string): Promise<DeviceCodeResponse> {
-      d.limits.codesPerClient.take(clientKey);
+      await d.limits.codesPerClient.take(clientKey);
       const deviceCode = randomSecret();
       // Retry on the (astronomically unlikely) user-code collision with a live code.
       for (let attempt = 0; ; attempt++) {
@@ -157,13 +153,12 @@ export function deviceFlow(d: DeviceFlowDeps) {
       const rec = await d.store.getDeviceCode(hash);
       if (!rec) return null;
       if (rec.status === 'consumed') return { status: 'expired' };
-      if (tooFast(hash)) return { status: 'slow_down' };
+      if (await tooFast(hash)) return { status: 'slow_down' };
       if (rec.status === 'denied') return { status: 'denied' };
       if (expired(rec)) return { status: 'expired' };
       if (rec.status === 'pending') return { status: 'pending' };
       const won = await d.store.transitionDeviceCode(hash, 'approved', 'consumed');
       if (!won?.userId) return { status: 'expired' };
-      lastPoll.delete(hash);
       const m = await d.createMachine({
         userId: won.userId,
         ...(won.name ? { name: won.name } : {}),

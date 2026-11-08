@@ -31,7 +31,7 @@ const HELLO_TIMEOUT_MS = 10_000;
 /** After sending a close frame to a retired socket, how long before the TCP connection is cut. */
 export const CLOSE_GRACE_MS = 500;
 
-/** Hubs with a WebSocket server attached (one at a time: one offered URL, one sweep timer). */
+/** Hubs with a WebSocket server attached (one at a time: one offered URL, one maintenance timer). */
 const attached = new WeakSet<MachineHub>();
 
 function internals(hub: Hub): HubInternalsHandle {
@@ -42,8 +42,8 @@ function internals(hub: Hub): HubInternalsHandle {
 
 /**
  * Accepts machine WebSockets on `server` at `path` (default `<basePath>/agent`), the traditional
- * mode transport; the URL offered to agents follows `path`. Also runs the hub's retention sweep
- * hourly in this long-running process. Returns a function that stops accepting new sockets
+ * mode transport; the URL offered to agents follows `path`. Also runs `hub.maintain()` every
+ * `maintenance.intervalMs` (default 60 s) in this long-running process. Returns a function that stops accepting new sockets
  * (connected machines stay until `hub.close()`); `hub.close()` detaches too. One server per hub
  * at a time: a second call before detaching throws.
  *
@@ -89,7 +89,9 @@ export function attachWebSocket(hub: Hub, server: Server, o: { path?: string } =
   server.on('upgrade', listener);
   h.enableWebSocket({ path });
 
-  const sweep = setInterval(() => void h.maintenance.run().catch((err: unknown) => logger.error({ err }, 'retention sweep failed')), h.maintenance.intervalMs);
+  // Long-running process: maintenance on a timer (same code path as FaaS; the lease keeps
+  // several nodes to one run per interval).
+  const sweep = setInterval(() => void hub.maintain().catch((err: unknown) => logger.error({ err }, 'maintenance failed')), h.maintenance.intervalMs);
   unrefTimer(sweep);
 
   const detach = () => {

@@ -1,6 +1,7 @@
 import type { SkillSpec } from '@uncage/protocol';
 import type { ClusterAdapter } from './cluster/cluster.js';
 import type { HubLogger, MachineHub } from './machines.js';
+import type { MaintenanceReport } from './maintenance.js';
 import type { HubStore } from './store/store.js';
 import type { SiteTool } from './tools.js';
 
@@ -79,8 +80,8 @@ export interface HubOptions {
    */
   maxConcurrentToolCalls?: number;
   /**
-   * Abuse limits, counted in memory per hub node (with several nodes each counts on its own until
-   * limits are shared through the cluster adapter). Exceeding one → 429 `rate_limited`.
+   * Abuse limits, counted in the store (fixed windows), so every hub instance — several nodes or
+   * FaaS function instances — shares one count. Exceeding one → 429 `rate_limited`.
    */
   rateLimits?: {
     /** `POST /device/code` per client IP per minute. Default 20. */
@@ -104,6 +105,24 @@ export interface HubOptions {
     /** Use the rightmost `X-Forwarded-For` entry when no client IP is known. Default false. */
     trustForwardedFor?: boolean;
   };
+  /**
+   * Retention (old run manifests, attachment copies, expired outbox items, finished inbox rows,
+   * old rate-limit windows, expired device codes). It runs at most once per `intervalMs` across
+   * every instance (a store lease): `attachWebSocket` runs it on a timer in a long-running process;
+   * otherwise requests trigger it (in the background through `info.waitUntil` when the platform
+   * provides it). A platform cron can also call `GET|POST <basePath>/maintenance`.
+   */
+  maintenance?: {
+    /** Default 60 000 ms. */
+    intervalMs?: number;
+    /**
+     * Enables `GET|POST <basePath>/maintenance` with `Authorization: Bearer <secret>` (what Vercel
+     * Cron sends with `CRON_SECRET`). Without it the endpoint is a 404.
+     */
+    secret?: string;
+    /** Your own cleanup, called after each maintenance run. */
+    onRun?(): Promise<void>;
+  };
 }
 
 /** Key of the hub's internals, read by `@uncage/hub/node` only. */
@@ -118,8 +137,8 @@ export interface HubInternalsHandle {
   enableWebSocket(o?: { path?: string }): void;
   /** Machine heartbeat for WebSocket links. */
   heartbeat: { pingIntervalMs: number; missedPings: number };
-  /** Retention sweep (run manifests, attachment copies) a long-running process runs every `intervalMs`. */
-  maintenance: { intervalMs: number; run(): Promise<void> };
+  /** Maintenance interval: a long-running process calls `hub.maintain()` this often. */
+  maintenance: { intervalMs: number };
 }
 
 export interface Hub {
@@ -147,6 +166,11 @@ export interface Hub {
     userCode: string,
     user: HubUser,
   ): Promise<{ name?: string; os?: string; expiresAt: string; repairsMachine: { id: string; name: string } | null } | null>;
+  /**
+   * Runs maintenance now unless another instance holds the maintenance lease (`ran: false`). You
+   * rarely need it: see `HubOptions.maintenance`.
+   */
+  maintain(): Promise<MaintenanceReport>;
   /** Deletes the machine (its token stops working) and disconnects it. Throws `machine_not_found`. */
   revokeMachine(machineId: string, user: HubUser): Promise<void>;
   /**

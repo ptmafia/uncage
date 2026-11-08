@@ -11,7 +11,8 @@ import { assertVersionRange, defaultCliRange, installScript } from './install-sc
 import { newNodeId } from './ids.js';
 import { compareVersions, MachineHub, sessionChannel, type HubLogger } from './machines.js';
 import { applyEvent, emptySnapshot, indexPatch } from './replica.js';
-import { SlidingWindow } from './rate-limit.js';
+import { maintenance } from './maintenance.js';
+import { storeRateLimiter } from './rate-limit.js';
 import type { HubStore, MachineRecord, SessionRecord, ToolCallStatus, ToolResultFrame } from './store/store.js';
 import { siteToolExecutor, toToolSpec, type ToolContext, type ToolExecutor } from './tools.js';
 import { HUB_INTERNALS, type Hub, type HubOptions } from './types.js';
@@ -31,8 +32,17 @@ const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
 const DEFAULT_RUN_INDEX_WAIT_MS = 10_000;
 /** Hub copies of attachments are deleted after this many days (`attachmentRetentionDays`). */
 const DEFAULT_ATTACHMENT_RETENTION_DAYS = 30;
-/** Run-manifest retention sweep: every hour (run by `attachWebSocket` on every node; deletes are idempotent). */
-const MANIFEST_SWEEP_MS = 3_600_000;
+/** Maintenance (retention) at most this often across all instances (`maintenance.intervalMs`). */
+const DEFAULT_MAINTENANCE_INTERVAL_MS = 60_000;
+/**
+ * Finished inbox (upstream dedupe) rows are kept a day. An agent resends an unacknowledged upstream
+ * message only while its link retries (minutes, bounded by its reconnect backoff and the outbox
+ * expiry); a resend arriving after its dedupe row is gone would be processed twice, so this stays
+ * far beyond that window.
+ */
+const INBOX_RETENTION_MS = 24 * 3_600_000;
+const DEFAULT_USER_CODE_WINDOW_MS = 600_000;
+const DEVICE_CODE_WINDOW_MS = 60_000;
 /** An unbound manifest (startRun never answered) is dropped after an hour. */
 const UNBOUND_MANIFEST_TTL_MS = 3_600_000;
 /**
@@ -72,8 +82,8 @@ export interface HubInternals {
   toolExecutor?: ToolExecutor;
   /** See DEFAULT_RUN_INDEX_WAIT_MS (tests shorten it). */
   runIndexWaitMs?: number;
-  /** Run-manifest (and attachment) sweep interval / retention (tests shorten them). */
-  manifestSweep?: { intervalMs?: number; unboundTtlMs?: number; boundTtlMs?: number };
+  /** Run-manifest retention (tests shorten it). */
+  manifestSweep?: { unboundTtlMs?: number; boundTtlMs?: number };
   logger?: HubLogger;
 }
 
@@ -139,6 +149,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   /** Set by `attachWebSocket`: this process serves machine WebSockets at this path. */
   let wsPath: string | undefined;
 
+  const userCodeWindowMs = o.rateLimits?.userCodeWindowMs ?? DEFAULT_USER_CODE_WINDOW_MS;
   const device = deviceFlow({
     store,
     verificationUri: `${origin}/${trimSlashes(o.verificationPath ?? '/device')}`,
@@ -170,8 +181,8 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
       return { machineId, machineToken };
     },
     limits: {
-      userFailures: new SlidingWindow(o.rateLimits?.userCodeFailures ?? 10, o.rateLimits?.userCodeWindowMs ?? 600_000),
-      codesPerClient: new SlidingWindow(o.rateLimits?.deviceCodesPerMinute ?? 20, 60_000),
+      userFailures: storeRateLimiter(store, { name: 'user_code', max: o.rateLimits?.userCodeFailures ?? 10, windowMs: userCodeWindowMs }),
+      codesPerClient: storeRateLimiter(store, { name: 'device_code', max: o.rateLimits?.deviceCodesPerMinute ?? 20, windowMs: DEVICE_CODE_WINDOW_MS }),
     },
   });
   /** Rate-limit key: custom `clientIp` > `info.clientIp` > (opt-in) rightmost X-Forwarded-For > shared. */
@@ -407,24 +418,44 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     }
   }
   const sweep = {
-    intervalMs: o.manifestSweep?.intervalMs ?? MANIFEST_SWEEP_MS,
     unboundTtlMs: o.manifestSweep?.unboundTtlMs ?? UNBOUND_MANIFEST_TTL_MS,
     boundTtlMs: o.manifestSweep?.boundTtlMs ?? BOUND_MANIFEST_TTL_MS,
   };
-  /** Retention sweep; no timer here (FaaS instances must not keep background work): `attachWebSocket` runs it. */
-  const sweepManifests = async (): Promise<void> => {
-    const now = Date.now();
-    await Promise.all([
-      store
-        .pruneRunManifests({ unboundBefore: new Date(now - sweep.unboundTtlMs).toISOString(), boundBefore: new Date(now - sweep.boundTtlMs).toISOString() })
-        .catch((err: unknown) => logger.error({ err }, 'run-manifest sweep failed')),
-      Number.isFinite(attachmentRetentionDays)
-        ? store
-            .pruneAttachments(new Date(now - attachmentRetentionDays * 86_400_000).toISOString())
-            .catch((err: unknown) => logger.error({ err }, 'attachment sweep failed'))
-        : undefined,
-    ]);
-  };
+  const maintenanceIntervalMs = o.maintenance?.intervalMs ?? DEFAULT_MAINTENANCE_INTERVAL_MS;
+  if (!(maintenanceIntervalMs > 0)) throw new Error(`createHub: maintenance.intervalMs must be > 0 (got ${maintenanceIntervalMs})`);
+  /** Rate-limit windows older than the longest window are dead. */
+  const longestWindowMs = Math.max(DEVICE_CODE_WINDOW_MS, userCodeWindowMs);
+  /** No timer here (FaaS instances must not keep background work): requests, `attachWebSocket` or a cron run it. */
+  const upkeep = maintenance({
+    store,
+    nodeId,
+    intervalMs: maintenanceIntervalMs,
+    logger,
+    ...(o.maintenance?.onRun ? { onRun: o.maintenance.onRun } : {}),
+    tasks: [
+      async () => {
+        const now = Date.now();
+        return {
+          runManifests: await store.pruneRunManifests({
+            unboundBefore: new Date(now - sweep.unboundTtlMs).toISOString(),
+            boundBefore: new Date(now - sweep.boundTtlMs).toISOString(),
+          }),
+        };
+      },
+      async (): Promise<Record<string, number>> =>
+        Number.isFinite(attachmentRetentionDays)
+          ? { attachments: await store.pruneAttachments(new Date(Date.now() - attachmentRetentionDays * 86_400_000).toISOString()) }
+          : {},
+      async () => {
+        const now = Date.now();
+        return store.pruneTransport({
+          now: new Date(now).toISOString(),
+          inboxBefore: new Date(now - INBOX_RETENTION_MS).toISOString(),
+          rateLimitBeforeMs: now - longestWindowMs,
+        });
+      },
+    ],
+  });
 
   const setupUrl = basePath === DEFAULT_BASE_PATH ? origin : hubUrl;
   const api = browserApi({
@@ -441,6 +472,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     publicOrigin: origin,
     install: { install: `curl -fsSL ${hubUrl}/install.sh | bash`, setup: `uncage setup ${setupUrl}`, windows: null },
     installScript: installScript(range),
+    maintenance: { secret: o.maintenance?.secret, run: () => upkeep.runNow() },
     version: HUB_VERSION,
     sseHeartbeatMs: o.sseHeartbeatMs ?? DEFAULT_SSE_HEARTBEAT_MS,
     shutdown: shutdown.signal,
@@ -449,8 +481,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   let closing: Promise<void> | undefined;
   return {
     basePath,
-    // TODO(Task 4/6): hand background work (opportunistic maintenance, outbox writes after the
-    // response) to `info.waitUntil` on platforms that provide it; unused so far.
+    // TODO(Task 6): hand outbox writes after the response to `info.waitUntil` too.
     async fetch(req, info) {
       const requestId = `req_${randomHex(12)}`;
       try {
@@ -458,7 +489,10 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
         if (url.pathname !== basePath && !url.pathname.startsWith(`${basePath}/`)) {
           throw new UncageError('not_found', { message: `No route for ${req.method} ${url.pathname}.` });
         }
-        return await api.handle(req, url, url.pathname.slice(basePath.length) || '/', requestId, clientKey(req, info));
+        const path = url.pathname.slice(basePath.length) || '/';
+        // Opportunistic maintenance (the cron endpoint runs it itself). Never throws.
+        if (path !== '/maintenance' && !shutdown.signal.aborted) await upkeep.maybeRun(info?.waitUntil?.bind(info));
+        return await api.handle(req, url, path, requestId, clientKey(req, info));
       } catch (err) {
         const uerr = err instanceof UncageError ? err : new UncageError('internal_error');
         if (!(err instanceof UncageError)) logger.error({ err, requestId }, 'hub request failed');
@@ -474,9 +508,11 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     denyDevice: (code, user) => device.deny(code, user),
     lookupDevice: (code, user) => device.lookup(code, user),
     revokeMachine: (id, user) => api.revokeMachine(id, user),
+    maintain: () => upkeep.runNow(),
     close: () =>
       (closing ??= (async () => {
         shutdown.abort();
+        await upkeep.idle();
         await machines.close();
         if (ownsCluster) await cluster.close();
       })()),
@@ -489,7 +525,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
         machines.enableWebSocket();
       },
       heartbeat: machines.heartbeat,
-      maintenance: { intervalMs: sweep.intervalMs, run: sweepManifests },
+      maintenance: { intervalMs: maintenanceIntervalMs },
     },
   };
 }

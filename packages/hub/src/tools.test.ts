@@ -342,7 +342,7 @@ describe('ctx.files (file channel)', () => {
 
 describe('run-manifest retention sweep', () => {
   it('the hub periodically drops unbound manifests older than their TTL', async () => {
-    const t = (th = await startTestHub({ manifestSweep: { intervalMs: 50, unboundTtlMs: 5_000, boundTtlMs: 60_000 } }));
+    const t = (th = await startTestHub({ maintenance: { intervalMs: 50 }, manifestSweep: { unboundTtlMs: 5_000, boundTtlMs: 60_000 } }));
     const at = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
     await t.store.putRunManifest({ key: 'stale', sessionId: 's', tools: [], createdAt: at(10_000), nonce: 'n' });
     await t.store.putRunManifest({ key: 'fresh', sessionId: 's', tools: [], createdAt: at(0), nonce: 'n' });
