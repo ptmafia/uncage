@@ -29,6 +29,8 @@
 - Commits are conventional (`feat(hub): …`, `fix(agent): …`, `docs: …`, `chore: …`) and end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Never commit on `main`; work on `feat/faas-mode`.
 - Release prep follows CONTRIBUTING + the user's rule: we prepare `release/0.3.0` (versions, changelogs, pushed); the user only opens/merges the PR.
 - Problems hit during execution are written down in the task's commit body and the recommended option is taken without blocking.
+- The ACP track (Tasks A1–A4, at the end of this plan) runs in parallel in its own worktree (`feat/acp-runtime`, branched from the Task 1 commit) and merges into `feat/faas-mode` after Task 13, before Task 14, through the explicit merge step in that section. Later FaaS tasks keep what it added (ACP rows, nav entry, site card, e2e project, `runtime-acp` in Task 18's version check and changeset).
+- ACP: Uncage declares no ACP `fs`/`terminal` client capabilities, never selects `allow_always`/`reject_always`, uses only the stable v1 entry of `@agentclientprotocol/sdk`, and claims an ACP agent as verified only after a real run (today only `@agentclientprotocol/claude-agent-acp`); every other agent is "protocol-compatible, not verified live".
 - Between Task 2 and Task 15 the help-site snippet check (`check-snippets`) and i18n parity may be red (docs still show the 0.2 API); Task 14 makes `check-snippets` green, Task 15 makes `check-i18n` strict green. `pnpm build && pnpm test && pnpm typecheck && pnpm lint` stay green after every task.
 
 ## Review Focus
@@ -38,6 +40,8 @@
 3. **Cursor/ack mishandling across stream rotation** re-executes a `startRun`/`decide` or skips one: the hub deletes outbox rows the agent never processed, or the agent processes a redelivered `seq` again. Pinned in Task 6 (`stream with cursor n delivers exactly the items > n; reopening with the same cursor redelivers them`) and Task 8 (`cut after delivery before processing: command executed once`).
 4. **Upstream retries landing on different instances duplicate or reorder data**: duplicate `file_chunk` corrupts a pull, a batch processed past a `busy` message reorders chunks, duplicate events reach browsers. Pinned in Task 6 (`batch stops at the first busy message`) and Task 7 (`file pull across instances survives a retried POST`).
 5. **The root entry silently pulls Node built-ins** (through the `@uncage/core` barrel, the `@uncage/server/wire` re-export of `toNodeHandler`, `Buffer`, `timer.unref()`), so a Workers build fails only at deploy time. Pinned in Task 2 (`check-web-entry` in the hub `build`) and Task 12 (`wrangler deploy --dry-run` of the Cloudflare example).
+6. **An ACP agent acts without the user's consent**: `allow_always` gets selected (and persists in the agent's own settings), a `requiresConfirmation` site tool runs without a card, `bypassPermissions`/`acceptEdits` auto-allow without `localPolicy`, or a pending `session/request_permission` is never answered on Stop (the agent hangs). Pinned in Task A2 (`allow_always is never chosen`, `site tools over http … declined confirmation`, `abort while a permission is pending answers it cancelled`).
+7. **ACP session crosstalk and orphan processes** in the shared agent process: `session/load` history replay or another session's updates leak into a run, or a killed run leaves the agent process alive. Pinned in Task A1 (`two concurrent runs share one process and get only their own updates`, `resumes with session/load without replaying history`, `dispose kills the agent process`).
 
 ---
 
@@ -801,3 +805,271 @@ Decision: keep the 3×2 "available" grid by turning "Scales out" into "Runs anyw
 - [ ] Step: add the changeset (`"@uncage/hub": minor` … every public package, `minor`; body: FaaS mode + traditional mode, breaking changes with a link to `/docs/reference/migrate-from-0-2/`); commit it on `feat/faas-mode`, then `git switch -c release/0.3.0 feat/faas-mode && pnpm changeset version` (the release branch carries the feature work plus the version bump, so the user can open one PR); confirm `MIN_AGENT_VERSION === '0.3.0'` and `install.sh` installs `@uncage/cli@^0.3`.
 - [ ] Step: run → PASS: the version check above, then `pnpm build && pnpm test && pnpm typecheck && pnpm lint`
 - [ ] Step: commit `chore: version packages (0.3.0)`; push `release/0.3.0`; hand the user the PR title (`chore: release 0.3.0`), description (ending with the 🤖 attribution line) and compare URL — the user only opens and merges it.
+
+---
+
+## ACP track (Tasks A1–A4): generic ACP runtime (spec §9)
+
+**Goal:** `@uncage/runtime-acp` lets Uncage drive any agent that speaks the Agent Client Protocol over stdio (Claude Code via its ACP adapter, Gemini CLI, OpenCode, …), next to the native `runtime-claude` / `runtime-codex`.
+
+**Verified facts (npm, 2026-11-08; re-check at implementation time with `npm view`):**
+- SDK: `@agentclientprotocol/sdk@2.4.0` (Apache-2.0). Default import `@agentclientprotocol/sdk` = stable ACP v1 (`PROTOCOL_VERSION = 1`); do not use `/unstable` or `/experimental/*`. Peer deps: `zod ^3.25.76 || ^4`, optional `@modelcontextprotocol/server`. Client API: `client({ name }).onRequest(methods.client.session.requestPermission, h).onNotification(methods.client.session.update, h).connect(ndJsonStream(Writable.toWeb(proc.stdin), Readable.toWeb(proc.stdout)))` → `ClientConnection { agent: ClientContext; signal; closed; close() }`; `conn.agent.request(methods.agent.X, params, { signal? })`, `conn.agent.notify(...)`. Errors: `RequestError` (`code`), `-32000` auth required, `-32002` resource/session not found, `-32800` cancelled. The SDK also has `agent({ name }).onRequest(...).connect(stream)` (used by the fake agent) and in-process `client.connect(agentApp)`.
+- Methods (constants in `methods`): agent side `initialize`, `authenticate`, `session/new`, `session/load`, `session/resume`, `session/list`, `session/close`, `session/set_mode`, `session/set_config_option`, `session/prompt`, notification `session/cancel`; client side `session/request_permission`, notification `session/update`, `fs/read_text_file`, `fs/write_text_file`, `terminal/*`, `elicitation/*`.
+- `initialize` → `{ protocolVersion, agentCapabilities?: { loadSession?, promptCapabilities?: { image?, audio?, embeddedContext? }, mcpCapabilities?: { http?, sse? }, sessionCapabilities?: { resume?, list?, close?, … } }, authMethods?, agentInfo?: { name, version } }`. Client sends `clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }`.
+- `session/new` `{ cwd, mcpServers: McpServer[] }` → `{ sessionId, modes?, configOptions? }`; `session/load` `{ sessionId, cwd, mcpServers }` replays history as `session/update` before it resolves. `McpServer` = `{ type: 'http' | 'sse', name, url, headers: { name, value }[] }` | stdio `{ name, command, args: string[], env: { name, value }[] }` (stdio has no `type`; every ACP agent must accept stdio).
+- `session/prompt` `{ sessionId, prompt: ContentBlock[] }` → `{ stopReason: 'end_turn' | 'max_tokens' | 'max_turn_requests' | 'refusal' | 'cancelled' }`. `ContentBlock` `type`: `text`, `image` (`data` base64 + `mimeType`), `audio`, `resource_link` (`uri`, `name`), `resource`.
+- `session/update` `update.sessionUpdate`: `user_message_chunk`, `agent_message_chunk`, `agent_thought_chunk` (`content`, `messageId?`), `tool_call` (`toolCallId`, `title`, `name?`, `kind?`, `status?`, `content?`, `locations?`, `rawInput?`, `rawOutput?`), `tool_call_update` (same, all optional but `toolCallId`), `plan` (`entries: { content, priority, status }[]`), `available_commands_update`, `current_mode_update`, `config_option_update`, `session_info_update`, `usage_update` (`used`, `size`, `cost?`), `notice`, `compaction_update`, `compaction_summary_chunk`. `ToolKind`: `read | edit | delete | move | search | execute | think | fetch | switch_mode | other`; `ToolCallStatus`: `pending | in_progress | completed | failed`.
+- `session/request_permission` `{ sessionId, toolCall: ToolCallUpdate, options: { optionId, name, kind: 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always' }[] }` → `{ outcome: { outcome: 'selected', optionId } | { outcome: 'cancelled' } }`. After `session/cancel` the client must answer every pending permission request with `cancelled`.
+- Claude Code's ACP adapter: **`@agentclientprotocol/claude-agent-acp@0.101.0`**, bin `claude-agent-acp` (stdio), engines `node >=22`, depends on `@agentclientprotocol/sdk 2.4.0` and `@anthropic-ai/claude-agent-sdk 0.3.318` (same as `runtime-claude`), uses the existing Claude login under the real HOME; `CLAUDE_CODE_EXECUTABLE` points it at an installed `claude`; `CLAUDE_AGENT_ACP_PROTOCOL=v1|v2|auto` (default `auto` serves v1 to a v1 client). `@zed-industries/claude-code-acp` (0.16.2) and `@zed-industries/claude-agent-acp` (0.23.1) are deprecated renames of it.
+- Gemini CLI (`@google/gemini-cli@0.67.0`, bin `gemini`) and OpenCode (`opencode-ai@1.19.5`, bin `opencode`): their npm READMEs do not document an ACP invocation. Presets `gemini --acp` and `opencode acp` are **unverified — verify at implementation time** against each project's docs; the compatibility matrix says "protocol-compatible, not verified live" until a real run.
+
+**Decisions (deviations from spec §9, recommended options taken):**
+- No new `RuntimeEvent` variants: `agent_thought_chunk`, `usage_update`, `available_commands_update`, `notice`, compaction and mode/config updates are dropped (the Claude adapter also drops thinking); `plan` becomes one synthetic step `tool.started { name: 'plan', title: 'Plan', category: 'other' }` whose `tool.updated`/`tool.completed` output is a `- [x] …` / `- [ ] …` checklist.
+- `allow_always` / `reject_always` are never selected: `ApprovalOutcome` has no scope and an agent may persist "always" outside the session (e.g. in its own settings). `capabilities.approval.session = false`; cards offer `allow_once` / `deny` only.
+- `RuntimeCapabilitiesSchema.skills` gains `'prompt'` (spec: `skills: 'prompt'`); this is the only protocol schema change of the track.
+- Site tools: every ACP agent must accept stdio MCP servers, so `siteTools` is `true` unless the entry sets `mcp: 'off'`. The adapter serves one loopback Streamable-HTTP MCP server per run (`@modelcontextprotocol/sdk` `^1.29.0`, already in the lockfile at 1.32.2) and declares it as `type: 'http'` when `mcpCapabilities.http`, else as a stdio shim (`node dist/mcp-stdio-bridge.js <url>`, token in env) that proxies to it.
+- One agent process per adapter, lazy, shared by all sessions, respawned after exit (the `runtime-codex` pattern); `probe`/`refreshCapabilities` reuse its `initialize` result.
+- Runtime ids are `acp-<id>`; there is no `uncage runtimes` command today, A3 adds it. `runtimes.acp` is read from `~/.uncage/agent.yaml` (Connected Mode) and, with the same schema, from `uncage.config.yaml` (Local Mode).
+
+**Parallelization and merge.** The ACP track runs in its own worktree, by a different subagent, concurrently with Tasks 2–13:
+1. After Task 1 is committed on `feat/faas-mode`: `git worktree add ../Uncage-acp -b feat/acp-runtime <Task 1 commit>`; A1 → A4 run there in order (A2 needs A1, A3 needs A1–A2, A4 needs A3). The same Global Constraints apply (tmp `UNCAGE_HOME`, never real Codex, system Chrome, conventional commits with the Co-Authored-By line).
+2. **Merge step (before Task 14 starts, after Task 13):** on `feat/faas-mode`, `git merge --no-ff feat/acp-runtime -m "merge: ACP runtime track"` (body ends with the Co-Authored-By line), then `pnpm install` and `pnpm build && pnpm test && pnpm typecheck && pnpm lint && UNCAGE_LIVE=1 pnpm --filter @uncage/e2e exec playwright test --project=connected-acp-live`; then `git worktree remove ../Uncage-acp`. `check-snippets` / strict i18n may already be red on `feat/faas-mode` (allowed until Tasks 14/15); the ACP pages themselves must pass `check:i18n` on the ACP branch.
+3. Files both tracks touch and how to resolve:
+   - `packages/protocol/src/index.ts` — Task 1 adds `transport.js` exports; A2 adds `runtime-helpers.js` exports. Keep both.
+   - `packages/agent/src/index.ts` — Task 8 adds transport exports; A3 adds ACP config exports. Keep both.
+   - `packages/cli/src/doctor.ts`, `packages/cli/src/doctor.test.ts` — Task 8 adds the per-site transport / `minAgentVersion` checks; A3 adds `runtime.acp-*` rows and treats them as optional. Different functions: keep both, re-run both test sets.
+   - `packages/agent/src/agent.test.ts` — Task 8 modifies it; A3 adds one test at the end. Keep both.
+   - `pnpm-lock.yaml` — never hand-merge: take either side, then `pnpm install`.
+   - Touched by the ACP track first and by later FaaS tasks (no merge conflict, but the later task must keep the ACP content): `e2e/playwright.config.ts` and `e2e/package.json` (A4 adds `connected-acp-live` to `e2e:live`; Task 17 adds its projects next to it), `docs/compatibility.md` (A4 rows; Task 17 run records), `apps/docs/src/nav.mjs`, `apps/docs/i18n-glossary.md` and `reference/cli.md` (A4; Task 14 adds its sections/rows/text around them), `apps/site/src/i18n/*` and `Features.astro` (A4 adds a 7th, full-width "Any ACP agent" card; Task 16 keeps it: its "keep the 3×2 grid" becomes "3×2 plus the full-width ACP row", `available` stays `Seven<Feature>`).
+   - Task 18: the version check list and the changeset include `runtime-acp` (`@uncage/runtime-acp` starts at `0.2.0` so the `fixed` `@uncage/*` group bumps it to `0.3.0` with the rest).
+
+---
+
+### Task A1: `@uncage/runtime-acp` — stdio client, probe, capabilities, run, events, cancel, errors
+
+**Files:**
+- Create: `packages/runtime-acp/{package.json,tsconfig.json,tsup.config.ts,vitest.config.ts,README.md,LICENSE}` (copy of `runtime-codex`'s, `version: "0.2.0"`, deps `@agentclientprotocol/sdk: "2.4.0"`, `@uncage/protocol: "workspace:^"`, devDeps `@uncage/testkit: "workspace:*"`), `packages/runtime-acp/src/{index.ts,adapter.ts,process.ts,map.ts,capabilities.ts,prompt.ts}`
+- Create: `packages/testkit/src/fake-acp/{server.ts,scenarios.ts}`, `packages/testkit/src/fake-acp-path.ts`
+- Modify: `packages/testkit/{package.json (dep @agentclientprotocol/sdk 2.4.0),tsup.config.ts (entry 'fake-acp': 'src/fake-acp/server.ts'),src/index.ts}`
+- Test: create `packages/runtime-acp/src/{adapter.contract.test.ts,adapter.test.ts,map.test.ts}`, `packages/testkit/src/fake-acp.test.ts`
+
+**Interfaces — Consumes:** `RuntimeAdapter`, `RuntimeEvent`, `AdapterRunInput`, `AdapterRunContext`, `RuntimeCapabilities`, `ERROR_CATALOG`, `ATTACHMENT_LIMITS` (`@uncage/protocol`); `runAdapterContract`, `collect` (`@uncage/testkit`). **Produces:**
+```ts
+// adapter.ts
+export interface AcpAdapterOptions {
+  id: string;                         // /^acp-[a-z][a-z0-9-]{0,31}$/, throws otherwise
+  displayName: string;
+  command: string[];                  // argv; command[0] is resolved on PATH (or absolute)
+  env?: Record<string, string>;       // merged over process.env
+  allowBypass?: boolean;              // A2
+  mcp?: 'auto' | 'http' | 'stdio' | 'off';   // A2, default 'auto'
+  installHint?: string; installUrl?: string;
+  initTimeoutMs?: number;             // 15_000
+  requestTimeoutMs?: number;          // 30_000 (not applied to session/prompt)
+  cancelGraceMs?: number;             // 10_000: after session/cancel, kill the process if prompt has not resolved
+}
+export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter;
+// process.ts
+export interface AcpProcess {
+  readonly conn: ClientConnection; readonly init: InitializeResponse;
+  readonly exited: Promise<{ code: number | null; signal: string | null; stderrTail: string }>;  // last 4 KiB
+  kill(): void;
+}
+export interface AcpClientHandlers {
+  onUpdate(n: SessionNotification): void;
+  onPermission(req: RequestPermissionRequest, signal: AbortSignal): Promise<RequestPermissionResponse>;
+}
+export function startAcpProcess(o: { command: string[]; env: NodeJS.ProcessEnv; handlers: AcpClientHandlers; initTimeoutMs: number }): Promise<AcpProcess>;
+export const CLIENT_CAPABILITIES: ClientCapabilities; // { fs: { readTextFile: false, writeTextFile: false }, terminal: false }
+// capabilities.ts
+export const DEFAULT_ACP_CAPABILITIES: RuntimeCapabilities; // before initialize: streaming, approval {once:true, session:false, types: all}, nativeResume:false, diffEvents:false, mcp:false, skills:'prompt', siteTools:false, models:[{id:'default',label:'Default'}], efforts:[], permissionModes:['default'], attachments {images:false, files:true, maxBytes: ATTACHMENT_LIMITS…}
+export function mapCapabilities(init: InitializeResponse, o: { allowBypass: boolean; mcp: NonNullable<AcpAdapterOptions['mcp']> }): RuntimeCapabilities;
+// map.ts
+export function toolCategory(kind: ToolKind | null | undefined): ApprovalCategory; // execute→shell, read|edit|delete|move|search→file, fetch→network, else other
+export interface AcpMapper { update(u: SessionUpdate): RuntimeEvent[]; finish(stop: StopReason): RuntimeEvent[]; }
+export function createAcpMapper(newId: () => string): AcpMapper;
+// prompt.ts
+export function toPromptBlocks(input: AdapterRunInput, caps: { image: boolean }): Promise<ContentBlock[]>; // text, image (base64) when caps.image, resource_link file://<absPath> for files
+// testkit
+export const fakeAcpPath: string; // dist/fake-acp.js; env FAKE_ACP_CAPS (JSON agentCapabilities), FAKE_ACP_RECORD (JSONL of received requests/notifications/responses), FAKE_ACP_PROTOCOL, FAKE_ACP_IGNORE_CANCEL=1
+```
+Mapping rules: the first `agent_message_chunk` text opens `message.started` (id = `messageId` or a new one), more chunks are `message.delta`; a `tool_call`, a new `messageId` or the end of the turn closes it with `message.completed` (text = concatenated deltas). `tool_call` → `tool.started { toolId: toolCallId, name: name ?? kind ?? 'tool', title, category: toolCategory(kind), input: rawInput }` (a second `tool_call` with the same id is treated as an update); `tool_call_update` → `tool.updated { output }` (text of `content` blocks, diffs as `path` + unified summary, `terminal` ignored), status `completed` → `tool.completed`, `failed` → `tool.failed`. Stop reasons: `end_turn` → `run.completed`; `max_tokens` / `max_turn_requests` / `refusal` → `warning { code: 'acp_<reason>' }` then `run.completed`; `cancelled` → `run.interrupted { reason: 'aborted' }`. Updates are routed by `sessionId`; updates that arrive while `session/load` is pending (history replay) and `user_message_chunk` are dropped. Native session: `native.session { ref: sessionId }` after `session/new`; with `nativeSessionRef`, use `session/resume` when `sessionCapabilities.resume`, else `session/load` when `loadSession`, else start a new session; `-32002` on resume/load → `native.session_lost`. Errors: spawn `ENOENT` → `run.failed runtime_unavailable`; `-32000` → `run.failed auth_required` (hint names `authMethods[].name`); process exit during a run → `run.interrupted { reason: 'runtime_disconnected' }`; other JSON-RPC errors → `run.failed internal_error` with the agent's message. Basic approvals: `request_permission` → `ctx.requestApproval` → `allow_once` / `reject_once` option (full rules in A2).
+
+- [ ] Step: failing tests.
+  ```ts
+  runAdapterContract('acp (fake agent)', () => acpAdapter({ id: 'acp-fake', displayName: 'Fake ACP', command: ['node', fakeAcpPath] }), { simple: 'simple', approval: 'approval', crash: 'crash' });
+  it('probe: not_installed for a missing command; available with the agent version; error on a protocol mismatch', async () => {
+    expect((await make({ command: ['uncage-no-such-acp-agent'] }).probe()).status).toBe('not_installed');
+    expect(await make().probe()).toMatchObject({ status: 'available', version: '1.0.0' });
+    expect(await make({ env: { FAKE_ACP_PROTOCOL: '99' } }).probe()).toMatchObject({ status: 'error', message: expect.stringMatching(/protocol version/) });
+  });
+  it('capabilities: defaults before initialize, mapped after refreshCapabilities', async () => {
+    const a = make({ env: { FAKE_ACP_CAPS: JSON.stringify({ loadSession: true, promptCapabilities: { image: true } }) } });
+    expect(a.capabilities()).toEqual(DEFAULT_ACP_CAPABILITIES);
+    expect(await a.refreshCapabilities!()).toMatchObject({ nativeResume: true, attachments: { images: true }, skills: 'prompt', approval: { session: false } });
+  });
+  it('initialize declares no fs/terminal client capabilities', …); // FAKE_ACP_RECORD: params.clientCapabilities toEqual CLIENT_CAPABILITIES, protocolVersion 1
+  it('maps the tools scenario: thought dropped, two message segments around a tool, plan as one step', async () => {
+    const events = await collect(make().run(input('tools'), ctx));
+    expect(events.map((e) => e.type)).toEqual(['native.session', 'message.started', 'message.delta', 'message.completed', 'tool.started', 'tool.updated', 'tool.completed', 'tool.started', 'tool.completed', 'message.started', 'message.delta', 'message.completed', 'run.completed']);
+    expect(events.find((e) => e.type === 'tool.started')).toMatchObject({ category: 'shell', input: { command: 'npm test' } });
+    expect(events.filter((e) => e.type === 'tool.completed').at(-1)).toMatchObject({ output: '- [x] read\n- [ ] write' });
+  });
+  it('resumes with session/load without replaying history into the run, and reports a lost session', …); // second run answers 'remembered 42'; no event text contains the first prompt; ref 'sess_unknown' → native.session_lost
+  it('prefers session/resume when sessionCapabilities.resume', …); // FAKE_ACP_RECORD has session/resume and no session/load
+  it('cancel: session/cancel, run.interrupted aborted within 2 s, the process stays usable', …);
+  it('an agent that ignores cancel is killed after cancelGraceMs and respawned on the next run', …); // FAKE_ACP_IGNORE_CANCEL=1, cancelGraceMs 200
+  it('crash → runtime_disconnected; next run respawns', …);
+  it('auth scenario (-32000 on session/new) → run.failed auth_required with the auth method in the hint', …);
+  it('two concurrent runs share one process and get only their own updates', …); // one 'initialize' in the record
+  it('prompt blocks: image as base64 when supported, files as resource_link', …);
+  it('dispose kills the agent process', …); // process.kill(pid, 0) throws ESRCH
+  // map.test.ts: toolCategory table; createAcpMapper unit cases for each stop reason and duplicate tool_call ids
+  ```
+- [ ] Step: run → FAIL: `pnpm --filter @uncage/testkit build && pnpm --filter @uncage/runtime-acp exec vitest run`
+- [ ] Step: implement the fake agent first (SDK `agent()` + `ndJsonStream` on process stdio; scenarios picked by prompt text: `simple`, `tools`, `approval`, `slow`, `crash`, `auth`, `remember`, `refusal`, later `site-tool`), then the adapter with the signatures above.
+- [ ] Step: run → PASS: `pnpm install && pnpm --filter @uncage/testkit test && pnpm --filter @uncage/runtime-acp test && pnpm build && pnpm typecheck && pnpm lint`
+- [ ] Step: commit `feat(runtime-acp): generic ACP runtime over stdio with a fake ACP agent in testkit`
+
+---
+
+### Task A2: Approvals, permission modes, site tools via `mcpServers`, skills as prompt context
+
+**Files:**
+- Create: `packages/runtime-acp/src/{approvals.ts,site-mcp.ts,mcp-stdio-bridge.ts,skills.ts}`, `packages/protocol/src/runtime-helpers.ts`
+- Modify: `packages/runtime-acp/{package.json (dep @modelcontextprotocol/sdk ^1.29.0),tsup.config.ts (entry 'mcp-stdio-bridge')}`, `packages/runtime-acp/src/adapter.ts`, `packages/protocol/src/{domain.ts,index.ts}`, `packages/runtime-claude/src/site-tools.ts` (import the moved helpers), `packages/testkit/src/fake-acp/scenarios.ts` (`site-tool`, `edit`, `modes`)
+- Test: create `packages/runtime-acp/src/{approvals.test.ts,site-mcp.test.ts,skills.test.ts}`, `packages/protocol/src/runtime-helpers.test.ts`; modify `packages/runtime-acp/src/adapter.test.ts`, `packages/protocol/src/domain.test.ts` (or the existing schema test file)
+
+**Interfaces — Consumes:** A1. **Produces:**
+```ts
+// protocol/domain.ts
+RuntimeCapabilitiesSchema.skills: z.enum(['supported', 'partial', 'prompt', 'unknown']); // 'prompt' = skills given as text context
+// protocol/runtime-helpers.ts (moved unchanged from runtime-claude/site-tools.ts)
+export function neutralizeSkillMarkdown(md: string): string;
+export function siteApprovalRequest(t: Pick<ToolSpec, 'name' | 'description'>, args: unknown, toolId: string, cwd: string): NativeApprovalInput;
+// approvals.ts
+export function permissionDecision(req: RequestPermissionRequest, o: { mode: PermissionMode; allowBypass: boolean; siteToolNames: ReadonlySet<string> }):
+  { auto: 'allow' } | { ask: NativeApprovalInput } | { auto: 'cancel'; warning: string };
+export function toPermissionResponse(outcome: ApprovalOutcome | 'allow', options: PermissionOption[]): RequestPermissionResponse;
+// site-mcp.ts
+export interface SiteMcpServer { url: string; token: string; close(): Promise<void> }
+export function startSiteMcpServer(tools: RunTool[], o: { requestApproval: AdapterRunContext['requestApproval']; cwd: string; signal: AbortSignal }): Promise<SiteMcpServer>; // 127.0.0.1:0, Bearer token (32 random bytes base64url)
+export function siteMcpDeclaration(s: SiteMcpServer, caps: McpCapabilities | undefined, mode: 'auto' | 'http' | 'stdio'): McpServer; // name 'site'
+// skills.ts
+export function skillsPreamble(skills: SkillSpec[]): string; // '<uncage-skills>…</uncage-skills>', each skill's name, description, neutralized markdown and file list; '' when empty
+```
+Rules: `capabilities.permissionModes` = `['default', 'acceptEdits']` plus `'bypassPermissions'` only with `allowBypass`; `bypassPermissions` auto-allows every request, `acceptEdits` auto-allows `kind` `edit | delete | move`; when the session's `modes.availableModes` has the same id as the Uncage mode the adapter also calls `session/set_mode`. A request whose tool is an Uncage site tool (`name`/`title` is `mcp__site__<n>` or `<n>` from the run's tools) is auto-allowed: confirmation happens in the MCP handler exactly as in `runtime-claude` (`requiresConfirmation` → `requestApproval(siteApprovalRequest(...))`, deny → MCP `isError` result "The user declined this action.", the site handler is not called). Cards offer `availableDecisions: ['allow_once', 'deny']`, target `{ command: rawInput.command, path: locations[0].path, cwd }`; `allow` → the `allow_once` option, `deny` → `reject_once` (else `cancelled`), `expired`/`cancelled` → `cancelled`; a request that offers no `allow_once` is answered `cancelled` with warning `acp_no_allow_once`. On abort every pending permission request is answered `cancelled` before `session/cancel`. Skills: the preamble is the first text block of the first prompt of each ACP session (new or after `session_lost`), never repeated on resume; site tools / MCP server are closed when the run ends. `mcp: 'off'` → `siteTools: false`, no `mcpServers` (the hub then drops tools with its `site_tools_unsupported` warning).
+
+- [ ] Step: failing tests.
+  ```ts
+  it('skills capability accepts prompt', () => expect(RuntimeCapabilitiesSchema.shape.skills.parse('prompt')).toBe('prompt'));
+  it('approval card and option mapping; allow_always is never chosen', async () => {
+    const { events, requests, record } = await runFake('approval', { outcome: { decision: 'allow' } });
+    expect(requests[0]).toMatchObject({ category: 'shell', availableDecisions: ['allow_once', 'deny'], target: { command: 'npm test' } });
+    expect(record.responses('session/request_permission')).toEqual([{ outcome: { outcome: 'selected', optionId: 'allow-once' } }]);
+    // deny → 'reject-once' + tool.failed { declined: true }; expired → { outcome: 'cancelled' }; no response ever has optionId 'allow-always'
+  });
+  it('acceptEdits auto-allows edits but asks for execute; bypass only with allowBypass', …);
+  it('permissionModes lists bypassPermissions only with allowBypass; set_mode is sent when the agent has that mode', …);
+  it('abort while a permission is pending answers it cancelled', …);
+  it('site tools over http: declaration, listing, a call, a declined confirmation', async () => {
+    const { record, calls, requests, events } = await runFake('site-tool', { caps: { mcpCapabilities: { http: true } }, tools: [saveNote, publishConfirm], outcome: { decision: 'deny' } });
+    expect(record.params('session/new').mcpServers).toEqual([{ type: 'http', name: 'site', url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\//), headers: [{ name: 'Authorization', value: expect.stringMatching(/^Bearer [A-Za-z0-9_-]{43}$/) }] }]);
+    expect(record.listedTools).toEqual(['publish', 'save_note']);
+    expect(calls.save_note).toHaveLength(1); expect(calls.publish ?? []).toHaveLength(0);
+    expect(requests.at(-1)).toMatchObject({ category: 'mcp', target: { command: expect.stringMatching(/^publish\(/) } });
+  });
+  it('site tools over the stdio shim when the agent has no http MCP', …); // declaration { name: 'site', command: process.execPath, args: [bridgePath, url], env: [{ name: 'UNCAGE_MCP_TOKEN', … }] }; save_note called once
+  it('the MCP server refuses a missing bearer (401) and is closed after the run', …);
+  it('a permission request for a site tool is auto-allowed (no second card)', …);
+  it('mcp off → siteTools false and no mcpServers', …);
+  it('skills preamble: first prompt of a session only, neutralized', async () => {
+    // record.prompts[0][0].text contains '<uncage-skills>', 'house-style' and '\\!`rm'; the resumed run's first block is the user prompt
+  });
+  ```
+- [ ] Step: run → FAIL: `pnpm --filter @uncage/protocol exec vitest run && pnpm --filter @uncage/testkit build && pnpm --filter @uncage/runtime-acp exec vitest run`
+- [ ] Step: implement; move the two helpers to `@uncage/protocol` and re-import them in `runtime-claude` (its tests stay unchanged and green).
+- [ ] Step: run → PASS: `pnpm --filter @uncage/protocol test && pnpm --filter @uncage/runtime-claude test && pnpm --filter @uncage/runtime-acp test && pnpm build && pnpm typecheck && pnpm lint`
+- [ ] Step: commit `feat(runtime-acp): approvals with local policy, site tools via injected MCP servers, skills as prompt context`
+
+---
+
+### Task A3: Agent integration — `runtimes.acp`, presets, registration, doctor, `uncage runtimes`, runtime picker
+
+**Files:**
+- Create: `packages/runtime-acp/src/presets.ts`, `packages/cli/src/runtimes-cmd.ts`
+- Modify: `packages/agent/src/{config.ts,index.ts}`, `packages/cli/{package.json (dep @uncage/runtime-acp),src/agent-cmd.ts,src/serve.ts,src/config.ts,src/doctor.ts,src/bin.ts}`, `packages/runtime-acp/src/index.ts`
+- Test: create `packages/runtime-acp/src/presets.test.ts`, `packages/cli/src/runtimes-cmd.test.ts`; modify `packages/agent/src/units.test.ts` (config), `packages/agent/src/agent.test.ts`, `packages/cli/src/{config.test.ts,doctor.test.ts}`, `packages/react-ui/src/components.test.tsx`
+
+**Interfaces — Consumes:** A1, A2. **Produces:**
+```ts
+// agent/config.ts
+export const ACP_AGENT_ID = /^[a-z][a-z0-9-]{0,31}$/;
+export const AcpAgentEntrySchema = z.object({
+  id: z.string().regex(ACP_AGENT_ID), preset: z.enum(['claude', 'gemini', 'opencode']).optional(),
+  displayName: z.string().min(1).max(60).optional(), command: z.array(z.string().min(1)).min(1).optional(),
+  env: z.record(z.string(), z.string()).optional(), mcp: z.enum(['auto', 'http', 'stdio', 'off']).default('auto'), enabled: z.boolean().default(true),
+}).strict(); // refined: preset or command required; ids unique
+export const AcpRuntimesSchema = z.object({ presets: z.enum(['auto', 'off']).default('auto'), agents: z.array(AcpAgentEntrySchema).default([]) }).strict();
+export type AcpRuntimesConfig = z.infer<typeof AcpRuntimesSchema>;
+// AgentConfigSchema gains runtimes: z.object({ acp: AcpRuntimesSchema }).strict().default(...); AgentConfig gains runtimes: { acp: AcpRuntimesConfig }; updateAgentSites keeps `runtimes`
+// runtime-acp/presets.ts
+export interface AcpPreset { id: 'claude' | 'gemini' | 'opencode'; displayName: string; command: string[]; installHint: string; installUrl: string; verifiedLive: boolean }
+export const ACP_PRESETS: readonly AcpPreset[];
+// claude: 'Claude Code (ACP)', ['claude-agent-acp'], 'npm i -g @agentclientprotocol/claude-agent-acp', verifiedLive true after A4
+// gemini: 'Gemini CLI (ACP)', ['gemini', '--acp'] (verify), 'npm i -g @google/gemini-cli'; opencode: 'OpenCode (ACP)', ['opencode', 'acp'] (verify), 'npm i -g opencode-ai'
+/** Structural copy of AcpRuntimesConfig (runtime-acp does not depend on @uncage/agent). */
+export interface AcpAgentsConfig { presets: 'auto' | 'off'; agents: { id: string; preset?: AcpPreset['id']; displayName?: string; command?: string[]; env?: Record<string, string>; mcp: 'auto' | 'http' | 'stdio' | 'off'; enabled: boolean }[] }
+export function resolveAcpAgents(cfg: AcpAgentsConfig, o: { allowBypass: boolean; which(cmd: string): Promise<string | null> }): Promise<AcpAdapterOptions[]>;
+// explicit entries always (enabled ones; preset fields filled, entry fields win; id → 'acp-<id>'); with presets 'auto', each preset not already listed whose command[0] resolves on PATH
+// cli
+export const agentAdapters: (allowBypass: boolean, acp: AcpAdapterOptions[]) => () => RuntimeAdapter[];
+export function runRuntimes(o: { adapters: RuntimeAdapter[]; json: boolean; out: (s: string) => void }): Promise<number>;
+// UncageConfig.runtimes gains acp: AcpRuntimesConfig (Local Mode, same schema)
+```
+- [ ] Step: failing tests.
+  ```ts
+  it('agent.yaml runtimes.acp: defaults, unknown keys rejected, preset or command required, duplicate ids rejected', …); // missing → { presets: 'auto', agents: [] }
+  it('updateAgentSites keeps runtimes.acp', …);
+  it('resolveAcpAgents: explicit entries always, auto presets only when on PATH, entry fields override the preset', async () => {
+    const r = await resolveAcpAgents({ presets: 'auto', agents: [{ id: 'mine', command: ['node', fakeAcpPath], mcp: 'auto', enabled: true }] }, { allowBypass: false, which: async (c) => (c === 'gemini' ? '/usr/local/bin/gemini' : null) });
+    expect(r.map((a) => a.id)).toEqual(['acp-mine', 'acp-gemini']);
+  });
+  it('the agent reports ACP runtimes to the hub (machine.runtimes)', …); // agent.test.ts: createAgent with acp-fake → hub machine info has { id: 'acp-fake', displayName: 'Fake ACP', status: 'available', capabilities: { skills: 'prompt' } }
+  it('doctor lists ACP runtimes and never fails on them', …); // check id 'runtime.acp-gemini', ok false, fix 'npm i -g @google/gemini-cli', doctorExitCode 0
+  it('uncage runtimes prints id, name, status, version, site tools and resume for every runtime; --json is parseable', …);
+  it('the runtime picker shows an ACP runtime from machine.runtimes and selects it', …); // react-ui: 'Gemini CLI (ACP)' option → onChange('acp-gemini')
+  ```
+- [ ] Step: run → FAIL: `pnpm --filter @uncage/agent exec vitest run src/units.test.ts src/agent.test.ts && pnpm --filter @uncage/runtime-acp exec vitest run src/presets.test.ts && pnpm --filter @uncage/cli exec vitest run && pnpm --filter @uncage/react-ui exec vitest run`
+- [ ] Step: implement; `runAgent` / `serve` / `doctor` / `runtimes` all build adapters through `resolveAcpAgents`; doctor treats `runtime.acp-*` as optional; bin help lists `uncage runtimes [--json]`.
+- [ ] Step: run → PASS: `pnpm build && pnpm test && pnpm typecheck && pnpm lint && pnpm e2e:mock`
+- [ ] Step: commit `feat(agent,cli): register ACP agents from runtimes.acp, presets, doctor rows and uncage runtimes`
+
+---
+
+### Task A4: Real E2E with Claude Code's ACP adapter, docs (3 languages), website card
+
+**Files:**
+- Create: `e2e/connected/acp-live.spec.ts` (project `connected-acp-live`), `apps/docs/src/content/docs/guides/use-any-acp-agent.md`, `apps/docs/src/content/docs/zh-cn/guides/use-any-acp-agent.md`, `apps/docs/src/content/docs/ja/guides/use-any-acp-agent.md`, `packages/runtime-acp/scripts/smoke.ts`
+- Modify: `e2e/{package.json (devDep "@agentclientprotocol/claude-agent-acp": "0.101.0"; e2e:live += --project=connected-acp-live),playwright.config.ts}`, `e2e/connected/stack.ts` (`writeAcpRuntimes(home, agents)`), `docs/compatibility.md`, `apps/docs/src/nav.mjs` (Guides += `guides/use-any-acp-agent` after `guides/local-policy`), `apps/docs/i18n-glossary.md` (rows: ACP agent / ACP agent（保持英文） / ACP エージェント; preset / 预设 / プリセット; Agent Client Protocol stays English), `apps/docs/src/content/docs/{,zh-cn/,ja/}reference/cli.md` (`uncage runtimes`, ACP rows in doctor), `apps/docs/src/content/docs/{,zh-cn/,ja/}guides/local-policy.md` (link), `apps/docs/scripts/markdown.test.ts`, `packages/runtime-acp/README.md`, `README.md` (runtimes list), `apps/site/src/i18n/{schema.ts,en.ts,zh.ts,ja.ts}`, `apps/site/src/components/{Features.astro,Icon.astro (icon plug)}`, `apps/site/tests/i18n.test.ts`
+
+Content requirements: the guide covers what ACP is, `runtimes.acp` in `agent.yaml` (complete example, every field), the presets table with live-verified status, capability differences from the native runtimes (skills as prompt text, no `fs`/`terminal` client capabilities — the agent uses its own tools in the workspace, approvals once/deny only, thinking/usage not shown, plan as a step, site tools through a loopback MCP server, resume only when the agent supports `session/load`/`session/resume`), troubleshooting (`not_installed`, `auth_required` → the agent's own login, initialize timeout, `uncage runtimes`), and a verification checklist. Compatibility matrix rows: Claude Code via `@agentclientprotocol/claude-agent-acp` 0.101.0 (live result + date + what passed), Gemini CLI / OpenCode "protocol-compatible, not verified live", fake ACP agent contract suite. Site card (`available[6]`, full-width row, icon `plug`): en "Any ACP agent — Gemini CLI, OpenCode, Claude Code's ACP adapter: any agent that speaks the Agent Client Protocol shows up in the runtime picker."; zh/ja translated with the glossary.
+
+- [ ] Step: failing tests.
+  ```ts
+  // acp-live.spec.ts — UNCAGE_LIVE=1; real `uncage setup` + real `uncage agent` with tmp UNCAGE_HOME (HOME real), agent.yaml runtimes.acp = { presets: 'off', agents: [{ id: 'claude', preset: 'claude', command: [process.execPath, <resolved @agentclientprotocol/claude-agent-acp/dist/index.js>] }] }
+  test('Claude Code over ACP: connect → pick "Claude Code (ACP)" → streaming → approval → site tool → publish → reload history', async ({ page }) => {
+    await connectedGoldenPath({ page, stack, url: demo.url, runTimeoutMs: 600_000,
+      agent: async (home) => { await stack.writeAcpRuntimes(home, agents); return stack.realAgent(home); },
+      beforeSend: async (p) => { await pickRuntime(p, 'Claude Code (ACP)'); } });
+  });
+  test('Stop during a run over ACP: run cancelled within 10 s', …);
+  // markdown.test.ts
+  it('the ACP guide documents every preset and the capability differences', …); // headings 'Configure', 'Presets', 'Differences from the native runtimes', 'Troubleshooting', 'Verify'; every ACP_PRESETS id appears
+  // apps/site/tests/i18n.test.ts
+  it('every locale has the ACP feature card', () => { for (const d of [en, zh, ja]) { expect(d.features.available).toHaveLength(7); expect(d.features.available[6].title).toMatch(/ACP/); } });
+  ```
+- [ ] Step: run → FAIL: `UNCAGE_LIVE=1 pnpm --filter @uncage/e2e exec playwright test --project=connected-acp-live && pnpm --filter docs exec vitest run && pnpm --filter site test`
+- [ ] Step: implement the stack helper and the smoke script (`node packages/runtime-acp/scripts/smoke.ts` drives the real adapter once outside the browser: initialize → session/new → prompt → one approval → `run.completed`; prints `agentInfo` and capabilities for the matrix); write the docs (en, then zh-cn/ja per `i18n-glossary.md`, code blocks byte-identical) and the site card. Record the observed `agentCapabilities` of `claude-agent-acp`, and whether resume worked, in `docs/compatibility.md`; anything that differs from the plan goes into the commit body.
+- [ ] Step: run → PASS: `pnpm build && pnpm test && pnpm typecheck && pnpm lint && pnpm --filter docs check:i18n && pnpm --filter docs build && pnpm --filter site check && pnpm --filter site exec playwright test && pnpm e2e:mock && UNCAGE_LIVE=1 pnpm --filter @uncage/e2e exec playwright test --project=connected-acp-live --project=connected-live` (all green; logs in `e2e/connected/results/`)
+- [ ] Step: commit `feat(runtime-acp): Claude Code over ACP verified live, "Use any ACP agent" guide (en, zh-CN, ja) and site card` — then perform the **merge step** above when Task 13 is done.
