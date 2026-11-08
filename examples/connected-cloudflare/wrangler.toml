@@ -1,0 +1,23 @@
+# Uncage Connected Mode on Cloudflare Workers. `pnpm dev` runs it locally on workerd (wrangler dev).
+name = "uncage-connected-cloudflare"
+main = "src/worker.ts"
+compatibility_date = "2026-10-01"
+# For the `pg` driver only (net sockets through cloudflare:sockets); @uncage/hub needs no Node APIs.
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# Your Worker's public origin (agents and install.sh use it). Set it to the deployed URL.
+PUBLIC_URL = "http://localhost:8787"
+
+# Postgres through Hyperdrive. Create one with
+#   wrangler hyperdrive create uncage --connection-string="postgres://…"
+# and put its id here. `wrangler dev` connects to localConnectionString directly instead (override
+# it with CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE).
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "00000000000000000000000000000000"
+localConnectionString = "postgres://uncage:uncage@127.0.0.1:5432/uncage"
+
+# Secrets (not in this file): DEMO_SECRET (>= 32 bytes) and optionally CRON_SECRET.
+#   wrangler secret put DEMO_SECRET
+# For wrangler dev, put them in .dev.vars (see .dev.vars.example).

@@ -1,0 +1,2 @@
+# Copy to .dev.vars for `wrangler dev` (never commit .dev.vars).
+DEMO_SECRET=change-me-to-a-random-string-of-at-least-32-bytes
