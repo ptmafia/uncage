@@ -3,7 +3,7 @@ title: Concepts
 description: 'The ideas behind Uncage, one section each: website and hub, machine and agent, session, run, events, approvals and permission modes, site tools, skills, manifest, file channel, storage, cluster, and the trust model.'
 ---
 
-This page explains each idea once. The words are used the same way everywhere on this site; the [glossary](/uncage/reference/glossary/) has the one-line versions.
+This page explains each idea once. The words are used the same way everywhere on this site; the [glossary](/docs/reference/glossary/) has the one-line versions.
 
 ## Website and hub
 
@@ -66,7 +66,7 @@ The **permission mode** of a session controls how much needs approval:
 | `acceptEdits` | Edit files without asking; still ask for commands |
 | `plan` | Plan only, change nothing |
 | `auto` | The runtime decides what needs the user |
-| `bypassPermissions` | Never ask. **Only available if the user enabled it on their own computer** (see [trust model](/uncage/concepts/trust-model/)) |
+| `bypassPermissions` | Never ask. **Only available if the user enabled it on their own computer** (see [trust model](/docs/concepts/trust-model/)) |
 
 ## Site tools
 
@@ -77,25 +77,25 @@ A **site tool** is a capability of your website that Claude Code can call, decla
 - `requiresConfirmation: true` makes every call show an approval card first, even in `bypassPermissions` mode.
 - Every call is checked (the session belongs to this machine and user, the tool was offered to this run, the arguments match `input`) and recorded in the hub’s store.
 
-Guide: [Define tools](/uncage/guides/define-tools/).
+Guide: [Define tools](/docs/guides/define-tools/).
 
 ## Skills
 
 A **skill** is instructions (markdown) plus optional template files, declared as a `SkillSpec` (`{ name, description, markdown, files? }`). The agent writes it to `.claude/skills/<name>/SKILL.md` in the session workspace before the run, and Claude Code loads it like any Claude Code skill: when the task matches its description. Skills are data, never code that the hub runs.
 
-Guide: [Write skills](/uncage/guides/write-skills/).
+Guide: [Write skills](/docs/guides/write-skills/).
 
 ## Manifest
 
 The **manifest** is the set of tools and skills offered to one run. By default it is every tool and skill you registered. With `selectManifest({ user, prompt, sessionId, runtime })` you choose per run, for example only offering the publishing tools to users on a paid plan, or only the `invoice` skill when the prompt is about invoices. The hub records each run’s tool list; a call to a tool outside it fails with `tool_failed` (`details.reason: 'not_in_manifest'`). Changes to your tools or skills apply from the next run. Runtimes without site tool support (Codex) get the skills only, with a `site_tools_unsupported` warning in the session.
 
-Guide: [Choose tools and skills per run](/uncage/guides/select-manifest/).
+Guide: [Choose tools and skills per run](/docs/guides/select-manifest/).
 
 ## File channel
 
 The **file channel** lets a tool handler read files from the run’s workspace on the machine, instead of passing whole files through JSON arguments: `ctx.files.pull(path)` (a file or a folder, at most 50 MiB in total and 10 MiB per file) and `ctx.files.read(path)` (one file). The machine refuses paths outside the workspace, never follows symlinks, and skips hard-linked files in folders.
 
-Guide: [Define tools → Reading files](/uncage/guides/define-tools/#reading-files-from-the-users-computer).
+Guide: [Define tools → Reading files](/docs/guides/define-tools/#reading-files-from-the-users-computer).
 
 ## Storage
 
@@ -109,24 +109,24 @@ There are two stores:
 - `'machine'` (default): history is read from the machine. While it is offline, the user cannot see past conversations.
 - `'site'`: the machine replicates every event to the hub, in order, and resends from the last acknowledged sequence after a reconnect. History stays readable on your site while the machine is off.
 
-Guide: [Site storage](/uncage/guides/site-storage/).
+Guide: [Site storage](/docs/guides/site-storage/).
 
 ## Cluster
 
 A hub can run on several **nodes** behind a load balancer. A machine’s WebSocket lives on one node; a browser request may land on another. The **cluster adapter** (`ClusterAdapter`) shares which node holds which machine and carries commands and events between nodes. `memoryCluster()` (default) is for one process; `redisCluster()` is for several. Every node must also share one `HubStore` (Postgres).
 
-Guide: [Multi-node](/uncage/guides/multi-node/).
+Guide: [Multi-node](/docs/guides/multi-node/).
 
 ## Local policy and activity
 
 The user’s computer has the last word. In `~/.uncage/agent.yaml`, `localPolicy.allowBypass` (default `false`) is the only switch that makes `bypassPermissions` possible, and `localPolicy.allowedPermissionModes` can cap the modes any website may use. Every command, tool call, file pull and approval a website causes is written to a local **activity log**, shown by `uncage activity`.
 
-Guide: [Local policy](/uncage/guides/local-policy/).
+Guide: [Local policy](/docs/guides/local-policy/).
 
 ## Trust model
 
-The website is trusted to act for its signed-in users, within limits the website cannot change: no code or shell from the website, bypass only by the user, a local log of everything. Read [the trust model](/uncage/concepts/trust-model/).
+The website is trusted to act for its signed-in users, within limits the website cannot change: no code or shell from the website, bypass only by the user, a local log of everything. Read [the trust model](/docs/concepts/trust-model/).
 
 ## Local Mode
 
-Everything above is **Connected Mode**. In **Local Mode**, there is no hub and no pairing: `uncage serve` (the **daemon**) runs on the same machine as your app, and your app talks to it through a same-origin **proxy** (`createUncageHandler` from `@uncage/server/proxy`) that adds the daemon’s bearer token on the server. Sessions, runs, events and approvals work the same way. See the [Local Mode quickstart](/uncage/start/quickstart-local/).
+Everything above is **Connected Mode**. In **Local Mode**, there is no hub and no pairing: `uncage serve` (the **daemon**) runs on the same machine as your app, and your app talks to it through a same-origin **proxy** (`createUncageHandler` from `@uncage/server/proxy`) that adds the daemon’s bearer token on the server. Sessions, runs, events and approvals work the same way. See the [Local Mode quickstart](/docs/start/quickstart-local/).

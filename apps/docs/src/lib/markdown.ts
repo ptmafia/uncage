@@ -22,18 +22,28 @@ export function mdPathOf(slug: string): string {
 export const htmlUrl = (slug: string): string => `${SITE_URL}/${slug === '' ? '' : `${slug}/`}`;
 export const mdUrl = (slug: string): string => `${SITE_URL}/${mdPathOf(slug)}`;
 
-/** `](/uncage/guides/x/#a)` → `](https://…/uncage/guides/x.md#a)`. Other links are left alone. */
-export function absolutizeLinks(body: string): string {
-  return body.replace(/\]\(\/uncage\/([^)\s#]*?)\/?(#[^)\s]*)?\)/g, (_m, path: string, hash: string | undefined) => {
+/** `](/docs/guides/x/#a)` → `](https://…/docs/guides/x.md#a)`. Other links are left alone. */
+export function toMarkdownLinks(body: string): string {
+  return body.replace(/\]\(\/docs\/([^)\s#]*?)\/?(#[^)\s]*)?\)/g, (_m, path: string, hash: string | undefined) => {
     const isFile = /\.[a-z]+$/i.test(path);
     const target = isFile ? `${SITE_URL}/${path}` : mdUrl(path);
     return `](${target}${hash ?? ''})`;
   });
 }
 
+/** MDX pages (imports, `<Image>`, components) become plain markdown: screenshots turn into their alt text. */
+export function stripMdx(body: string): string {
+  return body
+    .replace(/^import .*$\n?/gm, '')
+    .replace(/<Image\b[^>]*?\balt="([^"]*)"[^>]*?\/>/g, '*(Screenshot: $1)*')
+    .replace(/^<[A-Z]\w*\s*\/>\s*$\n?/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^\n+/, '');
+}
+
 export function toMarkdown(entry: DocsEntry): string {
   const { title, description } = entry.data;
-  const body = absolutizeLinks((entry.body ?? '').trim());
+  const body = toMarkdownLinks(stripMdx((entry.body ?? '').trim()));
   const head = `# ${title}\n\n${description ? `> ${description}\n\n` : ''}`;
   const source = `<!-- ${htmlUrl(slugOf(entry))} -->\n\n`;
   return `${head}${source}${body}\n`;

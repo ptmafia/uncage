@@ -6,13 +6,13 @@ hero:
   tagline: 网站下达指令，用户自己电脑上的 Claude Code 动手干活，并调用你网站的能力。过程和产出都留在你的网站上。
   actions:
     - text: Connected Mode 快速上手
-      link: /uncage/zh-cn/start/quickstart-connected/
+      link: /docs/zh-cn/start/quickstart-connected/
       icon: right-arrow
     - text: 工作原理
-      link: /uncage/zh-cn/start/how-it-works/
+      link: /docs/zh-cn/start/how-it-works/
       variant: minimal
     - text: 给 coding agent
-      link: /uncage/start/for-coding-agents/
+      link: /docs/start/for-coding-agents/
       variant: minimal
 ---
 
@@ -50,13 +50,13 @@ Uncage 是一组 npm 包，把 Claude Code（以及 Codex）放到你自己的�
 - 让多个用户共用一个 Claude 登录。每台电脑用的都是主人自己的 Claude Code。
 - 让网站打开“完全放行”（bypass permissions）。只有用户本人能在自己电脑上的配置文件里打开。
 
-完整列表见[信任模型](/uncage/zh-cn/concepts/trust-model/)。
+完整列表见[信任模型](/docs/zh-cn/concepts/trust-model/)。
 
 ## 从哪里开始
 
-- **在做网站？** 先读[工作原理](/uncage/zh-cn/start/how-it-works/)，再做 [Connected Mode 快速上手](/uncage/zh-cn/start/quickstart-connected/)（约 15 分钟）。
-- **agent 和你的应用在同一台机器上？** [Local Mode 快速上手](/uncage/zh-cn/start/quickstart-local/)只要 5 分钟。
-- **在用 coding agent？** 把 [Uncage 技能](/uncage/skills/uncage/SKILL.md) 或 [`llms.txt`](/uncage/llms.txt) 交给它。每个页面都有纯 Markdown 版本：在网址后面加 `.md` 即可。详见 [For coding agents](/uncage/start/for-coding-agents/)（英文）。
+- **在做网站？** 先读[工作原理](/docs/zh-cn/start/how-it-works/)，再做 [Connected Mode 快速上手](/docs/zh-cn/start/quickstart-connected/)（约 15 分钟）。
+- **agent 和你的应用在同一台机器上？** [Local Mode 快速上手](/docs/zh-cn/start/quickstart-local/)只要 5 分钟。
+- **在用 coding agent？** 把 [Uncage 技能](/docs/skills/uncage/SKILL.md) 或 [`llms.txt`](/docs/llms.txt) 交给它。每个页面都有纯 Markdown 版本：在网址后面加 `.md` 即可。详见 [For coding agents](/docs/start/for-coding-agents/)（英文）。
 
 :::note[状态]
 Connected Mode 属于 Uncage 0.2（`@uncage/hub`、`@uncage/agent`，以及 `@uncage/cli` 里的 `uncage setup` / `uncage agent` 命令）。用户电脑一侧目前只支持 **macOS**，需要 Node.js 22 或更高版本。Claude Code 已实机验证；Codex 已实现，但还没有对真实二进制运行过，也暂不支持网站工具。详见[兼容性记录](https://github.com/ptmafia/uncage/blob/main/docs/compatibility.md)。

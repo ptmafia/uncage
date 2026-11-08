@@ -6,8 +6,8 @@ description: Integrate Uncage into a website or web app, so the site's users can
 # Integrate Uncage into a website
 
 Uncage puts Claude Code behind a web UI with streaming, approval cards, Stop and reload-safe history.
-Full docs: https://ptmafia.github.io/uncage/ (every page also as markdown: add `.md` to the URL;
-index: https://ptmafia.github.io/uncage/llms.txt; everything: https://ptmafia.github.io/uncage/llms-full.txt).
+Full docs: https://uncage.vercel.app/docs/ (every page also as markdown: add `.md` to the URL;
+index: https://uncage.vercel.app/docs/llms.txt; everything: https://uncage.vercel.app/docs/llms-full.txt).
 
 ## 1. Pick the mode
 
@@ -15,10 +15,10 @@ index: https://ptmafia.github.io/uncage/llms.txt; everything: https://ptmafia.gi
   website mounts `@uncage/hub` in its Node backend; users run two commands once
   (`curl -fsSL https://<site>/api/uncage/install.sh | bash`, then `uncage setup https://<site>`); a
   background agent on their Mac dials out to the hub. Claude Code can call the website's own tools.
-  Guide: https://ptmafia.github.io/uncage/start/quickstart-connected.md
+  Guide: https://uncage.vercel.app/docs/start/quickstart-connected.md
 - **Local Mode**: the app and the agent run on the same machine (internal tool, dev dashboard). Run
   `npx uncage serve --workspace <dir>`; the app adds a same-origin proxy route and `<AgentChat>`.
-  Guide: https://ptmafia.github.io/uncage/start/quickstart-local.md
+  Guide: https://uncage.vercel.app/docs/start/quickstart-local.md
 
 If unsure, ask the user: "Will each end user connect their own computer (Connected), or does the agent
 run on the same machine as this app (Local)?"
@@ -46,9 +46,9 @@ cannot run in serverless functions (Vercel functions); use a custom server or a 
 10. `next.config.ts` headers for `/device` (or all pages): `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`.
 11. `.gitignore`: `.uncage-hub/` (the default PGlite store).
 
-Copy the exact files from https://ptmafia.github.io/uncage/start/quickstart-connected.md; they are
+Copy the exact files from https://uncage.vercel.app/docs/start/quickstart-connected.md; they are
 type-checked in CI. Other servers (Express, Fastify, Hono, node:http):
-https://ptmafia.github.io/uncage/guides/mount-the-hub.md
+https://uncage.vercel.app/docs/guides/mount-the-hub.md
 
 ## 3. Local Mode steps (Next.js App Router)
 

@@ -1,0 +1,72 @@
+---
+title: Try the demo
+description: Connect your own Mac to a live Uncage site in two commands and watch your own Claude Code save and publish a note through the site's tools, with an approval card in the browser.
+---
+
+import { Image } from 'astro:assets';
+import DemoLink from '../../../components/DemoLink.astro';
+import chatApproval from '../../../assets/demo/chat-approval.png';
+import chatDone from '../../../assets/demo/chat-done.png';
+import chatAfterReload from '../../../assets/demo/chat-after-reload.png';
+import notes from '../../../assets/demo/notes.png';
+import chatOffline from '../../../assets/demo/chat-offline.png';
+
+The demo is a small notes site built with Uncage (the [`connected-demo` example](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo)). You connect your own computer to it, ask your own Claude Code to save a note and publish it, and approve the publish in the browser. It takes about five minutes.
+
+<DemoLink />
+
+## Before you start
+
+- A Mac (the Uncage agent runs on macOS).
+- Node.js 22 or newer.
+- Claude Code installed and signed in: `npm i -g @anthropic-ai/claude-code`, then run `claude` once and type `/login`.
+
+## Connect your computer
+
+Open the demo site. The chat offers **Connect your computer** with two commands. In a terminal, run them, with the demo's address in place of `<demo>`:
+
+```sh
+curl -fsSL <demo>/api/uncage/install.sh | bash
+uncage setup <demo>
+```
+
+Without a global install you can run the second one as `npx uncage setup <demo>`. `uncage setup` prints a code and opens the demo's approval page. Check that the code matches the one in your terminal and click **Approve**. The chat then shows **Connected** with your computer's name.
+
+## What you will see
+
+Ask the chat to save a note and publish it, for example: “Save a note titled hello with the text ‘hi from Uncage’, then publish it.”
+
+Claude Code runs on your computer, under your own login, and calls the demo site's tools. Saving a note needs no question. Publishing does, so the chat shows an approval card first and nothing runs until you answer.
+
+<Image src={chatApproval} alt="The chat shows two steps: save_note done, publish_note waiting for you, with an approval card offering Deny and Allow once." />
+
+*The approval card. `publish_note` is defined with `requiresConfirmation`, so the site asks you before every call. The run waits; if you do not answer, nothing happens.*
+
+<Image src={chatDone} alt="After Allow once the run finishes and Claude Code reports the note as saved and published." />
+
+*After **Allow once**, the tool runs on the site's server as you, and Claude Code reports back.*
+
+<Image src={notes} alt="The site's Notes page lists the note hello with a published badge." />
+
+*The result lives on the website, not on your computer: the Notes page shows the note you just published. Published pages can be opened only by their owner, which is the guest identity of that browser.*
+
+<Image src={chatAfterReload} alt="The same conversation after reloading the page, with all steps and the answer still there." />
+
+*Reload the page: the conversation is still there. The site keeps the history of every session.*
+
+<Image src={chatOffline} alt="The chat with a notice that the computer is offline, while the whole earlier conversation stays readable." />
+
+*Close the lid or stop the agent: the earlier conversation stays readable, and the chat says your computer is offline and waits for it to reconnect (`uncage agent` starts it again).*
+
+## About your data
+
+- You are signed in to the demo as a guest, identified by the browser you use. Another browser sees none of your notes.
+- The demo is public and shared. All of its data is cleared on every deploy and restart, and assets (notes and published pages) are removed 24 hours after they were last created or published.
+- Published pages can be viewed only by their owner.
+- Do not put anything private in the demo.
+
+To disconnect your computer when you are done, run `uncage sites` to list the sites it is connected to and `uncage sites remove <id>` with the demo's ID to remove it. See the [CLI reference](/docs/reference/cli/).
+
+## Run the demo yourself
+
+The demo's source is an ordinary Uncage Connected Mode site. To run it on your own machine, follow [the example's README](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo#run-it-single-node). To build your own, continue with [Quickstart: Connected Mode](/docs/start/quickstart-connected/).

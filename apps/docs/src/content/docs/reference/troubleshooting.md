@@ -21,7 +21,7 @@ The device-code limit (20 per minute) is **per client IP**. Behind a reverse pro
 - **Fetch-style servers (Hono, Next route handlers, …):** `createHub({ rateLimits: { clientIp: (req) => req.headers.get('cf-connecting-ip') ?? undefined } })` with your platform's client-IP header, or pass `hub.handler(req, { clientIp })`.
 - **`rateLimits.trustForwardedFor: true`** only if your proxy appends the client address to `X-Forwarded-For`.
 
-With several nodes the limit is counted on each node. Details: [behind a proxy](/uncage/guides/mount-the-hub/#behind-a-reverse-proxy-or-load-balancer).
+With several nodes the limit is counted on each node. Details: [behind a proxy](/docs/guides/mount-the-hub/#behind-a-reverse-proxy-or-load-balancer).
 
 ### The page keeps saying “Waiting for your computer…”
 
@@ -39,7 +39,7 @@ With several nodes the limit is counted on each node. Details: [behind a proxy](
 
 ### History disappears when the computer is off
 
-That is `sessionStorage: 'machine'` (the default). Use `sessionStorage: 'site'` to keep a replica on your site ([Site storage](/uncage/guides/site-storage/)).
+That is `sessionStorage: 'machine'` (the default). Use `sessionStorage: 'site'` to keep a replica on your site ([Site storage](/docs/guides/site-storage/)).
 
 ### Claude Code does not call my tool
 
@@ -54,7 +54,7 @@ The selected computer is offline. Pick another in the header’s computer menu, 
 
 ### `/device` can be framed, or the approve button does nothing
 
-See [Auth and device approval](/uncage/guides/auth-and-device-approval/#the-approval-page-device): the page needs `frame-ancestors 'none'`, `X-Frame-Options: DENY`, and a POST decision that your framework accepts (a Next.js Server Action, or an endpoint with an Origin check).
+See [Auth and device approval](/docs/guides/auth-and-device-approval/#the-approval-page-device): the page needs `frame-ancestors 'none'`, `X-Frame-Options: DENY`, and a POST decision that your framework accepts (a Next.js Server Action, or an endpoint with an Origin check).
 
 ### “The Uncage hub is not running: start the app with `node server.ts`”
 

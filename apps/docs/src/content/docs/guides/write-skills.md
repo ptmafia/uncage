@@ -51,7 +51,7 @@ const hub = await createHub({ publicUrl, getUser, tools, skills: [landingPage] }
 
 ## How a skill reaches Claude Code
 
-1. When a run starts, the hub puts the skills chosen for it (all of them, unless you use [`selectManifest`](/uncage/guides/select-manifest/)) into the run’s manifest, as text.
+1. When a run starts, the hub puts the skills chosen for it (all of them, unless you use [`selectManifest`](/docs/guides/select-manifest/)) into the run’s manifest, as text.
 2. The agent writes each one to the session workspace before Claude Code starts:
 
    ```text

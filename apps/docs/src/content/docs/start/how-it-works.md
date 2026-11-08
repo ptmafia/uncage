@@ -126,6 +126,6 @@ Your handler stored the files, so your own pages can show them. With `sessionSto
 
 ## Next
 
-- [Connected Mode quickstart](/uncage/start/quickstart-connected/): build all of this into a Next.js app.
-- [Concepts](/uncage/concepts/): the vocabulary, one section per idea.
-- [Trust model](/uncage/concepts/trust-model/): what a website can and cannot do on a user’s computer.
+- [Connected Mode quickstart](/docs/start/quickstart-connected/): build all of this into a Next.js app.
+- [Concepts](/docs/concepts/): the vocabulary, one section per idea.
+- [Trust model](/docs/concepts/trust-model/): what a website can and cannot do on a user’s computer.

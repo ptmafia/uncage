@@ -5,12 +5,12 @@ description: Run Claude Code on the machine that runs your app, behind a local d
 
 Local Mode is for apps that run on the **same machine** as the agent: a developer dashboard, an internal tool, a desktop-style app. The daemon `uncage serve` runs Claude Code under that machine’s Claude login; your app reaches it through a same-origin proxy that adds the daemon token on the server.
 
-If your users each have their own computer, use [Connected Mode](/uncage/start/quickstart-connected/) instead.
+If your users each have their own computer, use [Connected Mode](/docs/start/quickstart-connected/) instead.
 
 ## Copy prompt for your coding agent
 
 ```text wrap
-Add Uncage Local Mode to this Next.js (App Router) app, following https://ptmafia.github.io/uncage/start/quickstart-local.md exactly.
+Add Uncage Local Mode to this Next.js (App Router) app, following https://uncage.vercel.app/docs/start/quickstart-local.md exactly.
 1. npm i @uncage/server @uncage/react-ui @uncage/cli
 2. Create app/api/uncage/[...path]/route.ts with createUncageHandler from @uncage/server/proxy (runtime 'nodejs', dynamic 'force-dynamic', export GET, POST, PATCH).
 3. Create a page that renders <UncageProvider><AgentChat /></UncageProvider> from @uncage/react-ui inside a full-height container, and import '@uncage/react-ui/styles.css'.
@@ -115,9 +115,9 @@ app.listen(3000);
 
 - **A Vite or webpack SPA with a separate backend**: keep the browser’s `Host` in the dev proxy (`changeOrigin: false`). With `changeOrigin: true` every POST gets 403 `forbidden_origin`, because the proxy compares `Origin` with the rewritten `Host`.
 
-[Local Mode in depth](/uncage/reference/local-mode/) covers the composer, attachments, configuration (`uncage.config.yaml`) and the Local Mode security model. The [CLI reference](/uncage/reference/cli/) lists every flag.
+[Local Mode in depth](/docs/reference/local-mode/) covers the composer, attachments, configuration (`uncage.config.yaml`) and the Local Mode security model. The [CLI reference](/docs/reference/cli/) lists every flag.
 
 ## Next
 
-- [Custom UI with hooks](/uncage/guides/custom-ui/): build your own chat with `@uncage/react`.
-- [Troubleshooting](/uncage/reference/troubleshooting/): `forbidden_origin`, ports, sign-in.
+- [Custom UI with hooks](/docs/guides/custom-ui/): build your own chat with `@uncage/react`.
+- [Troubleshooting](/docs/reference/troubleshooting/): `forbidden_origin`, ports, sign-in.

@@ -126,6 +126,6 @@ handler 已经把文件存好，你自己的页面就能展示它们。配置 `s
 
 ## 下一步
 
-- [Connected Mode 快速上手](/uncage/zh-cn/start/quickstart-connected/)：把这一切接进一个 Next.js 应用。
-- [概念](/uncage/zh-cn/concepts/)：术语，一个概念一节。
-- [信任模型](/uncage/zh-cn/concepts/trust-model/)：网站在用户电脑上能做什么、不能做什么。
+- [Connected Mode 快速上手](/docs/zh-cn/start/quickstart-connected/)：把这一切接进一个 Next.js 应用。
+- [概念](/docs/zh-cn/concepts/)：术语，一个概念一节。
+- [信任模型](/docs/zh-cn/concepts/trust-model/)：网站在用户电脑上能做什么、不能做什么。

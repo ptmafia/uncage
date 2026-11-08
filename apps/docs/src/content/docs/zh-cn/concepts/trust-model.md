@@ -50,10 +50,10 @@ Connected Mode 让网站可以在用户自己的电脑上启动工作。这就�
 
 Uncage 无法防止一个网站滥用它自己用户的信任，但它给了你配得上这份信任所需的一切：
 
-- **认证每一个请求。** `getUser(req)` 必须返回真实的已登录用户，或者 `null`。见 [Auth and device approval](/uncage/guides/auth-and-device-approval/)（英文）。
+- **认证每一个请求。** `getUser(req)` 必须返回真实的已登录用户，或者 `null`。见 [Auth and device approval](/docs/guides/auth-and-device-approval/)（英文）。
 - **保护 `/device`。** 批准一个码就是把一台电脑关联到一个账号。只对已登录用户提供这个页面，禁止被嵌入框架，并用带 CSRF 防护的 POST 做决定。
 - **在工具 handler 里检查归属。** `ctx.user` 是会话所属用户；每次查询都用它（`WHERE owner = ctx.user.id`）。
 - **抛出对用户安全的错误信息。** handler 抛出的消息会展示给用户和模型。
 - **对任何发布、发送、付款或删除类的工具使用 `requiresConfirmation`。**
 
-传输、令牌和各项限制见 [Security](/uncage/reference/security/)（英文）。
+传输、令牌和各项限制见 [Security](/docs/reference/security/)（英文）。

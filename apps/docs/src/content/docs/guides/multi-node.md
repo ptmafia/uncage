@@ -61,7 +61,7 @@ export async function closeHub(): Promise<void> {
 }
 ```
 
-Mount it in your server exactly as for one node ([Mount the hub](/uncage/guides/mount-the-hub/)).
+Mount it in your server exactly as for one node ([Mount the hub](/docs/guides/mount-the-hub/)).
 
 - **Migrations** run when the store starts. With Postgres they run under an advisory lock, so nodes can start together.
 - **Every node must have the same configuration:** `publicUrl`, `basePath`, `site`, `tools`, `skills`, `selectManifest`, `sessionStorage`. A tool call runs on whichever node holds the computer’s socket, so every node needs every tool.
@@ -89,7 +89,7 @@ node-postgres emits `'error'` on a pool when an idle connection dies (a database
 
 - **WebSockets** on `<basePath>/agent` must be forwarded (HTTP/1.1 `Upgrade`), with idle timeouts above the 10 s heartbeat. No stickiness needed.
 - **SSE** on `<basePath>/sessions/:id/events` must not be buffered, and needs idle timeouts above 15 s (the SSE heartbeat).
-- **Host header** preserved, and **client IP** passed on for rate limits: see [behind a proxy](/uncage/guides/mount-the-hub/#behind-a-reverse-proxy-or-load-balancer).
+- **Host header** preserved, and **client IP** passed on for rate limits: see [behind a proxy](/docs/guides/mount-the-hub/#behind-a-reverse-proxy-or-load-balancer).
 
 :::caution[Client IP behind the load balancer]
 `POST <basePath>/device/code` is limited to 20 per minute **per client IP**, per node. Behind a load balancer every request comes from the balancer's address unless you set `app.set('trust proxy', <hops>)` (Express, with `toNodeHandler`), `rateLimits.clientIp(req)`, or `rateLimits.trustForwardedFor: true`. Without one of them all users share one bucket per node and `uncage setup` starts failing with `429 rate_limited` as soon as about 20 people connect in the same minute.
@@ -115,6 +115,6 @@ HUB_NODES=2 REDIS_URL=redis://127.0.0.1:6380 \
 docker compose down                 # when done
 ```
 
-Then connect a computer and run a task as in the [quickstart](/uncage/start/quickstart-connected/#9-connect-your-computer-the-users-side), against `http://localhost:3200`. The E2E suite runs this setup too (`UNCAGE_DOCKER_TESTS=1 pnpm exec playwright test --project=connected-multinode` from `e2e/`), and checks that both nodes answered.
+Then connect a computer and run a task as in the [quickstart](/docs/start/quickstart-connected/#9-connect-your-computer-the-users-side), against `http://localhost:3200`. The E2E suite runs this setup too (`UNCAGE_DOCKER_TESTS=1 pnpm exec playwright test --project=connected-multinode` from `e2e/`), and checks that both nodes answered.
 
 The hub’s own tests run the same two-node scenario in one process with `ioredis-mock` (`pnpm --filter @uncage/hub test`), and against real Redis and Postgres containers with `UNCAGE_DOCKER_TESTS=1`.

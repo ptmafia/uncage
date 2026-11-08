@@ -73,7 +73,7 @@ Codes are 8 characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, shown as `ABCD-EF
 
 ### Next.js
 
-The [Connected Mode quickstart](/uncage/start/quickstart-connected/#7-the-approval-page) has the complete Next.js version: a server component that calls `lookupDevice`, a Server Action that calls `approveDevice` / `denyDevice` (Server Actions are POST-only and Next.js checks their `Origin`, which is the CSRF protection), a client component around `<ApproveDevice>`, and the headers in `next.config.ts`. The same pattern, with a real sign-in redirect, is in `examples/connected-demo/app/device/`.
+The [Connected Mode quickstart](/docs/start/quickstart-connected/#7-the-approval-page) has the complete Next.js version: a server component that calls `lookupDevice`, a Server Action that calls `approveDevice` / `denyDevice` (Server Actions are POST-only and Next.js checks their `Origin`, which is the CSRF protection), a client component around `<ApproveDevice>`, and the headers in `next.config.ts`. The same pattern, with a real sign-in redirect, is in `examples/connected-demo/app/device/`.
 
 Adding the headers only to the approval page:
 

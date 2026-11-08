@@ -35,7 +35,7 @@ and pass it to the hub: `createHub({ …, tools: [lookupOrder] })`.
 1. The user’s computer only ever receives the tool’s **name**, **description** and the **JSON Schema** of `input` (generated with `z.toJSONSchema`). Claude Code sees the tool as `mcp__site__lookup_order`.
 2. When Claude Code calls it, the agent sends the call over its WebSocket. The hub node holding that connection checks that:
    - the session belongs to this computer and to its user;
-   - the run was started through the hub, and the tool was in **this run’s manifest** (see [selectManifest](/uncage/guides/select-manifest/));
+   - the run was started through the hub, and the tool was in **this run’s manifest** (see [selectManifest](/docs/guides/select-manifest/));
    - the arguments match `input`. They are parsed with it, so zod defaults and transforms apply. A mismatch fails with `invalid_request` and the handler is not called.
 3. Your handler runs **in your backend** with the parsed arguments and a `ctx`.
 4. The return value goes back to Claude Code as the tool result. The call is recorded in the hub’s store (`store.listToolCalls(sessionId)`), and the browser sees it in the session’s events as a normal tool step.
@@ -185,7 +185,7 @@ export const createAsset = defineTool({
 });
 ```
 
-A [skill](/uncage/guides/write-skills/) is the right place for the longer recipe (“first create_asset, then write the files, then publish_asset”).
+A [skill](/docs/guides/write-skills/) is the right place for the longer recipe (“first create_asset, then write the files, then publish_asset”).
 
 ## Testing a handler
 

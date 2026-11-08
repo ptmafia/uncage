@@ -11,7 +11,9 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "check": "node scripts/check-snippets.ts && astro build",
+    "check": "node scripts/check-snippets.ts && node scripts/check-i18n.ts --allow-missing && astro build",
+    "check:i18n": "node scripts/check-i18n.ts",
+    "test": "vitest run",
     "check:snippets": "node scripts/check-snippets.ts",
     "typecheck": "astro sync && tsc --noEmit",
     "lint": "eslint ."

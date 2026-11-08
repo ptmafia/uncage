@@ -3,7 +3,7 @@ title: Security
 description: The security properties of Connected Mode (transport, machine tokens, device login, isolation between users, tool execution, file channel, limits) and Local Mode, and a checklist for website developers.
 ---
 
-The [trust model](/uncage/concepts/trust-model/) explains what a website may do on a user’s computer. This page lists how it is enforced.
+The [trust model](/docs/concepts/trust-model/) explains what a website may do on a user’s computer. This page lists how it is enforced.
 
 ## Transport
 
@@ -22,7 +22,7 @@ The [trust model](/uncage/concepts/trust-model/) explains what a website may do 
 ## Device login
 
 - User codes: 8 characters from a 31-character alphabet without look-alikes (`ABCDEFGHJKMNPQRSTUVWXYZ23456789`), valid 10 minutes, single use.
-- Codes can only be approved by a signed-in user, through your `/device` page, which you must protect against framing and CSRF ([guide](/uncage/guides/auth-and-device-approval/#the-approval-page-device)).
+- Codes can only be approved by a signed-in user, through your `/device` page, which you must protect against framing and CSRF ([guide](/docs/guides/auth-and-device-approval/#the-approval-page-device)).
 - Rate limits: 20 device codes per minute per client IP; 10 failed code lookups or decisions per user per 10 minutes. Counted per hub node.
 - The device code (the CLI’s polling secret) and the user code are stored hashed.
 
@@ -58,7 +58,7 @@ The [trust model](/uncage/concepts/trust-model/) explains what a website may do 
 
 ## Local Mode
 
-The daemon binds to loopback only, requires a bearer token from `~/.uncage/token` (mode 600), rejects foreign `Origin`s, and is reached by browsers only through your same-origin proxy, which checks `Host` (DNS rebinding) and `Origin`. Details: [Local Mode in depth](/uncage/reference/local-mode/#security-model-local-mode).
+The daemon binds to loopback only, requires a bearer token from `~/.uncage/token` (mode 600), rejects foreign `Origin`s, and is reached by browsers only through your same-origin proxy, which checks `Host` (DNS rebinding) and `Origin`. Details: [Local Mode in depth](/docs/reference/local-mode/#security-model-local-mode).
 
 ## Checklist for website developers
 

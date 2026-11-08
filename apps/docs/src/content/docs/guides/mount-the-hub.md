@@ -8,7 +8,7 @@ The hub needs two things from your server:
 1. **HTTP requests** under its base path (default `/api/uncage`): the browser API, the device endpoints and `install.sh`. Use `hub.handler(request)` (Fetch API) or `toNodeHandler(hub)` (Node `req, res, next`).
 2. **WebSocket upgrades** at `<basePath>/agent`, where connected computers dial in. `hub.attach(httpServer)` registers them on your Node HTTP server.
 
-So the hub runs in a long-lived Node process (Node.js 22 or newer). Each example below is a complete server file. All of them import the same `getSessionUser` from `./auth`, which stands for your app’s sign-in (see [Auth and device approval](/uncage/guides/auth-and-device-approval/)):
+So the hub runs in a long-lived Node process (Node.js 22 or newer). Each example below is a complete server file. All of them import the same `getSessionUser` from `./auth`, which stands for your app’s sign-in (see [Auth and device approval](/docs/guides/auth-and-device-approval/)):
 
 ```ts title="auth.ts"
 import type { HubUser } from '@uncage/hub';
@@ -112,7 +112,7 @@ hub.attach(server as Server);
 
 ## Next.js (custom server)
 
-Next.js route handlers cannot accept WebSocket upgrades, so run Next.js inside your own Node server and put the hub next to it. This is what the [Connected Mode quickstart](/uncage/start/quickstart-connected/) and the `connected-demo` example do:
+Next.js route handlers cannot accept WebSocket upgrades, so run Next.js inside your own Node server and put the hub next to it. This is what the [Connected Mode quickstart](/docs/start/quickstart-connected/) and the `connected-demo` example do:
 
 ```ts title="server.ts"
 import { createServer } from 'node:http';
@@ -184,15 +184,15 @@ Only `publicUrl` and `getUser` are required.
 | `publicUrl` | (required) | Your website’s public origin, for example `https://app.example.com`. Used for the install and setup commands, the `/device` link and the CSRF origin check. |
 | `getUser(req)` | (required) | Your auth: `{ id, name? }` for a signed-in browser request, else `null`. |
 | `basePath` | `/api/uncage` | Where the hub is mounted. If you change it, pass the same path to `UncageProvider` as `baseUrl`. |
-| `tools` | `[]` | Site tools from `defineTool`. [Guide](/uncage/guides/define-tools/) |
-| `skills` | `[]` | `SkillSpec[]`. [Guide](/uncage/guides/write-skills/) |
-| `selectManifest(ctx)` | all tools and skills | Picks tools and skills per run. [Guide](/uncage/guides/select-manifest/) |
-| `sessionStorage` | `'machine'` | `'site'` keeps a replica of every conversation. [Guide](/uncage/guides/site-storage/) |
-| `attachmentRetentionDays` | `30` | Days the hub keeps its copy of attachments sent through the website (hourly sweep; `Infinity` keeps them). A revoked computer's attachments are deleted at once. [Details](/uncage/guides/site-storage/#attachments) |
+| `tools` | `[]` | Site tools from `defineTool`. [Guide](/docs/guides/define-tools/) |
+| `skills` | `[]` | `SkillSpec[]`. [Guide](/docs/guides/write-skills/) |
+| `selectManifest(ctx)` | all tools and skills | Picks tools and skills per run. [Guide](/docs/guides/select-manifest/) |
+| `sessionStorage` | `'machine'` | `'site'` keeps a replica of every conversation. [Guide](/docs/guides/site-storage/) |
+| `attachmentRetentionDays` | `30` | Days the hub keeps its copy of attachments sent through the website (hourly sweep; `Infinity` keeps them). A revoked computer's attachments are deleted at once. [Details](/docs/guides/site-storage/#attachments) |
 | `store` | `pgliteHubStore({ dataDir: './.uncage-hub' })` | `HubStore`. Use `postgresHubStore` for several nodes. |
-| `cluster` | `memoryCluster()` | `ClusterAdapter`. Use `redisCluster` for several nodes. [Guide](/uncage/guides/multi-node/) |
+| `cluster` | `memoryCluster()` | `ClusterAdapter`. Use `redisCluster` for several nodes. [Guide](/docs/guides/multi-node/) |
 | `site` | id and name from `publicUrl`’s host | `{ id?, name? }` shown to computers at pairing. Keep `id` stable. |
-| `verificationPath` | `/device` | Your approval page. [Guide](/uncage/guides/auth-and-device-approval/) |
+| `verificationPath` | `/device` | Your approval page. [Guide](/docs/guides/auth-and-device-approval/) |
 | `minAgentVersion` | this hub’s version | Older agents are told to upgrade (`upgrade_required`); they run `npm i -g @uncage/cli@latest` and reconnect. |
 | `cliVersionRange` | `^<major.minor>` of the hub | Which `@uncage/cli` version `install.sh` installs (`^0.2`, `~0.2.1`, `0.2.0` or `latest`). |
 | `heartbeat` | `{ pingIntervalMs: 10000, missedPings: 2 }` | A silent computer shows offline after about 30 s. |

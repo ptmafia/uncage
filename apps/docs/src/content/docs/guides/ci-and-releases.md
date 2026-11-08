@@ -65,13 +65,13 @@ The site lives in `apps/docs` (Astro + Starlight). It is not part of the root `p
 
 ```sh
 pnpm build                          # the packages (the API reference and the sample check use them)
-pnpm --filter docs dev              # http://localhost:4321/uncage/
+pnpm --filter docs dev              # http://localhost:4321/docs/
 pnpm --filter docs check            # sample type-check + full build with link validation
 ```
 
 - **Pages** are markdown files in `apps/docs/src/content/docs/` (English) and `apps/docs/src/content/docs/zh-cn/` (Chinese: the overview, the quickstarts and the concepts). The sidebar order is in `apps/docs/src/nav.mjs`; `/llms.txt` and `/llms-full.txt` follow it.
 - **Code samples:** every code block fenced as `ts` or `tsx` is type-checked by `apps/docs/scripts/check-snippets.ts` against the workspace packages. Blocks on one page form one project; give a block `title="lib/tools.ts"` to make it a file others can import. Add the word `nocheck` to the fence (a `ts nocheck` info string) only for fragments that are not a whole file (a signature, one option).
-- **Links** to other pages are absolute and include the base: `/uncage/guides/define-tools/`. The build fails on a broken internal link or anchor (`starlight-links-validator`).
+- **Links** to other pages are absolute and include the base: `/docs/guides/define-tools/`. The build fails on a broken internal link or anchor (`starlight-links-validator`).
 - **API reference** (`/api/…`) is generated at build time from the packages’ TypeScript (TypeDoc + `typedoc-plugin-markdown`, via `starlight-typedoc`); improve it by improving the TSDoc comments in the source.
 - **For agents:** every page is also served as `/<page>.md`; `/llms.txt`, `/llms-full.txt` and `/skills/uncage/SKILL.md` are generated from the pages and from `skills/uncage/SKILL.md` at the repository root.
-- **Deploy:** `.github/workflows/docs.yml` builds the site and deploys it to GitHub Pages (`https://ptmafia.github.io/uncage/`) on every push to `main`. One-time: repository Settings → Pages → Build and deployment → Source: **GitHub Actions**.
+- **Deploy:** `.github/workflows/docs.yml` builds the site and deploys it to GitHub Pages (`https://uncage.vercel.app/docs/`) on every push to `main`. One-time: repository Settings → Pages → Build and deployment → Source: **GitHub Actions**.

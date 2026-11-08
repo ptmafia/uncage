@@ -5,12 +5,12 @@ description: 在运行你应用的那台机器上，通过本地的 Uncage 服�
 
 Local Mode 适合和 agent 跑在**同一台机器**上的应用：开发者面板、内部工具、桌面类应用。Uncage 服务 `uncage serve`（英文叫 daemon）用这台机器的 Claude 登录运行 Claude Code；你的应用通过一个同源代理访问它，代理在服务器端加上服务的令牌。
 
-如果你的用户各自有自己的电脑，请改用 [Connected Mode](/uncage/zh-cn/start/quickstart-connected/)。
+如果你的用户各自有自己的电脑，请改用 [Connected Mode](/docs/zh-cn/start/quickstart-connected/)。
 
 ## 复制给你的 coding agent 的提示词
 
 ```text wrap
-Add Uncage Local Mode to this Next.js (App Router) app, following https://ptmafia.github.io/uncage/start/quickstart-local.md exactly.
+Add Uncage Local Mode to this Next.js (App Router) app, following https://uncage.vercel.app/docs/start/quickstart-local.md exactly.
 1. npm i @uncage/server @uncage/react-ui @uncage/cli
 2. Create app/api/uncage/[...path]/route.ts with createUncageHandler from @uncage/server/proxy (runtime 'nodejs', dynamic 'force-dynamic', export GET, POST, PATCH).
 3. Create a page that renders <UncageProvider><AgentChat /></UncageProvider> from @uncage/react-ui inside a full-height container, and import '@uncage/react-ui/styles.css'.
@@ -115,9 +115,9 @@ app.listen(3000);
 
 - **前后端分离的 Vite 或 webpack SPA**：开发代理要保留浏览器的 `Host`（`changeOrigin: false`）。用 `changeOrigin: true` 时，所有 POST 都会得到 403 `forbidden_origin`，因为代理会拿 `Origin` 和被改写的 `Host` 比较。
 
-[Local Mode in depth](/uncage/reference/local-mode/)（英文）介绍输入框的各项控制、附件、配置（`uncage.config.yaml`）和 Local Mode 的安全模型。[CLI 参考](/uncage/reference/cli/)（英文）列出了所有参数。
+[Local Mode in depth](/docs/reference/local-mode/)（英文）介绍输入框的各项控制、附件、配置（`uncage.config.yaml`）和 Local Mode 的安全模型。[CLI 参考](/docs/reference/cli/)（英文）列出了所有参数。
 
 ## 下一步（英文）
 
-- [Custom UI with hooks](/uncage/guides/custom-ui/)：用 `@uncage/react` 构建自己的对话界面。
-- [Troubleshooting](/uncage/reference/troubleshooting/)：`forbidden_origin`、端口、登录。
+- [Custom UI with hooks](/docs/guides/custom-ui/)：用 `@uncage/react` 构建自己的对话界面。
+- [Troubleshooting](/docs/reference/troubleshooting/)：`forbidden_origin`、端口、登录。

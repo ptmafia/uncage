@@ -3,7 +3,7 @@ title: Changelog
 description: What changed in each Uncage release, and what is coming in 0.2 (Connected Mode). The authoritative changelog is CHANGELOG.md in the repository and on each npm package.
 ---
 
-All public `@uncage/*` packages share one version. The authoritative record is [`CHANGELOG.md`](https://github.com/ptmafia/uncage/blob/main/CHANGELOG.md) in the repository (and each package’s changelog on npm), written by [Changesets](/uncage/guides/ci-and-releases/#releases) at release time.
+All public `@uncage/*` packages share one version. The authoritative record is [`CHANGELOG.md`](https://github.com/ptmafia/uncage/blob/main/CHANGELOG.md) in the repository (and each package’s changelog on npm), written by [Changesets](/docs/guides/ci-and-releases/#releases) at release time.
 
 ## 0.2.0 (upcoming): Connected Mode
 

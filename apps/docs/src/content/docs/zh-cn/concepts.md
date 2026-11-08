@@ -3,7 +3,7 @@ title: 概念
 description: Uncage 背后的概念，一节一个：网站与 hub、电脑与守护进程、会话、运行、事件、审批与权限模式、网站工具、技能、manifest、文件通道、存储、集群，以及信任模型。
 ---
 
-这一页把每个概念讲一遍。全站对这些词的用法完全一致；一句话版本见[术语表](/uncage/reference/glossary/)（英文，含中文界面用词）。
+这一页把每个概念讲一遍。全站对这些词的用法完全一致；一句话版本见[术语表](/docs/reference/glossary/)（英文，含中文界面用词）。
 
 ## 网站与 hub
 
@@ -66,7 +66,7 @@ description: Uncage 背后的概念，一节一个：网站与 hub、电脑与�
 | `acceptEdits` | 修改文件不询问；执行命令仍会询问 |
 | `plan` | 只做计划，不做任何改动 |
 | `auto` | 由运行时决定哪些需要用户确认 |
-| `bypassPermissions` | 从不询问。**只有用户在自己电脑上打开后才可用**（见[信任模型](/uncage/zh-cn/concepts/trust-model/)） |
+| `bypassPermissions` | 从不询问。**只有用户在自己电脑上打开后才可用**（见[信任模型](/docs/zh-cn/concepts/trust-model/)） |
 
 ## 网站工具（site tool）
 
@@ -77,25 +77,25 @@ description: Uncage 背后的概念，一节一个：网站与 hub、电脑与�
 - `requiresConfirmation: true` 会让每次调用都先弹出审批卡片，即使是 `bypassPermissions` 模式。
 - 每次调用都会被检查（会话属于这台电脑和用户、这次运行提供了这个工具、参数符合 `input`），并记录在 hub 的存储里。
 
-指南：[Define tools](/uncage/guides/define-tools/)（英文）。
+指南：[Define tools](/docs/guides/define-tools/)（英文）。
 
 ## 技能（skill）
 
 **技能**是一份说明（Markdown）加上可选的模板文件，声明为 `SkillSpec`（`{ name, description, markdown, files? }`）。运行开始前，agent 把它写到会话工作目录的 `.claude/skills/<名称>/SKILL.md`，Claude Code 会像加载普通 Claude Code 技能一样，在任务符合描述时加载它。技能是数据，绝不是 hub 要执行的代码。
 
-指南：[Write skills](/uncage/guides/write-skills/)（英文）。
+指南：[Write skills](/docs/guides/write-skills/)（英文）。
 
 ## Manifest
 
 **manifest** 是提供给某一次运行的工具和技能。默认是你注册的全部工具和技能。用 `selectManifest({ user, prompt, sessionId, runtime })` 可以按次选择，比如只给付费用户提供发布类工具，或者只在提示词与发票有关时提供 `invoice` 技能。hub 会记录每次运行的工具清单；调用清单以外的工具会失败，返回 `tool_failed`（`details.reason: 'not_in_manifest'`）。你对工具或技能的修改从下一次运行开始生效。不支持站点工具的运行时（目前是 Codex）只拿到技能，会话里会出现 `site_tools_unsupported` 警告。
 
-指南：[Choose tools and skills per run](/uncage/guides/select-manifest/)（英文）。
+指南：[Choose tools and skills per run](/docs/guides/select-manifest/)（英文）。
 
 ## 文件通道（file channel）
 
 **文件通道**让工具 handler 从电脑上这次运行的工作目录读取文件，而不是把整个文件塞进 JSON 参数：`ctx.files.pull(path)`（一个文件或文件夹，总共最多 50 MiB，单个文件最多 10 MiB）和 `ctx.files.read(path)`（单个文件）。电脑会拒绝工作目录以外的路径，从不跟随符号链接，并在拉取文件夹时跳过有多个硬链接的文件。
 
-指南：[Define tools → Reading files](/uncage/guides/define-tools/#reading-files-from-the-users-computer)（英文）。
+指南：[Define tools → Reading files](/docs/guides/define-tools/#reading-files-from-the-users-computer)（英文）。
 
 ## 存储
 
@@ -109,24 +109,24 @@ description: Uncage 背后的概念，一节一个：网站与 hub、电脑与�
 - `'machine'`（默认）：历史从电脑读取。电脑离线时，用户看不到过去的对话。
 - `'site'`：电脑按顺序把每个事件复制到 hub，重连后从最后一个已确认的序号继续补传。电脑关机时，历史在你的网站上仍然可读。
 
-指南：[Site storage](/uncage/guides/site-storage/)（英文）。
+指南：[Site storage](/docs/guides/site-storage/)（英文）。
 
 ## 集群（cluster）
 
 hub 可以在负载均衡后面运行多个**节点**。一台电脑的 WebSocket 落在某一个节点上，而浏览器请求可能落在另一个节点上。**集群适配器**（`ClusterAdapter`）共享“哪个节点持有哪台电脑”的信息，并在节点之间传递命令和事件。`memoryCluster()`（默认）用于单进程；`redisCluster()` 用于多节点。所有节点还必须共享同一个 `HubStore`（Postgres）。
 
-指南：[Multi-node](/uncage/guides/multi-node/)（英文）。
+指南：[Multi-node](/docs/guides/multi-node/)（英文）。
 
 ## 本机策略与操作日志
 
 用户的电脑说了算。在 `~/.uncage/agent.yaml` 里，`localPolicy.allowBypass`（默认 `false`）是唯一能让 `bypassPermissions` 生效的开关，`localPolicy.allowedPermissionModes` 可以限制任何网站能使用的模式。网站引起的每条命令、每次工具调用、每次文件拉取和每次审批都会写进本地**操作日志**，用 `uncage activity` 查看。
 
-指南：[Local policy](/uncage/guides/local-policy/)（英文）。
+指南：[Local policy](/docs/guides/local-policy/)（英文）。
 
 ## 信任模型
 
-网站被信任代表它的已登录用户行事，但有一些网站无法改变的限制：网站不能下发代码或 shell，完全放行只能由用户打开，所有操作都有本地记录。详见[信任模型](/uncage/zh-cn/concepts/trust-model/)。
+网站被信任代表它的已登录用户行事，但有一些网站无法改变的限制：网站不能下发代码或 shell，完全放行只能由用户打开，所有操作都有本地记录。详见[信任模型](/docs/zh-cn/concepts/trust-model/)。
 
 ## Local Mode
 
-以上讲的都是 **Connected Mode**。在 **Local Mode** 下没有 hub，也没有配对：`uncage serve`（**Uncage 服务**，英文叫 daemon）和你的应用运行在同一台机器上，你的应用通过同源**代理**（`@uncage/server/proxy` 里的 `createUncageHandler`）访问它，代理在服务器端加上服务的 bearer 令牌。会话、运行、事件和审批的工作方式完全相同。见 [Local Mode 快速上手](/uncage/zh-cn/start/quickstart-local/)。
+以上讲的都是 **Connected Mode**。在 **Local Mode** 下没有 hub，也没有配对：`uncage serve`（**Uncage 服务**，英文叫 daemon）和你的应用运行在同一台机器上，你的应用通过同源**代理**（`@uncage/server/proxy` 里的 `createUncageHandler`）访问它，代理在服务器端加上服务的 bearer 令牌。会话、运行、事件和审批的工作方式完全相同。见 [Local Mode 快速上手](/docs/zh-cn/start/quickstart-local/)。

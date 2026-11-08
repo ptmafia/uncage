@@ -17,8 +17,8 @@ description: 把 Uncage 接进一个 Next.js 应用，让已登录的用户连�
 如果你在用 Claude Code、Codex 或其他 coding agent，可以把下面这段直接贴给它，代替手动操作（提示词保持英文，agent 读得最准）：
 
 ```text wrap
-Add Uncage Connected Mode to this Next.js (App Router) app, following https://ptmafia.github.io/uncage/start/quickstart-connected.md exactly.
-Read https://ptmafia.github.io/uncage/skills/uncage/SKILL.md first and follow its rules.
+Add Uncage Connected Mode to this Next.js (App Router) app, following https://uncage.vercel.app/docs/start/quickstart-connected.md exactly.
+Read https://uncage.vercel.app/docs/skills/uncage/SKILL.md first and follow its rules.
 1. Install @uncage/hub, @uncage/react-ui and zod.
 2. Create lib/auth.ts, lib/tools.ts, lib/uncage-hub.ts, lib/hub-registry.ts, server.ts, app/uncage/page.tsx, app/device/page.tsx, app/device/actions.ts, app/device/approve-page.tsx and the headers in next.config.ts, as on that page.
 3. Wire lib/auth.ts to this app's existing sign-in (find how the app reads the current user). Do not keep the development user unless the app has no sign-in at all.
@@ -33,7 +33,7 @@ Verify: start the dev server, then curl -s http://localhost:3000/api/uncage/inst
 - **用户一侧（这次测试就是你自己的 Mac）：** macOS、Node.js 22+，并且已安装并登录 Claude Code：`npm i -g @anthropic-ai/claude-code`，然后运行一次 `claude` 并输入 `/login`。
 
 :::caution[为什么需要自定义服务器]
-hub 要和每台已连接的电脑保持一条 WebSocket，所以它需要一个长期运行、能接触到 HTTP 服务器的 Node 进程。单靠 Next.js 的 route handler 无法接受 WebSocket 升级，Serverless 平台（例如 Vercel Functions）也无法托管 hub。在 Vercel 上，请把 hub 作为单独的 Node 服务运行，见 [Mount the hub](/uncage/guides/mount-the-hub/#serverless-hosting-vercel-netlify)（英文）。
+hub 要和每台已连接的电脑保持一条 WebSocket，所以它需要一个长期运行、能接触到 HTTP 服务器的 Node 进程。单靠 Next.js 的 route handler 无法接受 WebSocket 升级，Serverless 平台（例如 Vercel Functions）也无法托管 hub。在 Vercel 上，请把 hub 作为单独的 Node 服务运行，见 [Mount the hub](/docs/guides/mount-the-hub/#serverless-hosting-vercel-netlify)（英文）。
 :::
 
 ## 1. 安装
@@ -44,7 +44,7 @@ npm i @uncage/hub @uncage/react-ui zod
 
 ## 2. 谁登录了
 
-hub 在每个浏览器请求上都会问你的应用：当前用户是谁。这个快速上手里先用一个固定的开发用户。[认证指南](/uncage/guides/auth-and-device-approval/)（英文）介绍如何接入真正的登录。
+hub 在每个浏览器请求上都会问你的应用：当前用户是谁。这个快速上手里先用一个固定的开发用户。[认证指南](/docs/guides/auth-and-device-approval/)（英文）介绍如何接入真正的登录。
 
 ```ts title="lib/auth.ts"
 import type { HubUser } from '@uncage/hub';
@@ -394,8 +394,8 @@ agent 只对 `localhost` 和 `127.0.0.1` 接受 `http://`。其他网站都必�
 
 ## 下一步（英文）
 
-- [Define tools](/uncage/guides/define-tools/)：参数校验、错误、确认、文件通道。
-- [Write skills](/uncage/guides/write-skills/) 与[按次选择](/uncage/guides/select-manifest/)。
-- [Auth and device approval](/uncage/guides/auth-and-device-approval/)：接入你真正的登录。
-- [Multi-node](/uncage/guides/multi-node/)：负载均衡后面的 Postgres + Redis。
-- **部署到代理后面之前：** 设置客户端 IP（`trust proxy` 或 `rateLimits.clientIp`），否则所有用户共用一个 `uncage setup` 限流桶（每分钟 20 次）。见 [behind a proxy](/uncage/guides/mount-the-hub/#behind-a-reverse-proxy-or-load-balancer)。
+- [Define tools](/docs/guides/define-tools/)：参数校验、错误、确认、文件通道。
+- [Write skills](/docs/guides/write-skills/) 与[按次选择](/docs/guides/select-manifest/)。
+- [Auth and device approval](/docs/guides/auth-and-device-approval/)：接入你真正的登录。
+- [Multi-node](/docs/guides/multi-node/)：负载均衡后面的 Postgres + Redis。
+- **部署到代理后面之前：** 设置客户端 IP（`trust proxy` 或 `rateLimits.clientIp`），否则所有用户共用一个 `uncage setup` 限流桶（每分钟 20 次）。见 [behind a proxy](/docs/guides/mount-the-hub/#behind-a-reverse-proxy-or-load-balancer)。

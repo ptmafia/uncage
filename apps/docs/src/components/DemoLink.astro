@@ -1,0 +1,16 @@
+---
+/**
+ * "Open the demo" button. The hosted demo URL comes from PUBLIC_DEMO_URL at build time; when it is
+ * not set (local builds, forks) the page links to the instructions for running the demo locally.
+ */
+const demoUrl = import.meta.env.PUBLIC_DEMO_URL as string | undefined;
+const localUrl = 'https://github.com/ptmafia/uncage/tree/main/examples/connected-demo#run-it-single-node';
+---
+
+{
+  demoUrl ? (
+    <a class="sl-link-button primary" href={demoUrl} target="_blank" rel="noopener">Open the demo</a>
+  ) : (
+    <a class="sl-link-button primary" href={localUrl} target="_blank" rel="noopener">Run the demo locally</a>
+  )
+}
