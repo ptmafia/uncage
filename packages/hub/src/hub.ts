@@ -1,6 +1,7 @@
 import { UncageError } from '@uncage/core/errors';
 import {
   CONNECTED_PROTOCOL,
+  MIN_AGENT_VERSION,
   SkillSpecSchema,
   type HubFrame,
   type SkillSpec,
@@ -78,7 +79,7 @@ const UNBOUND_MANIFEST_TTL_MS = 3_600_000;
 const BOUND_MANIFEST_TTL_MS = 7 * 24 * 3_600_000;
 export { normalizeWorkspacePath } from './tool-calls.js';
 
-/** Hooks not (yet) part of the public options: the tool executor seam and a logger. */
+/** Hooks not (yet) part of the public options: the tool executor seam and test knobs. */
 export interface HubInternals {
   toolExecutor?: ToolExecutor;
   /** See DEFAULT_RUN_INDEX_WAIT_MS (tests shorten it). */
@@ -90,10 +91,13 @@ export interface HubInternals {
   toolLeaseGraceMs?: number;
   /** Run-manifest retention (tests shorten it). */
   manifestSweep?: { unboundTtlMs?: number; boundTtlMs?: number };
-  logger?: HubLogger;
 }
 
-const silent: HubLogger = { warn: () => undefined, error: () => undefined };
+/** The default `HubOptions.logger`: warnings and errors to the console with an `[uncage]` prefix. */
+export const consoleHubLogger: HubLogger = {
+  warn: (obj, msg) => console.warn(`[uncage] ${msg ?? 'warning'}`, obj),
+  error: (obj, msg) => console.error(`[uncage] ${msg ?? 'error'}`, obj),
+};
 
 const trimSlashes = (s: string): string => s.replace(/^\/+|\/+$/g, '');
 
@@ -113,14 +117,14 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   const origin = publicUrl.origin;
   const basePath = `/${trimSlashes(o.basePath ?? DEFAULT_BASE_PATH)}`;
   const hubUrl = `${origin}${basePath}`;
-  const minAgentVersion = o.minAgentVersion ?? HUB_VERSION;
+  const minAgentVersion = o.minAgentVersion ?? MIN_AGENT_VERSION;
   if (compareVersions(minAgentVersion, '0.0.0') < 0) throw new Error(`createHub: invalid minAgentVersion "${minAgentVersion}"`);
   const range = assertVersionRange(o.cliVersionRange ?? defaultCliRange(HUB_VERSION));
   const installExtension = assertInstallExtension(o.installScript);
   const sessionStorage = o.sessionStorage ?? 'machine';
   const attachmentRetentionDays = o.attachmentRetentionDays ?? DEFAULT_ATTACHMENT_RETENTION_DAYS;
   if (!(attachmentRetentionDays > 0)) throw new Error(`createHub: attachmentRetentionDays must be > 0 (got ${attachmentRetentionDays})`);
-  const logger = o.logger ?? silent;
+  const logger = o.logger ?? consoleHubLogger;
   const executor = o.toolExecutor ?? siteToolExecutor(o.tools ?? []);
   const toolTimeoutMs = o.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
   const runIndexWaitMs = o.runIndexWaitMs ?? DEFAULT_RUN_INDEX_WAIT_MS;
@@ -371,6 +375,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     ],
   });
 
+  const agentAuthFailures = storeRateLimiter(store, { name: 'agent_auth', max: o.rateLimits?.agentAuthFailuresPerMinute ?? 60, windowMs: AGENT_AUTH_WINDOW_MS });
   const agentTransport = httpTransport({
     store,
     cluster,
@@ -383,7 +388,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     pingIntervalMs: machines.heartbeat.pingIntervalMs,
     toolLeaseMs: toolTimeoutMs + toolLeaseGraceMs,
     shutdown: shutdown.signal,
-    authFailures: storeRateLimiter(store, { name: 'agent_auth', max: o.rateLimits?.agentAuthFailuresPerMinute ?? 60, windowMs: AGENT_AUTH_WINDOW_MS }),
+    authFailures: agentAuthFailures,
     bodyTimeoutMs,
   });
 
@@ -411,6 +416,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     streamMaxDurationMs: streamMaxMs,
     bodyTimeoutMs,
     shutdown: shutdown.signal,
+    agentAuthFailures,
   });
 
   let closing: Promise<void> | undefined;
@@ -440,12 +446,16 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
       } catch (err) {
         const uerr = err instanceof UncageError ? err : new UncageError('internal_error');
         if (!(err instanceof UncageError)) logger.error({ err, requestId }, 'hub request failed');
-        return errorResponse(uerr.code, {
+        const res = errorResponse(uerr.code, {
           message: uerr.message,
           ...(uerr.hint !== undefined ? { hint: uerr.hint } : {}),
           ...(uerr.details !== undefined ? { details: uerr.details } : {}),
           requestId,
         });
+        // 429: tell clients when the window ends (the agent backs off by `Retry-After`).
+        const retryAfterSec = uerr.details?.['retryAfterSec'];
+        if (uerr.code === 'rate_limited' && typeof retryAfterSec === 'number') res.headers.set('retry-after', String(retryAfterSec));
+        return res;
       }
     },
     approveDevice: (code, user) => device.approve(code, user),
@@ -476,6 +486,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
       },
       heartbeat: machines.heartbeat,
       maintenance: { intervalMs: maintenanceIntervalMs },
+      defaultCluster: ownsCluster,
     },
   };
 }

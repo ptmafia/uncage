@@ -69,10 +69,22 @@ export function attachWebSocket(hub: Hub, server: Server, o: { path?: string } =
       return;
     }
     if (pathname !== path) return; // someone else's upgrade (e.g. a dev server's HMR)
-    const m = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '');
+    // Detached or closing: a retryable 503, never 401 (the agent would take it for a revoked token).
+    if (detached || machines.isClosed) {
+      socket.end(
+        `HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nRetry-After: 1\r\nConnection: close\r\n\r\n` +
+          JSON.stringify({ error: new UncageError('internal_error', { message: 'The hub is shutting down; reconnect.', hint: 'Reconnect: another instance will serve the request.' }).toBody() }),
+      );
+      return;
+    }
+    const m = /^Bearer (\S+)$/i.exec(req.headers.authorization ?? '');
     (m?.[1] ? machines.authenticate(m[1]) : Promise.resolve(null))
       .then((machine) => {
-        if (!machine || detached || machines.isClosed) {
+        if (detached || machines.isClosed) {
+          socket.end(`HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\n\r\n`);
+          return;
+        }
+        if (!machine) {
           socket.end(
             `HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n` +
               JSON.stringify({ error: new UncageError('unauthorized', { message: 'Missing or invalid machine token.', hint: 'Run `uncage setup <site>` again to pair this machine.' }).toBody() }),

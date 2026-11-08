@@ -28,11 +28,16 @@ export interface HubOptions {
    * platforms. The hub never closes it: close it yourself after `hub.close()`.
    */
   store: HubStore;
-  /** Defaults to `memoryCluster()` (single node). Several nodes share one `redisCluster`. */
+  /**
+   * Defaults to `memoryCluster()` (one process). Several nodes, or FaaS function instances, share one
+   * `postgresCluster` (the FaaS default) or `redisCluster`; without one, presence and command replies
+   * stay inside each instance.
+   */
   cluster?: ClusterAdapter;
   /**
-   * Site tools (`defineTool`) offered to runs as MCP tools. They execute on the hub node holding
-   * the machine's connection, as the session's owner; every call is audited in the store
+   * Site tools (`defineTool`) offered to runs as MCP tools. They execute as the session's owner on
+   * the hub instance that receives the call: over WebSocket the node holding the machine's socket,
+   * over HTTP whichever instance gets the agent's POST. Every call is audited in the store
    * (`listToolCalls`) and shows in the session's events as the runtime's `tool.*` events.
    */
   tools?: SiteTool[];
@@ -55,12 +60,16 @@ export interface HubOptions {
    */
   sessionStorage?: 'machine' | 'site';
   /**
-   * Days the hub keeps attachment bytes sent through the website (a periodic sweep deletes older
-   * ones — `attachWebSocket` runs it hourly in a long-running process; the machine keeps its own copy). Default 30. `Infinity` keeps them until the machine is
-   * revoked.
+   * Days the hub keeps attachment bytes sent through the website (maintenance deletes older ones,
+   * at most every `maintenance.intervalMs`; the machine keeps its own copy). Default 30. `Infinity`
+   * keeps them until the machine is revoked.
    */
   attachmentRetentionDays?: number;
-  /** Agents older than this are told to upgrade. Defaults to this package's version. */
+  /**
+   * Agents older than this are told to upgrade. Defaults to `MIN_AGENT_VERSION` from
+   * `@uncage/protocol` (0.3.0), the oldest agent this hub's protocol works with, so a hub patch
+   * release never locks out agents of the same minor.
+   */
   minAgentVersion?: string;
   /** `install.sh` and `install.ps1` install `@uncage/cli@<range>`. Defaults to `^<major.minor>` of this package. */
   cliVersionRange?: string;
@@ -101,8 +110,19 @@ export interface HubOptions {
    * wakes the stream at once through the cluster.
    */
   polling?: { activeMs?: number; idleMs?: number; activeWindowMs?: number };
-  /** A request body not fully received within this long is refused with 400. Defaults to 30 000 ms. */
+  /**
+   * A request body that stalls (no bytes arrive) for this long is refused with 400 (an idle timeout,
+   * re-armed on every chunk, so a large upload on a slow link still gets through). A body is also
+   * refused once it has taken 4 × this long in total. Defaults to 30 000 ms.
+   */
   bodyTimeoutMs?: number;
+  /**
+   * Where the hub reports warnings (e.g. no client IP for per-IP rate limits, events for an unknown
+   * session) and errors (a request that failed with 500, maintenance failures, a tool result that
+   * could not be stored). Defaults to the console (`console.warn` / `console.error`, prefixed
+   * `[uncage]`). Pass your own (pino and most loggers fit) or `{ warn() {}, error() {} }` to silence it.
+   */
+  logger?: HubLogger;
   /** SSE comment heartbeat for browser event streams. Defaults to 15 000 ms. */
   sseHeartbeatMs?: number;
   /** How long a browser request waits for the machine. Defaults to 30 000 ms. */
@@ -213,6 +233,8 @@ export interface HubInternalsHandle {
   heartbeat: { pingIntervalMs: number; missedPings: number };
   /** Maintenance interval: a long-running process calls `hub.maintain()` this often. */
   maintenance: { intervalMs: number };
+  /** No `cluster` option: presence and command replies stay inside this instance (`memoryCluster`). */
+  defaultCluster: boolean;
 }
 
 export interface Hub {

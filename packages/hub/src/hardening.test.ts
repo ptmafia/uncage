@@ -195,6 +195,37 @@ describe('rate limits', () => {
     expect(warns.filter((m) => m.includes('no client IP'))).toHaveLength(1);
   });
 
+  it('without a logger option the warning reaches the console (once)', async () => {
+    const store = await pgliteHubStore({ dataDir: 'memory://' });
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const hub = await createHub({ publicUrl: 'https://app.example', store, getUser: async () => null });
+    cleanups.push(async () => {
+      spy.mockRestore();
+      await hub.close();
+      await store.close();
+    });
+    for (let i = 0; i < 3; i++) await hub.fetch(codeReq());
+    const lines = spy.mock.calls.filter((c) => String(c[0]).includes('no client IP'));
+    expect(lines).toHaveLength(1);
+    expect(String(lines[0]![0])).toMatch(/^\[uncage\] /);
+  });
+
+  it('fetchOnce warns once when the hub has no cluster (presence per instance)', async () => {
+    const { fetchOnce } = await import('./fetch-adapters.js');
+    const warns: string[] = [];
+    const logger = { warn: (_o: unknown, msg?: string) => void warns.push(msg ?? ''), error: () => undefined };
+    for (let i = 0; i < 2; i++) {
+      const store = await pgliteHubStore({ dataDir: 'memory://' });
+      cleanups.push(() => store.close());
+      const res = await fetchOnce(
+        async () => createHub({ publicUrl: 'https://app.example', store, getUser: async () => null, logger }),
+        new Request('https://app.example/api/uncage/agent/info'),
+      );
+      await res.text();
+    }
+    expect(warns.filter((m) => m.includes('no cluster'))).toHaveLength(1);
+  });
+
   it('trustForwardedFor uses the rightmost entry, so a spoofed leading entry cannot bypass the limit', async () => {
     const hub = await directHub({ deviceCodesPerMinute: 1, trustForwardedFor: true });
     // The proxy appends the real client (5.5.5.5); the client forged the leading entries.

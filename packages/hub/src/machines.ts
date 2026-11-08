@@ -25,6 +25,7 @@ import { routedId, routeOf } from './ids.js';
 import type { HubStore, MachineRecord, ToolResultFrame } from './store/store.js';
 import { randomHex, sha256Hex, toBase64, unrefTimer, utf8Length } from './web.js';
 
+/** Where the hub logs (`HubOptions.logger`): `obj` carries the context (`err`, ids), `msg` the text. */
 export interface HubLogger {
   warn(obj: unknown, msg?: string): void;
   error(obj: unknown, msg?: string): void;
@@ -142,8 +143,8 @@ export interface MachineLink {
   machine: MachineRecord;
   /** Aborts when the connection goes away (cancels its tool calls and pulls). */
   readonly signal: AbortSignal;
-  /** ws: write now; http: `durable` → outbox, otherwise collected into the response's `replies`. */
-  send(f: HubFrame, o?: { durable?: boolean }): Promise<void>;
+  /** ws: write now; http: collected into the response's `replies`. */
+  send(f: HubFrame): Promise<void>;
   /** http: the acknowledged outbox seq, set by `hello` when it opens the link. */
   cursor?: number;
 }

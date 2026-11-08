@@ -3,12 +3,30 @@
  * one-hub-per-request platforms (Cloudflare Workers). Web-standard only — this module never
  * imports `next` (pass Next's `after` as `waitUntil` yourself).
  */
-import type { Hub } from './types.js';
+import { HUB_INTERNALS, type Hub } from './types.js';
 
 /** A Next.js App Router route handler (also any `(Request) => Promise<Response>` host). */
 export type RouteHandler = (req: Request) => Promise<Response>;
 
 type WaitUntil = (p: Promise<unknown>) => void;
+
+/** The no-cluster warning was logged in this isolate / process. */
+let warnedNoCluster = false;
+
+/**
+ * Logs once per process when `hub` has no `cluster`: on FaaS each instance then keeps its own presence
+ * (machines look offline on other instances, command replies are lost).
+ */
+function warnIfNoCluster(hub: Hub): void {
+  if (warnedNoCluster) return;
+  const h = (hub as Partial<Hub>)[HUB_INTERNALS];
+  if (!h?.defaultCluster) return;
+  warnedNoCluster = true;
+  h.logger.warn(
+    {},
+    'this hub has no cluster: presence is per instance, so on FaaS machines look offline on other instances and command replies are lost. Use postgresCluster (or redisCluster) on FaaS.',
+  );
+}
 
 /** Where Vercel (`@vercel/functions`) and Next.js publish the platform's request context, in lookup order. */
 const REQUEST_CONTEXTS = [Symbol.for('@vercel/request-context'), Symbol.for('@next/request-context')];
@@ -95,6 +113,8 @@ export function toNextHandlers(
   };
   const handle: RouteHandler = async (req) => {
     const h = await resolve();
+    // On Vercel every function instance is a separate process: a default cluster cannot work there.
+    if (onVercel()) warnIfNoCluster(h);
     const clientIp = o.clientIp ? o.clientIp(req) : onVercel() ? vercelClientIp(req) : undefined;
     const waitUntil = o.waitUntil ?? platformWaitUntil();
     return h.fetch(req, {
@@ -180,6 +200,8 @@ export async function fetchOnce(
     throw err;
   }
   const close = () => cleanup(() => hub.close());
+  // One hub per request: a memory cluster never reaches the next request.
+  warnIfNoCluster(hub);
 
   let res: Response;
   try {

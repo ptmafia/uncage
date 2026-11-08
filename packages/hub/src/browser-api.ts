@@ -26,6 +26,7 @@ import { downloadHeaders } from '@uncage/server/wire';
 import { z } from 'zod';
 import type { ClusterAdapter } from './cluster/cluster.js';
 import type { DeviceFlow } from './device.js';
+import type { RateLimiter } from './rate-limit.js';
 import { compareVersions, HTTP_PRESENCE, sessionChannel, type MachineHub } from './machines.js';
 import { toSessionSnapshot } from './replica.js';
 import { eventStreamResponse, readHistory, type EventSource } from './sse.js';
@@ -72,6 +73,8 @@ export interface ApiContext {
   /** A request body not received within this long is refused. */
   bodyTimeoutMs: number;
   shutdown: AbortSignal;
+  /** Failed machine-token checks per client IP, shared with the agent routes (`agentAuthFailuresPerMinute`). */
+  agentAuthFailures: RateLimiter;
 }
 
 type Params = Record<string, string>;
@@ -330,10 +333,13 @@ export function browserApi(ctx: ApiContext) {
   }, { public: true });
 
   // `uncage sites remove`: the machine revokes itself with its own token.
-  add('POST', '/machine/revoke', async ({ req }) => {
+  add('POST', '/machine/revoke', async ({ req, clientKey }) => {
     const m = /^Bearer (\S+)$/i.exec(req.headers.get('authorization') ?? '');
-    const machine = m ? await store.findMachineByTokenHash(await sha256Hex(m[1]!)) : null;
-    if (!machine) throw new UncageError('unauthorized', { message: 'Unknown or revoked machine token.' });
+    const machine = m ? await machines.authenticate(m[1]!) : null;
+    if (!machine) {
+      await ctx.agentAuthFailures.take(clientKey); // throws rate_limited (429) once over the limit
+      throw new UncageError('unauthorized', { message: 'Unknown or revoked machine token.' });
+    }
     await store.deleteMachine(machine.id);
     await machines.kick(machine.id);
     return json({ ok: true });

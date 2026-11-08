@@ -109,6 +109,8 @@ export function toolCalls(d: ToolCallsDeps): {
   /** Handlers running on this instance per machine (the concurrency cap). */
   const running = new Map<string, number>();
   const stopping = new AbortController();
+  /** `close()` started: no new handler starts here (the agent retries, and lands on another instance). */
+  let draining = false;
 
   /** Finishes a stale call as interrupted; resolves its frame if this caller won the compare-and-set. */
   async function interrupt(rec: ToolCallRecord): Promise<ToolResultFrame | null> {
@@ -134,6 +136,9 @@ export function toolCalls(d: ToolCallsDeps): {
     // from this one read, so a resend loop costs no session/run lookups, subscribes or claims.
     // A running row past its lease (or without one) goes on to the claim, which interrupts it.
     if (existing?.leaseUntil && Date.parse(existing.leaseUntil) > Date.now()) return null;
+    // Closing: start nothing new. `null` = "not answered here": over HTTP the agent asks again (another
+    // instance, or a 500 from this closing one), over WebSocket it resends after reconnecting.
+    if (draining) return null;
 
     const rec = await store.getSession(call.sessionId);
     // The session must be this machine's, and its owner the machine's user (ctx.user).
@@ -367,6 +372,7 @@ export function toolCalls(d: ToolCallsDeps): {
       for (const call of active) if (call.machineId === machineId && call.runId === runId) call.abort();
     },
     async close(drainMs) {
+      draining = true;
       const all = Promise.all([...active].map((c) => c.done));
       if (active.size > 0 && drainMs > 0) {
         let t: ReturnType<typeof setTimeout> | undefined;

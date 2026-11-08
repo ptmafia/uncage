@@ -116,7 +116,7 @@ export function httpTransport(ctx: HttpTransportContext) {
     return machine;
   }
 
-  /** A link for one request: non-durable frames become the response's `replies`. */
+  /** A link for one request: frames sent on it become the response's `replies`. */
   function requestLink(machine: MachineRecord, linkId: string, replies: HubFrame[]): MachineLink {
     return {
       kind: 'http',
@@ -124,9 +124,8 @@ export function httpTransport(ctx: HttpTransportContext) {
       machine,
       // A dropped request must not abandon work the agent will retry (the retry is deduped).
       signal: ctx.shutdown,
-      async send(f, o) {
-        if (o?.durable) await machines.enqueue(machine.id, [{ msgId: `${linkId}:${randomHex(8)}`, msg: f, ttlMs: 600_000 }]);
-        else replies.push(f);
+      async send(f) {
+        replies.push(f);
       },
     };
   }
@@ -466,6 +465,11 @@ export function httpTransport(ctx: HttpTransportContext) {
   async function handle(req: Request, url: URL, path: string, clientKey: string, waitUntil?: WaitUntil): Promise<Response | null> {
     if (path !== '/agent' && !path.startsWith('/agent/')) return null;
     const method = req.method;
+    // Closing (graceful shutdown, rolling deploy): a retryable 5xx, never 401 or 426 — the agent must
+    // not take a closing instance for a revoked token or an upgrade. It reconnects (elsewhere).
+    if (ctx.shutdown.aborted && path !== '/agent/info') {
+      throw new UncageError('internal_error', { message: 'The hub is shutting down; reconnect.', hint: 'Reconnect: another instance will serve the request.' });
+    }
     if (path === '/agent') {
       if (method === 'GET' && (req.headers.get('upgrade') ?? '').toLowerCase() === 'websocket') return upgradeRefused(req);
       return null;

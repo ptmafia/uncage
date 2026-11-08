@@ -139,21 +139,35 @@ export async function readBody(req: Request, limit: number, timeoutMs?: number):
   const reader = req.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
-  // One deadline for the whole body: a client trickling bytes must not hold the request forever.
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  // Idle timeout (re-armed on every chunk, so a large body on a slow link gets through) plus an
+  // overall cap of 4 × `timeoutMs`: a client trickling bytes must not hold the request forever.
+  let idle: ReturnType<typeof setTimeout> | undefined;
+  let total: ReturnType<typeof setTimeout> | undefined;
+  let fail: ((e: Error) => void) | undefined;
   const deadline =
     timeoutMs === undefined
       ? undefined
       : new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new UncageError('invalid_request', { message: `The request body did not arrive within ${Math.round(timeoutMs / 1000)} s.` })),
-            timeoutMs,
+          fail = reject;
+          total = setTimeout(
+            () => reject(new UncageError('invalid_request', { message: `The request body did not arrive within ${Math.round((4 * timeoutMs) / 1000)} s.` })),
+            4 * timeoutMs,
           );
-          unrefTimer(timer);
+          unrefTimer(total);
         });
   deadline?.catch(() => undefined);
+  const arm = (): void => {
+    if (timeoutMs === undefined) return;
+    clearTimeout(idle);
+    idle = setTimeout(
+      () => fail?.(new UncageError('invalid_request', { message: `The request body did not arrive: no data for ${Math.round(timeoutMs / 1000)} s.` })),
+      timeoutMs,
+    );
+    unrefTimer(idle);
+  };
   try {
     for (;;) {
+      arm();
       const { done, value } = await (deadline ? Promise.race([reader.read(), deadline]) : reader.read());
       if (done) break;
       size += value.byteLength;
@@ -167,7 +181,8 @@ export async function readBody(req: Request, limit: number, timeoutMs?: number):
     await reader.cancel().catch(() => undefined);
     throw err;
   } finally {
-    clearTimeout(timer);
+    clearTimeout(idle);
+    clearTimeout(total);
   }
   return concatBytes(chunks);
 }

@@ -1,7 +1,8 @@
 /**
- * Cross-node messaging and machine presence. A machine's WebSocket lives on exactly one hub node;
- * browser requests may land on any node, so commands and events travel over the cluster.
- * `memoryCluster()` is the single-process default; multi-node deployments use a shared one (Redis).
+ * Cross-instance messaging and machine presence. A machine's connection lives on one hub instance
+ * (a WebSocket's node, or the instance serving its HTTP stream); browser requests may land on any
+ * instance, so commands, wake-ups and events travel over the cluster. `memoryCluster()` is the
+ * single-process default; several nodes or FaaS instances share `postgresCluster` or `redisCluster`.
  */
 export interface ClusterAdapter {
   publish(channel: string, msg: string): Promise<void>;

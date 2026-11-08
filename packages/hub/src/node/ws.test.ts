@@ -110,6 +110,18 @@ describe('attachWebSocket', () => {
     expect(await dial(`${origin.replace('http', 'ws')}/api/uncage/agent`, tok.machineToken)).not.toBe('open');
   });
 
+  it('accepts a lower-case bearer scheme', async () => {
+    const { hub, server, origin } = await setup();
+    attachWebSocket(hub, server);
+    const tok = await pair(hub, origin);
+    const ws = new WebSocket(`${origin.replace('http', 'ws')}/api/uncage/agent`, { headers: { authorization: `bearer ${tok.machineToken}` } });
+    closers.push(async () => ws.terminate());
+    await new Promise<void>((resolve, reject) => {
+      ws.once('open', () => resolve());
+      ws.once('unexpected-response', (_req, res) => reject(new Error(String(res.statusCode))));
+    });
+  });
+
   it('refuses a bad token with 401 and closes connected machines when the hub closes', async () => {
     const { hub, server, origin } = await setup();
     attachWebSocket(hub, server);
@@ -119,7 +131,10 @@ describe('attachWebSocket', () => {
     const agent = await connectFakeAgent({ url: wsUrl, token: tok.machineToken });
     await hub.close();
     expect((await agent.closed).code).toBe(1001);
-    expect(await dial(wsUrl, tok.machineToken)).not.toBe('open');
+    // A closed hub is not a revocation (401) nor an upgrade (426): a retryable 5xx.
+    const after = await dial(wsUrl, tok.machineToken);
+    expect(after).not.toBe('open');
+    expect(Number(after)).toBeGreaterThanOrEqual(500);
   });
 
   it('a second attach throws until the first is detached', async () => {

@@ -5,6 +5,7 @@ import {
   DeviceTokenResponseSchema,
   HTTP_STREAM_CONTENT_TYPE,
   HttpConnectResponseSchema,
+  MIN_AGENT_VERSION,
   type DeviceCodeResponse,
   type HttpEventsResponse,
   type MachineInfo,
@@ -636,8 +637,50 @@ describe('HTTP transport — fix round 1', () => {
     const statuses: number[] = [];
     for (let i = 0; i < 5; i++) statuses.push((await hubs.fetch('/agent/connect', json(hello(), bad))).status);
     expect(statuses).toEqual([401, 401, 401, 429, 429]); // counted across both instances
+    // 429 says when to come back (the agent backs off by Retry-After).
+    const limited = await hubs.fetch('/agent/connect', json(hello(), bad));
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get('retry-after'))).toBeGreaterThanOrEqual(1);
+    // `/machine/revoke` with a wrong token counts against the same limit.
+    expect((await hubs.fetch('/machine/revoke', { method: 'POST', headers: bad })).status).toBe(429);
     // A valid token is never limited.
     expect((await hubs.fetch('/agent/connect', json(hello(), { authorization: `Bearer ${token}` }))).status).toBe(200);
+  });
+
+  it('bodyTimeoutMs is an idle timeout: a body that keeps arriving gets through', async () => {
+    const hubs = await faas({ n: 1, bodyTimeoutMs: 300 });
+    const { token } = await hubs.pair('u1');
+    const w = await rawConnect(hubs, token);
+    const body = JSON.stringify({ linkId: w.linkId, busy: false, msgs: [] });
+    const parts = [body.slice(0, 10), body.slice(10, 20), body.slice(20)];
+    const enc = new TextEncoder();
+    const trickle = new ReadableStream<Uint8Array>({
+      async start(c) {
+        for (const p of parts) {
+          c.enqueue(enc.encode(p));
+          await sleep(200); // each gap < 300 ms, total > 300 ms
+        }
+        c.close();
+      },
+    });
+    const res = await hubs.fetch('/agent/events', { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: trickle, duplex: 'half' } as RequestInit);
+    expect(res.status).toBe(200);
+  });
+
+  it('a closed hub answers agents with a retryable 5xx, never 401 (not a revocation)', async () => {
+    const hubs = await faas({ n: 1 });
+    const { token } = await hubs.pair('u1');
+    await hubs.hubs[0]!.close();
+    const res = await hubs.fetch('/agent/connect', json(hello(), { authorization: `Bearer ${token}` }));
+    expect(res.status).not.toBe(401);
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect((await errorOf(res)).message).toMatch(/shutting down/);
+  });
+
+  it('minAgentVersion defaults to MIN_AGENT_VERSION from the protocol, not the hub version', async () => {
+    const hubs = await faas({ n: 1 });
+    const info = AgentInfoSchema.parse(await (await hubs.fetch('/agent/info')).json());
+    expect(info.minAgentVersion).toBe(MIN_AGENT_VERSION);
   });
 
   it('a request body that does not arrive within bodyTimeoutMs is refused', async () => {
