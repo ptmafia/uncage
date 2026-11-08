@@ -41,3 +41,10 @@ Rules for translators:
 | trust model | 信任模型 | トラストモデル | The page `concepts/trust-model`. ja: not 信頼モデル. |
 | source of truth | 以……为准 | 正となるデータ | E.g. the computer's local database. ja: not 信頼できる唯一の情報源. |
 | UI labels in prose | Real Chinese UI labels (允许执行 / 拒绝, 批准, 素材) | English UI label + Japanese gloss on first use: **Allow once**（許可）/ **Deny**（拒否） | `@uncage/react-ui` has no Japanese strings. The connected demo's UI is Chinese: en/ja pages quote the Chinese label with a gloss, e.g. **允许执行** (Allow once), **允许执行**（1回だけ許可）. |
+| deployment mode | 部署模式 | デプロイモード | Traditional mode or FaaS mode (`start/choose-deployment-mode`). |
+| traditional mode | 传统模式 | 従来モード（常駐プロセス） | A long-running Node process: PGlite + WebSocket, zero external dependencies. ja: 「従来モード」 after the first use. |
+| FaaS mode | FaaS 模式 | FaaS モード | Serverless functions / Fetch platforms (Vercel, Cloudflare Workers): Postgres + HTTP streaming. Keep “FaaS” in Latin letters. |
+| transport | 传输方式 | トランスポート | How a computer is linked to the hub: WebSocket (`ws`) or HTTP streaming (`http`). |
+| HTTP streaming | HTTP 流式传输 | HTTP ストリーミング | The `http` transport (`/agent/stream` + `/agent/events`). |
+| function instance | 函数实例 | 関数インスタンス | One running copy of a serverless function. |
+| maintenance | 维护任务 | メンテナンス | `HubOptions.maintenance`, the `/maintenance` endpoint, retention cleanup. |

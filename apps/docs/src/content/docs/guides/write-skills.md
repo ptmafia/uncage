@@ -46,7 +46,7 @@ Use this when the user asks for a landing page, product page or marketing page.
 Register it with the hub (`npm i @uncage/protocol` for the type, or let TypeScript infer it):
 
 ```ts nocheck
-const hub = await createHub({ publicUrl, getUser, tools, skills: [landingPage] });
+const hub = await createHub({ publicUrl, getUser, store, tools, skills: [landingPage] });
 ```
 
 ## How a skill reaches Claude Code

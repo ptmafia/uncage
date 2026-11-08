@@ -108,14 +108,17 @@ export const tools: SiteTool[] = [saveNote];
 
 ```ts title="lib/uncage-hub.ts"
 import { createHub, type Hub } from '@uncage/hub';
+import { pgliteHubStore } from '@uncage/hub/node';
 import { userFromRequest } from './auth.ts';
 import { tools } from './tools.ts';
 
-export function createAppHub(): Promise<Hub> {
+export async function createAppHub(): Promise<Hub> {
   return createHub({
     // The URL your users open. Also what `uncage setup <url>` is given.
     publicUrl: process.env.PUBLIC_URL ?? 'http://localhost:3000',
     getUser: userFromRequest,
+    // The hub's own database: embedded Postgres in this folder (computers, sessions, tool calls).
+    store: await pgliteHubStore({ dataDir: './.uncage-hub' }),
     tools,
     // Keep a copy of every conversation on the website (readable while the computer is off).
     sessionStorage: 'site',
@@ -149,7 +152,7 @@ export function getHub(): Hub {
 
 ```ts title="server.ts"
 import { createServer } from 'node:http';
-import { toNodeHandler } from '@uncage/hub';
+import { attachWebSocket, toNodeHandler } from '@uncage/hub/node';
 import next from 'next';
 import { publishHub } from './lib/hub-registry.ts';
 import { createAppHub } from './lib/uncage-hub.ts';
@@ -172,7 +175,7 @@ server.on('request', (req, res) => {
   hubHandler(req, res, () => void handle(req, res));
 });
 
-hub.attach(server); // computers connect to ws(s)://<host>/api/uncage/agent
+attachWebSocket(hub, server); // computers connect to ws(s)://<host>/api/uncage/agent
 
 if (dev) {
   // Next.js hot reload uses WebSockets too; leave the hub's path to the hub.

@@ -103,12 +103,14 @@ export default config;
 
 ```ts title="server.ts"
 import { createServer } from 'node:http';
-import { createHub, toNodeHandler, type HubUser } from '@uncage/hub';
+import { createHub, type HubUser } from '@uncage/hub';
+import { attachWebSocket, pgliteHubStore, toNodeHandler } from '@uncage/hub/node';
 import express, { type NextFunction, type Request as ExpressRequest, type Response } from 'express';
 import { getUser } from './auth.ts';
 
 const PUBLIC_URL = process.env.PUBLIC_URL ?? 'http://localhost:3000';
-const hub = await createHub({ publicUrl: PUBLIC_URL, getUser });
+const store = await pgliteHubStore({ dataDir: './.uncage-hub' });
+const hub = await createHub({ publicUrl: PUBLIC_URL, getUser, store });
 
 /** Your sign-in for Express requests (the same session as getUser). */
 declare function userOf(req: ExpressRequest): Promise<HubUser | null>;
@@ -159,7 +161,7 @@ app.post('/device/decision', async (req, res) => {
 });
 
 const server = createServer(app);
-hub.attach(server);
+attachWebSocket(hub, server);
 server.listen(3000);
 ```
 

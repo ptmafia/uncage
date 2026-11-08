@@ -13,7 +13,8 @@ description: 用 sessionStorage 'site' 在你的网站上保存每段对话的�
 如果过程应该一直在你的网站上可见（回看 agent 做了什么、分享结果、客户支持），就选 `'site'`。参考演示项目用的就是它。如果对话除了被查看的时候之外不能离开用户电脑，就选 `'machine'`。
 
 ```ts title="hub.ts"
-import { createHub, pgliteHubStore, type HubUser } from '@uncage/hub';
+import { createHub, type HubUser } from '@uncage/hub';
+import { pgliteHubStore } from '@uncage/hub/node';
 
 declare function getUser(req: Request): Promise<HubUser | null>;
 

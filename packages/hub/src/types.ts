@@ -113,10 +113,9 @@ export interface HubOptions {
    * fails with "Site tool "<name>" timed out on the website. Please try again." (it is never re-run).
    *
    * Over HTTP a tool call runs inside the agent's upstream POST. On runtimes that cancel a request's
-   * work when the client disconnects (Cloudflare Workers without `ctx.waitUntil`), a dropped POST
+   * work when the client disconnects (Cloudflare Workers), a dropped POST
    * stops the handler: the call is then at-most-once (interrupted error) instead of exactly-once.
-   * Pass the platform's `waitUntil` to `hub.fetch` so the call outlives the request.
-   * TODO(Task 14 docs): document this on the Workers / Vercel pages.
+   * Keep handlers short and idempotent there (help site: Deploy → Cloudflare Workers → FAQ).
    */
   toolTimeoutMs?: number;
   /**

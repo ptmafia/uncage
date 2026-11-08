@@ -7,11 +7,11 @@ This page explains each idea once. The words are used the same way everywhere on
 
 ## Website and hub
 
-The **website** is your web application. The **hub** (`@uncage/hub`) is the part of Uncage you mount inside its Node backend with `createHub()`. It serves, under one base path (default `/api/uncage`):
+The **website** is your web application. The **hub** (`@uncage/hub`) is the part of Uncage you mount inside its backend with `createHub()`: in a long-running Node process (**traditional mode**) or in serverless functions (**FaaS mode**, see [Choose a deployment mode](/docs/start/choose-deployment-mode/)). It is a Fetch handler (`hub.fetch`) and serves, under one base path (default `/api/uncage`):
 
 - the **browser API** your UI uses (the same request and response shapes as the Local Mode daemon’s `/v1` API, so `@uncage/client`, `@uncage/react` and `@uncage/react-ui` work unchanged);
-- the **device endpoints** and `install.sh` that the CLI uses to connect a computer;
-- the **WebSocket** that connected computers dial into (`<basePath>/agent`, via `hub.attach(server)`).
+- the **device endpoints** and the installers (`install.sh`, `install.ps1`) that connect a computer;
+- the **transports** connected computers dial into at `<basePath>/agent`: a **WebSocket** (traditional mode, via `attachWebSocket(hub, server)` from `@uncage/hub/node`) and **HTTP streaming** (any platform). The hub offers them, the agent picks one.
 
 Each website runs its own hub. There is no Uncage cloud service in between.
 
@@ -21,9 +21,9 @@ A website has an **id** and a **name** that computers see when they connect. By 
 
 A **machine** is one user’s computer connected to your website. In UI text it is called a **computer**. A user can connect several; each one has an id (`mch_…`), a name, its OS, the agent version, the runtimes it has (Claude Code, Codex) and whether it is **online**.
 
-The **agent** is the background process on that computer: `uncage agent`, installed by `uncage setup` as a launchd service on macOS. In Chinese UI text it is called **守护进程**. One agent can be connected to several websites at once, with one machine token, one WebSocket and one workspace root per website.
+The **agent** is the background process on that computer: `uncage agent`, installed by `uncage setup` as a per-user background service (launchd on macOS, systemd on Linux, a scheduled task on Windows). In Chinese UI text it is called **守护进程**. One agent can be connected to several websites at once, with one machine token, one connection and one workspace root per website.
 
-A machine is **online** while its WebSocket is connected and answering heartbeats. The hub pings every 10 seconds and marks a silent machine offline after two missed pings, so the UI shows “offline” within about 30 seconds.
+A machine is **online** while its connection is live: a WebSocket answering heartbeats, or an open HTTP stream. The hub pings every 10 seconds and marks a silent machine offline after two missed pings, so the UI shows “offline” within about 30 seconds.
 
 **Pairing** uses a device login, much like signing in to a TV app: `uncage setup <url>` gets a short **user code**, the user approves it on your website’s `/device` page, and the CLI receives a **machine token**. The token is stored only on the computer (`~/.uncage/agent.yaml`, mode 0600); the hub keeps its SHA-256 hash. Revoking a machine (from your website, or with `uncage sites remove` on the computer) makes the token stop working at once.
 
@@ -102,7 +102,7 @@ Guide: [Define tools → Reading files](/docs/guides/define-tools/#reading-files
 There are two stores:
 
 - **On the machine:** the session data (truth), in PGlite under `~/.uncage/sites/<site id>/`.
-- **On the hub (`HubStore`):** machines, device codes, the session index (who owns which session, on which machine), run manifests, attachments uploaded through the hub and the tool-call audit. `pgliteHubStore` (embedded, one process) is the default; `postgresHubStore` is for several nodes.
+- **On the hub (`HubStore`):** machines, device codes, the session index (who owns which session, on which machine), run manifests, attachments uploaded through the hub and the tool-call audit. In FaaS mode it also holds each machine’s **outbox** (the numbered commands it has not processed yet) and the tool-call results. `pgliteHubStore` (embedded, one process, from `@uncage/hub/node`) is for traditional mode; `postgresHubStore` is for several nodes and FaaS mode. You always pass one as `store`.
 
 **Session storage** (`sessionStorage` option) decides whether the hub also keeps the conversation:
 
@@ -113,7 +113,7 @@ Guide: [Site storage](/docs/guides/site-storage/).
 
 ## Cluster
 
-A hub can run on several **nodes** behind a load balancer. A machine’s WebSocket lives on one node; a browser request may land on another. The **cluster adapter** (`ClusterAdapter`) shares which node holds which machine and carries commands and events between nodes. `memoryCluster()` (default) is for one process; `redisCluster()` is for several. Every node must also share one `HubStore` (Postgres).
+A hub can run on several **nodes** behind a load balancer; in FaaS mode every function instance is a node. A machine’s WebSocket lives on one node; a browser request may land on another. The **cluster adapter** (`ClusterAdapter`) shares which node holds which machine and carries commands, wake-ups and events between nodes. `memoryCluster()` (default) is for one process; `redisCluster()` or `postgresCluster()` is for several. Every node must also share one `HubStore` (Postgres).
 
 Guide: [Multi-node](/docs/guides/multi-node/).
 

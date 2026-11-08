@@ -1,3 +1,11 @@
+/**
+ * `@uncage/hub`: the hub as a Web-standard Fetch handler (`createHub`, `hub.fetch`), usable on any
+ * platform — Node, Vercel, Cloudflare Workers, other Fetch hosts — plus site tools, stores,
+ * clusters and the Fetch-platform adapters (`toNextHandlers`, `fetchOnce`). Node-only parts are in
+ * `@uncage/hub/node`.
+ *
+ * @module hub
+ */
 export { createHub, DEFAULT_HEARTBEAT, HUB_VERSION } from './hub.js';
 export type { Hub, HubOptions, HubUser } from './types.js';
 export { fetchOnce, toNextHandlers, type CreatedHub, type RouteHandler } from './fetch-adapters.js';

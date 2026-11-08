@@ -46,7 +46,7 @@ Use this when the user asks for a landing page, product page or marketing page.
 ハブに登録します（型が必要なら`npm i @uncage/protocol`を実行するか、TypeScriptに推論させてください）。
 
 ```ts nocheck
-const hub = await createHub({ publicUrl, getUser, tools, skills: [landingPage] });
+const hub = await createHub({ publicUrl, getUser, store, tools, skills: [landingPage] });
 ```
 
 ## スキルがClaude Codeに届くまで

@@ -23,7 +23,13 @@ export const sections = [
     label: 'Start here',
     zh: '开始',
     ja: 'はじめに',
-    items: ['start/how-it-works', 'start/quickstart-connected', 'start/quickstart-local', 'start/try-the-demo', 'start/for-coding-agents'],
+    items: ['start/how-it-works', 'start/choose-deployment-mode', 'start/quickstart-connected', 'start/quickstart-local', 'start/try-the-demo', 'start/for-coding-agents'],
+  },
+  {
+    label: 'Deploy',
+    zh: '部署',
+    ja: 'デプロイ',
+    items: ['deploy/node', 'deploy/vercel', 'deploy/cloudflare-workers', 'deploy/other-fetch-platforms'],
   },
   {
     label: 'Concepts',
@@ -60,6 +66,7 @@ export const sections = [
       'reference/errors',
       'reference/security',
       'reference/troubleshooting',
+      'reference/migrate-from-0-2',
       'reference/changelog',
     ],
   },

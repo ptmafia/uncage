@@ -82,7 +82,7 @@ Now close the lid, or stop the agent (`uncage agent uninstall` stops the backgro
 ## About your data
 
 - You are signed in to the demo as a guest, identified by the browser you use. Another browser sees none of your conversations or pages.
-- The demo is public and shared. Unless its host keeps it on a persistent volume, all of its data is cleared on every deploy and restart. Assets (the pages you create) are removed 24 hours after they were last created or published.
+- The demo is public and shared. Running on a single server without a persistent volume, all of its data is cleared on every deploy and restart; on Vercel it is kept in Postgres. Either way, assets (the pages you create) are removed 24 hours after they were last created or published.
 - Requests for a published page are owner-only: only your guest account can open it. The files the page loads are guarded by the page's unguessable ID.
 - Do not put anything private in the demo.
 
@@ -90,4 +90,4 @@ To disconnect your computer when you are done, run `uncage sites` to list the si
 
 ## Run the demo yourself
 
-The demo's source is an ordinary Uncage Connected Mode site. To run it on your own machine, follow [the example's README](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo#run-it-single-node). To build your own, continue with [Quickstart: Connected Mode](/docs/start/quickstart-connected/).
+The demo's source is an ordinary Uncage Connected Mode site with two entry points over the same tools, skills and pages: `server.ts` for traditional mode (one Node process, for example on Railway) and a Next.js route handler for FaaS mode (Vercel, with Postgres). To run it on your own machine, follow [the example's README](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo#run-it-single-node). To build your own, continue with [Quickstart: Connected Mode](/docs/start/quickstart-connected/), and see [Choose a deployment mode](/docs/start/choose-deployment-mode/) for where to host it.

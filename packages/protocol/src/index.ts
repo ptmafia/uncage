@@ -1,3 +1,10 @@
+/**
+ * `@uncage/protocol`: the shared types, zod schemas, error catalog and wire protocol (browser API,
+ * connected protocol, HTTP streaming transport). Browser-safe; Node-only helpers are in
+ * `@uncage/protocol/node`.
+ *
+ * @module protocol
+ */
 export * from './ids.js';
 export * from './errors.js';
 export * from './domain.js';

@@ -24,7 +24,7 @@ The same tools, skill, pages and sign-in run in two modes. The entry that starts
 | One publish (`publish_asset`) | up to 20 MB | up to 5 MB (Postgres storage is small and metered) |
 | Browser attachments | up to 10 MB | up to 4 MB (Vercel refuses request bodies over ~4.5 MB) |
 
-FaaS mode refuses to start without `DATABASE_URL` and `DEMO_SECRET`, and names what is missing. Nothing is written to local disk. `lib/hub-registry.ts` gives every caller (the route handler, the `/device` page and its Server Action) the one hub of the process: in traditional mode the one `server.ts` published, in FaaS mode one built on first use. Deploying on Vercel: see [DEPLOY.md](DEPLOY.md).
+FaaS mode refuses to start without `DATABASE_URL` and `DEMO_SECRET`, and names what is missing. Nothing is written to local disk. `lib/hub-registry.ts` gives every caller (the route handler, the `/device` page and its Server Action) the one hub of the process: in traditional mode the one `server.ts` published, in FaaS mode one built on first use. Deploying on Vercel: see [DEPLOY.md](DEPLOY.md). The help site explains both modes for your own site: [Choose a deployment mode](https://uncage.vercel.app/docs/start/choose-deployment-mode/), [Node](https://uncage.vercel.app/docs/deploy/node/), [Next.js on Vercel](https://uncage.vercel.app/docs/deploy/vercel/).
 
 In traditional mode, one Node `http` server (`server.ts`) carries everything:
 
@@ -68,7 +68,7 @@ pnpm start                          # production: http://localhost:3200
    node ../../packages/cli/dist/bin.js agent          # foreground; Ctrl-C to stop
    ```
 
-   `setup` opens `/device?code=…`. Check the code and click **批准**. (Without `--no-daemon`, setup installs the agent as a launchd service on macOS.)
+   `setup` opens `/device?code=…`. Check the code and click **批准**. (Without `--no-daemon`, setup installs the agent as a per-user background service: launchd on macOS, systemd on Linux, a scheduled task on Windows.)
 3. Send **做一个介绍 Uncage 的落地页并发布**. Claude Code works on your machine, in `~/Uncage/localhost-3200/<session>/`. It calls `create_asset`, writes `landing/index.html` (allow the file-write card), then asks to `publish_asset` (allow it).
 4. Open **素材** (`/assets`) to see the published page, rendered in the sandboxed iframe.
 5. Stop `uncage agent` and reload the conversation. The whole process is still there, and the header shows the computer offline.

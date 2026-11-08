@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { isTranslatedId, stripMdx, toMarkdownLinks } from '../src/lib/markdown.ts';
 import { ACP_PRESETS } from '@uncage/runtime-acp';
-import { SITE_URL } from '../src/nav.mjs';
+import { SITE_URL, sections } from '../src/nav.mjs';
 
 describe('toMarkdownLinks', () => {
   it('rewrites only /docs/ page links to absolute .md URLs', () => {
@@ -77,5 +77,25 @@ describe('the ACP guide', () => {
         expect(text, term).toContain(term);
       }
     }
+  });
+});
+
+describe('the deploy pages', () => {
+  const deployPages = ['deploy/node', 'deploy/vercel', 'deploy/cloudflare-workers', 'deploy/other-fetch-platforms'];
+
+  it('every deploy page has the six required sections', () => {
+    for (const slug of deployPages) {
+      const page = readFileSync(new URL(`../src/content/docs/${slug}.md`, import.meta.url), 'utf8');
+      for (const h of ['Prerequisites', 'Code', 'Environment variables', 'Deploy', 'Verify', 'FAQ']) {
+        expect(page, `${slug}: heading ${h}`).toMatch(new RegExp(`^## ${h}$`, 'm'));
+      }
+    }
+  });
+
+  it('the deployment-mode page, the deploy pages and the migration page are in the sidebar', () => {
+    const items = sections.flatMap((s) => s.items);
+    expect(items).toContain('start/choose-deployment-mode');
+    expect(items).toContain('reference/migrate-from-0-2');
+    for (const slug of deployPages) expect(items).toContain(slug);
   });
 });

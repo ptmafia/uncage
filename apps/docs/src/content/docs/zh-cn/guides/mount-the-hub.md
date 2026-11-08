@@ -25,13 +25,16 @@ export async function getSessionUser(req: Request): Promise<HubUser | null> {
 
 ```ts title="express-server.ts"
 import { createServer } from 'node:http';
-import { createHub, toNodeHandler } from '@uncage/hub';
+import { createHub } from '@uncage/hub';
+import { attachWebSocket, pgliteHubStore, toNodeHandler } from '@uncage/hub/node';
 import express from 'express';
 import { getSessionUser } from './auth.ts';
 
+const store = await pgliteHubStore({ dataDir: './.uncage-hub' });
 const hub = await createHub({
   publicUrl: process.env.PUBLIC_URL ?? 'http://localhost:3000',
   getUser: getSessionUser,
+  store,
 });
 
 const app = express();
@@ -43,7 +46,7 @@ app.get('/', (_req, res) => {
 });
 
 const server = createServer(app);
-hub.attach(server);
+attachWebSocket(hub, server); // computers connect to ws(s)://<host>/api/uncage/agent
 server.listen(3000, () => console.log('http://localhost:3000'));
 ```
 
@@ -54,13 +57,16 @@ server.listen(3000, () => console.log('http://localhost:3000'));
 Fastify 会自己解析请求体，所以要给 hub 一个不带任何 body 解析器的作用域，并把原始请求交给它：
 
 ```ts title="fastify-server.ts"
-import { createHub, toNodeHandler } from '@uncage/hub';
+import { createHub } from '@uncage/hub';
+import { attachWebSocket, pgliteHubStore, toNodeHandler } from '@uncage/hub/node';
 import Fastify from 'fastify';
 import { getSessionUser } from './auth.ts';
 
+const store = await pgliteHubStore({ dataDir: './.uncage-hub' });
 const hub = await createHub({
   publicUrl: process.env.PUBLIC_URL ?? 'http://localhost:3000',
   getUser: getSessionUser,
+  store,
 });
 const hubHandler = toNodeHandler(hub);
 
@@ -79,7 +85,7 @@ await app.register(async (scope) => {
 app.get('/', async () => 'Your website');
 
 await app.ready();
-hub.attach(app.server);
+attachWebSocket(hub, app.server);
 await app.listen({ port: 3000 });
 ```
 
@@ -92,22 +98,25 @@ import type { Server } from 'node:http';
 import { serve } from '@hono/node-server';
 import { getConnInfo } from '@hono/node-server/conninfo';
 import { createHub } from '@uncage/hub';
+import { attachWebSocket, pgliteHubStore } from '@uncage/hub/node';
 import { Hono, type Context } from 'hono';
 import { getSessionUser } from './auth.ts';
 
+const store = await pgliteHubStore({ dataDir: './.uncage-hub' });
 const hub = await createHub({
   publicUrl: process.env.PUBLIC_URL ?? 'http://localhost:3000',
   getUser: getSessionUser,
+  store,
 });
 
 const app = new Hono();
-const toHub = (c: Context) => hub.handler(c.req.raw, { clientIp: getConnInfo(c).remote.address });
+const toHub = (c: Context) => hub.fetch(c.req.raw, { clientIp: getConnInfo(c).remote.address });
 app.all(hub.basePath, toHub);
 app.all(`${hub.basePath}/*`, toHub);
 app.get('/', (c) => c.text('Your website'));
 
 const server = serve({ fetch: app.fetch, port: 3000 });
-hub.attach(server as Server);
+attachWebSocket(hub, server as Server);
 ```
 
 ## Next.js（自定义服务器）
@@ -116,7 +125,8 @@ Next.js 的 route handler 无法接受 WebSocket 升级，所以要在你自己�
 
 ```ts title="server.ts"
 import { createServer } from 'node:http';
-import { createHub, toNodeHandler } from '@uncage/hub';
+import { createHub } from '@uncage/hub';
+import { attachWebSocket, pgliteHubStore, toNodeHandler } from '@uncage/hub/node';
 import next from 'next';
 import { getSessionUser } from './auth.ts';
 
@@ -126,6 +136,7 @@ const port = Number(process.env.PORT ?? 3000);
 const hub = await createHub({
   publicUrl: process.env.PUBLIC_URL ?? `http://localhost:${port}`,
   getUser: getSessionUser,
+  store: await pgliteHubStore({ dataDir: './.uncage-hub' }),
 });
 // Pages and Server Actions (for example /device) get the hub from here.
 (globalThis as Record<symbol, unknown>)[Symbol.for('my-site.uncage-hub')] = hub;
@@ -139,7 +150,7 @@ await app.prepare();
 server.on('request', (req, res) => {
   hubHandler(req, res, () => void handle(req, res));
 });
-hub.attach(server);
+attachWebSocket(hub, server);
 if (dev) {
   const upgrade = app.getUpgradeHandler(); // hot reload
   server.on('upgrade', (req, socket, head) => {
@@ -155,14 +166,16 @@ server.listen(port);
 
 ```ts title="node-server.ts"
 import { createServer } from 'node:http';
-import { createHub, toNodeHandler } from '@uncage/hub';
+import { createHub } from '@uncage/hub';
+import { attachWebSocket, pgliteHubStore, toNodeHandler } from '@uncage/hub/node';
 import { getSessionUser } from './auth.ts';
 
-const hub = await createHub({ publicUrl: 'http://localhost:3000', getUser: getSessionUser });
+const store = await pgliteHubStore({ dataDir: './.uncage-hub' });
+const hub = await createHub({ publicUrl: 'http://localhost:3000', getUser: getSessionUser, store });
 const hubHandler = toNodeHandler(hub);
 
 const server = createServer((req, res) => hubHandler(req, res)); // no next(): other paths get 404
-hub.attach(server);
+attachWebSocket(hub, server);
 server.listen(3000);
 ```
 
@@ -170,6 +183,7 @@ server.listen(3000);
 
 ```sh
 curl -s http://localhost:3000/api/uncage/install.sh | head -3   # public: prints the installer
+curl -s http://localhost:3000/api/uncage/agent/info             # public: protocol and offered transports
 curl -s http://localhost:3000/api/uncage/health                 # needs a signed-in user: 401 without
 ```
 

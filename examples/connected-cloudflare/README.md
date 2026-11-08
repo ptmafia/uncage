@@ -4,6 +4,9 @@ Uncage Connected Mode on **Cloudflare Workers**: a native Worker (no framework) 
 user's own Claude Code call this website's `save_note` tool. Postgres through Hyperdrive is the only
 dependency; agents connect over the HTTP streaming transport (Workers serve no WebSocket here).
 
+The help site walks through the same setup for your own Worker, with a checklist and FAQ:
+[Cloudflare Workers](https://uncage.vercel.app/docs/deploy/cloudflare-workers/).
+
 | Route | What |
 | --- | --- |
 | `/api/uncage/*` | The hub (browser API, device login, `install.sh`, agent transport) through `fetchOnce` |
