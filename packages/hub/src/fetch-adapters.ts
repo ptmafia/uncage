@@ -192,7 +192,9 @@ export async function fetchOnce(
     throw err;
   }
   const body = res.body;
-  if (!body) {
+  // The client is gone (the request was cancelled while the hub worked, e.g. a tool call kept alive
+  // by `waitUntil`): nobody will read or cancel the body, so close now — nothing runs any more.
+  if (!body || req.signal.aborted) {
     close();
     return res;
   }

@@ -9,6 +9,7 @@ import type { HubFrame, MachineInfo, Run, Session } from '@uncage/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { sqlCluster } from './cluster/postgres.js';
+import { fetchOnce } from './fetch-adapters.js';
 import { PullAssembler } from './files.js';
 import type { SqlClient } from './store/sql.js';
 import {
@@ -26,7 +27,7 @@ import {
   type FakeHttpAgent,
 } from './test-utils.js';
 import { defineTool, type SiteTool } from './tools.js';
-import { HUB_INTERNALS } from './types.js';
+import { HUB_INTERNALS, type Hub } from './types.js';
 
 const closers: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
@@ -582,12 +583,15 @@ describe('resends of a running call are cheap', () => {
 
 describe('HTTP tool calls under waitUntil (platforms that cancel a dropped request)', () => {
   type WaitUntilInfo = { waitUntil?(p: Promise<unknown>): void };
-  async function gatedSetup() {
+  async function gatedSetup(opts: Partial<Parameters<typeof startFaasHubs>[0]> = {}) {
     let runs = 0;
+    let finished = false;
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
-    const tool = defineTool({ name: 'gated', description: 'x', input: z.object({}), handler: async () => (runs++, await gate, 'gated') });
-    const t = await httpSetup([tool], { hub: { n: 1 } });
+    const tool = defineTool({ name: 'gated', description: 'x', input: z.object({}), handler: async () => (runs++, await gate, (finished = true), 'gated') });
+    // Maintenance runs on the setup's first requests (inline) and not again: the only waitUntil
+    // promise of a tool-call POST is then the tool call itself.
+    const t = await httpSetup([tool], { hub: { n: 1, maintenance: { intervalMs: 3_600_000 }, ...opts } });
     const hub = t.hubs.hubs[0]!;
     /** One `POST /agent/events` straight into `hub.fetch` (no node server), with `info`. */
     const post = (msgs: unknown[], info: WaitUntilInfo, signal?: AbortSignal) =>
@@ -601,28 +605,63 @@ describe('HTTP tool calls under waitUntil (platforms that cancel a dropped reque
         info,
       );
     const msg = (id: string) => ({ id, msg: { t: 'tool_call' as const, id: 'tc_wu', ...t.ctx, tool: 'gated', args: {} } });
-    return { ...t, post, msg, release, runs: () => runs };
+    return { ...t, post, msg, release, runs: () => runs, finished: () => finished };
   }
   const RESULT = { t: 'tool_result', id: 'tc_wu', ok: true, result: { content: [{ type: 'text', text: 'gated' }] } };
 
-  it('request dropped mid-handler: the handler, kept alive by waitUntil, finishes and stores; the resend gets it; ran once', async () => {
+  it('the tool call is handed to waitUntil: its promise settles only after the handler ends, the result is stored, the resend gets it, ran once', async () => {
     const t = await gatedSetup();
     const waited: Array<Promise<unknown>> = [];
-    let settled = 0;
-    const waitUntil = (p: Promise<unknown>) => void waited.push(p.finally(() => settled++));
+    let settledAt: number | undefined;
     const ac = new AbortController();
+    const waitUntil = (p: Promise<unknown>) => void waited.push(p.finally(() => (settledAt = Date.now())));
     void t.post([t.msg('up_wu_00000000000001')], { waitUntil }, ac.signal).catch(() => undefined); // abandoned, like a cancelled request
     await until(() => t.runs() === 1);
     ac.abort(); // the agent's POST drops
-    // The tool call was handed to the platform: a waitUntil promise is still pending on it.
     await sleep(50);
-    expect(waited.length).toBeGreaterThan(settled);
+    expect(waited).toHaveLength(1);
+    expect(settledAt).toBeUndefined();
+    const releasedAt = Date.now();
     t.release();
-    await Promise.all(waited);
+    await waited[0];
+    expect(settledAt).toBeGreaterThanOrEqual(releasedAt);
     expect(await t.hubs.store.listToolCalls(t.s.id)).toMatchObject([{ status: 'ok', result: RESULT }]);
     // The agent resends (same message id): answered from the store, not run again.
     const again = (await (await t.post([t.msg('up_wu_00000000000001')], {})).json()) as { processed: string[]; replies: HubFrame[] };
     expect(again).toMatchObject({ processed: ['up_wu_00000000000001'], replies: [RESULT] });
+    expect(t.runs()).toBe(1);
+  });
+
+  it('fetchOnce: a request dropped mid-call does not close the hub under the handler (stored ok, not interrupted); the hub closes once it ends', async () => {
+    const t = await gatedSetup({ toolDrainMs: 50 });
+    const hub = t.hubs.hubs[0]!;
+    let closedWhileRunning: boolean | undefined;
+    const wrapped = {
+      ...hub,
+      fetch: hub.fetch.bind(hub),
+      close: async () => {
+        closedWhileRunning ??= !t.finished();
+        await hub.close();
+      },
+    } as Hub;
+    const waited: Array<Promise<unknown>> = [];
+    const ac = new AbortController();
+    const req = new Request(`${t.hubs.api}/agent/events`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${t.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ linkId: t.agent.linkId, busy: false, msgs: [t.msg('up_wu_00000000000005')] }),
+      signal: ac.signal,
+    });
+    void fetchOnce(async () => wrapped, req, { waitUntil: (p) => void waited.push(p) }).catch(() => undefined); // abandoned
+    await until(() => t.runs() === 1);
+    ac.abort();
+    await sleep(300); // well past toolDrainMs
+    expect(closedWhileRunning).toBeUndefined();
+    t.release();
+    await until(() => closedWhileRunning !== undefined);
+    await Promise.all(waited);
+    expect(closedWhileRunning).toBe(false);
+    expect(await t.hubs.store.listToolCalls(t.s.id)).toMatchObject([{ status: 'ok', result: RESULT }]);
     expect(t.runs()).toBe(1);
   });
 

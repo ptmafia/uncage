@@ -117,8 +117,9 @@ export interface HubOptions {
    * that cancel a request's work when the client disconnects (Cloudflare Workers): its result is stored
    * and the agent's resend gets it (exactly-once). Pass it there (`ctx.waitUntil.bind(ctx)`; Next's
    * `after`). Without `waitUntil` such a runtime may stop the handler with the POST, and the call is
-   * at-most-once (the interrupted error). The platform's own `waitUntil` limit still applies (help
-   * site: Deploy → Cloudflare Workers → FAQ).
+   * at-most-once (the interrupted error). The platform's own `waitUntil` limit still applies: Workers
+   * keep `waitUntil` work alive only about 30 s after the client went away, so on Workers keep
+   * handlers well under ~30 s (help site: Deploy → Cloudflare Workers → FAQ).
    */
   toolTimeoutMs?: number;
   /**
