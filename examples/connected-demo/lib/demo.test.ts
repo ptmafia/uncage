@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assetCsp } from './asset-csp.ts';
 import { PGlite } from '@electric-sql/pglite';
 import type { PgPoolLike } from '@uncage/hub';
-import { assetStore, canReadAsset, fileAssetStore, needsOwnerCheck, postgresAssetStore, type AssetStore } from './assets.ts';
+import { AssetQuotaError, assetStore, canReadAsset, fileAssetStore, needsOwnerCheck, postgresAssetStore, type AssetStore } from './assets.ts';
 import { guestUsername, normalizeUsername, readCookie, secret, signUser, verifyUser } from './auth.ts';
 import { docsUrl, isPublicDemo, publicUrl } from './config.ts';
 import { isSameOrigin } from './csrf.ts';
@@ -15,7 +16,8 @@ import { getHub, publishHub } from './hub-registry.ts';
 import { demoMode, FAAS_ATTACHMENT_MAX_BYTES, faasAttachmentLimit, PUBLISHED_HUB_KEY, requireFaasEnv } from './mode.ts';
 import { safeNext } from './session-utils.ts';
 import { DEFAULT_DOCS_URL, landingPageSkill, makeLandingPageSkill } from './skills.ts';
-import { checkAssetQuota, createAssetTool, pageRelative, PUBLIC_MAX_ASSETS_PER_OWNER, PUBLISH_MAX_BYTES, publishAssetTool } from './tools.ts';
+import { createAssetTool, FAAS_PUBLISH_MAX_BYTES, pageRelative, PUBLIC_MAX_ASSETS_PER_OWNER, PUBLISH_MAX_BYTES, publishAssetTool, publishMaxBytes } from './tools.ts';
+import { endSharedPool, sharedPool } from './db.ts';
 
 let dir: string;
 beforeEach(async () => {
@@ -342,11 +344,41 @@ describe('landing-page skill', () => {
   });
 });
 
-/** A one-connection `pg.Pool` look-alike over PGlite, so postgresAssetStore runs without a server. */
+/**
+ * A one-connection `pg.Pool` look-alike over PGlite, so postgresAssetStore runs without a server:
+ * `connect()` hands the connection out exclusively until `release()` (a pool of size 1).
+ */
 function pglitePool(db: PGlite): PgPoolLike {
-  const query = async (sql: string, params?: unknown[]) => ({ rows: (await db.query(sql, params)).rows as unknown[] });
-  return { query, connect: async () => ({ query, release: () => undefined }), end: () => db.close() };
+  let lock: Promise<void> = Promise.resolve();
+  const acquire = async (): Promise<() => void> => {
+    let release!: () => void;
+    const prev = lock;
+    lock = new Promise<void>((r) => (release = r));
+    await prev;
+    return release;
+  };
+  const run = async (sql: string, params?: unknown[]) => ({ rows: (await db.query(sql, params)).rows as unknown[] });
+  return {
+    async query(sql, params) {
+      const release = await acquire();
+      try {
+        return await run(sql, params);
+      } finally {
+        release();
+      }
+    },
+    async connect() {
+      return { query: run, release: await acquire() };
+    },
+    end: () => db.close(),
+  };
 }
+
+/**
+ * Real Postgres for the concurrency checks: `DEMO_TEST_DATABASE_URL` (e.g. a throwaway
+ * `docker run postgres:16-alpine`). Without it those tests are skipped.
+ */
+const realDb = process.env.DEMO_TEST_DATABASE_URL;
 
 describe.each([
   ['fileAssetStore', async () => ({ store: fileAssetStore(join(dir, 'assets')), close: async () => undefined })],
@@ -411,11 +443,15 @@ describe.each([
   it(`holds ${PUBLIC_MAX_ASSETS_PER_OWNER} assets per owner (the public quota refuses the next) and a ${PUBLISH_MAX_BYTES / 1024 / 1024} MB publish`, async () => {
     for (let i = 0; i < PUBLIC_MAX_ASSETS_PER_OWNER; i++) await store.create({ owner: 'guest-a', title: `p${i}`, kind: 'landing-page', sessionId: 's' });
     expect(await store.count('guest-a')).toBe(PUBLIC_MAX_ASSETS_PER_OWNER);
-    await expect(checkAssetQuota(store, 'guest-a', true)).rejects.toThrow(/at most 20 assets per visitor/);
-    await expect(checkAssetQuota(store, 'guest-a', false)).resolves.toBeUndefined();
-    await expect(checkAssetQuota(store, 'guest-b', true)).resolves.toBeUndefined();
+    const o = { title: 'x', kind: 'landing-page' as const, sessionId: 's' };
+    await expect(store.create({ ...o, owner: 'guest-a' }, { maxPerOwner: PUBLIC_MAX_ASSETS_PER_OWNER })).rejects.toThrow(AssetQuotaError);
+    await expect(store.create({ ...o, owner: 'guest-a' }, { maxPerOwner: PUBLIC_MAX_ASSETS_PER_OWNER })).rejects.toThrow(/at most 20 assets per visitor/);
+    expect(await store.count('guest-a')).toBe(PUBLIC_MAX_ASSETS_PER_OWNER);
+    await expect(store.create({ ...o, owner: 'guest-b' }, { maxPerOwner: PUBLIC_MAX_ASSETS_PER_OWNER })).resolves.toMatchObject({ owner: 'guest-b' });
+    await expect(store.create({ ...o, owner: 'guest-a' })).resolves.toMatchObject({ owner: 'guest-a' }); // no limit asked
+    expect(await store.count('guest-a')).toBe(PUBLIC_MAX_ASSETS_PER_OWNER + 1);
 
-    const [first] = await store.list('guest-a');
+    const first = (await store.list('guest-a')).at(-1);
     const half = PUBLISH_MAX_BYTES / 2;
     const big = (seed: number) => Uint8Array.from({ length: half }, (_, i) => (i * 31 + seed) & 255);
     await store.publish(first!.id, [
@@ -500,5 +536,79 @@ describe('FaaS attachment limit', () => {
     expect(faasAttachmentLimit(upload(null))).toBeNull();
     expect(faasAttachmentLimit(upload(10_000_000, '/api/uncage/agent/events'))).toBeNull();
     expect(faasAttachmentLimit(upload(10_000_000, '/api/uncage/sessions/sess_1/attachments', 'GET'))).toBeNull();
+  });
+});
+
+/** 10 parallel creates of one guest holding 15: exactly 20 in the end, 5 refused. */
+async function parallelQuota(store: AssetStore, owner: string): Promise<void> {
+  const o = { owner, title: 'x', kind: 'landing-page' as const, sessionId: 's' };
+  for (let i = 0; i < 15; i++) await store.create(o);
+  const results = await Promise.allSettled(Array.from({ length: 10 }, () => store.create(o, { maxPerOwner: PUBLIC_MAX_ASSETS_PER_OWNER })));
+  expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(5);
+  const refused = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+  expect(refused).toHaveLength(5);
+  for (const r of refused) expect(r.reason).toBeInstanceOf(AssetQuotaError);
+  expect(await store.count(owner)).toBe(PUBLIC_MAX_ASSETS_PER_OWNER);
+}
+
+describe('atomic public quota (postgresAssetStore)', () => {
+  it('PGlite: 10 parallel creates from one guest never pass 20', async () => {
+    const db = new PGlite();
+    try {
+      await parallelQuota(postgresAssetStore(pglitePool(db)), 'guest-p');
+    } finally {
+      await db.close();
+    }
+  });
+
+  it.skipIf(!realDb)('real Postgres (pool of 10): 10 parallel creates from one guest never pass 20', async () => {
+    const pool = sharedPool(realDb!, { DATABASE_POOL_MAX: '10' });
+    try {
+      await parallelQuota(postgresAssetStore(pool), `guest-${randomBytes(6).toString('hex')}`);
+    } finally {
+      await endSharedPool(realDb!);
+    }
+  });
+});
+
+describe('one shared pg pool per instance', () => {
+  it('sharedPool returns one pool per URL; endSharedPool ends it once; the asset store follows it', async () => {
+    const url = 'postgres://u:p@127.0.0.1:1/never-connected';
+    const a = sharedPool(url);
+    expect(sharedPool(url)).toBe(a);
+    expect(a.options.max).toBe(5);
+    const store = assetStore({ DATABASE_URL: url });
+    expect(assetStore({ DATABASE_URL: url })).toBe(store);
+    await endSharedPool(url);
+    await endSharedPool(url); // once: no "Called end on pool more than once"
+    expect(a.ended).toBe(true);
+    const b = sharedPool(url);
+    expect(b).not.toBe(a);
+    expect(assetStore({ DATABASE_URL: url })).not.toBe(store);
+    await endSharedPool(url);
+  });
+
+  it.skipIf(!realDb)('FaaS hub, cluster and assets share one pool of at most 5; close ends it', async () => {
+    const env = { DATABASE_URL: realDb!, DEMO_SECRET: 's'.repeat(32), DEMO_PUBLIC: '1' };
+    const { hub, close } = await createDemoHub({ mode: 'faas', env });
+    const pool = sharedPool(realDb!);
+    await assetStore(env).count('nobody');
+    await hub.maintain();
+    expect(pool.totalCount).toBeGreaterThan(0);
+    expect(pool.totalCount).toBeLessThanOrEqual(5);
+    await close();
+    expect(pool.ended).toBe(true);
+  });
+});
+
+describe('publish size per mode', () => {
+  afterEach(() => {
+    delete (globalThis as Record<symbol, unknown>)[PUBLISHED_HUB_KEY];
+  });
+  it('20 MB in traditional mode, 5 MB in FaaS mode', () => {
+    expect(publishMaxBytes()).toBe(FAAS_PUBLISH_MAX_BYTES);
+    expect(FAAS_PUBLISH_MAX_BYTES).toBe(5 * 1024 * 1024);
+    publishHub({ basePath: '/api/uncage' } as never);
+    expect(publishMaxBytes()).toBe(PUBLISH_MAX_BYTES);
   });
 });

@@ -16,11 +16,12 @@ The same tools, skill, pages and sign-in run in two modes. The entry that starts
 | Start | `pnpm start` / `pnpm dev` (`node server.ts`) | `pnpm start:faas` / `pnpm dev:faas` (`next start` / `next dev`, no custom server), or Vercel |
 | Hub mounted by | `toNodeHandler(hub)` + `attachWebSocket(hub, server)` from `@uncage/hub/node` | `app/api/uncage/[[...path]]/route.ts`: `toNextHandlers(getHub, { waitUntil: after })` from `@uncage/hub` |
 | Machines connect over | WebSocket (HTTP streaming also offered) | HTTP streaming (a stream rotates every `UNCAGE_STREAM_MAX_MS`, default 250 s, under the route's `maxDuration = 300`) |
-| Hub store | PGlite under `DEMO_DATA_DIR`, or Postgres with `DATABASE_URL` | Postgres (`DATABASE_URL`, required) |
+| Hub store | PGlite under `DEMO_DATA_DIR`, or Postgres with `DATABASE_URL` | Postgres (`DATABASE_URL`, required; one pool of `DATABASE_POOL_MAX`, default 5, per instance for hub, cluster and assets) |
 | Cross-instance messages | in memory, or Redis with `REDIS_URL` | Postgres (`postgresCluster`), or Redis with `REDIS_URL` |
 | Assets | files under `DEMO_DATA_DIR/assets`, or Postgres with `DATABASE_URL` | Postgres (`demo_assets`, `demo_asset_files` with `bytea`) |
 | Cookie key | `DEMO_SECRET`, else generated into the data dir | `DEMO_SECRET` (at least 32 bytes, required) |
 | Public demo cleanup (24 h) | at start and hourly | the hub's maintenance: opportunistic on requests (through `after`), plus Vercel Cron on `/api/uncage/maintenance` (`vercel.json`, `CRON_SECRET`) |
+| One publish (`publish_asset`) | up to 20 MB | up to 5 MB (Postgres storage is small and metered) |
 | Browser attachments | up to 10 MB | up to 4 MB (Vercel refuses request bodies over ~4.5 MB) |
 
 FaaS mode refuses to start without `DATABASE_URL` and `DEMO_SECRET`, and names what is missing. Nothing is written to local disk. `lib/hub-registry.ts` gives every caller (the route handler, the `/device` page and its Server Action) the one hub of the process: in traditional mode the one `server.ts` published, in FaaS mode one built on first use. Deploying on Vercel: see [DEPLOY.md](DEPLOY.md).
@@ -43,7 +44,7 @@ In traditional mode, one Node `http` server (`server.ts`) carries everything:
 The tools and the skill are in `lib/tools.ts` and `lib/skills.ts`.
 
 - `create_asset({ title, kind: 'landing-page' })` runs without confirmation. It creates a draft owned by the user and returns `assetId`.
-- `publish_asset({ assetId, dir })` has `requiresConfirmation`, so the user gets an approval card in the chat. It pulls `dir` from the session workspace on the machine (`ctx.files.pull`, at most 20 MB), stores the files in the asset store (the data dir, or Postgres) and marks the asset published. A user can only publish their own assets.
+- `publish_asset({ assetId, dir })` has `requiresConfirmation`, so the user gets an approval card in the chat. It pulls `dir` from the session workspace on the machine (`ctx.files.pull`, at most 20 MB; 5 MB in FaaS mode), stores the files in the asset store (the data dir, or Postgres) and marks the asset published. A user can only publish their own assets.
 - The skill `landing-page` describes the page to build: one folder, `index.html` as the entry, inline CSS and JS, no CDNs or remote resources. Then the agent calls `create_asset` → `publish_asset`. It ends with a short "About Uncage" section of facts (linking `DOCS_URL`, or the public help site), so a page about Uncage describes the real product.
 
 The machine only ever gets the tools' names, descriptions and JSON Schemas, and the skill text. The tool handlers run here.
@@ -76,7 +77,7 @@ To keep your real `~/.uncage` and `~/Uncage` untouched while trying it, prefix b
 
 Environment: `PORT` (3200), `HOST` (127.0.0.1), `PUBLIC_URL` (`http://localhost:$PORT`, the URL users open and give to `uncage setup`), `DEMO_DATA_DIR` (`./.data`: the hub's PGlite store, the assets and the cookie secret), `DEMO_SECRET` (cookie key, at least 32 bytes; shorter values are ignored with a warning; otherwise generated into the data dir), `DATABASE_URL` (Postgres for the hub and the assets instead of the data dir), `TRUST_PROXY=1` / `CLIENT_IP_HEADER=<header>` (where per-IP rate limits find the client behind a proxy; leave both unset without one, see [DEPLOY.md](DEPLOY.md)).
 
-Public demo mode: `DEMO_PUBLIC=1` replaces the sign-in form with a random guest account, shows a banner, makes page requests owner-only (the page's sub-resources are guarded by the unguessable asset id), deletes assets last created or published more than 24 hours ago (traditional: at start and hourly; FaaS: by the hub's maintenance), caps each guest at 20 assets and hides Log out (the guest identity is the key to the linked computer). `DOCS_URL` (for example `https://uncage.example/docs/`) adds a link to the docs in the banner. To host it, see [DEPLOY.md](DEPLOY.md).
+Public demo mode: `DEMO_PUBLIC=1` replaces the sign-in form with a random guest account, shows a banner, makes page requests owner-only (the page's sub-resources are guarded by the unguessable asset id), deletes assets last created or published more than 24 hours ago (traditional: at start and hourly; FaaS: by the hub's maintenance), caps each guest at 20 assets (atomically on Postgres) and hides Log out (the guest identity is the key to the linked computer). `DOCS_URL` (for example `https://uncage.example/docs/`) adds a link to the docs in the banner. To host it, see [DEPLOY.md](DEPLOY.md).
 
 ## Run it (FaaS mode, locally)
 
@@ -106,7 +107,7 @@ HUB_NODES=2 REDIS_URL=redis://127.0.0.1:6380 \
 docker compose down                 # when done
 ```
 
-Then follow the same steps as above against http://localhost:3200. The nodes' log lines are prefixed `[node 1]` / `[node 2]`. The assets are in Postgres (`DATABASE_URL`); the nodes share `DEMO_DATA_DIR` for the generated cookie secret, so run them on one machine or set `DEMO_SECRET`. The hub's rate limits are counted in the store, so every node shares them.
+Then follow the same steps as above against http://localhost:3200. The nodes' log lines are prefixed `[node 1]` / `[node 2]`. The assets are in Postgres (`DATABASE_URL`). Since 0.3 a traditional deployment with `DATABASE_URL` keeps its assets there instead of the shared data dir; assets from an older version's `DEMO_DATA_DIR/assets` are not migrated. The nodes share `DEMO_DATA_DIR` for the generated cookie secret, so run them on one machine or set `DEMO_SECRET`. The hub's rate limits are counted in the store, so every node shares them.
 
 ## What to look at
 

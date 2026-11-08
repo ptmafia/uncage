@@ -89,18 +89,22 @@ describe('postgresHubStore migration fast path', () => {
     const base = pglitePool(pg);
     const first = recording(base);
     await (await postgresHubStore({ pool: first.pool })).close();
-    expect(first.sql.some((q) => q.includes('pg_advisory_lock'))).toBe(true);
+    expect(first.sql.some((q) => q.includes('pg_advisory_xact_lock'))).toBe(true);
+    // Transaction-scoped only (transaction-mode poolers): no session lock, the lock sits inside BEGIN … COMMIT.
+    expect(first.sql.some((q) => /pg_advisory_(un)?lock\(/.test(q))).toBe(false);
+    expect(first.sql.indexOf('BEGIN')).toBeLessThan(first.sql.findIndex((q) => q.includes('pg_advisory_xact_lock')));
+    expect(first.sql.at(-1)).toBe('COMMIT');
 
     const again = recording(base); // a new wrapper object: no memo, but the database is current
     await (await postgresHubStore({ pool: again.pool })).close();
-    expect(again.sql.some((q) => q.includes('pg_advisory_lock'))).toBe(false);
+    expect(again.sql.some((q) => q.includes('pg_advisory_xact_lock'))).toBe(false);
     expect(again.sql.filter((q) => q.includes('max(id)'))).toHaveLength(1);
 
     const third = recording(base);
     await (await postgresHubStore({ pool: third.pool })).close();
     await (await postgresHubStore({ pool: third.pool })).close(); // memoized: no query at all
     expect(third.sql.filter((q) => q.includes('max(id)'))).toHaveLength(1);
-    expect(third.sql.some((q) => q.includes('pg_advisory_lock'))).toBe(false);
+    expect(third.sql.some((q) => q.includes('pg_advisory_xact_lock'))).toBe(false);
     await pg.close();
   });
 
@@ -121,7 +125,7 @@ describe('postgresHubStore migration fast path', () => {
     const rec = recording(pglitePool(pg));
     const store = await postgresHubStore({ pool: rec.pool });
     expect((await store.listToolCalls('s')).map((r) => [r.id, r.callId])).toEqual([['tcl_a', 'tc_1'], ['tcl_b', 'tc_1#tcl_b']]);
-    expect(rec.sql.some((q) => q.includes('pg_advisory_lock'))).toBe(true);
+    expect(rec.sql.some((q) => q.includes('pg_advisory_xact_lock'))).toBe(true);
     const { rows } = await pg.query<{ id: number }>('SELECT id FROM uncage_hub_migrations ORDER BY id');
     expect(rows.map((r) => r.id)).toEqual(HUB_MIGRATIONS.map((m) => m.id));
     expect(await store.tryLease('x', { holder: 'a', until: '2', now: '1' })).toBe(true);

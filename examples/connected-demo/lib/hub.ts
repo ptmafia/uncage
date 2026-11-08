@@ -5,15 +5,16 @@
  *   in-memory cluster. With `DATABASE_URL` / `REDIS_URL`: shared Postgres + Redis, so several nodes
  *   can run behind a load balancer (see scripts/multinode.ts). server.ts adds the WebSocket server.
  * - `faas` (the route handler under `next start` / Vercel): Postgres only (`DATABASE_URL`, required
- *   with `DEMO_SECRET`), cluster messages through Postgres unless `REDIS_URL` is set, streams that
- *   end before the platform's function time limit, and the public demo's 24 h asset purge run by
- *   the hub's maintenance (opportunistic, or Vercel Cron on `/api/uncage/maintenance`).
+ *   with `DEMO_SECRET`; one shared pool, lib/db.ts), cluster messages through Postgres unless
+ *   `REDIS_URL` is set, streams that end before the platform's function time limit, and the public
+ *   demo's 24 h asset purge run by the hub's maintenance (opportunistic, or Vercel Cron on `/api/uncage/maintenance`).
  *
  * Both get the same tools, skills, sign-in and options otherwise.
  */
 import { join } from 'node:path';
 import { createHub, postgresCluster, postgresHubStore, redisCluster, type ClusterAdapter, type Hub, type HubOptions, type HubStore } from '@uncage/hub';
 import { assetStore } from './assets.ts';
+import { endSharedPool, sharedPool } from './db.ts';
 import { userFromRequest } from './auth.ts';
 import { dataDir, isPublicDemo, publicUrl } from './config.ts';
 import { requireFaasEnv, type DemoMode } from './mode.ts';
@@ -27,8 +28,11 @@ export async function createDemoHub(o: { mode: DemoMode; env?: Record<string, st
   const env = o.env ?? process.env;
   const faas = o.mode === 'faas';
   if (faas) requireFaasEnv(env);
+  // One pool for the hub store, the cluster and the assets (lib/db.ts).
+  const url = env.DATABASE_URL?.trim() || undefined;
+  const pool = url ? sharedPool(url, env) : undefined;
   let store: HubStore;
-  if (env.DATABASE_URL) store = await postgresHubStore({ connectionString: env.DATABASE_URL });
+  if (pool) store = await postgresHubStore({ pool });
   else {
     // Traditional single node only; loaded lazily so the FaaS bundle never pulls in PGlite.
     const { pgliteHubStore } = await import('@uncage/hub/node');
@@ -36,7 +40,7 @@ export async function createDemoHub(o: { mode: DemoMode; env?: Record<string, st
   }
   let cluster: ClusterAdapter | undefined;
   if (env.REDIS_URL) cluster = redisCluster({ url: env.REDIS_URL });
-  else if (faas) cluster = postgresCluster({ connectionString: env.DATABASE_URL! });
+  else if (faas && pool) cluster = postgresCluster({ pool });
   const options: HubOptions = {
     publicUrl: publicUrl(env),
     getUser: async (req) => userFromRequest(req),
@@ -69,7 +73,8 @@ export async function createDemoHub(o: { mode: DemoMode; env?: Record<string, st
     close: async () => {
       await hub.close();
       await cluster?.close();
-      await store.close();
+      await store.close(); // leaves the shared pool open…
+      if (url) await endSharedPool(url); // …which ends here, once
     },
   };
 }

@@ -15,6 +15,7 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promise
 import { dirname, extname, join, resolve, sep } from 'node:path';
 import type { PgPoolLike } from '@uncage/hub';
 import { dataDir } from './config.ts';
+import { sharedPool } from './db.ts';
 
 export type AssetKind = 'landing-page';
 
@@ -32,8 +33,26 @@ export interface Asset {
   files?: Array<{ path: string; size: number }>;
 }
 
+/** `create` refused: the owner already keeps `limit` assets. */
+export class AssetQuotaError extends Error {
+  // A plain field, not a parameter property: server.ts runs under Node's strip-only TypeScript.
+  readonly limit: number;
+  constructor(limit: number) {
+    super(
+      `This demo keeps at most ${limit} assets per visitor, and you already have that many. Publish into one of your existing assets instead (publish_asset replaces its files), or try again after older ones are cleared (24 hours after they were last created or published).`,
+    );
+    this.limit = limit;
+    this.name = 'AssetQuotaError';
+  }
+}
+
 export interface AssetStore {
-  create(o: { owner: string; title: string; kind: AssetKind; sessionId: string }): Promise<Asset>;
+  /**
+   * With `maxPerOwner`, refuses (AssetQuotaError) when the owner already keeps that many. Postgres
+   * counts and inserts under a per-owner lock, so concurrent creates never pass the limit; the file
+   * store checks best-effort.
+   */
+  create(o: { owner: string; title: string; kind: AssetKind; sessionId: string }, limits?: { maxPerOwner?: number }): Promise<Asset>;
   get(id: string): Promise<Asset | null>;
   /** `owner`'s assets, newest first. */
   list(owner: string): Promise<Asset[]>;
@@ -120,7 +139,8 @@ export function fileAssetStore(dir: string): AssetStore {
     await rename(tmp, file);
   }
   const store: AssetStore = {
-    async create(o) {
+    async create(o, limits) {
+      if (limits?.maxPerOwner !== undefined && (await store.count(o.owner)) >= limits.maxPerOwner) throw new AssetQuotaError(limits.maxPerOwner);
       const asset = newAsset(o);
       await writeMeta(asset);
       return asset;
@@ -274,23 +294,51 @@ export function postgresAssetStore(pool: PgPoolLike): AssetStore {
     }
     return ready;
   };
+  type Q = <T = unknown>(sql: string, params?: unknown[]) => Promise<T[]>;
+  /** Runs `fn` in one transaction on one checked-out connection (call `ensure()` first). */
+  const inTransaction = async (fn: (q: Q) => Promise<void>): Promise<void> => {
+    const client = await pool.connect();
+    const q: Q = async <T,>(sql: string, params: unknown[] = []) => (await client.query(sql, params)).rows as T[];
+    let broken: Error | undefined;
+    try {
+      await client.query('BEGIN');
+      try {
+        await fn(q);
+        await client.query('COMMIT');
+      } catch (e) {
+        await client.query('ROLLBACK').catch((re: unknown) => (broken = re instanceof Error ? re : new Error(String(re))));
+        throw e;
+      }
+    } finally {
+      client.release(broken);
+    }
+  };
   const query = async <T>(sql: string, params: unknown[] = []): Promise<T[]> => {
     await ensure();
     return (await pool.query(sql, params)).rows as T[];
   };
 
   const store: AssetStore = {
-    async create(o) {
+    async create(o, limits) {
       const a = newAsset(o);
-      await query('INSERT INTO demo_assets (id, owner, title, kind, status, session_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz)', [
-        a.id,
-        a.owner,
-        a.title,
-        a.kind,
-        a.status,
-        a.sessionId,
-        a.createdAt,
-      ]);
+      await ensure();
+      await inTransaction(async (q) => {
+        if (limits?.maxPerOwner !== undefined) {
+          // Per-owner lock: concurrent creates of one guest count and insert one after another.
+          await q('SELECT pg_advisory_xact_lock($1, hashtext($2))', [SCHEMA_LOCK, o.owner]);
+          const [row] = await q<{ n: number | string }>('SELECT count(*)::int AS n FROM demo_assets WHERE owner = $1', [o.owner]);
+          if (Number(row?.n ?? 0) >= limits.maxPerOwner) throw new AssetQuotaError(limits.maxPerOwner);
+        }
+        await q('INSERT INTO demo_assets (id, owner, title, kind, status, session_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz)', [
+          a.id,
+          a.owner,
+          a.title,
+          a.kind,
+          a.status,
+          a.sessionId,
+          a.createdAt,
+        ]);
+      });
       return a;
     },
     async get(id) {
@@ -311,29 +359,18 @@ export function postgresAssetStore(pool: PgPoolLike): AssetStore {
       checkPublish(files);
       const next = published(asset, files);
       // One transaction: readers see the old files or the new ones, never a mix.
-      const client = await pool.connect();
-      let broken: Error | undefined;
-      try {
-        await client.query('BEGIN');
-        try {
-          await client.query('DELETE FROM demo_asset_files WHERE asset_id = $1', [id]);
-          for (const f of files) {
-            await client.query('INSERT INTO demo_asset_files (asset_id, path, data) VALUES ($1, $2, $3)', [id, f.path, Buffer.from(f.data.buffer, f.data.byteOffset, f.data.byteLength)]);
-          }
-          const updated = await client.query("UPDATE demo_assets SET status = 'published', published_at = $2::timestamptz, files = $3::jsonb WHERE id = $1 RETURNING id", [
-            id,
-            next.publishedAt,
-            JSON.stringify(next.files),
-          ]);
-          if (updated.rows.length === 0) throw new Error(`Unknown asset ${id}`);
-          await client.query('COMMIT');
-        } catch (e) {
-          await client.query('ROLLBACK').catch((re: unknown) => (broken = re instanceof Error ? re : new Error(String(re))));
-          throw e;
+      await inTransaction(async (q) => {
+        await q('DELETE FROM demo_asset_files WHERE asset_id = $1', [id]);
+        for (const f of files) {
+          await q('INSERT INTO demo_asset_files (asset_id, path, data) VALUES ($1, $2, $3)', [id, f.path, Buffer.from(f.data.buffer, f.data.byteOffset, f.data.byteLength)]);
         }
-      } finally {
-        client.release(broken);
-      }
+        const updated = await q("UPDATE demo_assets SET status = 'published', published_at = $2::timestamptz, files = $3::jsonb WHERE id = $1 RETURNING id", [
+          id,
+          next.publishedAt,
+          JSON.stringify(next.files),
+        ]);
+        if (updated.length === 0) throw new Error(`Unknown asset ${id}`);
+      });
       return next;
     },
     async readFile(id, path) {
@@ -352,44 +389,25 @@ export function postgresAssetStore(pool: PgPoolLike): AssetStore {
   return store;
 }
 
-const POOLS = Symbol.for('uncage.connected-demo.asset-pools');
+const ASSET_STORES = Symbol.for('uncage.connected-demo.asset-stores');
 
 /**
- * This process's asset store: Postgres when `DATABASE_URL` is set (one `pg.Pool` per URL, kept on
- * `globalThis` so every Next.js bundle and server.ts share it), otherwise files under
- * `<data dir>/assets`.
+ * This process's asset store: Postgres when `DATABASE_URL` is set (on the process's shared pool,
+ * lib/db.ts), otherwise files under `<data dir>/assets`.
  */
 export function assetStore(env: Record<string, string | undefined> = process.env): AssetStore {
   const url = env.DATABASE_URL?.trim();
   if (!url) return fileAssetStore(join(dataDir(env), 'assets'));
-  const g = globalThis as Record<symbol, Map<string, AssetStore> | undefined>;
-  const pools = (g[POOLS] ??= new Map());
-  let store = pools.get(url);
+  const pool = sharedPool(url, env);
+  // One store per pool (its schema check runs once); a pool ended by the hub's close gets a new store.
+  const g = globalThis as Record<symbol, WeakMap<object, AssetStore> | undefined>;
+  const stores = (g[ASSET_STORES] ??= new WeakMap());
+  let store = stores.get(pool);
   if (!store) {
-    store = postgresAssetStore(lazyPool(url));
-    pools.set(url, store);
+    store = postgresAssetStore(pool);
+    stores.set(pool, store);
   }
   return store;
-}
-
-/** A `pg.Pool` created on first use (`pg` is loaded only when a database is configured). */
-function lazyPool(connectionString: string): PgPoolLike {
-  let poolP: Promise<PgPoolLike> | undefined;
-  const pool = (): Promise<PgPoolLike> =>
-    (poolP ??= import('pg').then((mod) => {
-      const pg = (mod as unknown as { default?: typeof mod }).default ?? mod;
-      const p = new pg.Pool({ connectionString, max: 3 });
-      // An idle connection dying (database restart) must not crash the process.
-      p.on('error', (err) => console.error('asset store: postgres pool error:', err.message));
-      return p as unknown as PgPoolLike;
-    }));
-  return {
-    query: async (sql, params) => (await pool()).query(sql, params),
-    connect: async () => (await pool()).connect(),
-    end: async () => {
-      if (poolP) await (await poolP).end();
-    },
-  };
 }
 
 /**

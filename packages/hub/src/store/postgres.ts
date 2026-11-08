@@ -102,7 +102,8 @@ export function poolClient(pool: PgPoolLike): SqlClient {
  *
  * Errors of a pool the store created go to `onError` (default: `console.error`).
  *
- * Migrations run on start under a Postgres advisory lock, so several nodes can start at once. A
+ * Migrations run on start in one transaction under a transaction-scoped Postgres advisory lock, so
+ * several nodes can start at once, also behind a transaction-mode pooler (PgBouncer, Neon `-pooler`). A
  * database already at the latest migration is detected with one `SELECT max(id)` (and remembered
  * per pool / connection string for the life of the process or isolate), skipping the lock.
  *
@@ -133,16 +134,23 @@ export async function postgresHubStore(
   try {
     const known = url !== undefined ? migratedUrls.has(url) : migratedPools.has(pool);
     if (!known && !(await isCurrent(pool))) {
+      // One transaction under a transaction-scoped advisory lock: works behind a transaction-mode
+      // pooler (PgBouncer, Neon's -pooler host), where a session-level lock taken on one server
+      // connection and released on another would leak and block every later migrator.
       const client = await pool.connect();
+      let unusable: Error | undefined;
       try {
-        await client.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_KEY]);
-        try {
-          await migrateHubStore({ ...asQueryable(client), transaction: (fn) => inTransaction(client, fn) });
-        } finally {
-          await client.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY]);
-        }
+        await inTransaction(
+          client,
+          async (tx) => {
+            await tx.query('SELECT pg_advisory_xact_lock($1)', [MIGRATION_LOCK_KEY]);
+            // Already inside the transaction: each migration's own transaction is this one.
+            await migrateHubStore({ ...tx, transaction: (fn) => fn(tx) });
+          },
+          (e) => (unusable = e instanceof Error ? e : new Error(String(e))),
+        );
       } finally {
-        client.release();
+        client.release(unusable);
       }
     }
     if (url !== undefined) migratedUrls.add(url);

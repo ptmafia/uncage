@@ -304,3 +304,67 @@ describe('two hub nodes sharing one Postgres (postgresHubStore + postgresCluster
     }
   }, 60_000);
 });
+
+/**
+ * A transaction-mode pooler (PgBouncer, Neon's -pooler host) in miniature: a "client" from
+ * `connect()` is pinned to one server connection only between BEGIN and COMMIT/ROLLBACK; every
+ * other statement goes to whichever pooled connection is free.
+ */
+function transactionPooled(pool: pg.Pool): import('./store/postgres.js').PgPoolLike {
+  return {
+    query: (sql, params) => pool.query(sql, params),
+    end: async () => undefined,
+    async connect() {
+      let pinned: pg.PoolClient | undefined;
+      return {
+        async query(sql: string, params?: unknown[]) {
+          if (!pinned && /^BEGIN\b/i.test(sql)) pinned = await pool.connect();
+          if (!pinned) {
+            // Outside a transaction: a different server connection than the last statement's.
+            const other = await pool.connect();
+            const hold = await pool.connect();
+            try {
+              return await other.query(sql, params);
+            } finally {
+              other.release();
+              hold.release();
+            }
+          }
+          const c = pinned;
+          try {
+            return await c.query(sql, params);
+          } finally {
+            if (/^(COMMIT|ROLLBACK)\b/i.test(sql)) {
+              pinned = undefined;
+              c.release();
+            }
+          }
+        },
+        release() {
+          pinned?.release();
+          pinned = undefined;
+        },
+      };
+    },
+  };
+}
+
+describe('postgresHubStore behind a transaction-mode pooler', () => {
+  it('migrates without leaving an advisory lock behind; concurrent starts on a fresh database succeed', async () => {
+    const db = await freshDatabase();
+    const pool = new pg.Pool({ connectionString: db.url, max: 6 });
+    pool.on('error', () => undefined);
+    try {
+      const stores = await Promise.all([1, 2, 3].map(() => postgresHubStore({ pool: transactionPooled(pool) })));
+      // A session lock taken on one connection and "released" on another would still be held here.
+      const { rows } = await pool.query("SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND granted");
+      expect(rows[0].n).toBe(0);
+      const ids = await pool.query('SELECT id FROM uncage_hub_migrations ORDER BY id');
+      expect(ids.rows.length).toBeGreaterThan(0);
+      await Promise.all(stores.map((s) => s.close()));
+    } finally {
+      await pool.end();
+      await db.drop();
+    }
+  });
+});
