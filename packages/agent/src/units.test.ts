@@ -490,3 +490,44 @@ describe('fitEvent fallbacks', () => {
     expect(f.payload).toMatch(/…\[truncated \d+ bytes\]$/);
   });
 });
+
+describe('command dedupe cache', () => {
+  type Cache = { commands: Map<string, { frame: AgentFrame | null }>; cacheCommand(id: string, frame: AgentFrame | null): void };
+  const make = async (commandCacheBytes?: number) => {
+    const { home, cleanup } = await tmpHome();
+    cleanups.push(cleanup);
+    const { SiteAgent, DEFAULT_TIMING } = await import('./site.js');
+    const { memoryLogger } = await import('./test-helpers.js');
+    const agent = new SiteAgent({
+      site: { id: 's.example', name: 'S', url: 'https://s.example/api/uncage', machineId: 'm', token: 't' },
+      home,
+      adapters: [],
+      localPolicy: { allowBypass: false },
+      logger: memoryLogger(),
+      timing: DEFAULT_TIMING,
+      machine: { name: 'M', os: 'darwin' },
+      agentVersion: '0.3.0',
+      ...(commandCacheBytes !== undefined ? { commandCacheBytes } : {}),
+      onStop: () => undefined,
+      onUpgradeRequired: async () => 60_000,
+    });
+    return agent as unknown as Cache;
+  };
+  const done = (id: string): AgentFrame => ({ t: 'result', id, ok: true, data: 'x'.repeat(100) }) as AgentFrame;
+
+  it('never evicts a running command, past the entry limit', async () => {
+    const c = await make();
+    for (let i = 0; i < 1100; i++) c.cacheCommand(`run_${i}`, null); // all still running
+    c.cacheCommand('fin_0', done('fin_0'));
+    for (let i = 0; i < 1100; i++) expect(c.commands.has(`run_${i}`)).toBe(true);
+  });
+
+  it('never evicts a running command over the byte budget; finished ones go first', async () => {
+    const c = await make(250);
+    c.cacheCommand('running', null);
+    for (let i = 0; i < 10; i++) c.cacheCommand(`fin_${i}`, done(`fin_${i}`));
+    expect(c.commands.has('running')).toBe(true);
+    expect(c.commands.has('fin_9')).toBe(true); // the newest stays
+    expect(c.commands.has('fin_0')).toBe(false);
+  });
+});

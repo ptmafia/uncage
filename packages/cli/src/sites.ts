@@ -1,4 +1,4 @@
-import { loadAgentConfig, updateAgentSites, type AgentSite } from '@uncage/agent';
+import { isHubUnauthorized, loadAgentConfig, updateAgentSites, type AgentSite } from '@uncage/agent';
 
 export const SITES_HELP = `uncage sites - websites this computer is connected to
 
@@ -20,10 +20,14 @@ export async function listSites(home: string): Promise<string> {
   return formatSites((await loadAgentConfig(home)).sites);
 }
 
+/** A 401 that is not the hub's: nothing was revoked, the local token stays. */
+class NotRevokedError extends Error {}
+
 /**
  * Revokes the machine on the website (`POST <site>/machine/revoke` with its own token), then
  * removes the site locally. An unreachable website is reported but the local token is removed
- * anyway (it can still be revoked from the website's machine list).
+ * anyway (it can still be revoked from the website's machine list). A 401 that is not the hub's own
+ * `unauthorized` error throws and keeps the local token.
  */
 export async function removeSite(o: { home: string; id: string; fetch: typeof fetch; out: (l: string) => void }): Promise<void> {
   const site = (await loadAgentConfig(o.home)).sites.find((s) => s.id === o.id);
@@ -32,9 +36,19 @@ export async function removeSite(o: { home: string; id: string; fetch: typeof fe
     try {
       const res = await o.fetch(`${site.url}/machine/revoke`, { method: 'POST', headers: { authorization: `Bearer ${site.token}` } });
       if (res.ok) o.out(`✓ Revoked this machine on ${new URL(site.url).host}.`);
-      else if (res.status === 401) o.out(`The website no longer knew this machine (already revoked).`);
-      else o.out(`! The website answered HTTP ${res.status}; remove the machine from the website's machine list too.`);
-    } catch {
+      else if (res.status === 401) {
+        // Only the hub's own `unauthorized` means the token is gone; a proxy's 401 (deployment
+        // protection, an access gate) says nothing about the machine: keep the token.
+        const body: unknown = await res.json().catch(() => null);
+        if (!isHubUnauthorized(body)) {
+          throw new NotRevokedError(
+            `${new URL(site.url).host} answered HTTP 401, but not from Uncage (a proxy or deployment protection in front of the site?). The machine was not revoked and its token is kept; try again, or remove the machine from the website's machine list.`,
+          );
+        }
+        o.out(`The website no longer knew this machine (already revoked).`);
+      } else o.out(`! The website answered HTTP ${res.status}; remove the machine from the website's machine list too.`);
+    } catch (err) {
+      if (err instanceof NotRevokedError) throw err;
       o.out(`! Could not reach ${new URL(site.url).host}; remove the machine from the website's machine list too.`);
     }
   }

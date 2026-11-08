@@ -42,7 +42,7 @@ export { backoffDelay, DEFAULT_TIMING, HUB_CLOSE, siteHost, type AgentLogger, ty
 export { chooseTransport, compareVersions, fetchAgentInfo } from './transport/choose.js';
 export { dialHttp, MAX_UPSTREAM_MESSAGE_BYTES } from './transport/http.js';
 export { dialWs } from './transport/ws.js';
-export { FrameTooLargeError, type AgentLink, type DialOptions, type LinkEnd } from './transport/types.js';
+export { FrameTooLargeError, isHubUnauthorized, type AgentLink, type DialOptions, type LinkEnd } from './transport/types.js';
 export {
   execTarget,
   openUrlCommand,

@@ -275,6 +275,20 @@ describe('uncage sites', () => {
     expect((await loadAgentConfig(home)).sites).toEqual([]);
   });
 
+  it('"already revoked" only on the hub\'s own unauthorized body; a proxy 401 keeps the local token', async () => {
+    const home = await tmpHome();
+    const entry = { id: 'p.example', name: 'P', url: 'https://p.example/api/uncage', machineId: 'm', token: 't' };
+    await updateAgentSites(home, () => [entry]);
+    const proxy = (async () => new Response('<html>Vercel Authentication</html>', { status: 401 })) as typeof fetch;
+    await expect(removeSite({ home, id: entry.id, fetch: proxy, out: () => undefined })).rejects.toThrow(/not from Uncage.*token is kept/);
+    expect((await loadAgentConfig(home)).sites.map((s) => s.id)).toEqual([entry.id]);
+    const hub401 = (async () => Response.json({ error: { code: 'unauthorized', message: 'Unknown or revoked machine token.' } }, { status: 401 })) as typeof fetch;
+    const lines: string[] = [];
+    await removeSite({ home, id: entry.id, fetch: hub401, out: (l) => lines.push(l) });
+    expect(lines.join('\n')).toMatch(/already revoked/);
+    expect((await loadAgentConfig(home)).sites).toEqual([]);
+  });
+
   it('formats an empty list helpfully and marks revoked sites', () => {
     expect(formatSites([])).toMatch(/uncage setup/);
     expect(formatSites([{ id: 'a', name: 'A', url: 'https://a.example/api/uncage', machineId: 'm', token: 't', revokedAt: '2026-11-07T00:00:00Z' }])).toContain('revoked');
