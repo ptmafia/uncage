@@ -52,6 +52,34 @@ export function treeKillArgv(pid: number, env: NodeJS.ProcessEnv = process.env):
   return [systemTool('taskkill', { platform: 'win32', env }), ['/pid', String(pid), '/t', '/f']];
 }
 
+/** The synchronous spawner `windowsKill` uses (`spawnSync`'s shape; injectable for tests). */
+export type SyncRunner = (file: string, args: string[], o: { stdio: 'ignore'; windowsHide: true; timeout: number }) => { status: number | null; error?: Error };
+
+/**
+ * Windows stop: `taskkill /pid <pid> /t /f` (absolute path) run synchronously first, so the whole
+ * tree goes while the root still exists (killing the root first would leave taskkill nothing to walk
+ * from, and npx / cmd.exe grandchildren would survive). The direct kill (`direct`) only follows when
+ * taskkill failed, or with `force` (after the tree kill was attempted). Returns whether taskkill succeeded.
+ */
+export function windowsKill(o: {
+  pid: number;
+  env: NodeJS.ProcessEnv;
+  force: boolean;
+  run?: SyncRunner;
+  direct(sig: NodeJS.Signals): void;
+}): boolean {
+  let ok: boolean;
+  try {
+    const [file, args] = treeKillArgv(o.pid, o.env);
+    const r = (o.run ?? (spawnSync as unknown as SyncRunner))(file, args, { stdio: 'ignore', windowsHide: true, timeout: 5_000 });
+    ok = !r.error && r.status === 0;
+  } catch {
+    ok = false;
+  }
+  if (!ok || o.force) o.direct(o.force ? 'SIGKILL' : 'SIGTERM');
+  return ok;
+}
+
 /**
  * `kill()`, then waits for `exited` at most `timeoutMs`; past that, force-kills and resolves anyway
  * (`'timeout'`), so a caller (`dispose`, `uncage runtimes`, `uncage doctor`) never blocks forever.
@@ -214,20 +242,6 @@ export async function startAcpProcess(o: {
     liveWinPids.add(winPid);
     hookExit();
   }
-  let treeKilled = false;
-  /** Windows: `taskkill /t /f` on the agent's tree (absolute path), once. */
-  const treeKill = (): void => {
-    if (winPid === undefined || treeKilled) return;
-    treeKilled = true;
-    liveWinPids.delete(winPid);
-    try {
-      const [file, args] = treeKillArgv(winPid, o.env);
-      const tk = spawn(file, args, { stdio: 'ignore', windowsHide: true });
-      tk.on('error', () => undefined);
-    } catch {
-      // Falls back to killing the direct child below.
-    }
-  };
   /** Signals the agent's whole process group (POSIX; even after the leader exited), else the agent. */
   const signalGroup = (sig: NodeJS.Signals): void => {
     if (pgid !== undefined) {
@@ -249,8 +263,11 @@ export async function startAcpProcess(o: {
   const kill = (force = false): void => {
     if (windows) {
       proc.stdin.end();
-      treeKill();
-      if (!exitedFlag) proc.kill(force ? 'SIGKILL' : 'SIGTERM');
+      if (winPid !== undefined && !exitedFlag) {
+        // Tree first (synchronously), the direct child only if that failed or when forced.
+        windowsKill({ pid: winPid, env: o.env, force, direct: (sig) => void (exitedFlag || proc.kill(sig)) });
+        liveWinPids.delete(winPid);
+      } else if (!exitedFlag) proc.kill(force ? 'SIGKILL' : 'SIGTERM');
     } else if (force) {
       signalGroup('SIGKILL');
       if (pgid !== undefined) untrackGroup(pgid);
@@ -269,10 +286,11 @@ export async function startAcpProcess(o: {
       proc.stdin.destroy();
     }
   };
-  // The agent exited by itself: whatever it left behind in its group / tree goes too.
+  // The agent exited by itself: whatever it left behind in its group goes too (POSIX). Windows: no
+  // taskkill after the exit (the pid may already be reused by an unrelated process): just forget it.
   void exited.then(() => {
     if (pgid !== undefined) kill();
-    else if (winPid !== undefined) treeKill();
+    else if (winPid !== undefined) liveWinPids.delete(winPid);
   });
 
   const app = client({ name: 'uncage' })

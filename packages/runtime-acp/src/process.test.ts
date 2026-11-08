@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { fakeAcpPath } from '@uncage/testkit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CLIENT_INFO, stopAcpProcess, treeKillArgv } from './process.js';
+import { CLIENT_INFO, stopAcpProcess, treeKillArgv, windowsKill } from './process.js';
 import pkg from '../package.json' with { type: 'json' };
 
 const run = promisify(execFile);
@@ -62,6 +62,28 @@ describe('stopping an agent', () => {
   it('Windows tree kill: the absolute taskkill on the pid, /t /f', () => {
     expect(treeKillArgv(4242, { SystemRoot: 'C:\\Windows' })).toEqual(['C:\\Windows\\System32\\taskkill.exe', ['/pid', '4242', '/t', '/f']]);
     expect(treeKillArgv(7, {})[0]).toBe('C:\\Windows\\System32\\taskkill.exe');
+  });
+
+  it('Windows: the tree kill runs (synchronously) before any direct kill; the direct kill only on failure or force', () => {
+    const order: string[] = [];
+    const run = (ok: boolean) => (file: string, args: string[], o: { timeout: number }) => {
+      order.push(`taskkill ${file} ${args.join(' ')} t=${o.timeout}`);
+      return ok ? { status: 0 } : { status: 128 };
+    };
+    const direct = (sig: string) => void order.push(`direct ${sig}`);
+    const env = { SystemRoot: 'C:\\Windows' };
+    expect(windowsKill({ pid: 9, env, force: false, run: run(true), direct })).toBe(true);
+    expect(order).toEqual(['taskkill C:\\Windows\\System32\\taskkill.exe /pid 9 /t /f t=5000']);
+    order.length = 0;
+    expect(windowsKill({ pid: 9, env, force: false, run: run(false), direct })).toBe(false);
+    expect(order).toEqual(['taskkill C:\\Windows\\System32\\taskkill.exe /pid 9 /t /f t=5000', 'direct SIGTERM']);
+    order.length = 0;
+    windowsKill({ pid: 9, env, force: true, run: run(true), direct });
+    expect(order).toEqual(['taskkill C:\\Windows\\System32\\taskkill.exe /pid 9 /t /f t=5000', 'direct SIGKILL']);
+    // A spawner that throws counts as a failure.
+    order.length = 0;
+    windowsKill({ pid: 9, env, force: false, run: () => { throw new Error('nope'); }, direct });
+    expect(order).toEqual(['direct SIGTERM']);
   });
 
   it('stopAcpProcess resolves once the agent exits', async () => {
