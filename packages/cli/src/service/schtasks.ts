@@ -211,7 +211,20 @@ export function parseTaskCsvStatus(csv: string): string | null {
 
 const errText = (e: unknown): string => `${(e as { stderr?: string }).stderr ?? ''} ${(e as Error).message ?? ''}`;
 
-/** The command line of process `pid` (PowerShell CIM), or null when it is not running. */
+/**
+ * Whether `cmd` (a process command line) is this install's supervisor: argv[0] is the pinned Node
+ * (or any `node.exe`), argv[1] is exactly the CLI entry, and `--supervise` is an argument after it.
+ * Paths compare case-insensitively (Windows). A command line that merely mentions both strings
+ * (`notepad "…\bin.js" --supervise`) does not match.
+ */
+export function isOwnSupervisorCommandLine(cmd: string, spec: Pick<ServiceSpec, 'nodePath' | 'cliEntry'>): boolean {
+  const argv = winSplit(cmd.trim());
+  const exe = (argv[0] ?? '').toLowerCase();
+  const nodeOk = exe === spec.nodePath.toLowerCase() || /(^|[\\/])node\.exe$/.test(exe);
+  return nodeOk && (argv[1] ?? '').toLowerCase() === spec.cliEntry.toLowerCase() && argv.slice(2).includes('--supervise');
+}
+
+/** The command line of process `pid` (PowerShell CIM): null when no such process; throws when the lookup fails. */
 function defaultCommandLine(exec: ServiceDeps['exec']): (pid: number) => Promise<string | null> {
   return async (pid) => {
     const { stdout } = await exec('powershell.exe', [
@@ -257,25 +270,34 @@ export function schtasksService(d: ServiceDeps): AgentService {
   const runValueExists = () => ok(d.exec('reg', ['query', RUN_KEY, '/v', TASK_NAME]));
   const commandLineOf = d.processCommandLine ?? defaultCommandLine(d.exec);
   /**
-   * The live `--supervise` process this install started, from `<logsDir>/supervisor.pid` (written by
-   * the supervisor at every start). The pid is only trusted when that process's command line holds
-   * our CLI entry and `--supervise`; a stale file (the pid now belongs to something else) is removed.
+   * The `--supervise` process this install started, from `<logsDir>/supervisor.pid` (written by the
+   * supervisor at every start). `owned` only when that pid's command line is exactly ours
+   * (`isOwnSupervisorCommandLine`). A pid that is gone or belongs to something else: the stale file
+   * is removed. When the lookup itself fails (`unknown`), the file is kept and nothing is killed.
    */
-  const ownedSupervisor = async (spec: ServiceSpec | null | undefined): Promise<number | null> => {
-    if (!spec?.logsDir) return null;
+  const supervisorState = async (
+    spec: ServiceSpec | null | undefined,
+  ): Promise<{ state: 'none' | 'owned' | 'absent' | 'mismatch' | 'unknown'; pid?: number }> => {
+    if (!spec?.logsDir) return { state: 'none' };
     const file = join(spec.logsDir, 'supervisor.pid');
     const n = Number((await readFile(file, 'utf8').catch(() => '')).trim());
-    if (!Number.isInteger(n) || n <= 0) return null;
-    const cmd = await commandLineOf(n).catch(() => null);
-    if (cmd && cmd.toLowerCase().includes(spec.cliEntry.toLowerCase()) && cmd.includes('--supervise')) return n;
+    if (!Number.isInteger(n) || n <= 0) return { state: 'none' };
+    let cmd: string | null;
+    try {
+      cmd = await commandLineOf(n);
+    } catch {
+      return { state: 'unknown', pid: n };
+    }
+    if (cmd !== null && isOwnSupervisorCommandLine(cmd, spec)) return { state: 'owned', pid: n };
     await rm(file, { force: true });
-    return null;
+    return { state: cmd === null ? 'absent' : 'mismatch', pid: n };
   };
   /** Stops the supervised agent tree: ending a task only stops conhost, the node processes would survive. */
   const killStarted = async (spec?: ServiceSpec | null) => {
-    const pid = await ownedSupervisor(spec);
-    if (pid !== null) await d.exec('taskkill', ['/pid', String(pid), '/t', '/f']).catch(() => undefined);
-    if (spec?.logsDir) await rm(join(spec.logsDir, 'supervisor.pid'), { force: true });
+    const st = await supervisorState(spec);
+    if (st.state !== 'owned') return;
+    await d.exec('taskkill', ['/pid', String(st.pid), '/t', '/f']).catch(() => undefined);
+    await rm(join(spec!.logsDir, 'supervisor.pid'), { force: true });
   };
   /** The Run-key start: the same `--supervise` command line as the task, detached and hidden. */
   const startDetached = (spec: ServiceSpec) => {
@@ -364,7 +386,9 @@ export function schtasksService(d: ServiceDeps): AgentService {
         if (await runValueExists()) {
           kind = 'run-key';
           installed = true;
-          running = (await ownedSupervisor(await readSpec())) !== null;
+          const st = await supervisorState(await readSpec());
+          running = st.state === 'owned' ? true : st.state === 'unknown' ? null : false;
+          if (st.state === 'unknown') detail = 'could not check the agent process';
         }
       }
       const spec = installed ? await readSpec() : null;

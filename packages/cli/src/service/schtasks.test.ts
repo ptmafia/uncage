@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExecFn } from '@uncage/agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { conhostPath, parseTaskCsvStatus, parseTaskXml, RUN_KEY, runKeyCommand, schtasksService, TASK_NAME, taskXml, winQuote, winSplit } from './schtasks.js';
+import { conhostPath, isOwnSupervisorCommandLine, parseTaskCsvStatus, parseTaskXml, RUN_KEY, runKeyCommand, schtasksService, TASK_NAME, taskXml, winQuote, winSplit } from './schtasks.js';
 import type { ServiceSpec } from './types.js';
 
 const cleanups: string[] = [];
@@ -138,7 +138,7 @@ describe('schtasks service', () => {
       void writeFile(join(s.logsDir, 'supervisor.pid'), '4242\n');
       return 4242;
     });
-    const processCommandLine = async (pid: number) => (pid === 4242 ? `node "${s.cliEntry}" agent --supervise` : null);
+    const processCommandLine = async (pid: number) => (pid === 4242 ? `node.exe "${s.cliEntry}" agent --supervise` : null);
     const svc = schtasksService({ platform: 'win32', home, env: { SystemRoot: 'C:\\Windows' }, exec, username: 'PC\\u', windowsBuild: 22631, spawnDetached, processCommandLine });
     const r = await svc.install(s);
     expect(svc.kind).toBe('run-key');
@@ -198,7 +198,7 @@ describe('schtasks service', () => {
       await expect(stat(join(s.logsDir, 'supervisor.pid'))).rejects.toThrow();
     }
     // Our CLI entry but not the supervisor (e.g. a foreground `uncage agent`): not killed either.
-    const fg = schtasksService({ platform: 'win32', home, env: {}, exec, username: 'PC\\u', windowsBuild: 22631, processCommandLine: async () => `node "${s.cliEntry}" agent` });
+    const fg = schtasksService({ platform: 'win32', home, env: {}, exec, username: 'PC\\u', windowsBuild: 22631, processCommandLine: async () => `node.exe "${s.cliEntry}" agent` });
     await writeFile(join(s.logsDir, 'supervisor.pid'), '999\n');
     exec.mockClear();
     await fg.uninstall();
@@ -216,5 +216,61 @@ describe('schtasks service', () => {
     expect(() => taskXml(winSpec, 'PC\\u\r\n')).toThrow(/line break/);
     // % in the PATH kept in <Documentation> is fine: it is never expanded.
     expect(() => taskXml({ ...winSpec, env: { ...winSpec.env, PATH: 'C:\\100%\\bin' } }, 'PC\\u')).not.toThrow();
+  });
+
+  it('ownership is the exact argv: pinned node (or node.exe), argv[1] the CLI entry, a --supervise argument', () => {
+    const spec = { nodePath: winSpec.nodePath, cliEntry: winSpec.cliEntry };
+    const ok = (cmd: string) => isOwnSupervisorCommandLine(cmd, spec);
+    expect(ok(`"${winSpec.nodePath}" "${winSpec.cliEntry}" agent --supervise --log-file "C:\\l\\agent.log"`)).toBe(true);
+    expect(ok(`"${winSpec.nodePath.toUpperCase()}" "${winSpec.cliEntry.toLowerCase()}" agent --supervise`)).toBe(true);
+    expect(ok(`"C:\\Program Files\\nodejs\\node.exe" "${winSpec.cliEntry}" agent --supervise`)).toBe(true);
+    // Mentions both strings, but is not our supervisor.
+    expect(ok(`notepad.exe "${winSpec.cliEntry}" --supervise`)).toBe(false);
+    expect(ok(`"C:\\tools\\rg.exe" --supervise "${winSpec.cliEntry}"`)).toBe(false);
+    expect(ok(`"${winSpec.nodePath}" "${winSpec.cliEntry}.bak" agent --supervise`)).toBe(false);
+    expect(ok(`"${winSpec.nodePath}" "C:\\x\\other.js" "${winSpec.cliEntry}" --supervise`)).toBe(false);
+    expect(ok(`"${winSpec.nodePath}" "${winSpec.cliEntry}" agent --supervised`)).toBe(false);
+    expect(ok(`"${winSpec.nodePath}" "${winSpec.cliEntry}" agent`)).toBe(false);
+    expect(ok('')).toBe(false);
+  });
+
+  it('a notepad / rg process holding the reused pid is not killed; its stale pid file is removed', async () => {
+    const home = await tmpHome();
+    const exec = vi.fn<ExecFn>(async () => ok());
+    const s = localSpec(home);
+    for (const cmd of [`notepad.exe "${s.cliEntry}" --supervise`, `rg.exe --supervise "${s.cliEntry}"`]) {
+      const svc = schtasksService({ platform: 'win32', home, env: {}, exec, username: 'PC\\u', windowsBuild: 22631, processCommandLine: async () => cmd });
+      await svc.install(s);
+      await writeFile(join(s.logsDir, 'supervisor.pid'), '4321\n');
+      exec.mockClear();
+      await svc.uninstall();
+      expect(exec.mock.calls.some(([f]) => f === 'taskkill')).toBe(false);
+      await expect(stat(join(s.logsDir, 'supervisor.pid'))).rejects.toThrow();
+    }
+  });
+
+  it('when the process lookup itself fails, the pid file is kept and nothing is killed (state unknown)', async () => {
+    const home = await tmpHome();
+    let runValue = false;
+    const exec = vi.fn<ExecFn>(async (file, args) => {
+      if (file === 'schtasks' && args[0] === '/query') throw new Error('not found');
+      if (file === 'reg' && args[0] === 'query' && !runValue) throw new Error('not found');
+      if (file === 'reg' && args[0] === 'add') runValue = true;
+      if (file === 'schtasks' && args[0] === '/create') throw Object.assign(new Error('x'), { stderr: 'ERROR: Access is denied.' });
+      return ok();
+    });
+    const s = localSpec(home);
+    const processCommandLine = vi.fn(async () => {
+      throw new Error('powershell.exe: Get-CimInstance: RPC server is unavailable');
+    });
+    const svc = schtasksService({ platform: 'win32', home, env: {}, exec, username: 'PC\\u', windowsBuild: 22631, processCommandLine, spawnDetached: () => 1 });
+    await svc.install(s);
+    await writeFile(join(s.logsDir, 'supervisor.pid'), '2468\n');
+    expect(await svc.status()).toMatchObject({ kind: 'run-key', installed: true, running: null, detail: 'could not check the agent process' });
+    exec.mockClear();
+    await svc.uninstall();
+    expect(processCommandLine).toHaveBeenCalledWith(2468);
+    expect(exec.mock.calls.some(([f]) => f === 'taskkill')).toBe(false);
+    expect((await readFile(join(s.logsDir, 'supervisor.pid'), 'utf8')).trim()).toBe('2468');
   });
 });
