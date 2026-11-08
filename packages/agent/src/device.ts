@@ -43,6 +43,14 @@ export function agentWsUrl(hubUrl: string): string {
   return url.toString();
 }
 
+/** `http(s)://…/agent` (the HTTP streaming routes) for a hub base URL; refuses plain http to anything but loopback. */
+export function agentHttpUrl(hubUrl: string): string {
+  const url = new URL(hubUrl);
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error(`Refusing a non-http(s) hub URL (${url.protocol}).`);
+  if (url.protocol === 'http:' && !isLoopback(url.hostname)) throw new Error(`Refusing an insecure connection to ${url.hostname}.`);
+  return `${url.origin}${url.pathname.replace(/\/+$/, '')}/agent`;
+}
+
 async function postJson(fetchFn: typeof fetch, url: string, body: unknown): Promise<unknown> {
   let res: Response;
   try {

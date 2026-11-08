@@ -9,6 +9,7 @@ import {
   type AgentSite,
   type ExecFn,
 } from '@uncage/agent';
+import type { TransportKind } from '@uncage/protocol';
 import { installLaunchAgent } from './launchd.js';
 
 export const SETUP_HELP = `uncage setup - connect this computer to a website (Connected Mode)
@@ -42,6 +43,13 @@ export interface SetupDeps {
   sleep?: (ms: number) => Promise<void>;
 }
 
+/** How the agent will connect, from the transports the website offers (the agent prefers WebSocket). */
+export function transportLine(kinds: TransportKind[]): string {
+  if (kinds.includes('ws') && kinds.includes('http')) return 'WebSocket (falls back to HTTP streaming if WebSocket is blocked)';
+  if (kinds.includes('ws')) return 'WebSocket';
+  return 'HTTP streaming (this website runs on a serverless platform)';
+}
+
 export async function runSetup(d: SetupDeps): Promise<AgentSite> {
   const hubUrl = normalizeHubUrl(d.url);
   const config = await loadAgentConfig(d.home);
@@ -70,6 +78,7 @@ export async function runSetup(d: SetupDeps): Promise<AgentSite> {
   };
   await updateAgentSites(d.home, (sites) => [...sites.filter((s) => s.id !== site.id && s.url !== siteUrl), site]);
   d.out(`✓ Connected to ${site.name} (${new URL(siteUrl).host}) as machine ${site.machineId}.`);
+  d.out(`  Transport: ${transportLine(grant.transports.map((t) => t.kind))}`);
 
   const platform = d.platform ?? process.platform;
   if (d.noDaemon) {

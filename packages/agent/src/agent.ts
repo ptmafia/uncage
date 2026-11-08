@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { homedir, hostname, release } from 'node:os';
 import { promisify } from 'node:util';
-import type { RuntimeAdapter } from '@uncage/protocol';
+import type { RuntimeAdapter, TransportKind } from '@uncage/protocol';
 import pino from 'pino';
 import pkg from '../package.json' with { type: 'json' };
 import { readFile, writeFile } from 'node:fs/promises';
@@ -47,17 +47,22 @@ export interface CreateAgentOptions {
   exec?: ExecFn;
   /** Called after a self-upgrade attempt. Default `process.exit`. */
   exit?: (code: number) => void;
+  /** HTTP client for `/agent/info` and the HTTP streaming transport. Default: the global `fetch` (tests inject one). */
+  fetch?: typeof fetch;
 }
 
 export interface Agent {
   close(): Promise<void>;
   /** Per configured site: connecting, connected, upgrade_failed, failed (could not start), revoked, replaced, closed. */
   status(): Record<string, SiteStatus>;
+  /** Per running site: the transport of its live link (`ws` / `http`), `null` while not connected. */
+  transports(): Record<string, TransportKind | null>;
 }
 
 /**
- * The Connected Mode daemon: one WebSocket per configured (non-revoked) site, each with its own
- * core instance, workspace root and activity log. Revocation (4401 / HTTP 401) marks the site in
+ * The Connected Mode daemon: one link per configured (non-revoked) site — WebSocket, or HTTP
+ * streaming when the site only offers that or WebSocket keeps failing — each with its own core
+ * instance, workspace root and activity log. Revocation (4401 / HTTP 401) marks the site in
  * `agent.yaml` and stops dialing it; replacement (4409) stops that connection without fighting;
  * `upgrade_required` runs `npm i -g @uncage/cli@latest` and, if that worked, exits non-zero so
  * launchd restarts (a failed upgrade keeps only that site offline, retried at most hourly). A site
@@ -142,6 +147,7 @@ export async function createAgent(o: CreateAgentOptions): Promise<Agent> {
       timing,
       machine,
       agentVersion: version,
+      ...(o.fetch ? { fetch: o.fetch } : {}),
       onStop: (reason) => {
         if (closed) return;
         if (reason === 'revoked') {
@@ -169,6 +175,7 @@ export async function createAgent(o: CreateAgentOptions): Promise<Agent> {
   return {
     close,
     status: () => ({ ...Object.fromEntries(status), ...Object.fromEntries(sites.map((x) => [x.site.id, x.state])) }),
+    transports: () => Object.fromEntries(sites.map((x) => [x.site.id, x.transport])),
   };
 }
 

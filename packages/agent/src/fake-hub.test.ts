@@ -15,7 +15,8 @@ import { FAST, memoryLogger, sleep, tmpHome, until } from './test-helpers.js';
 
 /** A scriptable stand-in for the hub: accepts agent sockets and records their frames. */
 async function fakeHub() {
-  const server: Server = createServer();
+  // Plain requests (`GET /agent/info`) get 404: this stand-in only speaks WebSocket.
+  const server: Server = createServer((_req, res) => res.writeHead(404).end());
   const wss = new WebSocketServer({ server, path: '/api/uncage/agent' });
   const conns: Array<{ ws: WebSocket; frames: AgentFrame[]; auth?: string }> = [];
   let onHello: (ws: WebSocket) => void = (ws) =>

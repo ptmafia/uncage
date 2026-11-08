@@ -7,8 +7,8 @@ import {
   HubCommandArgsSchemas,
   MAX_FRAME_BYTES,
   newId,
-  parseHubFrame,
   type AgentFrame,
+  type AgentInfo,
   type ErrorBody,
   type HubCommandArgs,
   type HubCommandOp,
@@ -16,56 +16,23 @@ import {
   type PermissionMode,
   type RuntimeAdapter,
   type ToolCallResult,
+  type TransportKind,
   type UncageEvent,
 } from '@uncage/protocol';
-import { WebSocket } from 'ws';
 import { ActivityLog } from './activity.js';
 import { siteDir, type AgentConfig, type AgentSite } from './config.js';
-import { agentWsUrl } from './device.js';
 import { planPull, sendPull } from './files.js';
 import { fitEvent } from './fit.js';
+import { chooseTransport, fetchAgentInfo } from './transport/choose.js';
+import { dialHttp } from './transport/http.js';
+import { FrameTooLargeError, backoffDelay, type AgentLink, type AgentLogger, type AgentTiming, type DialOptions } from './transport/types.js';
+import { dialWs } from './transport/ws.js';
 
-/** Close codes the hub uses (see @uncage/hub machines.ts). */
-export const HUB_CLOSE = { revoked: 4401, replaced: 4409, upgrade: 4426, hubTooOld: 4505 } as const;
-
-export interface AgentLogger {
-  info(obj: object, msg?: string): void;
-  warn(obj: object, msg?: string): void;
-  error(obj: object, msg?: string): void;
-}
-
-export interface AgentTiming {
-  /** Reconnect backoff: starts here, doubles per failed attempt (with jitter). Default 1 000. */
-  backoffMinMs: number;
-  /** Default 30 000. */
-  backoffMaxMs: number;
-  /** A `tool_call` without `tool_result` fails with `tool_failed` after this. Default 120 000. */
-  toolTimeoutMs: number;
-  /** No frame from the hub for this long → the connection is presumed dead. Default 35 000 (hub pings every 10 s). */
-  idleTimeoutMs: number;
-  /** The backoff only resets after a connection stayed up this long. Default 30 000. */
-  stableMs: number;
-  /** A chunked attachment upload with no frame for this long is dropped. Default 60 000. */
-  uploadIdleMs: number;
-}
-
-export const DEFAULT_TIMING: AgentTiming = {
-  backoffMinMs: 1000,
-  backoffMaxMs: 30_000,
-  toolTimeoutMs: 120_000,
-  idleTimeoutMs: 35_000,
-  stableMs: 30_000,
-  uploadIdleMs: 60_000,
-};
+export { HUB_CLOSE } from './transport/ws.js';
+export { backoffDelay, DEFAULT_TIMING, type AgentLogger, type AgentTiming } from './transport/types.js';
 
 /** Most chunked attachment uploads in progress at once (per site). */
 const MAX_UPLOADS = 8;
-
-/** Exponential backoff with jitter: a random delay in [base/2, base], base = min(max, min·2^attempt). */
-export function backoffDelay(attempt: number, t: Pick<AgentTiming, 'backoffMinMs' | 'backoffMaxMs'>, random = Math.random): number {
-  const base = Math.min(t.backoffMaxMs, t.backoffMinMs * 2 ** Math.min(attempt, 30));
-  return Math.round(base / 2 + random() * (base / 2));
-}
 
 /** Keep frames comfortably below the hub's 1 MiB limit. */
 const FRAME_BUDGET = MAX_FRAME_BYTES - 16 * 1024;
@@ -150,9 +117,18 @@ interface Upload {
 }
 
 interface PendingTool {
+  /** Re-sent (same id) after every welcome until the hub answers. */
+  frame: Extract<AgentFrame, { t: 'tool_call' }>;
   resolve(r: ToolCallResult): void;
   reject(e: unknown): void;
 }
+
+/** Commands remembered for dedupe (a redelivered command is answered from here, never run again). */
+const COMMAND_CACHE = 1000;
+/** `GET /agent/info` is re-read at most this often. */
+const INFO_TTL_MS = 5 * 60_000;
+/** While busy, an HTTP link waits this long before checking again whether WebSocket can be retried. */
+const REPROBE_BUSY_RECHECK_MS = 60_000;
 
 export type SiteStop = 'revoked' | 'replaced' | 'upgrade' | 'closed';
 /** Live state of a site's connection. */
@@ -167,6 +143,8 @@ export interface SiteAgentOptions {
   timing: AgentTiming;
   machine: { name: string; os: string };
   agentVersion: string;
+  /** HTTP client for `/agent/info` and the HTTP transport. Default: the global `fetch` (tests inject one). */
+  fetch?: typeof fetch;
   /** The site stopped for good (revoked or replaced). */
   onStop(reason: 'revoked' | 'replaced'): void;
   /**
@@ -178,7 +156,12 @@ export interface SiteAgentOptions {
 
 /**
  * One website: its own core instance (`~/.uncage/sites/<id>/data`), workspace root
- * (`~/Uncage/<siteHost>/`), activity log and one WebSocket to its hub.
+ * (`~/Uncage/<siteHost>/`), activity log and one link to its hub.
+ *
+ * Transport: before each dial the agent reads `GET <hub>/agent/info` (cached 5 min) and picks
+ * WebSocket when offered, HTTP streaming when only that is offered or after `wsFallbackAfter`
+ * failed WebSocket attempts in a row (WebSocket is retried `wsReprobeMs` later). Everything above
+ * the link (replication, commands, site tools, file pulls, uploads) is transport-neutral.
  *
  * Replication: every committed event is sent in an `events` frame as soon as the connection is up
  * (after `welcome`). Per session the agent keeps a cursor. A hub that keeps a replica ("site"
@@ -187,13 +170,18 @@ export interface SiteAgentOptions {
  * the cursor and the agent resends from there. Since the hub only accepts `lastSequence + 1`
  * onward, resends never duplicate. A hub without a replica never acks; there the cursor is "sent
  * while connected", and events produced while offline are sent after the next `welcome`.
+ *
+ * Exactly-once: commands are deduped by id (the cached result is re-sent); a pending site tool call
+ * survives a dropped connection and its `tool_call` is re-sent with the same id after every welcome
+ * (the hub answers from its stored outcome); a `tool_result` for an unknown id is ignored.
  */
 export class SiteAgent {
   readonly site: AgentSite;
   private uncage!: Uncage;
   private activity: ActivityLog;
   private root: string;
-  private ws: WebSocket | undefined;
+  private link: AgentLink | undefined;
+  private linkKind: TransportKind | null = null;
   private connected = false;
   private stopped = false;
   private wake: (() => void) | undefined;
@@ -203,7 +191,16 @@ export class SiteAgent {
   private readonly pendingTools = new Map<string, PendingTool>();
   private readonly pulls = new Set<AbortController>();
   private readonly uploads = new Map<string, Upload>();
-  private upgradeMin: string | undefined;
+  /** Command id → its result frame (`null` while it runs). Insertion-ordered: the oldest is evicted. */
+  private readonly commands = new Map<string, AgentFrame | null>();
+  private readonly activeRuns = new Set<string>();
+  /** HTTP transport: highest outbox seq dispatched (process lifetime). */
+  private cursor = 0;
+  private info: { value: AgentInfo; at: number } | undefined;
+  private wsFailures = 0;
+  private fellBackAt: number | undefined;
+  private httpFailures = 0;
+  private reprobing = false;
   /** See `SiteState`. */
   state: SiteState = 'connecting';
 
@@ -215,6 +212,11 @@ export class SiteAgent {
 
   private get log(): AgentLogger {
     return this.o.logger;
+  }
+
+  /** Transport of the live (welcomed) link, `null` while not connected. */
+  get transport(): TransportKind | null {
+    return this.connected ? this.linkKind : null;
   }
 
   async start(): Promise<void> {
@@ -247,29 +249,81 @@ export class SiteAgent {
     this.stopped = true;
     if (this.state === 'connecting' || this.state === 'connected') this.state = 'closed';
     this.wake?.();
-    const ws = this.ws;
-    if (ws) {
-      ws.close(1000, 'agent shutting down');
-      setTimeout(() => ws.terminate(), 500).unref();
-    }
+    this.link?.close();
     await this.loopDone;
+    for (const p of [...this.pendingTools.values()]) p.reject(new UncageError('tool_failed', { message: 'The agent is shutting down.' }));
     await this.uncage?.close();
     await this.activity.flush();
   }
 
   // ---- connection -------------------------------------------------------------------------
 
+  private get fetchFn(): typeof fetch {
+    return this.o.fetch ?? fetch;
+  }
+
+  private async agentInfo(): Promise<AgentInfo | null> {
+    if (this.info && Date.now() - this.info.at < INFO_TTL_MS) return this.info.value;
+    const value = await fetchAgentInfo(this.fetchFn, this.site.url);
+    if (value) this.info = { value, at: Date.now() };
+    return value ?? this.info?.value ?? null;
+  }
+
+  private busy(): boolean {
+    return this.activeRuns.size > 0 || this.pendingTools.size > 0;
+  }
+
   private async loop(): Promise<void> {
     let attempt = 0;
+    const t = this.o.timing;
     while (!this.stopped) {
-      const r = await this.connectOnce();
+      const info = await this.agentInfo();
       if (this.stopped) return;
+      const kind = chooseTransport(info, { wsFailures: this.wsFailures, ...(this.fellBackAt !== undefined ? { fellBackAt: this.fellBackAt } : {}), now: Date.now() }, t);
+      if (kind === 'ws' && this.wsFailures >= t.wsFallbackAfter) {
+        // Re-probe after a fallback: one more failure goes straight back to HTTP.
+        this.log.info({ site: this.site.id }, 'trying WebSocket again');
+        this.wsFailures = t.wsFallbackAfter - 1;
+        this.fellBackAt = undefined;
+      }
+      const runtimes = await this.uncage.runtimes.list().catch(() => []);
+      if (this.stopped) return;
+      const opts: DialOptions = {
+        hubUrl: this.site.url,
+        token: this.site.token,
+        hello: {
+          t: 'hello',
+          protocol: CONNECTED_PROTOCOL,
+          agentVersion: this.o.agentVersion,
+          machine: { name: this.o.machine.name, os: this.o.machine.os, runtimes },
+        },
+        onWelcome: (w) => this.onWelcome(link, w.replies),
+        onFrame: (f) => this.onFrame(link, f),
+        cursor: { get: () => this.cursor, set: (seq) => void (this.cursor = Math.max(this.cursor, seq)) },
+        busy: () => this.busy(),
+        timing: t,
+        fetch: this.fetchFn,
+        logger: this.log,
+        siteId: this.site.id,
+      };
+      const link: AgentLink = kind === 'ws' ? dialWs(opts) : dialHttp(opts);
+      this.link = link;
+      this.linkKind = kind;
+      const reprobe = kind === 'http' ? this.scheduleReprobe(info, link) : undefined;
+      const r = await link.ended;
+      reprobe?.cancel();
+      if (this.link === link) this.link = undefined;
+      this.onDisconnect();
+      if (r.welcomed) void this.activity.append({ kind: 'disconnected' });
+      if (this.stopped) return;
+
+      if (!r.stop) this.countFailure(kind, info, r);
       if (r.stop === 'upgrade') {
+        void this.activity.append({ kind: 'upgrade', detail: { minAgentVersion: r.minAgentVersion ?? 'unknown' } });
         // Resolves only if the upgrade did not happen (on success the process exits): this site
         // stays offline until the retry time, the other sites keep running.
-        const retryInMs = await this.o.onUpgradeRequired(this.upgradeMin);
+        const retryInMs = await this.o.onUpgradeRequired(r.minAgentVersion);
         if (this.stopped) return;
-        this.upgradeMin = undefined;
         this.state = 'upgrade_failed';
         this.log.warn({ site: this.site.id, retryInMs }, 'staying disconnected until the upgrade can be retried');
         await this.sleep(retryInMs);
@@ -278,18 +332,80 @@ export class SiteAgent {
         continue;
       }
       if (r.stop) {
+        if (r.stop === 'revoked') {
+          this.log.warn({ site: this.site.id }, 'machine token revoked by the website; not reconnecting');
+          void this.activity.append({ kind: 'revoked' });
+        } else {
+          this.log.warn({ site: this.site.id }, 'replaced by a newer connection for this machine; stopping this one');
+          void this.activity.append({ kind: 'replaced' });
+        }
         this.stopped = true;
         this.state = r.stop;
         this.o.onStop(r.stop);
         return;
       }
+      if (this.reprobing) {
+        this.reprobing = false;
+        continue;
+      }
       // Only a connection that stayed up resets the backoff (a hub that accepts then drops at once
       // must not be hammered every second).
-      if (r.upMs >= this.o.timing.stableMs) attempt = 0;
-      const delay = backoffDelay(attempt++, this.o.timing);
-      this.log.info({ site: this.site.id, delayMs: delay }, 'reconnecting');
+      if (r.upMs >= t.stableMs) attempt = 0;
+      const delay = backoffDelay(attempt++, t);
+      this.log.info({ site: this.site.id, delayMs: delay, transport: kind }, 'reconnecting');
       await this.sleep(delay);
     }
+  }
+
+  /** Tracks consecutive failures per transport (drives `chooseTransport`). */
+  private countFailure(kind: TransportKind, info: AgentInfo | null, r: { welcomed: boolean; upMs: number }): void {
+    const t = this.o.timing;
+    if (this.reprobing) return;
+    const failed = !r.welcomed || r.upMs < t.stableMs;
+    if (kind === 'ws') {
+      if (!failed) {
+        this.wsFailures = 0;
+        this.fellBackAt = undefined;
+        return;
+      }
+      this.wsFailures++;
+      if (this.wsFailures >= t.wsFallbackAfter && this.fellBackAt === undefined) {
+        this.fellBackAt = Date.now();
+        if (!info || info.transports.some((x) => x.kind === 'http')) {
+          this.log.warn({ site: this.site.id, failures: this.wsFailures }, 'WebSocket keeps failing; falling back to HTTP streaming');
+        }
+      }
+      return;
+    }
+    // HTTP that never even connects while WebSocket is the one we fell back from: try WebSocket again.
+    if (r.welcomed) this.httpFailures = 0;
+    else if (++this.httpFailures >= t.wsFallbackAfter && this.wsFailures >= t.wsFallbackAfter) {
+      this.httpFailures = 0;
+      this.wsFailures = 0;
+      this.fellBackAt = undefined;
+    }
+  }
+
+  /**
+   * On an HTTP link chosen as a fallback from WebSocket: once `wsReprobeMs` has passed and nothing
+   * is in flight, ends the link so the next dial tries WebSocket again.
+   */
+  private scheduleReprobe(info: AgentInfo | null, link: AgentLink): { cancel(): void } | undefined {
+    if (this.fellBackAt === undefined || (info && !info.transports.some((x) => x.kind === 'ws'))) return undefined;
+    let timer: NodeJS.Timeout;
+    const check = () => {
+      if (this.link !== link || this.stopped) return;
+      if (this.busy()) {
+        timer = setTimeout(check, Math.min(REPROBE_BUSY_RECHECK_MS, this.o.timing.wsReprobeMs));
+        timer.unref();
+        return;
+      }
+      this.reprobing = true;
+      link.close();
+    };
+    timer = setTimeout(check, Math.max(0, this.fellBackAt + this.o.timing.wsReprobeMs - Date.now()));
+    timer.unref();
+    return { cancel: () => clearTimeout(timer) };
   }
 
   private async sleep(ms: number): Promise<void> {
@@ -308,118 +424,21 @@ export class SiteAgent {
     return this.activity.append(e);
   }
 
-  private connectOnce(): Promise<{ welcomed: boolean; upMs: number; stop?: Exclude<SiteStop, 'closed'> }> {
-    return new Promise((resolve) => {
-      let welcomed = false;
-      let welcomedAt = 0;
-      const done = (r: { welcomed: boolean; stop?: Exclude<SiteStop, 'closed'> }) =>
-        resolve({ ...r, upMs: welcomedAt ? Date.now() - welcomedAt : 0 });
-      let httpStatus: number | undefined;
-      let idle: NodeJS.Timeout | undefined;
-      let ws: WebSocket;
-      try {
-        ws = new WebSocket(agentWsUrl(this.site.url), {
-          headers: { authorization: `Bearer ${this.site.token}` },
-          maxPayload: MAX_FRAME_BYTES,
-          handshakeTimeout: 15_000,
-        });
-      } catch (err) {
-        this.log.error({ err, site: this.site.id }, 'cannot connect');
-        done({ welcomed: false });
-        return;
-      }
-      this.ws = ws;
-      const armIdle = () => {
-        clearTimeout(idle);
-        idle = setTimeout(() => {
-          this.log.warn({ site: this.site.id }, 'no frames from the hub; reconnecting');
-          ws.terminate();
-        }, this.o.timing.idleTimeoutMs);
-        idle.unref();
-      };
-
-      ws.on('unexpected-response', (req, res) => {
-        httpStatus = res.statusCode;
-        res.resume();
-        req.destroy();
-        ws.terminate();
-      });
-      ws.on('error', (err) => {
-        if (httpStatus === undefined) this.log.warn({ site: this.site.id, err: err.message }, 'connection error');
-      });
-      ws.on('open', () => {
-        armIdle();
-        void this.hello(ws);
-      });
-      ws.on('message', (data) => {
-        armIdle();
-        let frame: HubFrame;
-        try {
-          frame = parseHubFrame(data.toString());
-        } catch (err) {
-          this.log.warn({ site: this.site.id, err: (err as Error).message }, 'malformed frame from hub');
-          return;
-        }
-        if (frame.t === 'welcome') {
-          welcomed = true;
-          welcomedAt = Date.now();
-          this.onWelcome(ws);
-        } else this.onFrame(ws, frame);
-      });
-      ws.on('close', (code, reason) => {
-        clearTimeout(idle);
-        const wasConnected = welcomed;
-        if (this.ws === ws) {
-          this.ws = undefined;
-          this.onDisconnect();
-        }
-        if (wasConnected) void this.activity.append({ kind: 'disconnected', detail: { code } });
-        if (httpStatus === 401 || code === HUB_CLOSE.revoked) {
-          this.log.warn({ site: this.site.id }, 'machine token revoked by the website; not reconnecting');
-          void this.activity.append({ kind: 'revoked' });
-          return done({ welcomed, stop: 'revoked' });
-        }
-        if (code === HUB_CLOSE.replaced) {
-          this.log.warn({ site: this.site.id }, 'replaced by a newer connection for this machine; stopping this one');
-          void this.activity.append({ kind: 'replaced' });
-          return done({ welcomed, stop: 'replaced' });
-        }
-        if (code === HUB_CLOSE.upgrade || this.upgradeMin) {
-          void this.activity.append({ kind: 'upgrade', detail: { minAgentVersion: this.upgradeMin ?? 'unknown' } });
-          return done({ welcomed, stop: 'upgrade' });
-        }
-        if (code === HUB_CLOSE.hubTooOld) this.log.warn({ site: this.site.id }, 'this website runs an older hub than the agent supports');
-        else if (httpStatus !== undefined) this.log.warn({ site: this.site.id, status: httpStatus }, 'hub refused the connection');
-        else this.log.info({ site: this.site.id, code, reason: reason.toString().slice(0, 200) }, 'disconnected');
-        done({ welcomed });
-      });
-    });
-  }
-
-  private async hello(ws: WebSocket): Promise<void> {
-    const runtimes = await this.uncage.runtimes.list().catch(() => []);
-    if (ws.readyState !== WebSocket.OPEN) return;
-    this.rawSend(ws, {
-      t: 'hello',
-      protocol: CONNECTED_PROTOCOL,
-      agentVersion: this.o.agentVersion,
-      transport: 'ws',
-      machine: { name: this.o.machine.name, os: this.o.machine.os, runtimes },
-    });
-  }
-
-  private onWelcome(ws: WebSocket): void {
-    if (this.ws !== ws) return;
+  private onWelcome(link: AgentLink, replies: HubFrame[]): void {
+    if (this.link !== link) return;
     this.connected = true;
     this.state = 'connected';
     this.acksOnConn = false;
-    this.log.info({ site: this.site.id }, 'connected');
+    this.log.info({ site: this.site.id, transport: link.kind }, 'connected');
     void this.activity.append({ kind: 'connected' });
     for (const rep of this.reps.values()) {
       rep.sentHigh = rep.delivered;
       rep.outstanding = [];
       rep.gen++;
     }
+    for (const f of replies) this.onFrame(link, f);
+    // Site tool calls still waiting for their result: ask again (same id; the hub never runs one twice).
+    for (const p of this.pendingTools.values()) this.sendToolCall(p);
     void this.backfillAll();
   }
 
@@ -432,39 +451,20 @@ export class SiteAgent {
       rep.outstanding = [];
       rep.gen++;
     }
-    const lost = new UncageError('tool_failed', { message: 'The connection to the website was lost.' });
-    for (const p of this.pendingTools.values()) p.reject(lost);
-    this.pendingTools.clear();
+    // Pending tool calls are kept: they are re-sent after the next welcome (their own timeout still runs).
     for (const ac of this.pulls) ac.abort();
     for (const u of this.uploads.values()) u.stream.fail(new UncageError('machine_offline', { message: 'The connection to the website was lost during the upload.' }));
   }
 
-  private rawSend(ws: WebSocket, f: AgentFrame): Promise<void> {
-    const raw = JSON.stringify(f);
-    if (byteLength(raw) > MAX_FRAME_BYTES) return Promise.reject(new Error(`frame "${f.t}" too large`));
-    return new Promise((resolve, reject) => {
-      if (ws.readyState !== WebSocket.OPEN) return reject(new UncageError('machine_offline'));
-      ws.send(raw, (err) => (err ? reject(err) : resolve()));
-    });
-  }
-
-  /** Sends on the current, welcomed connection. */
+  /** Sends on the current, welcomed link. */
   private send(f: AgentFrame): Promise<void> {
-    if (!this.connected || !this.ws) return Promise.reject(new UncageError('machine_offline'));
-    return this.rawSend(this.ws, f);
+    if (!this.connected || !this.link) return Promise.reject(new UncageError('machine_offline'));
+    return this.link.send(f);
   }
 
-  private onFrame(ws: WebSocket, f: HubFrame): void {
-    if (f.t === 'upgrade_required') {
-      this.upgradeMin = f.minAgentVersion;
-      this.log.warn({ site: this.site.id, minAgentVersion: f.minAgentVersion }, 'the website requires a newer agent');
-      return;
-    }
-    if (this.ws !== ws || !this.connected) return;
+  private onFrame(link: AgentLink, f: HubFrame): void {
+    if (this.link !== link || !this.connected) return;
     switch (f.t) {
-      case 'ping':
-        void this.send({ t: 'pong', at: f.at }).catch(() => undefined);
-        return;
       case 'command':
         void this.onCommand(f.id, f.op, f.args);
         return;
@@ -473,7 +473,7 @@ export class SiteAgent {
         return;
       case 'tool_result': {
         const p = this.pendingTools.get(f.id);
-        if (!p) return;
+        if (!p) return; // answered already (a duplicate) or given up
         this.pendingTools.delete(f.id);
         if (f.ok) p.resolve(f.result);
         else p.reject(new UncageError(f.error.code, { message: f.error.message }));
@@ -506,25 +506,36 @@ export class SiteAgent {
   // ---- commands ---------------------------------------------------------------------------
 
   private async onCommand(id: string, op: HubCommandOp, rawArgs: unknown): Promise<void> {
-    let frame: AgentFrame;
+    if (this.commands.has(id)) {
+      // Redelivered (overlapping streams, a resend): answer from the cache, never run it again.
+      const cached = this.commands.get(id);
+      if (cached) await this.sendResult(cached).catch(() => undefined);
+      return;
+    }
+    this.commands.set(id, null);
+    while (this.commands.size > COMMAND_CACHE) this.commands.delete(this.commands.keys().next().value!);
+    const frame = await this.runCommand(id, op, rawArgs);
+    if (this.commands.has(id)) this.commands.set(id, frame);
+    await this.sendResult(frame).catch((err: unknown) => this.log.warn({ site: this.site.id, op, err: (err as Error).message }, 'could not send result'));
+  }
+
+  private async runCommand(id: string, op: HubCommandOp, rawArgs: unknown): Promise<AgentFrame> {
     const parsed = HubCommandArgsSchemas[op].safeParse(rawArgs);
     if (!parsed.success) {
       const err = new UncageError('invalid_request', { message: `Invalid ${op} arguments: ${parsed.error.issues[0]?.message ?? 'bad shape'}` });
       void this.activity.append({ kind: 'command', name: op, ok: false, code: err.code });
-      frame = { t: 'result', id, ok: false, error: err.toBody() };
-    } else {
-      try {
-        const data = await this.execute(op, parsed.data as HubCommandArgs[typeof op]);
-        frame = { t: 'result', id, ok: true, data };
-        void this.activity.append({ kind: 'command', name: op, ok: true, detail: this.activityArgs(op, parsed.data) });
-      } catch (err) {
-        const body = errorBody(err);
-        if (body.code === 'internal_error') this.log.error({ err, site: this.site.id, op }, 'command failed');
-        void this.activity.append({ kind: 'command', name: op, ok: false, code: body.code, detail: this.activityArgs(op, parsed.data) });
-        frame = { t: 'result', id, ok: false, error: body };
-      }
+      return { t: 'result', id, ok: false, error: err.toBody() };
     }
-    await this.sendResult(frame).catch((err: unknown) => this.log.warn({ site: this.site.id, op, err: (err as Error).message }, 'could not send result'));
+    try {
+      const data = await this.execute(op, parsed.data as HubCommandArgs[typeof op]);
+      void this.activity.append({ kind: 'command', name: op, ok: true, detail: this.activityArgs(op, parsed.data) });
+      return { t: 'result', id, ok: true, data };
+    } catch (err) {
+      const body = errorBody(err);
+      if (body.code === 'internal_error') this.log.error({ err, site: this.site.id, op }, 'command failed');
+      void this.activity.append({ kind: 'command', name: op, ok: false, code: body.code, detail: this.activityArgs(op, parsed.data) });
+      return { t: 'result', id, ok: false, error: body };
+    }
   }
 
   /** Read-only, high-volume ops carry no detail in the activity log. */
@@ -625,13 +636,14 @@ export class SiteAgent {
 
   // ---- site tools -------------------------------------------------------------------------
 
+  /**
+   * A site tool call: `tool_call` to the hub, resolved by its `tool_result`. A dropped connection
+   * does not fail it (nor does starting while disconnected): the call is (re-)sent with the same id
+   * after every welcome until the hub answers, the run is cancelled or `toolTimeoutMs` passes.
+   */
   private readonly callTool: CallTool = (tool, args, ctx) =>
     new Promise<ToolCallResult>((resolve, reject) => {
       if (ctx.signal.aborted) return reject(new UncageError('tool_failed', { message: 'The run was cancelled.' }));
-      if (!this.connected) {
-        void this.activity.append({ kind: 'tool_call', name: tool, ok: false, code: 'machine_offline', detail: { sessionId: ctx.sessionId, runId: ctx.runId } });
-        return reject(new UncageError('tool_failed', { message: 'The website is not connected.' }));
-      }
       const id = `tc_${randomUUID().replaceAll('-', '')}`;
       // `input` is opaque to the activity-log redaction: tool arguments never show, not even key names.
       const detail = { sessionId: ctx.sessionId, runId: ctx.runId, input: args };
@@ -651,7 +663,8 @@ export class SiteAgent {
         reject(new UncageError('tool_failed', { message: `Site tool "${tool}" did not answer within ${Math.round(this.o.timing.toolTimeoutMs / 1000)} s.` }));
       }, this.o.timing.toolTimeoutMs);
       ctx.signal.addEventListener('abort', onAbort, { once: true });
-      this.pendingTools.set(id, {
+      const pending: PendingTool = {
+        frame: { t: 'tool_call', id, sessionId: ctx.sessionId, runId: ctx.runId, tool, args },
         resolve: (r) => {
           finish();
           void this.activity.append({ kind: 'tool_call', name: tool, ok: !r.isError, detail });
@@ -662,11 +675,19 @@ export class SiteAgent {
           void this.activity.append({ kind: 'tool_call', name: tool, ok: false, code: errorBody(e).code, detail });
           reject(e);
         },
-      });
-      this.send({ t: 'tool_call', id, sessionId: ctx.sessionId, runId: ctx.runId, tool, args }).catch((e: unknown) =>
-        this.pendingTools.get(id)?.reject(new UncageError('tool_failed', { message: `Could not reach the website: ${(e as Error).message}` })),
-      );
+      };
+      this.pendingTools.set(id, pending);
+      if (this.connected) this.sendToolCall(pending);
     });
+
+  /** Sends (or re-sends) a pending call. Only an unsendable frame fails it; a lost link waits for the next welcome. */
+  private sendToolCall(p: PendingTool): void {
+    this.send(p.frame).catch((e: unknown) => {
+      if (e instanceof FrameTooLargeError && this.pendingTools.get(p.frame.id) === p) {
+        p.reject(new UncageError('tool_failed', { message: `Could not send the call to the website: ${e.message}` }));
+      }
+    });
+  }
 
   // ---- file channel -----------------------------------------------------------------------
 
@@ -760,6 +781,10 @@ export class SiteAgent {
   }
 
   private onEvent(e: UncageEvent): void {
+    if (e.type === 'run.started') this.activeRuns.add(e.payload.run.id);
+    else if (e.type === 'run.completed' || e.type === 'run.failed' || e.type === 'run.cancelled' || e.type === 'run.interrupted') {
+      this.activeRuns.delete(e.payload.runId);
+    }
     if (e.type === 'approval.requested' || e.type === 'approval.resolved') {
       const a = e.payload.approval;
       void this.activity.append({ kind: 'approval', name: e.type, detail: { approvalId: a.id, sessionId: e.sessionId, state: a.state, category: a.category } });
@@ -786,7 +811,7 @@ export class SiteAgent {
    * rewound so those events are sent again.
    */
   private sendBatch(sessionId: string, rep: Rep, events: UncageEvent[]): Promise<boolean> {
-    if (!this.connected || !this.ws || events.length === 0) return Promise.resolve(false);
+    if (!this.connected || !this.link || events.length === 0) return Promise.resolve(false);
     const frame: AgentFrame = { t: 'events', sessionId, events };
     if (byteLength(JSON.stringify(frame)) > MAX_FRAME_BYTES) {
       this.log.error({ site: this.site.id, sessionId, first: events[0]!.sequence }, 'events frame too large; not sent');

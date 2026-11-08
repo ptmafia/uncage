@@ -73,6 +73,7 @@ describe('uncage setup', () => {
     expect(exec).toHaveBeenCalledWith('open', [expect.stringContaining('/device?code=')]);
     expect(a.lines.join('\n')).toMatch(/confirm the code:\s+[A-Z0-9]{4}-[A-Z0-9]{4}/);
     expect(a.lines.join('\n')).toContain('--no-daemon');
+    expect(a.lines.join('\n')).toContain('Transport: WebSocket (falls back to HTTP streaming');
     expect(exec).toHaveBeenCalledTimes(1); // no launchctl
     const cfg = await loadAgentConfig(home);
     expect(cfg.sites).toEqual([expect.objectContaining({ id: site.id, machineId: site.machineId, token: site.token, machineKey: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) })]);

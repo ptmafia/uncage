@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { access, constants, mkdir, readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { AGENT_VERSION, compareVersions, fetchAgentInfo, loadAgentConfig } from '@uncage/agent';
 import { redactForExport } from '@uncage/core';
 import type { RuntimeAdapter } from '@uncage/protocol';
 import { DEFAULT_PORT, type UncageConfig } from './config.js';
@@ -35,6 +36,10 @@ export interface DoctorDeps {
    * running daemon reports in `/v1/health`, else the config's (what `uncage serve` here would use).
    */
   workspaces?: string[];
+  /** Home of the Connected Mode agent (`~/.uncage/agent.yaml`). Defaults to `home`. */
+  agentHome?: string;
+  /** Version compared with each website's `minAgentVersion`. Defaults to the installed agent. */
+  agentVersion?: string;
 }
 
 export const DOCTOR_HELP = `uncage doctor - check the local Uncage setup
@@ -50,6 +55,9 @@ Options:
   --data-dir <dir>    Data directory to check (same as "uncage serve --data-dir").
   --token-file <file> Token file to check and use (same as "uncage serve --token-file").
   -h, --help          Show this help.
+
+Also lists each connected website (uncage setup) with the transports it offers, and warns
+when a website needs a newer agent.
 
 Env: UNCAGE_URL (the daemon URL, as used by the proxy), UNCAGE_PORT.
 Precedence: --url, --port, UNCAGE_URL, UNCAGE_PORT, uncage.config.yaml, ${DEFAULT_PORT}.`;
@@ -312,6 +320,51 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
   }
   const workspaces = deps.workspaces ?? daemonWorkspaces ?? [config.workspace.default, ...config.workspace.allowedRoots];
   checks.push(...(await uncageIgnoreChecks(workspaces, deps.gitCommand ?? 'git')));
+  checks.push(...(await siteChecks(deps.fetch, deps.agentHome ?? home, deps.agentVersion ?? AGENT_VERSION)));
+  return checks;
+}
+
+const TRANSPORT_LABEL = { ws: 'WebSocket', http: 'HTTP streaming' } as const;
+
+/**
+ * One check per connected (non-revoked) website from `agent.yaml`: the transports it offers
+ * (`GET <hub>/agent/info`), and a warning when it needs a newer agent than this one. Never fatal.
+ */
+async function siteChecks(fetchFn: typeof fetch, agentHome: string, agentVersion: string): Promise<DoctorCheck[]> {
+  let sites;
+  try {
+    sites = (await loadAgentConfig(agentHome)).sites.filter((s) => !s.revokedAt);
+  } catch (e) {
+    return [{ id: 'agentConfig', label: 'Connected websites', ok: false, warn: true, detail: e instanceof Error ? e.message : String(e) }];
+  }
+  const checks: DoctorCheck[] = [];
+  for (const site of sites) {
+    const id = `site.${site.id}`;
+    const label = `Website ${site.name}`;
+    let host = site.url;
+    try {
+      host = new URL(site.url).host;
+    } catch {
+      // keep the raw URL
+    }
+    const info = await fetchAgentInfo(fetchFn, site.url);
+    if (!info) {
+      checks.push({ id, label, ok: false, warn: true, detail: `${host}: cannot read ${site.url}/agent/info (offline, or not an Uncage 0.3 website)` });
+      continue;
+    }
+    const kinds = info.transports.map((t) => TRANSPORT_LABEL[t.kind]).join(', ');
+    checks.push({ id, label, ok: true, detail: `${host} · transports: ${kinds}` });
+    if (compareVersions(info.minAgentVersion, agentVersion) > 0) {
+      checks.push({
+        id: `${id}.version`,
+        label: `Agent version for ${site.name}`,
+        ok: false,
+        warn: true,
+        detail: `${host} needs agent ${info.minAgentVersion} or newer; this computer has ${agentVersion}`,
+        fix: 'npm i -g @uncage/cli@latest',
+      });
+    }
+  }
   return checks;
 }
 

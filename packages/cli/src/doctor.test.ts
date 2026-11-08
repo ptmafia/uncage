@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { RuntimeAdapter, RuntimeProbe } from '@uncage/protocol';
 import { describe, expect, it } from 'vitest';
+import { updateAgentSites } from '@uncage/agent';
 import { loadConfig } from './config.js';
 import { DOCTOR_HELP, doctorExitCode, exportEvents, formatChecks, nonLoopbackWarning, parseDoctorArgs, runDoctor } from './doctor.js';
 import { ensureToken, ensureTokenAt } from './token.js';
@@ -130,6 +131,47 @@ describe('runDoctor', () => {
     expect(checks.find((c) => c.id === 'token')).toMatchObject({ ok: true });
     expect(checks.find((c) => c.id === 'token')?.detail).toContain(path);
     expect(auth).toBe(`Bearer ${token}`);
+  });
+});
+
+describe('runDoctor: connected websites', () => {
+  it('doctor prints each site’s transports and warns when minAgentVersion is above the installed agent', async () => {
+    const { home, config } = await setup();
+    const agentHome = await mkdtemp(join(tmpdir(), 'uncage-agent-home-'));
+    const site = (id: string, url: string, extra: Record<string, unknown> = {}) => ({ id, name: id, url, machineId: `mch_${id}`, token: `tok_${id}`, ...extra });
+    await updateAgentSites(agentHome, () => [
+      site('faas', 'https://faas.example/api/uncage'),
+      site('trad', 'https://trad.example/api/uncage'),
+      site('down', 'https://down.example/api/uncage'),
+      site('gone', 'https://gone.example/api/uncage', { revokedAt: new Date().toISOString() }),
+    ]);
+    const seen: string[] = [];
+    const f = (async (input: string) => {
+      const url = String(input);
+      seen.push(url);
+      const offer = (kinds: string[]) => kinds.map((kind) => ({ kind, url: `${kind}://x/agent` }));
+      if (url === 'https://faas.example/api/uncage/agent/info') return Response.json({ protocol: 2, minAgentVersion: '9.0.0', transports: offer(['http']) });
+      if (url === 'https://trad.example/api/uncage/agent/info') return Response.json({ protocol: 2, minAgentVersion: '0.3.0', transports: offer(['ws', 'http']) });
+      if (url.startsWith('https://down.example')) throw new TypeError('fetch failed');
+      return new Response(JSON.stringify({ ok: true }));
+    }) as unknown as typeof fetch;
+    const checks = await runDoctor({ config, home, agentHome, agentVersion: '0.3.0', fetch: f, adapters: [] });
+    expect(checks.find((c) => c.id === 'site.trad')).toMatchObject({ ok: true, detail: expect.stringContaining('WebSocket, HTTP streaming') });
+    expect(checks.find((c) => c.id === 'site.faas')).toMatchObject({ ok: true, detail: expect.stringContaining('HTTP streaming') });
+    expect(checks.find((c) => c.id === 'site.faas.version')).toMatchObject({
+      ok: false,
+      warn: true,
+      detail: expect.stringContaining('9.0.0'),
+      fix: 'npm i -g @uncage/cli@latest',
+    });
+    expect(checks.find((c) => c.id === 'site.trad.version')).toBeUndefined();
+    expect(checks.find((c) => c.id === 'site.down')).toMatchObject({ ok: false, warn: true });
+    expect(checks.some((c) => c.id.startsWith('site.gone'))).toBe(false);
+    expect(seen.some((u) => u.startsWith('https://gone.example'))).toBe(false);
+    const out = formatChecks(checks);
+    expect(out).toContain('✓ Website faas');
+    expect(out).toContain('! Agent version for faas');
+    expect(doctorExitCode(checks)).toBe(0);
   });
 });
 

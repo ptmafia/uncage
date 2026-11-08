@@ -130,6 +130,7 @@ async function main(argv: string[]): Promise<number> {
       adapters: buildAdapters(config),
       fetch,
       home,
+      agentHome: connectedHome(),
       serverUrl: args.serverUrl,
       ...tokenFile,
       ...(args.dataDir ? { dataDir: args.dataDir } : {}),

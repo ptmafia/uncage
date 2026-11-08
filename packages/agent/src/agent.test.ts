@@ -132,6 +132,46 @@ describe('agent ↔ real hub', () => {
     expect(JSON.stringify(activity)).not.toContain('A-1');
   });
 
+  it('over WebSocket, a dropped connection does not fail a pending site tool call: re-sent after reconnect, answered from the stored result, the handler runs once', async () => {
+    let started = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const slow = defineTool({
+      name: 'slow_lookup',
+      description: 'Waits for the test',
+      input: z.object({ id: z.string() }),
+      handler: async (a) => {
+        started++;
+        await gate;
+        return `found ${a.id}`;
+      },
+    });
+    const t = await hubFor({ tools: [slow] });
+    const proxy = await startProxy(Number(new URL(t.origin).port));
+    cleanups.push(() => proxy.close());
+    const h = await home();
+    const site = await t.pair('alice', { url: proxy.url });
+    const agent = await agentFor(h, [site], [{ callTool: { name: 'slow_lookup', args: { id: 'B-2' } } }]);
+    await online(t);
+    expect(agent.transports()[site.id]).toBe('ws');
+    const session = await createSession(t);
+    expect((await startRun(t, session.id)).status).toBe(202);
+    await until(() => started === 1, 8000, 'handler started');
+    proxy.cut();
+    await until(async () => !(await machines(t))[0]?.online, 8000, 'offline');
+    // The call finishes while the machine is offline: only the agent's resend can fetch the result.
+    release();
+    await until(async () => (await t.store.listToolCalls(session.id))[0]?.status === 'ok', 5000, 'call stored');
+    proxy.restore();
+    await until(() => agent.status()[site.id] === 'connected', 8000, 'reconnected');
+    const evs = await until(async () => {
+      const all = await history(t, session.id);
+      return all.some((e) => e.type === 'message.completed') && terminal(all) ? all : null;
+    }, 10_000, 'run finished');
+    expect(evs.some((e) => e.type === 'message.completed' && e.payload.text === 'found B-2')).toBe(true);
+    expect(started).toBe(1);
+  });
+
   it('a runtime without siteTools still runs (site storage): tools dropped, skills kept, site_tools_unsupported shown', async () => {
     const lookup = defineTool({ name: 'lookup_order', description: 'Look up an order', input: z.object({}), handler: async () => 'x' });
     const skill = { name: 'brand-voice', description: 'Brand voice', markdown: '# Voice' };
