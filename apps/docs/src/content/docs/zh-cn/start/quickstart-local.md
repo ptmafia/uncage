@@ -1,11 +1,11 @@
 ---
-title: 快速上手：Local Mode
+title: 快速上手：Local 模式
 description: 在运行你应用的那台机器上，通过本地的 Uncage 服务（uncage serve）和同源代理运行 Claude Code，并使用现成的对话界面。约 5 分钟。
 ---
 
-Local Mode 适合和 agent 跑在**同一台机器**上的应用：开发者面板、内部工具、桌面类应用。Uncage 服务 `uncage serve`（英文叫 daemon）用这台机器的 Claude 登录运行 Claude Code；你的应用通过一个同源代理访问它，代理在服务器端加上服务的令牌。
+Local 模式适合和 agent 跑在**同一台机器**上的应用：开发者面板、内部工具、桌面类应用。Uncage 服务 `uncage serve`（英文叫 daemon）用这台机器的 Claude 登录运行 Claude Code；你的应用通过一个同源代理访问它，代理在服务器端加上服务的令牌。
 
-如果你的用户各自有自己的电脑，请改用 [Connected Mode](/docs/zh-cn/start/quickstart-connected/)。
+如果你的用户各自有自己的电脑，请改用 [Connected 模式](/docs/zh-cn/start/quickstart-connected/)。
 
 ## 复制给你的 coding agent 的提示词
 
@@ -115,9 +115,9 @@ app.listen(3000);
 
 - **前后端分离的 Vite 或 webpack SPA**：开发代理要保留浏览器的 `Host`（`changeOrigin: false`）。用 `changeOrigin: true` 时，所有 POST 都会得到 403 `forbidden_origin`，因为代理会拿 `Origin` 和被改写的 `Host` 比较。
 
-[Local Mode in depth](/docs/reference/local-mode/)（英文）介绍输入框的各项控制、附件、配置（`uncage.config.yaml`）和 Local Mode 的安全模型。[CLI 参考](/docs/reference/cli/)（英文）列出了所有参数。
+[Local 模式详解](/docs/zh-cn/reference/local-mode/)介绍输入框的各项控制、附件、配置（`uncage.config.yaml`）和 Local 模式的安全模型。[CLI 参考](/docs/zh-cn/reference/cli/)列出了所有参数。
 
-## 下一步（英文）
+## 下一步
 
-- [Custom UI with hooks](/docs/guides/custom-ui/)：用 `@uncage/react` 构建自己的对话界面。
-- [Troubleshooting](/docs/reference/troubleshooting/)：`forbidden_origin`、端口、登录。
+- [用 hooks 自定义界面](/docs/zh-cn/guides/custom-ui/)：用 `@uncage/react` 构建自己的对话界面。
+- [故障排查](/docs/zh-cn/reference/troubleshooting/)：`forbidden_origin`、端口、登录。

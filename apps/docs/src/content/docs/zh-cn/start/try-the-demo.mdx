@@ -1,0 +1,72 @@
+---
+title: 试用演示
+description: 用两条命令把你自己的 Mac 连接到一个在线的 Uncage 网站，看你自己的 Claude Code 通过网站工具保存并发布一条笔记，浏览器里会弹出审批卡片。
+---
+
+import { Image } from 'astro:assets';
+import DemoLink from '../../../../components/DemoLink.astro';
+import chatApproval from '../../../../assets/demo/chat-approval.png';
+import chatDone from '../../../../assets/demo/chat-done.png';
+import chatAfterReload from '../../../../assets/demo/chat-after-reload.png';
+import notes from '../../../../assets/demo/notes.png';
+import chatOffline from '../../../../assets/demo/chat-offline.png';
+
+这个演示是一个用 Uncage 搭建的小型笔记网站（即 [`connected-demo` 示例](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo)）。你把自己的电脑连接上去，让你自己的 Claude Code 保存一条笔记并发布，然后在浏览器里批准这次发布。整个过程约五分钟。
+
+<DemoLink />
+
+## 开始之前
+
+- 一台 Mac（Uncage 守护进程运行在 macOS 上）。
+- Node.js 22 或更高版本。
+- 已安装并登录 Claude Code：`npm i -g @anthropic-ai/claude-code`，然后运行一次 `claude` 并输入 `/login`。
+
+## 连接你的电脑
+
+打开演示网站。对话框会显示 **Connect your computer**（连接你的电脑）和两条命令。在终端里运行它们，把 `<demo>` 换成演示网站的地址：
+
+```sh
+curl -fsSL <demo>/api/uncage/install.sh | bash
+uncage setup <demo>
+```
+
+如果不想全局安装，第二条命令可以用 `npx uncage setup <demo>` 运行。`uncage setup` 会打印一个码，并打开演示网站的审批页。确认它和终端里的码一致，然后点击 **Approve**（批准）。之后对话框会显示 **Connected**（已连接）和你的电脑名。
+
+## 你会看到什么
+
+在对话框里让它保存一条笔记并发布，例如：“Save a note titled hello with the text ‘hi from Uncage’, then publish it.”
+
+Claude Code 在你的电脑上、用你自己的登录运行，并调用演示网站的工具。保存笔记不需要询问；发布需要，所以对话框会先弹出审批卡片，你回应之前什么都不会执行。
+
+<Image src={chatApproval} alt="对话框显示两个步骤：save_note 已完成，publish_note 正在等你处理，下方的审批卡片提供 Deny 和 Allow once 两个按钮。" />
+
+*审批卡片。`publish_note` 定义时设置了 `requiresConfirmation`，所以每次调用前网站都会先问你。运行会一直等待；你不回应，就什么都不会发生。*
+
+<Image src={chatDone} alt="点击 Allow once 后运行结束，Claude Code 报告笔记已保存并发布。" />
+
+*点击 **Allow once**（允许执行）后，工具以你的身份在网站的服务器上运行，Claude Code 随后汇报结果。*
+
+<Image src={notes} alt="网站的 Notes 页面列出了笔记 hello，带有已发布标记。" />
+
+*结果留在网站上，而不是你的电脑上：Notes 页面显示你刚发布的笔记。已发布的页面只有所有者能打开，也就是这个浏览器对应的访客身份。*
+
+<Image src={chatAfterReload} alt="刷新页面后的同一段对话，所有步骤和回答都还在。" />
+
+*刷新页面：对话仍然都在。网站保存了每个会话的历史。*
+
+<Image src={chatOffline} alt="对话框提示电脑已离线，之前的整段对话仍然可以查看。" />
+
+*合上笔记本或停掉守护进程：之前的对话仍然可以查看，对话框会提示你的电脑离线，并等待它重新连接（运行 `uncage agent` 即可重新启动）。*
+
+## 关于你的数据
+
+- 你以访客身份登录演示网站，身份由你使用的浏览器识别。换一个浏览器就看不到你的任何笔记。
+- 演示网站是公开、共享的。每次部署和重启都会清空全部数据；资产（笔记和已发布的页面）在最后一次创建或发布 24 小时后删除。
+- 已发布的页面只有所有者能查看。
+- 不要在演示网站里放任何私密内容。
+
+用完后要断开你的电脑：运行 `uncage sites` 列出它连接的网站，再用演示网站的 ID 运行 `uncage sites remove <id>` 移除它。见 [CLI 参考](/docs/zh-cn/reference/cli/)。
+
+## 自己运行演示
+
+演示网站的源码就是一个普通的 Uncage Connected 模式网站。要在你自己的电脑上运行，请按照[示例的 README](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo#run-it-single-node) 操作。要搭建你自己的网站，接着看[快速上手：Connected 模式](/docs/zh-cn/start/quickstart-connected/)。
