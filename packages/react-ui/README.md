@@ -37,10 +37,106 @@ Then `npm run dev` and open http://localhost:3000. `npx uncage doctor` checks yo
 ## Customizing
 
 - `locale`: `'en'` (default) or `'zh-CN'`. `theme`: `'auto'` (default), `'light'`, `'dark'`.
+- `persistSession`: `'url'` (default) keeps the open session in `?session=<id>` so a reload reopens it; `'localStorage'` keeps the URL clean; `false` leaves it to your router.
 - Restyle with the `--uncage-*` CSS variables; every class uses the `uc-` prefix.
 - Replace parts via the `components` prop, or build your own UI with the hooks in [`@uncage/react`](https://www.npmjs.com/package/@uncage/react).
 - `bypassPermissions` (no approvals) is only offered when the daemon is started with `UNCAGE_ALLOW_BYPASS=1`; choosing it asks for confirmation.
 - Attachments: images png/jpg/gif/webp (≤5 MB for Claude), text/code files and PDF (≤10 MB), 10 per message.
+
+## Connected Mode (users connect their own computer)
+
+When `UncageProvider`'s `baseUrl` is an [`@uncage/hub`](https://www.npmjs.com/package/@uncage/hub) (it serves `/machines`), `<AgentChat>` switches on its own:
+
+- the header shows the computer the conversation runs on (online dot, name) with a picker and "Connect another computer…";
+- with no computer yet, the empty state is `<ConnectMachine>`: the install command, `uncage setup <url>`, copy buttons and a live "Waiting for your computer…" → "Connected: <name>" (it polls every 3 s while shown);
+- while the computer is offline the composer is disabled: "Your computer is offline. Waiting for it to reconnect…" with the hint `uncage agent`.
+
+Against a local daemon (`uncage serve`, no `/machines`) nothing changes.
+
+`<ConnectMachine onConnected onClose />` (a dialog; `variant="inline"` to embed) and `<MachineStatus />` can be used on their own inside `UncageProvider`.
+
+`uncage setup` sends the user to your website's approval page (`/device?code=…` by default). Render it with `<ApproveDevice>`; it is presentational, the decision is made server-side with the signed-in user.
+
+**Security.** Approving gives a computer access to the user's account, so this page is a clickjacking and CSRF target:
+
+- serve it only on your website's own origin, behind the user's normal signed-in session;
+- refuse framing: `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`;
+- record the decision with a CSRF-protected POST (Next.js Server Actions are POST-only and check `Origin` against the host; a hand-written route handler needs its own Origin check or CSRF token plus `SameSite` cookies). Never approve from a GET or from the link alone.
+
+A Next.js example:
+
+```ts
+// next.config.ts — the approval page may never be framed
+import type { NextConfig } from 'next';
+const config: NextConfig = {
+  async headers() {
+    return [
+      {
+        source: '/device',
+        headers: [
+          { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
+          { key: 'X-Frame-Options', value: 'DENY' },
+        ],
+      },
+    ];
+  },
+};
+export default config;
+// (or in middleware.ts: for '/device', set the same two headers on NextResponse.next())
+```
+
+```tsx
+// app/device/page.tsx (server component)
+import { hub, currentUser } from '@/lib/uncage'; // your createHub(...) instance and auth
+import { ApprovePage } from './approve-page';
+
+export default async function Page({ searchParams }: { searchParams: Promise<{ code?: string }> }) {
+  const { code = '' } = await searchParams;
+  const user = await currentUser();
+  const lookup = await hub.lookupDevice(code, user); // { name?, os?, repairsMachine } | null
+  return <ApprovePage code={code} lookup={lookup} />;
+}
+
+// app/device/actions.ts — a Server Action: POST with Next.js's built-in Origin (CSRF) check
+'use server';
+import { hub, currentUser } from '@/lib/uncage';
+export async function decide(code: string, approve: boolean) {
+  const user = await currentUser(); // must be the signed-in user of this website; reject otherwise
+  try {
+    return { result: await (approve ? hub.approveDevice(code, user) : hub.denyDevice(code, user)) }; // 'ok' | 'not_found' | 'expired'
+  } catch (e) {
+    const err = e as { code?: string; message?: string };
+    return { error: { code: err.code ?? 'internal_error', message: err.message ?? 'Failed' } }; // e.g. rate_limited
+  }
+}
+
+// app/device/approve-page.tsx
+'use client';
+import { useState } from 'react';
+import { ApproveDevice, type ApproveDeviceProps, type ApproveDeviceState } from '@uncage/react-ui';
+import '@uncage/react-ui/styles.css';
+import { decide } from './actions';
+
+export function ApprovePage({ code, lookup }: Pick<ApproveDeviceProps, 'code' | 'lookup'>) {
+  const [state, setState] = useState<ApproveDeviceState>('idle');
+  const [error, setError] = useState<ApproveDeviceProps['error']>();
+  const act = async (approve: boolean) => {
+    setState(approve ? 'approving' : 'denying');
+    setError(undefined);
+    const r = await decide(code, approve);
+    if (r.error) {
+      setState('idle'); // buttons stay enabled for a retry
+      setError(r.error as ApproveDeviceProps['error']);
+    } else {
+      setState(r.result === 'ok' ? (approve ? 'approved' : 'denied') : r.result!);
+    }
+  };
+  return <ApproveDevice code={code} lookup={lookup} state={state} error={error} locale="zh-CN"
+    onApprove={() => void act(true)} onDeny={() => void act(false)} />;
+}
+```
+
+Errors such as `machine_offline`, `machine_not_found` and `rate_limited` are shown in the UI language. Wording: the background process on the user's computer (`uncage agent`) is always "the agent" in English and "守护进程" in Chinese; the machine is "computer" / "电脑".
 
 ---
 

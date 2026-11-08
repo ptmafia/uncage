@@ -12,6 +12,18 @@ npx uncage doctor --export-events <sessionId> [--out file] [--include-content]
 
 Prerequisite: Claude Code installed and logged in (`npm i -g @anthropic-ai/claude-code`, then `claude` → `/login`).
 
+## Connected Mode (0.2)
+
+```sh
+npx uncage setup https://your.site   # connect this computer to a website (approve in the browser)
+npx uncage agent                     # run the agent in the foreground (setup installs it as a background service)
+npx uncage sites [remove <host>]     # list or disconnect sites
+npx uncage activity                  # what sites did on this computer (redacted)
+npx uncage --version
+```
+
+State lives in `~/.uncage/agent.yaml` (mode 600) and `~/Uncage/<site>/<session>/`; set `UNCAGE_HOME` to relocate it.
+
 ## Quick start (Next.js)
 
 ```sh

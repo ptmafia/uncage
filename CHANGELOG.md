@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.0 — 2026-11-08
+
+Connected Mode: let a website drive Claude Code on its users' own computers. All public `@uncage/*` packages move to 0.2.0 together.
+
+- New `@uncage/hub` (in your website's Node backend): device login, machine WebSocket, browser API, site tools (`defineTool`, executed as the signed-in user), site skills, a fenced file channel (`ctx.files.pull/read`), attachments up to 10 MiB, `install.sh`, and multi-node operation (`redisCluster`, `postgresHubStore`).
+- New `@uncage/agent` (on the user's machine) and CLI commands `uncage setup <url>`, `uncage agent`, `uncage sites`, `uncage activity`, `uncage --version`. Local policy in `~/.uncage/agent.yaml` (bypass only if the user enables it), redacted activity log, revocable machine tokens.
+- Browser: `<ConnectMachine>`, `<ApproveDevice>`, `<MachineStatus>`, `useMachines()`, computer picker and offline state in `<AgentChat>`; `client.machines()/installInfo()/revokeMachine()`, `createSession({ machineId })`. Breaking for custom `UncageClient` implementations: three new required methods.
+- Codex sessions on sites with tools work: the hub drops the tools for runtimes without site tool support (skills stay) and shows a `site_tools_unsupported` warning; `selectManifest` receives `runtime`.
+- Hub attachment copies are deleted after `attachmentRetentionDays` (default 30) and when a machine is revoked. With `sessionStorage: 'site'` the hub only replicates sessions it created.
+- `runtime-claude` hardening for site tools and skills (schema complexity guard, destructive-action confirmation, `.claude` symlink fence). Site skills can never run shell: inline `` !`cmd` `` / ```` ```! ```` blocks are neutralized and `disableSkillShellExecution` is set for runs with site skills.
+- Local Mode fixes: last session restored on reload, first-prompt session titles with newest-first sorting, clearer proxy 403 messages, `createUncageNodeHandler` for Express/Fastify, `uncage doctor` flags (`--port`, `UNCAGE_URL`), lighter browser client without zod.
+- Composer features from 0.1.x stay (model, reasoning effort, permission modes, attachments, voice input).
+- Reference site `examples/connected-demo` and a help site for developers and coding agents: https://ptmafia.github.io/uncage/
+
 ## 0.1.1 — 2026-11-07
 
 - Docs only: npm-first quick start in the README; every package README is now self-contained (install, minimal usage, options) instead of linking to repo paths that npm can't show.

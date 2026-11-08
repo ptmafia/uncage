@@ -19,6 +19,9 @@ import {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  // `persistSession` (default 'url') writes `?session=`; start every test from a clean URL.
+  window.history.replaceState(null, '', '/');
+  window.localStorage.clear();
 });
 
 type Fake = ReturnType<typeof fakeClient>;
@@ -859,5 +862,83 @@ describe('Composer drafts and warnings', () => {
     expect(screen.getByText('A setting was reset: the runtime no longer offers it')).toBeTruthy();
     act(() => f.emit(ev('run.started', { run: run({ state: 'running' }) })));
     expect(screen.queryByText('A setting was reset: the runtime no longer offers it')).toBeNull();
+  });
+});
+
+describe('persistSession', () => {
+  const sessionParam = () => new URL(window.location.href).searchParams.get('session');
+
+  it("default 'url': the open session goes to ?session= and a reload reopens it", async () => {
+    const f = fakeClient();
+    const first = await openSession(f);
+    await waitFor(() => expect(sessionParam()).toBe('ses_1'));
+    first.unmount();
+
+    // "Reload": a fresh provider/store on the same URL reopens the session without any click.
+    const g = fakeClient();
+    renderChat(g);
+    await waitFor(() => expect(g.client.snapshot).toHaveBeenCalledWith('ses_1'));
+    await waitFor(() => expect(g.client.subscribe).toHaveBeenCalledWith('ses_1', expect.anything()));
+    expect(await screen.findByRole('heading', { name: 'Fix the build' })).toBeTruthy();
+    expect(sessionParam()).toBe('ses_1');
+  });
+
+  it('keeps other query params and uses replaceState (no history entries)', async () => {
+    window.history.replaceState(null, '', '/chat?tab=2');
+    const before = window.history.length;
+    await openSession(fakeClient());
+    await waitFor(() => expect(sessionParam()).toBe('ses_1'));
+    expect(new URL(window.location.href).searchParams.get('tab')).toBe('2');
+    expect(window.location.pathname).toBe('/chat');
+    expect(window.history.length).toBe(before);
+  });
+
+  it('"New session" clears ?session=', async () => {
+    await openSession(fakeClient());
+    await waitFor(() => expect(sessionParam()).toBe('ses_1'));
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'New session' })));
+    await waitFor(() => expect(sessionParam()).toBeNull());
+  });
+
+  it('an unknown ?session= id falls back to a new draft without an error banner', async () => {
+    window.history.replaceState(null, '', '/?session=ses_gone');
+    const f = fakeClient();
+    f.client.snapshot.mockRejectedValue(clientError('not_found', 404, 'Session ses_gone not found.'));
+    renderChat(f);
+    await waitFor(() => expect(sessionParam()).toBeNull());
+    expect(await screen.findByText('Start a session with Claude Code')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('any other restore error also falls back to a draft (param cleared), keeping the error visible', async () => {
+    window.history.replaceState(null, '', '/?session=ses_1');
+    const f = fakeClient();
+    f.client.snapshot.mockRejectedValue(clientError('internal_error', 500, 'Boom.'));
+    renderChat(f);
+    await waitFor(() => expect(sessionParam()).toBeNull());
+    expect(await screen.findByText('Start a session with Claude Code')).toBeTruthy();
+    expect(await screen.findByRole('alert')).toBeTruthy();
+  });
+
+  it("'localStorage' restores from storage and leaves the URL alone", async () => {
+    const first = await openSession(fakeClient(), { persistSession: 'localStorage' });
+    await waitFor(() => expect(window.localStorage.getItem('uncage:session')).toBe('ses_1'));
+    expect(sessionParam()).toBeNull();
+    first.unmount();
+    const g = fakeClient();
+    renderChat(g, { persistSession: 'localStorage' });
+    await waitFor(() => expect(g.client.snapshot).toHaveBeenCalledWith('ses_1'));
+  });
+
+  it('false: nothing is read or written', async () => {
+    window.history.replaceState(null, '', '/?session=ses_1');
+    const f = fakeClient();
+    renderChat(f, { persistSession: false });
+    expect(await screen.findByRole('button', { name: /Fix the build/ })).toBeTruthy();
+    expect(f.client.snapshot).not.toHaveBeenCalled();
+    window.history.replaceState(null, '', '/');
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: /Fix the build/ })));
+    await waitFor(() => expect(f.client.subscribe).toHaveBeenCalled());
+    expect(sessionParam()).toBeNull();
   });
 });

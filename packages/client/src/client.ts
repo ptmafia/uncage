@@ -1,21 +1,21 @@
-import {
-  ErrorBodySchema,
-  UncageEventSchema,
-  type ActiveRunInfo,
-  type ApprovalDecision,
-  type ApprovalRequest,
-  type Attachment,
-  type CreateSessionBody,
-  type ErrorBody,
-  type Run,
-  type RuntimeInfo,
-  type Session,
-  type SessionSettings,
-  type SessionSnapshot,
-  type StartRunBody,
-  type UncageEvent,
+import type {
+  ActiveRunInfo,
+  ApprovalDecision,
+  ApprovalRequest,
+  Attachment,
+  CreateSessionBody,
+  ErrorBody,
+  MachineInfo,
+  Run,
+  RuntimeInfo,
+  Session,
+  SessionSettings,
+  SessionSnapshot,
+  StartRunBody,
+  UncageEvent,
 } from '@uncage/protocol';
 import { ERROR_REASONS, UncageClientError } from './errors.js';
+import { isErrorBody, isUncageEvent } from './guards.js';
 import { parseSSE } from './sse.js';
 
 export type ConnectionState = 'connecting' | 'live' | 'reconnecting' | 'offline';
@@ -27,10 +27,23 @@ export interface SubscribeHandlers {
   onError?(e: UncageClientError): void;
 }
 
+/** `GET <base>/machines/install` (hub only): the commands that connect a computer. */
+export interface InstallInfo {
+  /** Installs the Uncage CLI (macOS / Linux). */
+  install: string;
+  /** `uncage setup <url>`: pairs the computer with this website and starts the agent. */
+  setup: string;
+  /** Windows install command; `null` until Windows is supported. */
+  windows: string | null;
+}
+
+/** `createSession` body; `machineId` (connected mode only) picks the computer that runs it. */
+export type CreateSessionRequest = CreateSessionBody & { machineId?: string };
+
 export interface UncageClient {
   health(): Promise<{ ok: true; protocol: '1.0' }>;
   runtimes(): Promise<RuntimeInfo[]>;
-  createSession(b: CreateSessionBody): Promise<Session>;
+  createSession(b: CreateSessionRequest): Promise<Session>;
   listSessions(): Promise<Session[]>;
   snapshot(sessionId: string): Promise<SessionSnapshot>;
   startRun(sessionId: string, b: StartRunBody): Promise<Run>;
@@ -41,6 +54,15 @@ export interface UncageClient {
   listActiveRuns(): Promise<ActiveRunInfo[]>;
   decide(approvalId: string, d: ApprovalDecision, idempotencyKey?: string): Promise<ApprovalRequest>;
   subscribe(sessionId: string, h: SubscribeHandlers): () => void;
+  /**
+   * Connected mode (an Uncage hub): the signed-in user's computers. A local daemon has no
+   * `/machines` and rejects with status 404, which is how UIs tell the two modes apart.
+   */
+  machines(): Promise<MachineInfo[]>;
+  /** Connected mode: the install and setup commands for connecting a computer. */
+  installInfo(): Promise<InstallInfo>;
+  /** Connected mode: disconnects (revokes) one of the user's computers. */
+  revokeMachine(machineId: string): Promise<void>;
 }
 
 export interface UncageClientOptions {
@@ -85,8 +107,8 @@ export function uploadContentType(file: Blob & { name: string }): string {
 async function toError(res: Response): Promise<UncageClientError> {
   let body: ErrorBody | undefined;
   try {
-    const parsed = ErrorBodySchema.safeParse(((await res.json()) as { error?: unknown }).error);
-    if (parsed.success) body = parsed.data;
+    const error = ((await res.json()) as { error?: unknown } | null)?.error;
+    if (isErrorBody(error)) body = error;
   } catch {
     // non-JSON error body
   }
@@ -213,27 +235,25 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
           for await (const frame of parseSSE(res.body)) {
             attempt = 0;
             if (frame.event === 'error') {
-              const parsed = ErrorBodySchema.safeParse(safeJson(frame.data));
-              if (parsed.success) {
-                if (parsed.data.code === 'event_replay_unavailable') {
-                  terminal(new UncageClientError(parsed.data, 200));
-                  return;
-                }
+              const body = safeJson(frame.data);
+              if (isErrorBody(body) && body.code === 'event_replay_unavailable') {
+                terminal(new UncageClientError(body, 200));
+                return;
               }
               continue;
             }
-            const parsed = UncageEventSchema.safeParse(safeJson(frame.data));
-            if (!parsed.success) {
+            const event = safeJson(frame.data);
+            if (!isUncageEvent(event)) {
               if (!warned) {
                 warned = true;
                 console.warn('[uncage] dropped malformed SSE event frame');
               }
               continue;
             }
-            if (parsed.data.sequence <= lastSequence) continue;
-            lastSequence = parsed.data.sequence;
+            if (event.sequence <= lastSequence) continue;
+            lastSequence = event.sequence;
             if (frame.id) lastEventId = frame.id;
-            guard(() => h.onEvent(parsed.data));
+            guard(() => h.onEvent(event));
           }
         } catch {
           // fall through to backoff (aborts exit via the loop condition)
@@ -266,6 +286,11 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
     decide: (id, d, key) =>
       request('POST', `/approvals/${enc(id)}/decision`, d, { 'idempotency-key': key ?? globalThis.crypto.randomUUID() }),
     subscribe,
+    machines: () => request('GET', '/machines'),
+    installInfo: () => request('GET', '/machines/install'),
+    revokeMachine: async (id) => {
+      await request('DELETE', `/machines/${enc(id)}`);
+    },
   };
 }
 

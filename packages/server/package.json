@@ -1,15 +1,15 @@
 {
   "name": "@uncage/server",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Uncage local daemon: REST + SSE over @uncage/core, and a same-origin proxy for Next.js",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "files": [
-    "dist",
+    "LICENSE",
     "README.md",
-    "LICENSE"
+    "dist"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -21,6 +21,10 @@
     "./proxy": {
       "types": "./dist/proxy.d.ts",
       "import": "./dist/proxy.js"
+    },
+    "./wire": {
+      "types": "./dist/wire.d.ts",
+      "import": "./dist/wire.js"
     }
   },
   "scripts": {
@@ -40,6 +44,11 @@
     "@uncage/testkit": "workspace:*"
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ptmafia/uncage.git",
+    "directory": "packages/server"
+  },
   "keywords": [
     "uncage",
     "agent",
@@ -51,5 +60,9 @@
   "publishConfig": {
     "access": "public"
   },
-  "author": "Nathan Zhang"
+  "author": "Nathan Zhang",
+  "homepage": "https://ptmafia.github.io/uncage/",
+  "bugs": {
+    "url": "https://github.com/ptmafia/uncage/issues"
+  }
 }

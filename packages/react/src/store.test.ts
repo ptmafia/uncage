@@ -2,7 +2,7 @@ import type { ActiveRunInfo, Attachment, RuntimeCapabilities, SessionSettings, U
 import { ATTACHMENT_LIMITS } from '@uncage/protocol';
 import { describe, expect, it, vi } from 'vitest';
 import { createUncageStore, UPLOAD_FAILED_REASON } from './store.js';
-import { approval, clientError, eventFactory, fakeClient, run, session, snapshot, T0 } from './test-fixtures.js';
+import { approval, clientError, eventFactory, fakeClient, machine, run, session, snapshot, T0 } from './test-fixtures.js';
 
 describe('createUncageStore', () => {
   it('selectSession replays history from sequence 0 on top of the snapshot', async () => {
@@ -22,6 +22,38 @@ describe('createUncageStore', () => {
     expect(active.runs.run_1!.state).toBe('completed');
     f.state('live');
     expect(store.getState().active!.connection).toBe('live');
+  });
+
+  it('sessions are newest-first before and after a reload; a first-run title reaches the list', async () => {
+    const at = (s: number) => new Date(Date.parse(T0) + s * 1000).toISOString();
+    const old = session({ id: 'ses_old', title: 'Old', createdAt: at(0) });
+    const mid = session({ id: 'ses_mid', title: 'Mid', createdAt: at(1) });
+    const f = fakeClient(() => snapshot({ session: mid }));
+    // The server lists oldest-first.
+    f.client.listSessions.mockResolvedValue([old, mid]);
+    const store = createUncageStore(f.client);
+    await store.actions.loadSessions();
+    expect(store.getState().sessions.map((s) => s.id)).toEqual(['ses_mid', 'ses_old']);
+
+    const fresh = session({ id: 'ses_new', title: 'ws', createdAt: at(2) });
+    f.client.createSession.mockResolvedValue(fresh);
+    await store.actions.createSession({ runtime: 'claude' });
+    expect(store.getState().sessions.map((s) => s.id)).toEqual(['ses_new', 'ses_mid', 'ses_old']);
+
+    // Selecting an older session keeps the order (no move to the top).
+    await store.actions.selectSession('ses_mid');
+    expect(store.getState().sessions.map((s) => s.id)).toEqual(['ses_new', 'ses_mid', 'ses_old']);
+
+    // The run-scoped session.updated that titles a session updates the sidebar list too.
+    const ev = eventFactory();
+    f.emit(ev('session.updated', { session: { ...mid, title: 'Fix the login test' } }, 'run_1'));
+    expect(store.getState().sessions.find((s) => s.id === 'ses_mid')?.title).toBe('Fix the login test');
+
+    // Reload: same order as before.
+    f.client.listSessions.mockResolvedValue([old, mid, fresh]);
+    const reloaded = createUncageStore(f.client);
+    await reloaded.actions.loadSessions();
+    expect(reloaded.getState().sessions.map((s) => s.id)).toEqual(['ses_new', 'ses_mid', 'ses_old']);
   });
 
   it('sendPrompt while active is a no-op (no duplicate run)', async () => {
@@ -564,5 +596,217 @@ describe('composer: settings and attachments', () => {
     const again = store.actions.watchActiveRuns();
     expect(f.client.listActiveRuns).toHaveBeenCalledTimes(2);
     again();
+  });
+});
+
+describe('machines (connected mode)', () => {
+  const runtimeInfo = {
+    id: 'fake',
+    displayName: 'Fake',
+    status: 'available' as const,
+    capabilities: session().capabilities,
+  };
+
+  it('a daemon without /machines (404) is Local Mode: no list, no error, no machineId on create', async () => {
+    const f = fakeClient();
+    const store = createUncageStore(f.client);
+    expect(store.getState().machines.mode).toBe('unknown');
+    await store.actions.loadMachines();
+    expect(store.getState().machines).toMatchObject({ mode: 'local', list: [], loading: false });
+    expect(store.getState().lastError).toBeUndefined();
+    await store.actions.createSession({ runtime: 'claude' });
+    expect(f.client.createSession).toHaveBeenCalledWith({ runtime: 'claude' });
+  });
+
+  it('a hub lists machines, selects the first online one and creates sessions on it', async () => {
+    const f = fakeClient(undefined, {
+      machines: [machine({ id: 'mac_off', online: false }), machine({ id: 'mac_on', name: 'Studio' })],
+    });
+    const store = createUncageStore(f.client);
+    await store.actions.loadMachines();
+    expect(store.getState().machines).toMatchObject({ mode: 'connected', selectedId: 'mac_on' });
+    expect(store.getState().machines.list).toHaveLength(2);
+    f.client.createSession.mockResolvedValue(session({ id: 'ses_9' }));
+    await store.actions.createSession({ runtime: 'claude' });
+    expect(f.client.createSession).toHaveBeenCalledWith({ runtime: 'claude', machineId: 'mac_on' });
+    store.actions.selectMachine('mac_off');
+    expect(store.getState().machines.selectedId).toBe('mac_off');
+    // An unknown id is ignored.
+    store.actions.selectMachine('nope');
+    expect(store.getState().machines.selectedId).toBe('mac_off');
+  });
+
+  it('commitDraft creates the draft session on the selected machine', async () => {
+    const f = fakeClient(undefined, { machines: [machine()] });
+    const store = createUncageStore(f.client);
+    await store.actions.loadMachines();
+    store.actions.openDraft('claude');
+    await store.actions.commitDraft();
+    expect(f.client.createSession).toHaveBeenCalledWith({ runtime: 'claude', machineId: 'mac_1' });
+  });
+
+  it('a failed refresh keeps the connected list and records machines.error, not lastError', async () => {
+    const f = fakeClient(undefined, { machines: [machine()] });
+    const store = createUncageStore(f.client);
+    await store.actions.loadMachines();
+    f.client.machines.mockRejectedValueOnce(clientError('rate_limited', 429));
+    await store.actions.loadMachines();
+    expect(store.getState().machines.mode).toBe('connected');
+    expect(store.getState().machines.list).toHaveLength(1);
+    expect(store.getState().machines.error?.code).toBe('rate_limited');
+    expect(store.getState().lastError).toBeUndefined();
+    await store.actions.loadMachines();
+    expect(store.getState().machines.error).toBeUndefined();
+  });
+
+  it('a poll that changes nothing does not notify subscribers', async () => {
+    const f = fakeClient(undefined, { machines: [machine()] });
+    const store = createUncageStore(f.client);
+    await store.actions.loadMachines();
+    const fn = vi.fn();
+    store.subscribe(fn);
+    f.client.machines.mockResolvedValueOnce([machine()]);
+    await store.actions.loadMachines();
+    expect(fn).not.toHaveBeenCalled();
+    f.client.machines.mockResolvedValueOnce([machine({ online: false })]);
+    await store.actions.loadMachines();
+    expect(fn).toHaveBeenCalled();
+  });
+
+  it('a non-404 failure on the first probe retries after 2 s, 5 s, 10 s, then every 30 s until it answers', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = fakeClient(undefined, { machines: [machine()] });
+      f.client.machines.mockRejectedValue(clientError('internal_error', 503));
+      const store = createUncageStore(f.client);
+      await store.actions.loadMachines();
+      expect(store.getState().machines.mode).toBe('unknown');
+      const calls = () => f.client.machines.mock.calls.length;
+      for (const [wait, total] of [[2000, 2], [5000, 3], [10_000, 4], [30_000, 5], [30_000, 6]] as const) {
+        await vi.advanceTimersByTimeAsync(wait - 1);
+        expect(calls()).toBe(total - 1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(calls()).toBe(total);
+      }
+      f.client.machines.mockResolvedValue([machine()]);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(store.getState().machines.mode).toBe('connected');
+      const n = calls();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(calls()).toBe(n);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('Local Mode (404) is never probed again; dispose stops pending retries', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = fakeClient();
+      const store = createUncageStore(f.client);
+      await store.actions.loadMachines();
+      expect(store.getState().machines.mode).toBe('local');
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(f.client.machines).toHaveBeenCalledTimes(1);
+
+      const g = fakeClient();
+      g.client.machines.mockRejectedValue(clientError('internal_error', 503));
+      const other = createUncageStore(g.client);
+      await other.actions.loadMachines();
+      other.dispose();
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(g.client.machines).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the selection while that machine is listed; reselects when it disappears', async () => {
+    const f = fakeClient(undefined, { machines: [machine({ id: 'a' }), machine({ id: 'b' })] });
+    const store = createUncageStore(f.client);
+    await store.actions.loadMachines();
+    store.actions.selectMachine('b');
+    f.client.machines.mockResolvedValueOnce([machine({ id: 'a' }), machine({ id: 'b', online: false })]);
+    await store.actions.loadMachines();
+    expect(store.getState().machines.selectedId).toBe('b');
+    f.client.machines.mockResolvedValueOnce([machine({ id: 'a' })]);
+    await store.actions.loadMachines();
+    expect(store.getState().machines.selectedId).toBe('a');
+  });
+
+  it('in connected mode, runtimes are the selected computer\'s', async () => {
+    const rt = (id: string) => ({ ...runtimeInfo, id, displayName: id });
+    const f = fakeClient(undefined, {
+      machines: [machine({ id: 'a', runtimes: [rt('claude')] }), machine({ id: 'b', runtimes: [rt('codex')] })],
+    });
+    f.client.runtimes.mockResolvedValue([rt('stale')]);
+    const store = createUncageStore(f.client);
+    const loading = store.actions.loadRuntimes();
+    await store.actions.loadMachines();
+    await loading;
+    expect(store.getState().runtimes.map((r) => r.id)).toEqual(['claude']);
+    store.actions.selectMachine('b');
+    expect(store.getState().runtimes.map((r) => r.id)).toEqual(['codex']);
+    await store.actions.loadRuntimes();
+    expect(store.getState().runtimes.map((r) => r.id)).toEqual(['codex']);
+    expect(f.client.runtimes).toHaveBeenCalledTimes(1);
+  });
+
+  it('watchMachines polls every 3 s while watched and visible', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = fakeClient(undefined, { machines: [machine()] });
+      const store = createUncageStore(f.client);
+      const stop = store.actions.watchMachines();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(f.client.machines).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(f.client.machines).toHaveBeenCalledTimes(2);
+      stop();
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(f.client.machines).toHaveBeenCalledTimes(2);
+      // A slower watcher alone polls at its own interval.
+      const slow = store.actions.watchMachines(10_000);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(f.client.machines).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(f.client.machines).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(7000);
+      expect(f.client.machines).toHaveBeenCalledTimes(4);
+      slow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('watchMachines in Local Mode stops polling after the 404', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = fakeClient();
+      const store = createUncageStore(f.client);
+      const stop = store.actions.watchMachines();
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(f.client.machines).toHaveBeenCalledTimes(1);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('loadInstallInfo caches the commands; revokeMachine drops the machine', async () => {
+    const f = fakeClient(undefined, { machines: [machine({ id: 'a' }), machine({ id: 'b' })] });
+    const store = createUncageStore(f.client);
+    await store.actions.loadMachines();
+    await store.actions.loadInstallInfo();
+    expect(store.getState().machines.install?.setup).toBe('uncage setup https://site.test/api/uncage');
+    await store.actions.loadInstallInfo();
+    expect(f.client.installInfo).toHaveBeenCalledTimes(1);
+    expect(await store.actions.revokeMachine('a')).toBe(true);
+    expect(f.client.revokeMachine).toHaveBeenCalledWith('a');
+    expect(store.getState().machines.list.map((m) => m.id)).toEqual(['b']);
+    expect(store.getState().machines.selectedId).toBe('b');
+    f.client.revokeMachine.mockRejectedValueOnce(clientError('machine_not_found', 404));
+    expect(await store.actions.revokeMachine('b')).toBe(false);
+    expect(store.getState().lastError?.code).toBe('machine_not_found');
   });
 });

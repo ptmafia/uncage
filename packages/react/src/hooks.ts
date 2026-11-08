@@ -1,8 +1,8 @@
-import type { ConnectionState, UncageClientError } from '@uncage/client';
+import type { ConnectionState, CreateSessionRequest, InstallInfo, UncageClientError } from '@uncage/client';
 import type {
   ActiveRunInfo,
   ApprovalRequest,
-  CreateSessionBody,
+  MachineInfo,
   Run,
   RuntimeCapabilities,
   RuntimeInfo,
@@ -18,6 +18,7 @@ import {
   latestRun,
   type AttachmentRejection,
   type DraftAttachment,
+  type MachinesState,
   type MessageView,
   type StoreState,
   type TimelineItem,
@@ -63,7 +64,7 @@ export function useSessions(): {
   activeSessionId?: string;
   loading: boolean;
   select(id: string): Promise<void>;
-  create(b: CreateSessionBody): Promise<string>;
+  create(b: CreateSessionRequest): Promise<string>;
   reload(): Promise<void>;
 } {
   const store = useUncageStore();
@@ -233,8 +234,144 @@ export function useRunningSessions(): { runs: ActiveRunInfo[]; count: number } {
   return useMemo(() => ({ runs, count: runs.length }), [runs]);
 }
 
+/**
+ * Connected mode: the signed-in user's computers on an Uncage hub. The first use probes the server
+ * (`GET /machines`): a hub answers with the list (`connected`), a local daemon with 404 (`mode:
+ * 'local'`; everything else stays as in Local Mode). `selected` is the computer new sessions run
+ * on; `current` is the one the open session runs on (`session.machineId`, set by the hub), else
+ * `selected`. `watch` polls while mounted and the page is visible (`true` = every 3 s, or a number
+ * of ms).
+ */
+export function useMachines(opts: { watch?: boolean | number } = {}): {
+  mode: MachinesState['mode'];
+  connected: boolean;
+  machines: MachineInfo[];
+  selected?: MachineInfo;
+  /** The open session's computer (`session.machineId`), else `selected`; absent if not listed. */
+  current?: MachineInfo;
+  /** Id of `current`, also when that computer is no longer listed (e.g. disconnected). */
+  currentId?: string;
+  loading: boolean;
+  error?: UncageClientError;
+  install?: InstallInfo;
+  select(id: string): void;
+  refresh(): Promise<void>;
+  revoke(id: string): Promise<boolean>;
+  loadInstallInfo(): Promise<boolean>;
+} {
+  const store = useUncageStore();
+  const m = useStoreSelector((s) => s.machines);
+  const draft = useStoreSelector(isDraft);
+  const activeSessionId = useStoreSelector((s) => s.activeSessionId);
+  const activeSession = useStoreSelector((s) => s.active?.session);
+  const sessions = useStoreSelector((s) => s.sessions);
+  const watch = opts.watch === true ? 3000 : typeof opts.watch === 'number' ? opts.watch : undefined;
+  useEffect(() => {
+    const s = store.getState().machines;
+    if (s.mode === 'unknown' && !s.loading) void store.actions.loadMachines();
+  }, [store]);
+  useEffect(() => (watch !== undefined ? store.actions.watchMachines(watch) : undefined), [store, watch]);
+  return useMemo(() => {
+    const selected = m.list.find((x) => x.id === m.selectedId);
+    // The hub stamps every session with its machine; it survives reloads.
+    const sessionMachine =
+      draft || activeSessionId === undefined
+        ? undefined
+        : (activeSession?.id === activeSessionId ? activeSession.machineId : undefined) ??
+          sessions.find((s) => s.id === activeSessionId)?.machineId;
+    const currentId = sessionMachine ?? selected?.id;
+    const current = currentId !== undefined ? m.list.find((x) => x.id === currentId) : undefined;
+    return {
+      mode: m.mode,
+      connected: m.mode === 'connected',
+      machines: m.list,
+      ...(selected ? { selected } : {}),
+      ...(current ? { current } : {}),
+      ...(currentId !== undefined ? { currentId } : {}),
+      loading: m.loading,
+      ...(m.error ? { error: m.error } : {}),
+      ...(m.install ? { install: m.install } : {}),
+      select: store.actions.selectMachine,
+      refresh: store.actions.loadMachines,
+      revoke: store.actions.revokeMachine,
+      loadInstallInfo: store.actions.loadInstallInfo,
+    };
+  }, [store, m, draft, activeSessionId, activeSession, sessions]);
+}
+
 /** The URL of an attachment's content, for `<img src>` or links. */
 export function useAttachmentUrl(attachmentId: string): string {
   const store = useUncageStore();
   return useMemo(() => store.attachmentUrl(attachmentId), [store, attachmentId]);
+}
+
+/** Where the open session is remembered across reloads (see `usePersistSession`). */
+export type PersistSessionMode = 'url' | 'localStorage' | false;
+
+/** The `?session=` query parameter (`'url'`) and the storage key (`'localStorage'`). */
+export const PERSIST_SESSION_PARAM = 'session';
+export const PERSIST_SESSION_STORAGE_KEY = 'uncage:session';
+
+function readPersisted(mode: PersistSessionMode): string | undefined {
+  if (mode === false || typeof window === 'undefined') return undefined;
+  try {
+    const id =
+      mode === 'url'
+        ? new URLSearchParams(window.location.search).get(PERSIST_SESSION_PARAM)
+        : window.localStorage.getItem(PERSIST_SESSION_STORAGE_KEY);
+    return id || undefined;
+  } catch {
+    return undefined; // storage disabled (privacy mode, sandboxed iframe)
+  }
+}
+
+function writePersisted(mode: PersistSessionMode, id: string | undefined): void {
+  if (mode === false || typeof window === 'undefined') return;
+  try {
+    if (mode === 'url') {
+      const url = new URL(window.location.href);
+      if ((url.searchParams.get(PERSIST_SESSION_PARAM) ?? undefined) === id) return;
+      if (id === undefined) url.searchParams.delete(PERSIST_SESSION_PARAM);
+      else url.searchParams.set(PERSIST_SESSION_PARAM, id);
+      // replaceState keeps the router's state object (Next.js stores its tree there).
+      window.history.replaceState(window.history.state, '', url);
+    } else if (id === undefined) window.localStorage.removeItem(PERSIST_SESSION_STORAGE_KEY);
+    else window.localStorage.setItem(PERSIST_SESSION_STORAGE_KEY, id);
+  } catch {
+    // storage disabled: nothing to remember
+  }
+}
+
+/**
+ * Remembers the open session so a reload lands on the same conversation: on mount it reopens the
+ * remembered session (`?session=<id>` with `'url'`, a `localStorage` entry with `'localStorage'`),
+ * then mirrors the open session there (`history.replaceState`, no new history entries) and clears
+ * it when a new draft is opened. A remembered session that cannot be opened falls back to a new
+ * draft (the error is shown unless the session simply no longer exists). `<AgentChat>` calls this (default `'url'`); headless UIs call it once near the root.
+ */
+export function usePersistSession(mode: PersistSessionMode = 'url'): void {
+  const store = useUncageStore();
+  const activeSessionId = useStoreSelector((s) => s.activeSessionId);
+  const draftOpen = useStoreSelector((s) => s.draft.open);
+
+  useEffect(() => {
+    const id = readPersisted(mode);
+    if (id === undefined || store.getState().activeSessionId !== undefined) return;
+    void store.actions.selectSession(id).then(() => {
+      const s = store.getState();
+      // Still this selection and it did not open: the restore failed (selectSession records why).
+      if (s.activeSessionId !== id || s.active !== undefined || s.lastError === undefined) return;
+      // Forget it and start fresh. A deleted session (or one from another server) is not worth an
+      // error; anything else (daemon down, …) stays visible in lastError.
+      if (s.lastError.code === 'not_found') store.actions.dismissError();
+      writePersisted(mode, undefined);
+      store.actions.openDraft();
+    });
+  }, [store, mode]);
+
+  useEffect(() => {
+    // Before anything is open (first render, restore in flight) there is nothing to write.
+    if (draftOpen) writePersisted(mode, undefined);
+    else if (activeSessionId !== undefined) writePersisted(mode, activeSessionId);
+  }, [mode, draftOpen, activeSessionId]);
 }

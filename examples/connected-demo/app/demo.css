@@ -1,0 +1,23 @@
+html, body { margin: 0; height: 100dvh; font-family: system-ui, -apple-system, 'PingFang SC', sans-serif; color: #1f2329; }
+body { display: flex; flex-direction: column; }
+.demo-nav { display: flex; align-items: center; gap: 20px; padding: 0 20px; height: 48px; border-bottom: 1px solid #e8e8ec; flex: none; }
+.demo-nav a { color: inherit; text-decoration: none; font-size: 14px; }
+.demo-nav nav { display: flex; gap: 16px; }
+.demo-brand { font-weight: 600; }
+.demo-spacer { flex: 1; }
+.demo-user { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.demo-user button, .demo-btn { border: 1px solid #d0d3d9; background: #fff; border-radius: 8px; padding: 4px 12px; cursor: pointer; font: inherit; }
+.demo-main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.demo-page { max-width: 960px; width: 100%; margin: 0 auto; padding: 32px 20px; box-sizing: border-box; overflow: auto; }
+.demo-page h1 { font-size: 22px; margin: 0 0 16px; }
+.demo-note { color: #646a73; font-size: 13px; }
+.demo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; padding: 0; list-style: none; }
+.demo-card { border: 1px solid #e8e8ec; border-radius: 12px; padding: 16px; }
+.demo-card a { color: inherit; text-decoration: none; font-weight: 600; }
+.demo-badge { display: inline-block; font-size: 12px; border-radius: 6px; padding: 1px 8px; background: #f2f3f5; margin-left: 8px; }
+.demo-badge[data-status='published'] { background: #e8f8ee; color: #1f7a3f; }
+.demo-preview { width: 100%; height: 70vh; border: 1px solid #e8e8ec; border-radius: 12px; background: #fff; }
+.demo-login { max-width: 360px; margin: 80px auto; display: flex; flex-direction: column; gap: 12px; padding: 0 20px; }
+.demo-login input { font: inherit; padding: 8px 12px; border: 1px solid #d0d3d9; border-radius: 8px; }
+.demo-warning { background: #fff7e6; border: 1px solid #ffd591; border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+.demo-device { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; }

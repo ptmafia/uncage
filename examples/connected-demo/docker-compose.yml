@@ -1,0 +1,14 @@
+# Redis + Postgres for multi-node dev mode (see README). Loopback only, throwaway credentials.
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '127.0.0.1:6380:6379'
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: uncage
+      POSTGRES_PASSWORD: uncage
+      POSTGRES_DB: uncage
+    ports:
+      - '127.0.0.1:5433:5432'

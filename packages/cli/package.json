@@ -1,7 +1,7 @@
 {
   "name": "@uncage/cli",
-  "version": "0.1.1",
-  "description": "The `uncage` command: serve the local daemon, run doctor, export events",
+  "version": "0.2.0",
+  "description": "The `uncage` command: serve the local daemon, run doctor, export events, and connect this computer to websites (Connected Mode)",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -10,9 +10,9 @@
     "uncage": "./dist/bin.js"
   },
   "files": [
-    "dist",
+    "LICENSE",
     "README.md",
-    "LICENSE"
+    "dist"
   ],
   "scripts": {
     "build": "tsup",
@@ -21,6 +21,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@uncage/agent": "workspace:^",
     "@uncage/core": "workspace:^",
     "@uncage/protocol": "workspace:^",
     "@uncage/runtime-claude": "workspace:^",
@@ -30,7 +31,15 @@
     "yaml": "^2.8.0",
     "zod": "^4.6.7"
   },
+  "devDependencies": {
+    "@uncage/hub": "workspace:*"
+  },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ptmafia/uncage.git",
+    "directory": "packages/cli"
+  },
   "keywords": [
     "uncage",
     "agent",
@@ -40,5 +49,9 @@
   "publishConfig": {
     "access": "public"
   },
-  "author": "Nathan Zhang"
+  "author": "Nathan Zhang",
+  "homepage": "https://ptmafia.github.io/uncage/",
+  "bugs": {
+    "url": "https://github.com/ptmafia/uncage/issues"
+  }
 }

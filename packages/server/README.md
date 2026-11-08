@@ -3,6 +3,7 @@
 Two things:
 
 1. **`@uncage/server/proxy`** — `createUncageHandler(options?)` returns `{ GET, POST, PATCH }` Fetch-style handlers for your app's `/api/uncage/[...path]` route. It forwards to the local daemon with its token (read from `UNCAGE_TOKEN` or `~/.uncage/token`), so the token never reaches the browser, and it rejects cross-origin requests and non-allowed hosts (DNS rebinding). Options: `endpoint` (env `UNCAGE_URL`, default `http://127.0.0.1:4783`), `token`, `basePath` (default `/api/uncage`), `allowedHosts` (env `UNCAGE_ALLOWED_HOSTS`, default loopback names; the list replaces the default).
+   For Express, Connect, Fastify or `node:http`, `createUncageNodeHandler(options?)` is the same proxy as a `(req, res, next?)` handler that streams bodies and SSE: `app.use('/api/uncage', createUncageNodeHandler())` (mount it before body parsers and compression).
 2. **`createUncageServer({ uncage, token, port })`** — the daemon itself (REST + SSE over `@uncage/core`, loopback only, bearer token, Host/Origin checks). Most people just run it with `npx uncage serve` from [`@uncage/cli`](https://www.npmjs.com/package/@uncage/cli).
 
 ## Quick start (Next.js)

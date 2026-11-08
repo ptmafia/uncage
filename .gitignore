@@ -12,3 +12,5 @@ playwright-report/
 next-env.d.ts
 *.tsbuildinfo
 e2e/live/results/
+.uncage-hub/
+e2e/connected/results/

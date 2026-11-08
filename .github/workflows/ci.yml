@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'feat/**']
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm typecheck
+      - run: pnpm lint
+      # One package at a time on CI: every package's tests boot PGlite (WASM) and/or jsdom, and
+      # running all of them at once oversubscribes the runner's few vCPUs so cold starts blow
+      # past per-test timeouts (seen on ubuntu-latest: hub suite 430 s, first tests timing out).
+      - run: pnpm exec turbo run test --concurrency=1
+      - name: Install Playwright Chromium
+        run: pnpm --dir e2e exec playwright install --with-deps chromium
+      - name: E2E (mock daemon)
+        run: pnpm e2e:mock
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-results-node${{ matrix.node }}
+          path: e2e/test-results
+          if-no-files-found: ignore
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The API reference and the sample check read the built packages.
+      - run: pnpm exec turbo run build --filter='docs^...'
+      # The root typecheck / lint skip the docs (Astro needs Node >= 22.23.4); they run here on Node 24.
+      - run: pnpm --filter docs lint
+      - run: pnpm --filter docs typecheck
+      - name: Type-check every code sample on the site
+        run: pnpm --filter docs check:snippets
+      - name: Build the site (generates the API reference, validates every internal link)
+        run: pnpm --filter docs build

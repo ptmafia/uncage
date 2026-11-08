@@ -1,19 +1,23 @@
 import {
   isDraft,
   useApprovals,
+  useMachines,
   useMessages,
   useRun,
   useRuntimes,
   useSession,
   useSessions,
   useStoreSelector,
+  usePersistSession,
   useUncageStore,
+  type PersistSessionMode,
 } from '@uncage/react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { ChatControllerContext, cx, UncageUIProvider, useUi, type ChatComponents, type ChatController } from '../context.js';
 import type { Locale } from '../i18n.js';
 import { BypassBanner } from './BypassBanner.js';
 import { Composer as DefaultComposer } from './Composer.js';
+import { ConnectMachine } from './ConnectMachine.js';
 import { ConnectionBanner } from './ConnectionBanner.js';
 import { ConversationHeader } from './ConversationHeader.js';
 import { EmptyState as DefaultEmptyState } from './EmptyState.js';
@@ -35,6 +39,12 @@ export interface AgentChatProps {
   starterPrompts?: string[];
   /** Show tool steps between messages (default `true`). */
   showTools?: boolean;
+  /**
+   * Where the open session is remembered so a reload reopens it (default `'url'`: `?session=<id>`,
+   * kept in sync with `history.replaceState`). `'localStorage'` keeps the URL clean; `false` turns
+   * it off (e.g. when the host app routes sessions itself).
+   */
+  persistSession?: PersistSessionMode;
   /** Replace any of the default building blocks. */
   components?: Partial<ChatComponents>;
   className?: string;
@@ -62,10 +72,41 @@ interface LayoutProps {
   className?: string;
   defaultRuntime?: string;
   starterPrompts: string[];
+  persistSession: PersistSessionMode;
 }
 
-function ChatLayout({ sidebar, theme, className, defaultRuntime, starterPrompts }: LayoutProps): JSX.Element {
+/** How often the chat refreshes computer status in connected mode. */
+const MACHINES_STATUS_POLL_MS = 5000;
+/** How long the empty state keeps "Connected: <name>" before showing the new-session view. */
+const CONNECTED_LINGER_MS = 1200;
+
+/**
+ * Connected mode (the server is an Uncage hub): keeps computer status fresh and decides whether
+ * the empty state shows `<ConnectMachine>` (no computer yet; it stays a moment after one joins).
+ */
+function useConnectedMode(): { connected: boolean; showConnect: boolean } {
+  const connected = useStoreSelector((s) => s.machines.mode === 'connected');
+  const { machines } = useMachines({ watch: connected ? MACHINES_STATUS_POLL_MS : false });
+  const needed = connected && machines.length === 0;
+  // Stays set for a moment after the first computer appears, so `<ConnectMachine>` can show
+  // "Connected: <name>" before the empty state takes over.
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (needed) {
+      setShown(true);
+      return;
+    }
+    if (!shown) return;
+    const id = setTimeout(() => setShown(false), CONNECTED_LINGER_MS);
+    return () => clearTimeout(id);
+  }, [needed, shown]);
+  return { connected, showConnect: needed || (connected && shown) };
+}
+
+function ChatLayout({ sidebar, theme, className, defaultRuntime, starterPrompts, persistSession }: LayoutProps): JSX.Element {
   const { locale, components } = useUi();
+  usePersistSession(persistSession);
+  const connectedMode = useConnectedMode();
   const controller = useChatSession(defaultRuntime, starterPrompts);
   const { draft } = controller.value;
   const { activeSessionId, select } = useSessions();
@@ -88,14 +129,22 @@ function ChatLayout({ sidebar, theme, className, defaultRuntime, starterPrompts 
           />
         )}
         <main className="uc-main">
-          {!draft && <ConversationHeader />}
+          {(!draft || connectedMode.connected) && <ConversationHeader />}
           <div className="uc-scroll" ref={scroll.ref} onScroll={scroll.onScroll}>
             <div className="uc-column">
               <div className="uc-top-banners">
                 <BypassBanner />
                 <ConnectionBanner />
               </div>
-              {draft ? <EmptyState /> : <MessageList />}
+              {!draft ? (
+                <MessageList />
+              ) : connectedMode.showConnect ? (
+                <div className="uc-empty uc-empty-connect">
+                  <ConnectMachine variant="inline" />
+                </div>
+              ) : (
+                <EmptyState />
+              )}
             </div>
           </div>
           <div className="uc-dock">
@@ -193,6 +242,7 @@ export function AgentChat({
   defaultRuntime,
   starterPrompts,
   showTools = true,
+  persistSession = 'url',
   components,
   className,
 }: AgentChatProps): JSX.Element {
@@ -202,6 +252,7 @@ export function AgentChat({
         sidebar={sidebar}
         theme={theme}
         starterPrompts={starterPrompts ?? NO_PROMPTS}
+        persistSession={persistSession}
         {...(defaultRuntime !== undefined ? { defaultRuntime } : {})}
         {...(className !== undefined ? { className } : {})}
       />

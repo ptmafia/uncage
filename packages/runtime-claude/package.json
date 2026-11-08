@@ -1,6 +1,6 @@
 {
   "name": "@uncage/runtime-claude",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Uncage runtime adapter for Claude Code via the Claude Agent SDK",
   "type": "module",
   "engines": {
@@ -8,9 +8,9 @@
   },
   "sideEffects": false,
   "files": [
-    "dist",
+    "LICENSE",
     "README.md",
-    "LICENSE"
+    "dist"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -29,12 +29,18 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.318",
-    "@uncage/protocol": "workspace:^"
+    "@uncage/protocol": "workspace:^",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@uncage/testkit": "workspace:*"
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ptmafia/uncage.git",
+    "directory": "packages/runtime-claude"
+  },
   "keywords": [
     "uncage",
     "agent",
@@ -46,5 +52,9 @@
   "publishConfig": {
     "access": "public"
   },
-  "author": "Nathan Zhang"
+  "author": "Nathan Zhang",
+  "homepage": "https://ptmafia.github.io/uncage/",
+  "bugs": {
+    "url": "https://github.com/ptmafia/uncage/issues"
+  }
 }

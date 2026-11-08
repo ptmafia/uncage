@@ -8,6 +8,7 @@ import {
   SessionSettingsSchema,
   type RuntimeCapabilities,
 } from './domain.js';
+import { SkillSpecSchema, type ToolCallResult, type ToolSpec } from './connected.js';
 import { ErrorBodySchema } from './errors.js';
 import { ToolInfoSchema } from './events.js';
 
@@ -30,8 +31,19 @@ export const AdapterRunInputSchema = z.object({
   nativeSessionRef: z.string().optional(),
   settings: SessionSettingsSchema,
   attachments: z.array(ResolvedAttachmentSchema),
+  /** Site skills for this run (connected mode). */
+  skills: z.array(SkillSpecSchema).optional(),
 });
-export type AdapterRunInput = z.infer<typeof AdapterRunInputSchema>;
+
+/**
+ * A site tool offered to the runtime for one run (connected mode). `call` round-trips to the site
+ * (via the hub); adapters expose it under their own namespace and must never let it shadow a
+ * built-in tool. Only passed to adapters whose capabilities advertise `siteTools`.
+ */
+export type RunTool = ToolSpec & { call(args: unknown): Promise<ToolCallResult> };
+
+/** `tools` carries functions, so it has no wire form and is not part of the schema. */
+export type AdapterRunInput = z.infer<typeof AdapterRunInputSchema> & { tools?: RunTool[] };
 
 export const NativeApprovalInputSchema = z.object({
   toolId: z.string().optional(),

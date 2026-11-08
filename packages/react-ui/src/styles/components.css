@@ -1673,6 +1673,379 @@
   color: var(--uncage-ink-3);
 }
 
+/* ---------- Connected mode: computers ---------- */
+.uc-header-end {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}
+.uc-popover[data-side="bottom"] {
+  top: calc(100% + 8px);
+  bottom: auto;
+}
+.uc-root .uc-tool.uc-machine-trigger {
+  height: 28px;
+  font-size: var(--uncage-text-caption);
+  line-height: var(--uncage-text-caption-lh);
+  color: var(--uncage-ink-2);
+}
+.uc-machine-name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.uc-machine-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 9999px;
+  background: var(--uncage-ink-4);
+}
+.uc-machine-dot[data-online] {
+  background: var(--uncage-ok-mark);
+}
+.uc-machine-offline {
+  align-items: center;
+}
+.uc-machine-offline > svg {
+  margin-top: 0;
+}
+.uc-machine-offline .uc-banner-text {
+  padding-top: 0;
+}
+.uc-inline-code {
+  padding: 1px 5px;
+  border-radius: var(--uncage-radius-xs);
+  background: var(--uncage-surface-2);
+  font-family: var(--uncage-font-mono);
+  font-size: 0.92em;
+  color: var(--uncage-ink);
+}
+
+/* "Connect your computer" (dialog or inline) */
+.uc-dialog.uc-connect-dialog {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  gap: 16px;
+  padding: 24px;
+  outline: none;
+}
+.uc-connect-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+  border: 1px solid var(--uncage-border-soft);
+  border-radius: var(--uncage-radius-lg);
+  background: var(--uncage-surface);
+  color: var(--uncage-ink);
+}
+.uc-empty.uc-empty-connect {
+  padding-top: 8vh;
+}
+.uc-connect-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.uc-connect-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--uncage-radius-md);
+  background: var(--uncage-surface-2);
+  color: var(--uncage-ink-2);
+}
+.uc-connect-icon svg {
+  width: 18px;
+  height: 18px;
+}
+.uc-connect-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.uc-connect-title {
+  font-family: var(--uncage-font-serif);
+  font-size: var(--uncage-text-title);
+  line-height: var(--uncage-text-title-lh);
+  font-weight: 500;
+  color: var(--uncage-ink);
+}
+.uc-connect-subtitle {
+  font-size: var(--uncage-text-ui);
+  line-height: var(--uncage-text-ui-lh);
+  color: var(--uncage-ink-2);
+}
+.uc-connect-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.uc-connect-step {
+  display: flex;
+  gap: 12px;
+}
+.uc-connect-num {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  border-radius: 9999px;
+  background: var(--uncage-neutral-bg);
+  font-size: var(--uncage-text-caption);
+  font-weight: 600;
+  color: var(--uncage-ink-2);
+}
+.uc-connect-step-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.uc-root .uc-connect-step-title {
+  margin: 0;
+  font-size: var(--uncage-text-heading);
+  line-height: var(--uncage-text-heading-lh);
+  font-weight: 600;
+  color: var(--uncage-ink);
+}
+.uc-connect-note,
+.uc-connect-muted {
+  font-size: var(--uncage-text-caption);
+  line-height: var(--uncage-text-caption-lh);
+  color: var(--uncage-ink-3);
+}
+.uc-connect-soon {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+}
+.uc-connect-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--uncage-err-border);
+  border-radius: var(--uncage-radius-md);
+  background: var(--uncage-err-surface);
+  color: var(--uncage-ink);
+}
+.uc-tabs {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--uncage-radius-md);
+  background: var(--uncage-surface-2);
+}
+.uc-root .uc-tab {
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-size: var(--uncage-text-caption);
+  line-height: var(--uncage-text-caption-lh);
+  font-weight: 500;
+  color: var(--uncage-ink-3);
+  cursor: pointer;
+  outline: none;
+  transition:
+    background-color var(--uncage-duration-fast) var(--uncage-ease),
+    color var(--uncage-duration-fast) var(--uncage-ease);
+}
+.uc-root .uc-tab[aria-selected="true"] {
+  background: var(--uncage-surface);
+  color: var(--uncage-ink);
+  box-shadow: 0 1px 2px rgb(40 30 15 / 0.08);
+}
+.uc-tab:focus-visible {
+  box-shadow: var(--uncage-shadow-focus);
+}
+.uc-command {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--uncage-border-soft);
+  border-radius: var(--uncage-radius-md);
+  background: var(--uncage-surface-2);
+}
+.uc-command-text {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  font-family: var(--uncage-font-mono);
+  font-size: var(--uncage-text-caption);
+  line-height: var(--uncage-text-caption-lh);
+  color: var(--uncage-ink);
+  white-space: nowrap;
+  user-select: all;
+}
+.uc-connect-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--uncage-radius-md);
+  background: var(--uncage-surface-2);
+  font-size: var(--uncage-text-ui);
+  color: var(--uncage-ink-2);
+}
+.uc-connect-status[data-state="connected"] {
+  background: var(--uncage-ok-bg);
+  color: var(--uncage-ok-fg);
+}
+.uc-connect-ok {
+  width: 16px;
+  height: 16px;
+}
+/* Green dot with a slow pulse ring; static under reduced motion. */
+.uc-live-dot {
+  position: relative;
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--uncage-ok-mark);
+}
+.uc-live-dot::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 9999px;
+  border: 2px solid var(--uncage-ok-mark);
+  opacity: 0;
+  animation: uc-live-ping var(--uncage-loop-breathe) var(--uncage-ease) infinite;
+}
+@keyframes uc-live-ping {
+  0% {
+    opacity: 0.6;
+    transform: scale(0.6);
+  }
+  80%,
+  100% {
+    opacity: 0;
+    transform: scale(1.4);
+  }
+}
+.uc-connect-more {
+  font-size: var(--uncage-text-ui);
+  color: var(--uncage-ink-2);
+}
+.uc-connect-more > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--uncage-radius-xs);
+  cursor: pointer;
+  list-style: none;
+  outline: none;
+}
+.uc-connect-more > summary::-webkit-details-marker {
+  display: none;
+}
+.uc-connect-more > summary:focus-visible {
+  box-shadow: var(--uncage-shadow-focus);
+}
+.uc-connect-chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--uncage-ink-3);
+  transition: transform var(--uncage-duration-fast) var(--uncage-ease);
+}
+.uc-connect-more[open] .uc-connect-chevron {
+  transform: rotate(90deg);
+}
+.uc-connect-more-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0 0 18px;
+  font-size: var(--uncage-text-caption);
+  line-height: var(--uncage-text-caption-lh);
+}
+
+/* Device approval page */
+.uc-approve-page {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  min-height: 100%;
+  padding: 12vh 16px 32px;
+}
+.uc-dialog.uc-approve {
+  width: min(460px, 100%);
+  gap: 14px;
+  padding: 24px;
+}
+.uc-approve-body {
+  font-size: var(--uncage-text-body);
+  line-height: var(--uncage-text-body-lh);
+  color: var(--uncage-ink);
+}
+.uc-approve-what {
+  color: var(--uncage-ink-2);
+}
+.uc-approve-code-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 12px;
+  border: 1px solid var(--uncage-border-soft);
+  border-radius: var(--uncage-radius-md);
+  background: var(--uncage-surface-2);
+}
+.uc-approve-code-label,
+.uc-approve-code-hint {
+  font-size: var(--uncage-text-caption);
+  line-height: var(--uncage-text-caption-lh);
+  color: var(--uncage-ink-3);
+}
+.uc-approve-code {
+  font-family: var(--uncage-font-mono);
+  font-size: var(--uncage-text-title);
+  line-height: var(--uncage-text-title-lh);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--uncage-ink);
+}
+.uc-approve-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--uncage-ink);
+}
+.uc-approve-result > svg {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+}
+.uc-approve-result[data-tone="ok"] > svg {
+  color: var(--uncage-ok-mark);
+}
+.uc-approve-result[data-tone="err"] > svg {
+  color: var(--uncage-err-fg);
+}
+.uc-approve-result[data-tone="neutral"] > svg {
+  color: var(--uncage-ink-3);
+}
+
 /* ---------- Reduced motion: nothing moves ---------- */
 @media (prefers-reduced-motion: reduce) {
   .uc-root *,
@@ -1685,8 +2058,16 @@
   /* Also when the components are used outside .uc-root. */
   .uc-spinner,
   .uc-breathe::after,
-  .uc-mic-on::after {
+  .uc-mic-on::after,
+  .uc-live-dot::after,
+  .uc-connect-chevron {
     animation: none !important;
+    transition: none !important;
+  }
+  /* The waiting dot rests as a static halo. */
+  .uc-live-dot::after {
+    opacity: 0.35;
+    transform: none;
   }
   /* The listening ring rests as a static ring. */
   .uc-mic-on::after {

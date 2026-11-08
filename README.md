@@ -1,41 +1,82 @@
 # Uncage
 
-**Bring your agent to any app.** Use the harness you trust. Ship the experience you own.
+[![CI](https://github.com/ptmafia/uncage/actions/workflows/ci.yml/badge.svg)](https://github.com/ptmafia/uncage/actions/workflows/ci.yml)
 
-Uncage runs Claude Code (and Codex) as a local, approval-gated agent runtime and gives your web app a typed REST + SSE API, headless React hooks, and a ready-made chat UI. Your app gets streaming answers, tool steps, Allow/Deny approval cards, Stop, reload-safe history, and a composer with model, effort and permission-mode pickers, file and image attachments, and voice input, while the agent keeps running on your own machine under your own login.
+**Let your website drive Claude Code on your users’ own computers.**
 
-> Status: 0.1 (`npm i @uncage/react-ui`), macOS only. Claude Code is verified live (see [docs/compatibility.md](docs/compatibility.md)). Codex is implemented but not yet verified against a real binary (see [Codex status](#codex-status)).
+Your website gives the instructions. Each user’s own Claude Code does the work, on their own Mac, under their own login, and calls your website’s tools as that user. The conversation, the approvals and the results stay on your site.
 
-## Quickstart (about 5 minutes)
+- **Two commands for the user.** Your page shows `curl -fsSL https://your.site/api/uncage/install.sh | bash` and `uncage setup https://your.site`. The user approves the computer in the browser, a background agent dials out to your site, and the page shows it online. No ports, no tunnels.
+- **A chat on your site.** `<AgentChat>` streams answers and tool steps, shows Allow / Deny cards, Stop, attachments, model and permission pickers, and keeps history across reloads.
+- **Your capabilities, your rules.** Declare site tools with `defineTool` (zod schema + handler). The handler runs in your backend as the signed-in user and can pull files from the run’s workspace. Give Claude Code your formats and templates as skills.
+- **Safe by construction.** Your site never sends code or shell to the user’s computer, only tool schemas, skill text and a fixed set of commands. Bypassing approvals can only be enabled by the user, locally. Everything a site does is logged on the user’s computer.
+- **Production shape.** Plug in your sign-in with `getUser(req)`. Keep a replica of every conversation on your site. Run the hub on several nodes with Postgres and Redis.
 
-**1. Prerequisites**
+**Help site (for developers and coding agents): https://ptmafia.github.io/uncage/** · [llms.txt](https://ptmafia.github.io/uncage/llms.txt) · [Skill for coding agents](skills/uncage/SKILL.md)
 
-- macOS, Node.js **22 or newer** (`node -v`)
-- Claude Code installed and logged in: `npm i -g @anthropic-ai/claude-code`, then run `claude` once and type `/login`
-- A Next.js (App Router) app. Starting fresh: `npx create-next-app@latest my-app` (TypeScript, App Router)
+> Status: Connected Mode is new in 0.2 (`@uncage/hub`, `@uncage/agent`, `uncage setup`). The user’s side runs on macOS with Node.js 22+. Claude Code is verified live, end to end ([compatibility](docs/compatibility.md)); Codex is implemented but not yet verified against a real binary and has no site-tool support. Local Mode (the 0.1 daemon + chat, with no hub) keeps working and is documented in the help site.
 
-**2. Install**
+## Try it in 5 minutes
+
+Run the reference website and connect your own Mac to it. You need macOS, Node.js 22.18+, pnpm, and Claude Code installed and signed in (`npm i -g @anthropic-ai/claude-code`, run `claude`, type `/login`).
 
 ```sh
-npm i @uncage/server @uncage/react-ui @uncage/cli
+git clone https://github.com/ptmafia/uncage && cd uncage
+pnpm install && pnpm build
+cd examples/connected-demo && pnpm start        # http://localhost:3200
 ```
 
-**3. Add two files**
+1. Open http://localhost:3200 and sign in with any username (demo-only sign-in).
+2. The chat shows **连接你的电脑** (connect your computer). In a second terminal, from `examples/connected-demo`, run the setup command with this repo’s CLI:
 
-The route handler is a same-origin proxy. It reads the daemon token on the server, so the token never reaches the browser.
+   ```sh
+   node ../../packages/cli/dist/bin.js setup http://localhost:3200 --no-daemon
+   node ../../packages/cli/dist/bin.js agent       # keep it running
+   ```
+
+   `setup` opens `/device?code=…`: check that the code matches and click **批准** (approve). (Prefix both commands with `UNCAGE_HOME=/tmp/uncage-demo` to leave your `~/.uncage` untouched.)
+3. Send **做一个介绍 Uncage 的落地页并发布** (“build a landing page about Uncage and publish it”). Claude Code works on your Mac in `~/Uncage/localhost-3200/<session>/`, calls the site’s `create_asset` tool, writes the page, and asks you to confirm `publish_asset`, which pulls the folder from your Mac into the site.
+4. Open **素材** (`/assets`) to see the published page. Stop the agent and reload the chat: the whole conversation is still there.
+
+## Add it to your website
+
+```sh
+npm i @uncage/hub @uncage/react-ui zod
+```
+
+An excerpt to show the shape (`./auth.ts` is your own sign-in). The complete, type-checked files are in the [Connected Mode quickstart](https://ptmafia.github.io/uncage/start/quickstart-connected/) and [Mount the hub](https://ptmafia.github.io/uncage/guides/mount-the-hub/).
 
 ```ts
-// app/api/uncage/[...path]/route.ts
-import { createUncageHandler } from '@uncage/server/proxy';
+// server.ts — mount the hub in your Node server (Express here; Fastify, Hono, Next.js custom servers work too)
+import { createServer } from 'node:http';
+import { createHub, defineTool, toNodeHandler } from '@uncage/hub';
+import express from 'express';
+import { z } from 'zod';
+import { getSessionUser } from './auth.ts'; // your sign-in: (req: Request) => Promise<{ id: string } | null>
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
-export const { GET, POST, PATCH } = createUncageHandler();
+const notes = new Map<string, Array<{ title: string; text: string }>>(); // stand-in for your database
+
+const saveNote = defineTool({
+  name: 'save_note',
+  description: 'Save a note to the signed-in user’s notes on the website.',
+  input: z.object({ title: z.string(), text: z.string() }),
+  // Runs in your backend, as the signed-in user.
+  handler: async ({ title, text }, ctx) => {
+    notes.set(ctx.user.id, [...(notes.get(ctx.user.id) ?? []), { title, text }]);
+    return { saved: title };
+  },
+});
+
+const hub = await createHub({ publicUrl: 'https://your.site', getUser: getSessionUser, tools: [saveNote] });
+const app = express();
+app.use(toNodeHandler(hub)); // before body parsers
+const server = createServer(app);
+hub.attach(server); // computers connect here (WebSocket)
+server.listen(3000);
 ```
 
 ```tsx
-// app/page.tsx
-'use client';
+// a page on the same origin
 import { AgentChat, UncageProvider } from '@uncage/react-ui';
 import '@uncage/react-ui/styles.css';
 
@@ -43,180 +84,56 @@ export default function Page() {
   return (
     <div style={{ height: '100vh' }}>
       <UncageProvider>
-        <AgentChat locale="zh-CN" />  {/* or "en" (default) */}
+        <AgentChat />
       </UncageProvider>
     </div>
   );
 }
 ```
 
-**4. Start the Uncage daemon** (leave it running, in its own terminal)
+You also need an approval page at `/device` (signed-in only, unframable, decided with a CSRF-protected POST). The [Connected Mode quickstart](https://ptmafia.github.io/uncage/start/quickstart-connected/) has every file for a Next.js app, type-checked in CI; [Mount the hub](https://ptmafia.github.io/uncage/guides/mount-the-hub/) covers Express, Fastify, Hono and Next.js custom servers.
 
-```sh
-npx uncage serve --workspace /absolute/path/to/the/project/the/agent/works/in
-```
+## Local Mode
 
-`--workspace` is the folder the agent reads and edits. On first start it creates `~/.uncage/token` (mode 600) and `~/.uncage/data`, then prints:
+When the agent runs on the same machine as your app (an internal tool, a dev dashboard), skip the hub: run `npx uncage serve --workspace <dir>`, add a same-origin proxy route (`createUncageHandler()` from `@uncage/server/proxy`) and render `<AgentChat>`. See the [Local Mode quickstart](https://ptmafia.github.io/uncage/start/quickstart-local/) (5 minutes) and [Local Mode in depth](https://ptmafia.github.io/uncage/reference/local-mode/).
 
-```
-Uncage listening on http://127.0.0.1:4783 · workspace /…/project · runtimes: claude ✓, codex ✗ (not installed)
-```
+## Documentation
 
-Check everything with `npx uncage doctor`: each line is ✓ or ✗, and every ✗ prints the exact `fix:` command. Codex showing "not installed" is fine, it is optional.
-
-**5. Run your app**
-
-```sh
-npm run dev
-```
-
-Open http://localhost:3000, pick **Claude Code**, and ask something like "Scan this repo and run the tests". Commands and file edits show an approval card: **Allow once** / **Deny**. **Stop** cancels the run and kills its processes. Refresh any time: history and pending approvals come back.
-
-> **How it fits together.** The browser talks only to your app (`/api/uncage/*`). Your app's server forwards to the daemon on `127.0.0.1:4783` with the token. The daemon runs Claude Code on the same machine, under that machine's Claude login. So the daemon must run on the machine where the agent should work (a developer laptop, a desktop app, an internal box). It is not a multi-tenant cloud service: don't expose it to the internet or share one Claude login among many users.
-
-**Other frameworks.** `createUncageHandler()` returns standard `(Request) => Promise<Response>` handlers, so it also works in any Fetch-style server route (Remix/React Router, SvelteKit, Hono, Bun). Mount it under `/api/uncage/*` (or pass `basePath`). The UI packages are plain React 19 components.
-
-**Try it from source instead.** Clone this repo, `pnpm install && pnpm build`, `pnpm uncage serve --workspace …`, then `pnpm --filter nextjs-default-chat dev` for the bundled example (Chinese UI) or `pnpm --filter react-headless-chat dev` for the headless one.
-
-Restyle the UI with the `--uncage-*` CSS variables. All classes use the `uc-` prefix. See [`examples/nextjs-default-chat`](examples/nextjs-default-chat).
-
-## The composer
-
-`<AgentChat>`'s prompt box (Claude Code style) has these controls. Each one really changes what the runtime gets. The live E2E against real Claude Code covers model, effort, the permission modes (including bypass), image and file attachments added with the + button, and the running chip. Drag and drop and paste are covered by the mock E2E. Voice input is [pending manual verification](docs/compatibility.md#voice-input-pending-manual-verification-by-the-user-requires-microphone). See [docs/compatibility.md](docs/compatibility.md).
-
-| Control | What it does |
+| | |
 | --- | --- |
-| **Model** (sparkle) | The runtime's own model list. For Claude Code that is `supportedModels()`, with `default` first |
-| **Effort** (brain) | `low`, `medium`, `high`, `xhigh`, `max` |
-| **Permissions** (shield) | `default` (ask before commands and edits), `acceptEdits` (edit files without asking, still ask for commands), `plan` (plan only, change nothing), `auto` (the runtime decides what needs you). `bypassPermissions` appears only when the server allows it (see below) |
-| **Attach** (+), drag and drop, paste | Images show as thumbnails, other files as chips. A pasted screenshot becomes an attachment, pasted text stays text |
-| **Voice** (mic) | Dictation through the browser's Web Speech API. Hidden in browsers without it |
-| **N running** chip | Runs in progress in any session on this server. Click it to jump to one |
-| **Send / Stop** | Enter sends, Shift+Enter is a new line, Enter while an IME is composing never sends. Stop cancels the run |
+| [How it works](https://ptmafia.github.io/uncage/start/how-it-works/) | Architecture and the connect → task → tool call → result sequence |
+| [Concepts](https://ptmafia.github.io/uncage/concepts/) · [Trust model](https://ptmafia.github.io/uncage/concepts/trust-model/) | The vocabulary, and what a website can and cannot do on a user’s computer |
+| [Guides](https://ptmafia.github.io/uncage/guides/define-tools/) | Tools, skills, `selectManifest`, site storage, multi-node, auth and `/device`, custom UI, local policy |
+| [Reference](https://ptmafia.github.io/uncage/reference/cli/) | CLI, HTTP API, error codes, security, troubleshooting, generated TypeScript API |
+| [For coding agents](https://ptmafia.github.io/uncage/start/for-coding-agents/) | Every page as markdown (`.md`), `llms.txt`, `llms-full.txt`, the Uncage skill, copy-paste prompts |
 
-Settings are stored per session. Before the first prompt they belong to the draft and apply when the session is created. In an open session a change applies **from the next run**. A run in progress and its open approval cards keep the settings it started with.
-
-**Bypass permissions** lets the agent run any command and edit any file without asking. It is off by default and the server never offers it then. A crafted `PATCH` gets 403 `policy_denied`. To allow it, set `security.allowBypass: true` in `uncage.config.yaml` or start the daemon with `UNCAGE_ALLOW_BYPASS=1`. `uncage serve` then prints a warning. Even then, choosing it in the UI asks for confirmation and a red banner stays on while it is active.
-
-> **Warning:** only allow bypass on a machine and workspace you are fine with the agent changing without review. It can delete files and run anything your user account can.
-
-**Attachments.**
-
-- Images: `png jpg jpeg gif webp`. Files: `txt md json csv yaml yml xml html css js ts tsx jsx py go rs java rb sh sql log pdf`.
-- At most 10 MB per file and 10 files per message. Claude Code caps images at 5 MB (the Anthropic API's limit).
-- Claude gets images inline. Other files are passed by path, and Claude reads them with its tools.
-- Uploads are stored in the session's workspace at `<workspace>/.uncage/attachments/<sessionId>/<attachmentId>-<name>`. Uploads that were never sent are deleted after 24 hours.
-- `useAttachmentUrl` / `client.attachmentUrl` return a URL under your same-origin proxy (`createUncageHandler`). A plain `<img src>` sends no `Authorization` header, so it only loads because the proxy adds the daemon token on the server; pointed straight at the daemon, it gets 401.
-- Uncage writes `.uncage/.gitignore` (`*`) when it creates `.uncage/`, so attachments are never committed. Your own `.gitignore` is never touched. `uncage doctor` warns (non-fatal) when a workspace is a git repo and `.uncage/` is still not ignored.
-
-**Voice privacy.** The browser does the speech recognition, not Uncage. In Chrome the audio goes to Google's speech service. Uncage only ever sees the resulting text in the prompt box. The first use shows a note saying so.
-
-## Custom UI (headless hooks)
-
-Build your own UI with `@uncage/react`. Wrap your app in `<UncageProvider>` and use these hooks. [`examples/react-headless-chat`](examples/react-headless-chat) is a complete chat built only from them.
-
-| Hook | Returns | Use it for |
-| --- | --- | --- |
-| `useRuntimes()` | `{ runtimes, loading }` | Runtime picker: `status` is `available` / `not_installed` / `auth_required` / …, with `hint` and `installUrl` |
-| `useSessions()` | `{ sessions, activeSessionId, loading, select(id), create(body), reload() }` | Session list, new chat, opening `?session=<id>` |
-| `useSession()` | `{ session, connection, replayIncomplete }` | Header, connection banner |
-| `useRun()` | `{ run, isActive, send(prompt), cancel() }` | Composer and Stop button. `send` resolves `true` once the run is accepted |
-| `useMessages()` | `{ timeline, messages, tools }` | The conversation |
-| `useApprovals()` | `{ pending, all }` | Approval cards |
-| `useApprovalActions()` | `{ decide(id, 'allow' \| 'deny'), pending }` | Allow and Deny buttons, with per-card in-flight state |
-| `useRuntimeCapabilities(id?)` | `RuntimeCapabilities` | Show only the features a runtime supports |
-| `useSessionSettings()` | `{ settings, capabilities, update(patch), pendingForNextRun }` | Model, effort and permission-mode pickers. In a draft they edit the draft, in a session they apply from the next run |
-| `useAttachments()` | `{ items, add(files), remove(localId), clear(), ready, rejected }` | Attach button and chips. `add` checks type, size and count, then uploads |
-| `useAttachmentUrl(id)` | `string` | `<img src>` for an attachment that was sent with a run |
-| `useRunningSessions()` | `{ runs, count }` | "N running" indicator across all sessions (polls every 3 s while the tab is visible) |
-| `useSpeechInput({ lang, onText })` | `{ supported, listening, start(), stop(), error }` | Dictation via the Web Speech API |
-| `useConnection()` | `'connecting' \| 'live' \| 'reconnecting' \| 'offline'` | Connection indicator |
-| `useUncageError()` | `{ error, dismiss }` | Error toast. Every error has a human `message` and a `hint` |
-
-Before the first prompt there is no session yet. Open a draft with `useUncageStore().actions.openDraft(runtimeId)` so settings and files can be picked. Then send with `commitDraft()` (creates the session, applies the draft settings, uploads queued files), then `selectSession(id)`, then `sendPrompt(text)`. The headless example does exactly this.
-
-Lower levels: `@uncage/client` (browser REST + resumable SSE, no React), the HTTP API itself (`/v1/*`, typed in `@uncage/protocol`), or embed the daemon in your own Node process with `createUncage()` (`@uncage/core`) + `createUncageServer()` (`@uncage/server`).
-
-## Security model
-
-- **Loopback only.** The daemon binds to `127.0.0.1:4783`. Requests whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>` get 403.
-- **Bearer token.** Every `/v1/*` call needs `Authorization: Bearer <token>`. The token is in `~/.uncage/token` (mode 600). It is never logged, never put in events, and never sent to the browser. Without it you get 401.
-- **No cross-origin browsers.** A request with an `Origin` header gets 403 unless that origin is listed in `security.allowedOrigins` in `uncage.config.yaml`. The list is empty by default. Browsers talk to the daemon only through your app's same-origin proxy (`createUncageHandler`).
-- **The proxy rejects cross-origin requests, too.** A request whose `Origin` differs from the origin the browser is on (the request scheme plus its `Host` header) gets 403 `forbidden_origin`, and so does a non-GET request marked `Sec-Fetch-Site: cross-site`. Loopback names count as one origin when the scheme and port match (`localhost:3000` = `127.0.0.1:3000`).
-- **DNS-rebinding guard.** The proxy only answers to allowed hostnames, checked against the browser's `Host` header (Next's `req.url` always carries the server's own hostname, so it can't be used; `X-Forwarded-Host` is ignored). By default these are `localhost`, `127.0.0.1` and `[::1]`, on any port. If your app is served under another hostname (a LAN name, a dev domain, a tunnel), list it:
-
-  ```ts
-  createUncageHandler({ allowedHosts: ['app.example.com', 'localhost'] });
-  // or: UNCAGE_ALLOWED_HOSTS=app.example.com,localhost
-  ```
-
-  The list **replaces** the default, so add the loopback names back if you still use them. Use bare hostnames with no scheme or port: the port of the `Host` header is ignored. Bracket IPv6 addresses (`[::1]`). Entries are trimmed and lowercased. Behind a reverse proxy, make sure it forwards the original `Host` header (e.g. nginx `proxy_set_header Host $host;`), since that is what the check sees.
-- **Tool calls are approved by a person by default.** New sessions use `permissionMode: 'default'`. Claude Code still auto-allows what it considers safe (reads, searches, and some read-only shell commands). Everything else becomes an approval card, and pending approvals expire after 10 minutes. A user can pick `acceptEdits`, `plan` or `auto` per session in the composer. `bypassPermissions` (no approvals at all) is available only when the server opts in with `security.allowBypass` / `UNCAGE_ALLOW_BYPASS=1`; otherwise it is never offered and refused with 403 `policy_denied` (see [The composer](#the-composer)).
-- **Workspaces are fenced.** A session's workspace must resolve (after `realpath`, so symlinks are followed) inside `workspace.allowedRoots`. By default that is the directory `uncage serve` was started in, or the `--workspace` folder.
-- **No telemetry.** Logs redact tokens and authorization headers, and they don't contain prompt text at info level. (Next.js, used by the examples, has its own telemetry. Turn it off with `NEXT_TELEMETRY_DISABLED=1`.)
-
-## Configuration
-
-Zero-config works. Optionally add `uncage.config.yaml` in the directory you run `uncage serve` from. Unknown keys are rejected by name.
-
-```yaml
-server:
-  port: 4783
-  eventRetentionDays: 7
-security:
-  allowedOrigins: []      # origins allowed to call the daemon directly (CORS-style); keep empty with the proxy
-  approvalTtlMs: 600000
-  allowBypass: false      # true offers the bypassPermissions mode (no approvals). Env: UNCAGE_ALLOW_BYPASS=1
-workspace:
-  allowedRoots: [/Users/me/code]
-  default: /Users/me/code/my-app
-runtimes:
-  claude: { enabled: true }
-  codex: { enabled: true }  # command: [codex, app-server]
-```
-
-| CLI | |
-| --- | --- |
-| `uncage serve [--port n] [--workspace dir] [--data-dir dir] [--token-file file]` | Start the daemon. Env: `UNCAGE_PORT`, `UNCAGE_LOG_LEVEL`, `UNCAGE_ALLOW_BYPASS=1` |
-| `uncage doctor [--data-dir dir] [--token-file file]` | Check Node, data dir, token, server and runtimes, with a fix for each failure. Warns (`!`, non-fatal) when a workspace is a git repo that does not ignore `.uncage/` |
-| `uncage doctor --export-events <sessionId> [--out file] [--include-content]` | Export a session's events for a bug report (content redacted unless `--include-content`) |
-
-Proxy env (host app): `UNCAGE_URL` (default `http://127.0.0.1:4783`), `UNCAGE_TOKEN` (default: read `~/.uncage/token`), `UNCAGE_ALLOWED_HOSTS`. If you start the daemon with `--token-file`, pass that token to the app as `UNCAGE_TOKEN`.
-
-## Codex status
-
-The Codex adapter (`@uncage/runtime-codex`, which drives `codex app-server` over stdio JSON-RPC) is **implemented, and verified only against a fake app-server**. Its protocol was checked against the official app-server schema, but it has not run against a real `codex` binary. Real-binary details are unverified, for example whether `codex app-server` needs a `--stdio` flag. If you try it, set `runtimes.codex.command` if needed and report what you find. When Codex isn't installed, the UI and `doctor` show it as **not installed** with the hint `npm i -g @openai/codex && codex login`.
+中文：[概览](https://ptmafia.github.io/uncage/zh-cn/)、[快速上手](https://ptmafia.github.io/uncage/zh-cn/start/quickstart-connected/)、[概念](https://ptmafia.github.io/uncage/zh-cn/concepts/)。
 
 ## Packages
 
 | Package | What it is |
 | --- | --- |
-| [`@uncage/cli`](packages/cli) | `uncage serve` / `uncage doctor` |
-| [`@uncage/server`](packages/server) | Local daemon (REST + SSE) and the Next.js same-origin proxy |
+| [`@uncage/hub`](packages/hub) | Connected Mode hub for your website’s Node backend |
+| [`@uncage/agent`](packages/agent) | The daemon on the user’s computer (run by `uncage agent`) |
+| [`@uncage/cli`](packages/cli) | `uncage setup` / `agent` / `sites` / `activity`, and `serve` / `doctor` for Local Mode |
+| [`@uncage/react-ui`](packages/react-ui) | `<AgentChat>`, `<ConnectMachine>`, `<ApproveDevice>`, `<MachineStatus>` |
+| [`@uncage/react`](packages/react) | Headless store and hooks |
+| [`@uncage/client`](packages/client) | Browser transport with resumable SSE |
+| [`@uncage/server`](packages/server) | Local Mode daemon and same-origin proxy |
 | [`@uncage/core`](packages/core) | Sessions, runs, approvals, event log (PGlite) |
 | [`@uncage/protocol`](packages/protocol) | Wire types, Zod schemas, error catalog |
 | [`@uncage/runtime-claude`](packages/runtime-claude) | Claude Code adapter (Claude Agent SDK) |
 | [`@uncage/runtime-codex`](packages/runtime-codex) | Codex adapter (app-server JSON-RPC) |
-| [`@uncage/client`](packages/client) | Browser transport with resumable SSE |
-| [`@uncage/react`](packages/react) | Headless store and hooks |
-| [`@uncage/react-ui`](packages/react-ui) | Default chat UI (`<AgentChat>`) |
-| [`@uncage/testkit`](packages/testkit) | Fake runtime adapter and adapter contract tests |
+| [`@uncage/testkit`](packages/testkit) | Fake runtime adapter and adapter contract tests (private) |
 
 ## Development
 
 ```sh
+pnpm install
 pnpm build && pnpm typecheck && pnpm lint && pnpm test
 pnpm e2e:mock                    # Playwright against a fake runtime (system Chrome)
-UNCAGE_LIVE=1 pnpm e2e:live      # Playwright against REAL Claude Code (uses a little Claude usage)
-pnpm --filter @uncage/runtime-claude smoke   # one real Claude run, prints the raw SDK messages
+UNCAGE_LIVE=1 pnpm e2e:live      # against REAL Claude Code (uses a little Claude usage)
+pnpm --filter docs dev           # the help site, http://localhost:4321/uncage/
 ```
 
-The E2E suites and smoke scripts run TypeScript files directly with `node`, so they need **Node 22.18 or newer**, which strips types by default. They use your installed Google Chrome and never download a browser. The live suite starts its own `uncage serve` on a tmp copy of [`e2e/live/fixture-repo`](e2e/live/fixture-repo), with its own data dir and token file, so it leaves `~/.uncage` alone. Its HTML report and traces go to `e2e/live/results/`. For the bypass spec it starts a second `uncage serve` with `UNCAGE_ALLOW_BYPASS=1` on another tmp copy of the fixture.
-
-## Troubleshooting
-
-- **"The Uncage daemon is not reachable" / "token was not found"**: start `npx uncage serve` first. If the daemon was started with `--token-file`, give the app `UNCAGE_TOKEN`.
-- **403 `forbidden_origin` in the app**: the `Host` your browser sends isn't an allowed hostname, for example you opened the `Network:` URL that `next dev` prints, a dev domain, or a tunnel. Add that hostname (without the port) to `allowedHosts` / `UNCAGE_ALLOWED_HOSTS` (see [Security model](#security-model)). The error message names the rejected host. Behind a reverse proxy, check that it passes the original `Host` header through.
-- **Port 4783 in use**: another `uncage serve` is running, or use `--port 4784` and set `UNCAGE_URL=http://127.0.0.1:4784` for the app.
-- **Claude Code shows "需要登录" (auth required)**: run `claude`, type `/login`, then restart `uncage serve`.
-- Run `npx uncage doctor`. Every failing check prints its fix.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for CI, releases and the help site. MIT licensed.

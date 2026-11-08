@@ -92,6 +92,23 @@ describe('createUncageHandler', () => {
     expect(req?.headers.host).toBe(new URL(endpoint).host);
   });
 
+  it('strips the daemon workspace from proxied /health responses (doctor reads it directly)', async () => {
+    respond = (res) => {
+      res.setHeader('content-type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify({ ok: true, protocol: '1.0', version: '9', workspace: { default: '/secret', allowedRoots: ['/secret'] } }));
+    };
+    const h = createUncageHandler({ endpoint, token: 'tok' });
+    const res = await h.GET(new Request('http://localhost:3000/api/uncage/health'));
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({ ok: true, protocol: '1.0', version: '9' });
+    expect(text).not.toContain('/secret');
+    expect(res.headers.get('content-type')).toContain('application/json');
+    // Other routes pass through byte for byte.
+    const other = await h.GET(new Request('http://localhost:3000/api/uncage/sessions'));
+    expect(JSON.parse(await other.text())).toHaveProperty('workspace');
+  });
+
   it('cross-origin POST → 403 forbidden_origin, not forwarded', async () => {
     const h = createUncageHandler({ endpoint, token: 'tok' });
     const res = await h.POST(
@@ -363,6 +380,40 @@ describe('createUncageHandler', () => {
       expect(await status(h, 'evil.com:3000')).toBe(403);
       expect(await status(h, 'EVIL.com')).toBe(403);
       expect(seen).toHaveLength(0);
+    });
+
+    it('Origin ≠ Host names both headers and the dev/reverse-proxy fix, never the daemon allowedOrigins', async () => {
+      const h = createUncageHandler({ endpoint, token: 'tok' });
+      // Vite `changeOrigin: true`: the browser is on :5201, the dev proxy rewrote Host to the backend.
+      const res = await h.POST(req('127.0.0.1:3200', 'http://localhost:5201', 'http://127.0.0.1:3200/api/uncage/sessions', 'POST'));
+      expect(res.status).toBe(403);
+      const { error } = (await res.json()) as {
+        error: { code: string; message: string; hint: string; details?: Record<string, unknown> };
+      };
+      expect(error.code).toBe('forbidden_origin');
+      expect(error.message).toContain('Origin http://localhost:5201');
+      expect(error.message).toContain('Host 127.0.0.1:3200');
+      expect(error.hint).toContain('changeOrigin: false');
+      expect(error.hint).toContain('proxy_set_header Host $host');
+      expect(`${error.message} ${error.hint}`).not.toMatch(/allowed ?origins/i);
+      expect(error.details).toMatchObject({ reason: 'origin_mismatch', origin: 'http://localhost:5201', host: '127.0.0.1:3200' });
+      expect(seen).toHaveLength(0);
+    });
+
+    it('cross-site fetches and unparseable Host headers get proxy-specific hints', async () => {
+      const h = createUncageHandler({ endpoint, token: 'tok' });
+      const cross = await h.POST(
+        new Request('http://localhost:3000/api/uncage/sessions', { method: 'POST', headers: { 'sec-fetch-site': 'cross-site' } }),
+      );
+      const crossErr = ((await cross.json()) as { error: { message: string; hint: string } }).error;
+      expect(crossErr.message).toContain('Sec-Fetch-Site');
+      expect(`${crossErr.message} ${crossErr.hint}`).not.toMatch(/allowed ?origins/i);
+      const bad = await h.GET(req('a@b:1'));
+      expect(bad.status).toBe(403);
+      const badErr = ((await bad.json()) as { error: { message: string; hint: string } }).error;
+      expect(badErr.message).toContain('Host header');
+      expect(badErr.hint).toContain('allowedHosts');
+      expect(`${badErr.message} ${badErr.hint}`).not.toMatch(/allowed ?origins/i);
     });
 
     it('ignores X-Forwarded-Host', async () => {

@@ -25,6 +25,8 @@ export function claudeCapabilities(o: { models: ModelOption[]; allowBypass: bool
     diffEvents: false,
     mcp: true,
     skills: 'supported',
+    // Site tools run as the in-process `site` MCP server (see site-tools.ts).
+    siteTools: true,
     models: o.models,
     ...(o.modelsAuthoritative ? { modelsAuthoritative: true } : {}),
     efforts: ['low', 'medium', 'high', 'xhigh', 'max'],

@@ -1,6 +1,6 @@
 {
   "name": "@uncage/client",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Browser transport for Uncage: REST calls and resumable SSE",
   "type": "module",
   "engines": {
@@ -8,9 +8,9 @@
   },
   "sideEffects": false,
   "files": [
-    "dist",
+    "LICENSE",
     "README.md",
-    "LICENSE"
+    "dist"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -30,9 +30,15 @@
     "@uncage/protocol": "workspace:^"
   },
   "devDependencies": {
+    "esbuild": "^0.28.2",
     "vitest": "^5.1.0"
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ptmafia/uncage.git",
+    "directory": "packages/client"
+  },
   "keywords": [
     "uncage",
     "agent",
@@ -43,5 +49,9 @@
   "publishConfig": {
     "access": "public"
   },
-  "author": "Nathan Zhang"
+  "author": "Nathan Zhang",
+  "homepage": "https://ptmafia.github.io/uncage/",
+  "bugs": {
+    "url": "https://github.com/ptmafia/uncage/issues"
+  }
 }

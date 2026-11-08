@@ -6,6 +6,9 @@ export const PORTS = { daemon: 4793, control: 4794, defaultChat: 3100, headlessC
 /** The live stack (live-supervisor.ts): real `uncage serve` + both examples. */
 export const LIVE_PORTS = { daemon: 4795, control: 4796, app: 3102, headlessApp: 3103, bypassDaemon: 4798, bypassApp: 3105 } as const;
 
+/** Connected Mode (e2e/connected): the connected-demo website, started by the specs themselves. */
+export const CONNECTED_PORTS = { mock: 3210, multinode: 3220, live: 3230 } as const;
+
 const live = process.env.UNCAGE_LIVE === '1';
 const exampleEnv = (daemonPort: number) => ({ UNCAGE_URL: `http://127.0.0.1:${daemonPort}`, UNCAGE_TOKEN: 'test-token' });
 // Next builds route-handler `req.url` with host `localhost`; loopback.spec.ts covers browsing
@@ -31,7 +34,8 @@ export default defineConfig<ExampleOptions>({
   ...(live ? { outputDir: 'live/results/artifacts' } : {}),
   timeout: 30_000,
   expect: { timeout: 10_000 },
-  use: { channel: 'chrome', headless: true, trace: live ? 'on' : 'retain-on-failure' },
+  // Local runs use the system Chrome; CI installs Playwright's bundled Chromium.
+  use: { ...(process.env.CI ? {} : { channel: 'chrome' as const }), headless: true, trace: live ? 'on' : 'retain-on-failure' },
   projects: [
     {
       name: 'mock-default',
@@ -50,6 +54,27 @@ export default defineConfig<ExampleOptions>({
       // Real model turns: minutes per spec, not seconds.
       timeout: 600_000,
       use: { example: 'default', baseURL: `http://localhost:${LIVE_PORTS.app}` },
+      ...(live ? {} : { testIgnore: '**' }),
+    },
+    {
+      // Connected Mode with the fake runtime: demo site + real hub + real `uncage setup` + real agent.
+      name: 'connected-mock',
+      testDir: './connected',
+      testMatch: 'mock.spec.ts',
+    },
+    {
+      // Two hub nodes on real Redis + Postgres (docker) behind the demo's round-robin proxy. The
+      // spec skips itself (with the reason) unless UNCAGE_DOCKER_TESTS=1.
+      name: 'connected-multinode',
+      testDir: './connected',
+      testMatch: 'multinode.spec.ts',
+    },
+    {
+      // Connected Mode with REAL Claude Code (`uncage setup` + `uncage agent`). UNCAGE_LIVE=1 only.
+      name: 'connected-live',
+      testDir: './connected',
+      testMatch: 'live.spec.ts',
+      timeout: 900_000,
       ...(live ? {} : { testIgnore: '**' }),
     },
   ],

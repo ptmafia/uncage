@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { RuntimeAdapter, RuntimeProbe } from '@uncage/protocol';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from './config.js';
-import { doctorExitCode, exportEvents, formatChecks, runDoctor } from './doctor.js';
+import { DOCTOR_HELP, doctorExitCode, exportEvents, formatChecks, nonLoopbackWarning, parseDoctorArgs, runDoctor } from './doctor.js';
 import { ensureToken, ensureTokenAt } from './token.js';
 
 const adapter = (id: string, probe: RuntimeProbe): RuntimeAdapter =>
@@ -130,6 +130,94 @@ describe('runDoctor', () => {
     expect(checks.find((c) => c.id === 'token')).toMatchObject({ ok: true });
     expect(checks.find((c) => c.id === 'token')?.detail).toContain(path);
     expect(auth).toBe(`Bearer ${token}`);
+  });
+});
+
+describe('doctor flags: --port, --url, UNCAGE_URL, --workspace, --help (F5)', () => {
+  const healthFetch = (seen: string[], body: unknown = { ok: true, protocol: '1.0', version: '0' }) =>
+    (async (url: string) => {
+      seen.push(url);
+      return new Response(JSON.stringify(body));
+    }) as unknown as typeof fetch;
+
+  it('parseDoctorArgs: --url > --port > UNCAGE_URL > UNCAGE_PORT/config', async () => {
+    const { config } = await setup();
+    const cwd = '/here';
+    expect(parseDoctorArgs([], {}, config, cwd).serverUrl).toBe('http://127.0.0.1:4783');
+    expect(parseDoctorArgs([], { UNCAGE_URL: 'http://127.0.0.1:4900/' }, config, cwd).serverUrl).toBe('http://127.0.0.1:4900');
+    expect(parseDoctorArgs(['--port', '4800'], { UNCAGE_URL: 'http://127.0.0.1:4900' }, config, cwd).serverUrl).toBe(
+      'http://127.0.0.1:4800',
+    );
+    expect(parseDoctorArgs(['--url', 'http://localhost:5000', '--port', '4800'], {}, config, cwd).serverUrl).toBe(
+      'http://localhost:5000',
+    );
+    expect(() => parseDoctorArgs(['--port', 'abc'], {}, config, cwd)).toThrow(/--port/);
+    const o = parseDoctorArgs(['--workspace', 'ws', '--data-dir', 'd', '--token-file', 't'], {}, config, cwd);
+    expect(o).toMatchObject({ workspace: '/here/ws', dataDir: '/here/d', tokenFile: '/here/t', help: false });
+  });
+
+  it('--help / -h is accepted and documents --port and UNCAGE_URL', async () => {
+    const { config } = await setup();
+    expect(parseDoctorArgs(['--help'], {}, config, '/').help).toBe(true);
+    expect(parseDoctorArgs(['-h'], {}, config, '/').help).toBe(true);
+    expect(DOCTOR_HELP).toContain('--port');
+    expect(DOCTOR_HELP).toContain('UNCAGE_URL');
+  });
+
+  it('probes the configured server URL and names the port in the fix when it is down', async () => {
+    const { home, config } = await setup();
+    const seen: string[] = [];
+    await runDoctor({ config, home, fetch: healthFetch(seen), adapters: [], serverUrl: 'http://127.0.0.1:4800' });
+    expect(seen).toEqual(['http://127.0.0.1:4800/v1/health']);
+    const down = await runDoctor({ config, home, fetch: downFetch, adapters: [], serverUrl: 'http://127.0.0.1:4800' });
+    expect(down.find((c) => c.id === 'server')?.fix).toBe('uncage serve --port 4800');
+    const atDefault = await runDoctor({ config, home, fetch: downFetch, adapters: [] });
+    expect(atDefault.find((c) => c.id === 'server')?.detail).toContain('--port');
+  });
+
+  it('warns before sending the token to a non-loopback --url / UNCAGE_URL', async () => {
+    expect(nonLoopbackWarning('http://127.0.0.1:4800')).toBeUndefined();
+    expect(nonLoopbackWarning('http://localhost:4800')).toBeUndefined();
+    expect(nonLoopbackWarning('http://[::1]:4800')).toBeUndefined();
+    const w = nonLoopbackWarning('http://192.168.1.20:4783');
+    expect(w).toContain('192.168.1.20');
+    expect(w).toMatch(/token/i);
+    const { home, config } = await setup();
+    const checks = await runDoctor({ config, home, fetch: okFetch, adapters: [], serverUrl: 'http://box.lan:4783' });
+    const i = checks.findIndex((c) => c.id === 'serverUrl');
+    expect(checks[i]).toMatchObject({ ok: false, warn: true });
+    expect(i).toBeLessThan(checks.findIndex((c) => c.id === 'server'));
+    expect(doctorExitCode(checks)).toBe(0);
+    const local = await runDoctor({ config, home, fetch: okFetch, adapters: [] });
+    expect(local.some((c) => c.id === 'serverUrl')).toBe(false);
+  });
+
+  it('checks git-ignore in the workspace the daemon reports, not the current directory', async () => {
+    const { home, config } = await setup();
+    const cwdRepo = await gitRepo(); // where doctor runs (config default = cwd)
+    const daemonRepo = await gitRepo(); // where the daemon actually writes
+    const checks = await runDoctor({
+      config: { ...config, workspace: { allowedRoots: [cwdRepo], default: cwdRepo } },
+      home,
+      adapters: [],
+      fetch: healthFetch([], { ok: true, protocol: '1.0', version: '0', workspace: { default: daemonRepo, allowedRoots: [daemonRepo] } }),
+    });
+    expect(checks.some((c) => c.id === `gitignore.${cwdRepo}`)).toBe(false);
+    expect(checks.find((c) => c.id === `gitignore.${daemonRepo}`)).toMatchObject({ ok: false, warn: true });
+  });
+
+  it('an explicit --workspace wins over the daemon and the config', async () => {
+    const { home, config } = await setup();
+    const cwdRepo = await gitRepo();
+    const chosen = await gitRepo();
+    const checks = await runDoctor({
+      config: { ...config, workspace: { allowedRoots: [cwdRepo], default: cwdRepo } },
+      home,
+      adapters: [],
+      fetch: okFetch,
+      workspaces: [chosen],
+    });
+    expect(checks.filter((c) => c.id.startsWith('gitignore.')).map((c) => c.id)).toEqual([`gitignore.${chosen}`]);
   });
 });
 

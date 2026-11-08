@@ -276,3 +276,106 @@ describe('subscribe', () => {
     expect(states).toEqual(['connecting', 'reconnecting', 'offline']);
   });
 });
+
+describe('structural guards (no zod in the browser path)', () => {
+  it('isErrorBody accepts daemon error bodies and rejects partial ones', async () => {
+    const { isErrorBody } = await import('./index.js');
+    expect(isErrorBody({ code: 'session_busy', message: 'busy', retryable: false, hint: 'wait', details: { a: 1 } })).toBe(true);
+    expect(isErrorBody({ code: 'session_busy', message: 'busy' })).toBe(false);
+    expect(isErrorBody({ code: 1, message: 'x', retryable: true })).toBe(false);
+    expect(isErrorBody({ code: 'x', message: 'x', retryable: true, hint: 3 })).toBe(false);
+    expect(isErrorBody(null)).toBe(false);
+  });
+
+  it('isUncageEvent checks the envelope and lets unknown (newer) event types through', async () => {
+    const { isUncageEvent } = await import('./index.js');
+    expect(isUncageEvent(evt(1))).toBe(true);
+    expect(isUncageEvent({ ...evt(1), type: 'future.thing' })).toBe(true);
+    expect(isUncageEvent({ ...evt(1), sequence: -1 })).toBe(false);
+    expect(isUncageEvent({ ...evt(1), sequence: 1.5 })).toBe(false);
+    expect(isUncageEvent({ ...evt(1), payload: null })).toBe(false);
+    expect(isUncageEvent({ ...evt(1), runId: 5 })).toBe(false);
+    expect(isUncageEvent({ nope: 1 })).toBe(false);
+  });
+
+  it('isUncageEvent checks the ids React relies on for known types', async () => {
+    const { isUncageEvent } = await import('./index.js');
+    const e = (type: string, payload: unknown) => ({ ...evt(1), type, payload });
+    expect(isUncageEvent(e('session.updated', { session: { id: 'ses_1' } }))).toBe(true);
+    expect(isUncageEvent(e('session.created', { session: {} }))).toBe(false);
+    expect(isUncageEvent(e('run.started', { run: { id: 'run_1' } }))).toBe(true);
+    expect(isUncageEvent(e('run.started', { runId: 'run_1' }))).toBe(false);
+    expect(isUncageEvent(e('run.completed', { runId: 'run_1', durationMs: 1 }))).toBe(true);
+    expect(isUncageEvent(e('run.failed', {}))).toBe(false);
+    expect(isUncageEvent(e('approval.requested', { approval: { id: 'apr_1' } }))).toBe(true);
+    expect(isUncageEvent(e('approval.resolved', { approval: 'x' }))).toBe(false);
+    expect(isUncageEvent(e('message.delta', { messageId: 'm1', chunkIndex: 0, text: 'x' }))).toBe(true);
+    expect(isUncageEvent(e('message.delta', { chunkIndex: 0, text: 'x' }))).toBe(false);
+    expect(isUncageEvent(e('tool.started', { toolId: 't1' }))).toBe(true);
+    expect(isUncageEvent(e('tool.completed', {}))).toBe(false);
+  });
+
+  it('drops a malformed known-type frame with one warning and keeps streaming', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const bad = (seq: number) => `data: ${JSON.stringify({ ...evt(seq), type: 'run.completed', payload: {} })}\n\n`;
+    const fetch = vi.fn(async () => sseResponse([bad(1), bad(2), frame(3)]));
+    const events: number[] = [];
+    const unsub = createUncageClient({ fetch }).subscribe('ses_1', { after: 0, onEvent: (ev) => events.push(ev.sequence) });
+    await vi.advanceTimersByTimeAsync(0);
+    unsub();
+    expect(events).toEqual([3]);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('a non-conforming error body becomes a generic http_status error', async () => {
+    const fetch = vi.fn<F>(async () => json({ error: { code: 'session_busy' } }, 409));
+    const err = await createUncageClient({ fetch }).listSessions().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UncageClientError);
+    expect(err).toMatchObject({ code: 'internal_error', status: 409, details: { reason: 'http_status', status: 409 } });
+  });
+});
+
+describe('connected mode (hub machines)', () => {
+  const machine = {
+    id: 'mac_1',
+    name: 'MacBook',
+    os: 'darwin',
+    agentVersion: '0.2.0',
+    runtimes: [],
+    online: true,
+    lastSeenAt: '2026-11-07T00:00:00.000Z',
+  };
+
+  it('machines() GETs <base>/machines', async () => {
+    const fetch = vi.fn<F>(async () => json([machine]));
+    expect(await createUncageClient({ fetch, baseUrl: '/hub' }).machines()).toEqual([machine]);
+    expect(fetch.mock.calls[0]![0]).toBe('/hub/machines');
+    expect(fetch.mock.calls[0]![1]!.method).toBe('GET');
+  });
+
+  it('machines() against a daemon (no /machines) rejects with status 404', async () => {
+    const fetch = vi.fn<F>(async () => json({ error: { code: 'not_found', message: 'No route', retryable: false } }, 404));
+    await expect(createUncageClient({ fetch }).machines()).rejects.toMatchObject({ code: 'not_found', status: 404 });
+  });
+
+  it('installInfo() GETs <base>/machines/install', async () => {
+    const info = { install: 'curl -fsSL https://x/install.sh | bash', setup: 'uncage setup https://x', windows: null };
+    const fetch = vi.fn<F>(async () => json(info));
+    expect(await createUncageClient({ fetch }).installInfo()).toEqual(info);
+    expect(fetch.mock.calls[0]![0]).toBe('/api/uncage/machines/install');
+  });
+
+  it('revokeMachine() DELETEs <base>/machines/:id (encoded)', async () => {
+    const fetch = vi.fn<F>(async () => json({ ok: true }));
+    await createUncageClient({ fetch }).revokeMachine('mac 1');
+    expect(fetch.mock.calls[0]![0]).toBe('/api/uncage/machines/mac%201');
+    expect(fetch.mock.calls[0]![1]!.method).toBe('DELETE');
+  });
+
+  it('createSession forwards machineId', async () => {
+    const fetch = vi.fn<F>(async () => json({ id: 'ses_1' }, 201));
+    await createUncageClient({ fetch }).createSession({ runtime: 'claude', machineId: 'mac_1' });
+    expect(JSON.parse(fetch.mock.calls[0]![1]!.body as string)).toEqual({ runtime: 'claude', machineId: 'mac_1' });
+  });
+});

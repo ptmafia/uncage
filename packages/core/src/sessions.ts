@@ -12,7 +12,7 @@ import {
 import { UncageError } from './errors.js';
 import type { EventLog } from './event-log.js';
 import type { AdapterRegistry } from './registry.js';
-import type { RunManager } from './runs.js';
+import type { RunManager, StartRunOptions } from './runs.js';
 import { mergeSettings, type SecurityPolicy } from './settings.js';
 import type { Store } from './store/store.js';
 import { resolveWorkspace } from './workspace.js';
@@ -21,8 +21,11 @@ export interface SessionHandle {
   readonly id: string;
   get(): Promise<Session>;
   snapshot(): Promise<SessionSnapshot>;
-  /** Returns once the run is queued; execution continues in the background. */
-  startRun(b: StartRunBody & { idempotencyKey?: string }): Promise<Run>;
+  /**
+   * Returns once the run is queued; execution continues in the background. `manifest` (connected
+   * mode) offers site tools and skills to the runtime for this run; tool calls go to `callTool`.
+   */
+  startRun(b: StartRunBody & StartRunOptions): Promise<Run>;
   /** Replays from the store, then streams live events. Never ends on its own; abort via `signal`. */
   events(opts?: { after?: number; signal?: AbortSignal }): AsyncIterable<UncageEvent>;
 }
@@ -30,6 +33,19 @@ export interface SessionHandle {
 export interface WorkspaceConfig {
   allowedRoots: string[];
   default: string;
+}
+
+/** Shape of ids from `newId('ses')`; a caller-chosen id must match it. */
+const SESSION_ID = /^ses_[a-z0-9]{8,64}$/;
+
+/** Longest title derived from a prompt, in characters (code points). */
+export const MAX_TITLE_LENGTH = 60;
+
+/** A session title from a prompt: whitespace collapsed, trimmed, cut to 60 characters with `…`. */
+export function titleFromPrompt(prompt: string): string {
+  const chars = [...prompt.replace(/\s+/g, ' ').trim()];
+  if (chars.length <= MAX_TITLE_LENGTH) return chars.join('');
+  return `${chars.slice(0, MAX_TITLE_LENGTH - 1).join('').trimEnd()}…`;
 }
 
 /** Strips store-internal fields from a stored session. */
@@ -53,7 +69,11 @@ export class SessionService {
     private readonly policy: SecurityPolicy,
   ) {}
 
-  async create(b: CreateSessionBody): Promise<SessionHandle> {
+  async create(b: CreateSessionBody, opts: { id?: string } = {}): Promise<SessionHandle> {
+    if (opts.id !== undefined) {
+      if (!SESSION_ID.test(opts.id)) throw new UncageError('invalid_request', { message: 'Invalid session id.' });
+      if (await this.store.getSession(opts.id)) throw new UncageError('invalid_request', { message: `Session ${opts.id} already exists.` });
+    }
     const adapter = this.registry.require(b.runtime);
     const info = await this.registry.info(adapter.id);
     if (info.status !== 'available') {
@@ -65,9 +85,10 @@ export class SessionService {
     }
     const workspace = await resolveWorkspace(b.workspace, this.workspace);
     const session: Session = {
-      id: newId('ses'),
+      id: opts.id ?? newId('ses'),
       runtimeId: adapter.id,
       workspace,
+      // Untitled sessions show the workspace folder until their first prompt names them (RunManager).
       title: b.title ?? basename(workspace),
       status: 'ready',
       readOnly: false,

@@ -1,0 +1,45 @@
+/* Uncage help site: Kumi-like neutral palette with a warm accent. */
+:root {
+  --sl-color-accent-low: #3b2a17;
+  --sl-color-accent: #d97a2b;
+  --sl-color-accent-high: #f6d5b5;
+  --sl-content-width: 48rem;
+}
+:root[data-theme='light'] {
+  --sl-color-accent-low: #fbe7d3;
+  --sl-color-accent: #b85e14;
+  --sl-color-accent-high: #5a2e09;
+}
+
+.uc-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.uc-md-link {
+  font-size: var(--sl-text-xs);
+  white-space: nowrap;
+  color: var(--sl-color-gray-3);
+  text-decoration: none;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+}
+.uc-md-link:hover {
+  color: var(--sl-color-white);
+  border-color: var(--sl-color-gray-3);
+}
+
+/* Mermaid diagrams: centered, never wider than the column. */
+pre.mermaid,
+.mermaid {
+  display: flex;
+  justify-content: center;
+  background: transparent;
+}
+.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
