@@ -17,7 +17,7 @@ afterEach(async () => {
   for (const c of closers.splice(0).reverse()) await c().catch(() => undefined);
 });
 
-async function setup(o: { cluster?: ClusterAdapter; maintenance?: HubOptions['maintenance'] } & HubInternals = {}): Promise<{ hub: Hub; server: Server; origin: string; store: HubStore }> {
+async function setup(o: { cluster?: ClusterAdapter; maintenance?: HubOptions['maintenance']; rateLimits?: HubOptions['rateLimits'] } & HubInternals = {}): Promise<{ hub: Hub; server: Server; origin: string; store: HubStore }> {
   const store = await pgliteHubStore({ dataDir: 'memory://' });
   closers.push(() => store.close());
   const server = createServer();
@@ -108,6 +108,18 @@ describe('attachWebSocket', () => {
     closers.push(() => agent.close());
     expect(agent.frames[0]?.t).toBe('welcome');
     expect(await dial(`${origin.replace('http', 'ws')}/api/uncage/agent`, tok.machineToken)).not.toBe('open');
+  });
+
+  it('wrong tokens on the upgrade count against agentAuthFailuresPerMinute: 429 once over it', async () => {
+    const { hub, server, origin } = await setup({ rateLimits: { agentAuthFailuresPerMinute: 2 } });
+    attachWebSocket(hub, server);
+    const wsUrl = `${origin.replace('http', 'ws')}/api/uncage/agent`;
+    const results: string[] = [];
+    for (let i = 0; i < 4; i++) results.push(await dial(wsUrl, 'x'.repeat(43)));
+    expect(results).toEqual(['401', '401', '429', '429']);
+    // A valid token is never limited.
+    const tok = await pair(hub, origin);
+    expect(await dial(wsUrl, tok.machineToken)).toBe('open');
   });
 
   it('accepts a lower-case bearer scheme', async () => {

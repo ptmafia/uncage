@@ -677,6 +677,15 @@ describe('HTTP transport — fix round 1', () => {
     expect((await errorOf(res)).message).toMatch(/shutting down/);
   });
 
+  it('/machine/revoke on a closed hub is a retryable 5xx, never the 401 the CLI reads as "already revoked"', async () => {
+    const hubs = await faas({ n: 1 });
+    const { token } = await hubs.pair('u1');
+    await hubs.hubs[0]!.close();
+    const res = await hubs.fetch('/machine/revoke', { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+    expect(res.status).toBe(500);
+    expect((await errorOf(res)).message).toMatch(/shutting down/);
+  });
+
   it('minAgentVersion defaults to MIN_AGENT_VERSION from the protocol, not the hub version', async () => {
     const hubs = await faas({ n: 1 });
     const info = AgentInfoSchema.parse(await (await hubs.fetch('/agent/info')).json());

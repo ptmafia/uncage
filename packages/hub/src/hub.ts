@@ -487,6 +487,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
       heartbeat: machines.heartbeat,
       maintenance: { intervalMs: maintenanceIntervalMs },
       defaultCluster: ownsCluster,
+      agentAuthFailed: (req, info) => agentAuthFailures.take(clientKey(req, info)),
     },
   };
 }

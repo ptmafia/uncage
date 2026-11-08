@@ -548,6 +548,25 @@ describe('stored results come first; one outcome per call', () => {
   });
 });
 
+describe('hub.close() starts no new tool calls', () => {
+  it('a call arriving while close() drains is not executed or recorded (the agent retries elsewhere)', async () => {
+    let runs = 0;
+    const tools = [defineTool({ name: 'quick', description: 'x', input: z.object({}), handler: async () => (runs++, await sleep(300), 'ok') })];
+    const one = await wsSetup(tools, { toolDrainMs: 2_000 });
+    one.a.send(one.frame('tc_first', 'quick'));
+    await until(async () => (await one.t.store.listToolCalls(one.s.id))[0]?.status === 'running');
+    const closing = one.t.hub.close();
+    await sleep(20);
+    one.a.send(one.frame('tc_late', 'quick'));
+    await sleep(100);
+    await closing;
+    expect(runs).toBe(1);
+    const rows = await one.t.store.listToolCalls(one.s.id);
+    expect(rows.map((r) => r.callId)).toEqual(['tc_first']);
+    expect(rows[0]).toMatchObject({ status: 'ok' });
+  });
+});
+
 describe('resends of a running call are cheap', () => {
   it('N resends of a running call: N getToolCall reads, no session lookups, subscribes or claims', async () => {
     let release!: () => void;

@@ -84,13 +84,7 @@ export function attachWebSocket(hub: Hub, server: Server, o: { path?: string } =
           socket.end(`HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\n\r\n`);
           return;
         }
-        if (!machine) {
-          socket.end(
-            `HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n` +
-              JSON.stringify({ error: new UncageError('unauthorized', { message: 'Missing or invalid machine token.', hint: 'Run `uncage setup <site>` again to pair this machine.' }).toBody() }),
-          );
-          return;
-        }
+        if (!machine) return refuseToken(req, socket);
         wss.handleUpgrade(req, socket, head, (ws) => onSocket(ws, machine, machines, h, logger));
       })
       .catch((err: unknown) => {
@@ -98,6 +92,29 @@ export function attachWebSocket(hub: Hub, server: Server, o: { path?: string } =
         socket.destroy();
       });
   };
+  /** A missing or wrong token: counts against the `agent_auth` limit like HTTP; 429 once over it, else 401. */
+  async function refuseToken(req: IncomingMessage, socket: Duplex): Promise<void> {
+    try {
+      const headers = new Headers();
+      for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v);
+      const ip = req.socket.remoteAddress;
+      await h.agentAuthFailed(new Request(`http://hub${req.url ?? '/'}`, { headers }), ip ? { clientIp: ip } : {});
+    } catch (err) {
+      if (err instanceof UncageError && err.code === 'rate_limited') {
+        const retry = Number(err.details?.['retryAfterSec']) || 60;
+        socket.end(
+          `HTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\nRetry-After: ${retry}\r\nConnection: close\r\n\r\n` + JSON.stringify({ error: err.toBody() }),
+        );
+        return;
+      }
+      logger.error({ err }, 'counting a failed machine token failed');
+    }
+    socket.end(
+      `HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n` +
+        JSON.stringify({ error: new UncageError('unauthorized', { message: 'Missing or invalid machine token.', hint: 'Run `uncage setup <site>` again to pair this machine.' }).toBody() }),
+    );
+  }
+
   server.on('upgrade', listener);
   h.enableWebSocket({ path });
 

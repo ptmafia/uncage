@@ -233,6 +233,11 @@ export interface HubInternalsHandle {
   heartbeat: { pingIntervalMs: number; missedPings: number };
   /** Maintenance interval: a long-running process calls `hub.maintain()` this often. */
   maintenance: { intervalMs: number };
+  /**
+   * Counts one failed machine-token check for the caller (the same `agent_auth` limit as the HTTP
+   * agent routes); throws `rate_limited` once over it.
+   */
+  agentAuthFailed(req: Request, info?: { clientIp?: string }): Promise<void>;
   /** No `cluster` option: presence and command replies stay inside this instance (`memoryCluster`). */
   defaultCluster: boolean;
 }

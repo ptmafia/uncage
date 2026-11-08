@@ -334,6 +334,8 @@ export function browserApi(ctx: ApiContext) {
 
   // `uncage sites remove`: the machine revokes itself with its own token.
   add('POST', '/machine/revoke', async ({ req, clientKey }) => {
+    // Closing: a retryable 5xx, never the 401 the CLI would read as "already revoked".
+    if (ctx.shutdown.aborted) throw new UncageError('internal_error', { message: 'The hub is shutting down; reconnect.', hint: 'Try again: another instance will serve the request.' });
     const m = /^Bearer (\S+)$/i.exec(req.headers.get('authorization') ?? '');
     const machine = m ? await machines.authenticate(m[1]!) : null;
     if (!machine) {
