@@ -1,14 +1,55 @@
-/* Uncage help site: Kumi-like neutral palette with a warm accent. */
+/* Uncage help site: brand tokens (warm paper, ink, orange accent) mapped onto Starlight. */
+@import '../../../../brand/tokens.css';
+
+/*
+ * Starlight's scale means the same thing in both themes (white = strongest text, black = page
+ * background), and the --uc-* tokens switch with [data-theme], so one mapping covers both.
+ * Unlayered rules here win over Starlight's @layer defaults.
+ */
 :root {
-  --sl-color-accent-low: #3b2a17;
-  --sl-color-accent: #d97a2b;
-  --sl-color-accent-high: #f6d5b5;
+  --sl-font: var(--uc-font-sans);
+  --sl-font-mono: var(--uc-font-mono);
   --sl-content-width: 48rem;
+
+  --sl-color-white: var(--uc-ink);
+  --sl-color-gray-1: var(--uc-ink);
+  --sl-color-gray-2: var(--uc-ink-2);
+  /* gray-3 carries small muted text, so it sits between ink-2 and ink-3 to stay AA. */
+  --sl-color-gray-3: color-mix(in srgb, var(--uc-ink-2) 50%, var(--uc-ink-3));
+  --sl-color-gray-4: var(--uc-ink-3);
+  --sl-color-gray-5: var(--uc-line);
+  --sl-color-gray-6: var(--uc-paper-2);
+  --sl-color-gray-7: var(--uc-paper-2);
+  --sl-color-black: var(--uc-paper);
+
+  --sl-color-accent-low: var(--uc-accent-soft);
+  --sl-color-accent: var(--uc-accent);
+  --sl-color-text-accent: var(--uc-accent-ink);
+  --sl-color-bg-accent: var(--uc-accent-ink);
+
+  --sl-color-text: var(--uc-ink-2);
+  --sl-color-bg: var(--uc-paper);
+  --sl-color-bg-nav: var(--uc-paper);
+  --sl-color-bg-sidebar: var(--uc-paper);
+  --sl-color-bg-inline-code: var(--uc-paper-2);
+  --sl-color-hairline-light: var(--uc-line);
+  --sl-color-hairline: var(--uc-line);
+  --sl-color-hairline-shade: var(--uc-line);
 }
 :root[data-theme='light'] {
-  --sl-color-accent-low: #fbe7d3;
-  --sl-color-accent: #b85e14;
   --sl-color-accent-high: #5a2e09;
+  --sl-color-text-invert: #ffffff;
+}
+:root[data-theme='dark'] {
+  --sl-color-accent-high: #f6d5b5;
+  --sl-color-text-invert: var(--uc-paper);
+}
+
+/* Brand lockup: wordmark in ink beside the mark, as on the website. */
+.site-title {
+  color: var(--sl-color-white);
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .uc-title {
@@ -42,4 +83,18 @@ pre.mermaid,
 .mermaid svg {
   max-width: 100%;
   height: auto;
+}
+
+/* CJK glyph forms follow the page language: the brand stack lists 'PingFang SC' before the Japanese fonts,
+   so Japanese pages would otherwise render kanji with Chinese forms. Mirrors apps/site. */
+:root:lang(ja) {
+  --sl-font: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'Hiragino Sans',
+    'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', 'Yu Gothic', Meiryo, 'Noto Sans JP', 'Noto Sans CJK JP', system-ui,
+    sans-serif;
+  --uc-font-sans: var(--sl-font);
+}
+:root:lang(zh-CN) {
+  --sl-font: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans SC', system-ui, sans-serif;
+  --uc-font-sans: var(--sl-font);
 }

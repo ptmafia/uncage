@@ -1,0 +1,97 @@
+---
+import Icon, { type IconName } from './Icon.astro';
+import { docsPath, getDict, type Locale } from '../i18n/index.ts';
+
+interface Props {
+  locale: Locale;
+}
+
+const { locale } = Astro.props;
+const t = getDict(locale).security;
+const icons: IconName[] = ['shield', 'user', 'sliders', 'list'];
+const parts = (body: string) => body.split('{activity}');
+---
+
+<section class="section" id="security" aria-labelledby="security-title">
+  <div class="wrap">
+    <p class="kicker">{t.kicker}</p>
+    <h2 class="h2" id="security-title">{t.title}</h2>
+    <p class="sub">{t.sub}</p>
+    <ul class="trust" role="list">
+      {
+        t.points.map((p, i) => {
+          const [a, b] = parts(p.body);
+          return (
+            <li>
+              <span class="ic">
+                <Icon name={icons[i]!} size={20} />
+              </span>
+              <h3>{p.title}</h3>
+              <p>
+                {a}
+                {b !== undefined && (
+                  <>
+                    <code class="inline-code" translate="no">
+                      uncage activity
+                    </code>
+                    {b}
+                  </>
+                )}
+              </p>
+            </li>
+          );
+        })
+      }
+    </ul>
+    <p class="more">
+      <a class="text-link" href={docsPath(locale, 'concepts/trust-model/')}>
+        {t.more}
+        <Icon name="arrow" size={16} />
+      </a>
+    </p>
+  </div>
+</section>
+
+<style>
+  .trust {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 28px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  li {
+    border-left: 2px solid var(--uc-accent);
+    padding: 2px 0 2px 20px;
+  }
+  .ic {
+    display: block;
+    color: var(--uc-accent-ink);
+    margin-bottom: 14px;
+  }
+  h3 {
+    margin: 0 0 8px;
+    font-size: 17px;
+    font-weight: 680;
+  }
+  li p {
+    margin: 0;
+    font-size: 15px;
+    color: var(--uc-ink-2);
+  }
+  .more {
+    margin: 40px 0 0;
+  }
+  @media (max-width: 960px) {
+    .trust {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      row-gap: 36px;
+    }
+  }
+  @media (max-width: 520px) {
+    .trust {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

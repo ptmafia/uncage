@@ -66,4 +66,4 @@ Every error is JSON with the HTTP status of its code:
 { "code": "machine_offline", "message": "The machine is offline.", "hint": "Make sure the Uncage agent is running on that machine and connected to the internet.", "retryable": true, "requestId": "req_…" }
 ```
 
-`details` is added where useful (for example `details.reason`, `details.retryAfterSec`). The full list is in [Error codes](/uncage/reference/errors/).
+`details` is added where useful (for example `details.reason`, `details.retryAfterSec`). The full list is in [Error codes](/docs/reference/errors/).

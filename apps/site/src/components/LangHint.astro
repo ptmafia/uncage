@@ -1,0 +1,143 @@
+---
+/**
+ * One-time, dismissible suggestion to read the page in the visitor's language (zh / ja), shown
+ * only when navigator.language prefers it, the page is in another language, and the visitor has
+ * not answered before (localStorage['uc-lang-hint']). Fixed to the bottom, so it never shifts the layout.
+ */
+import Icon from './Icon.astro';
+import { getDict, localeInfo, localePath, pendingLocales, type Locale } from '../i18n/index.ts';
+
+interface Props {
+  locale: Locale;
+  path?: string;
+}
+
+const { locale, path = '/' } = Astro.props;
+// Locales still on the English placeholder (see src/i18n/zh.ts / ja.ts) are not suggested.
+const targets = (['zh', 'ja'] as const).filter((l) => l !== locale && !pendingLocales.includes(l));
+---
+
+{
+  targets.map((l) => {
+    const h = getDict(l).langHint;
+    return (
+      <div class="lang-hint" data-lang-hint={l} lang={localeInfo[l].lang} role="region" aria-label={localeInfo[l].label} hidden>
+        <Icon name="globe" size={18} class="lang-hint-ic" />
+        <p>{h.text}</p>
+        <a class="lang-hint-go" href={localePath(l, path)} data-lang-choice={l}>
+          {h.switch}
+          <Icon name="arrow" size={15} />
+        </a>
+        <button type="button" class="lang-hint-x" data-lang-dismiss aria-label={h.dismiss} title={h.dismiss}>
+          <Icon name="x" size={16} />
+        </button>
+      </div>
+    );
+  })
+}
+
+<script is:inline define:vars={{ page: locale }}>
+  (() => {
+    const KEY = 'uc-lang-hint';
+    let store;
+    try {
+      store = window.localStorage;
+      if (store.getItem(KEY)) return;
+    } catch {
+      return;
+    }
+    const pref = (navigator.languages && navigator.languages[0]) || navigator.language || '';
+    // Simplified Chinese only (zh, zh-CN, zh-SG, zh-Hans…); zh-TW / zh-HK read Traditional Chinese.
+    const want = /^zh(-(cn|sg|hans)(-.*)?)?$/i.test(pref) ? 'zh' : /^ja(-.*)?$/i.test(pref) ? 'ja' : null;
+    if (!want || want === page) return;
+    const bar = document.querySelector(`[data-lang-hint="${want}"]`);
+    if (!bar) return;
+    bar.hidden = false;
+    const remember = (v) => {
+      try {
+        store.setItem(KEY, v);
+      } catch {}
+    };
+    bar.querySelector('[data-lang-dismiss]')?.addEventListener('click', () => {
+      remember('dismissed');
+      bar.hidden = true;
+    });
+    bar.querySelector('[data-lang-choice]')?.addEventListener('click', () => remember(want));
+  })();
+</script>
+
+<style>
+  .lang-hint {
+    position: fixed;
+    left: 50%;
+    bottom: 20px;
+    z-index: 60;
+    transform: translateX(-50%);
+    width: max-content;
+    max-width: calc(100vw - 24px);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 8px 8px 16px;
+    border-radius: 999px;
+    background: var(--uc-ink);
+    color: var(--uc-paper);
+    box-shadow: 0 20px 40px -16px rgb(0 0 0 / 0.45);
+    font-size: 14px;
+    animation: hint-in 0.35s ease-out both;
+  }
+  .lang-hint[hidden] {
+    display: none;
+  }
+  .lang-hint p {
+    margin: 0;
+  }
+  .lang-hint :global(.lang-hint-ic) {
+    flex: none;
+    opacity: 0.8;
+  }
+  .lang-hint-go {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--uc-paper);
+    color: var(--uc-ink);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .lang-hint-x {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  .lang-hint-x:hover {
+    background: rgb(255 255 255 / 0.12);
+  }
+  @media (max-width: 560px) {
+    .lang-hint {
+      border-radius: 18px;
+      flex-wrap: wrap;
+      left: 12px;
+      right: 12px;
+      transform: none;
+      width: auto;
+    }
+    .lang-hint p {
+      flex: 1;
+    }
+  }
+  @keyframes hint-in {
+    from {
+      opacity: 0;
+      translate: 0 12px;
+    }
+  }
+</style>

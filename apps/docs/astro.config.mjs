@@ -4,7 +4,7 @@ import { defineConfig } from 'astro/config';
 import mermaid from 'astro-mermaid';
 import starlightLinksValidator from 'starlight-links-validator';
 import { createStarlightTypeDocPlugin } from 'starlight-typedoc';
-import { sections } from './src/nav.mjs';
+import { SITE_ORIGIN, sections } from './src/nav.mjs';
 
 /**
  * Public packages documented in the generated API reference (typedoc → markdown at build time,
@@ -53,8 +53,8 @@ const apiPlugins = apiPackages.map((p) => {
 });
 
 export default defineConfig({
-  site: 'https://ptmafia.github.io',
-  base: '/uncage',
+  site: SITE_ORIGIN,
+  base: '/docs',
   trailingSlash: 'ignore',
   // Mermaid's renderer is one large client chunk, loaded only on pages with diagrams.
   vite: { build: { chunkSizeWarningLimit: 4096 } },
@@ -65,6 +65,8 @@ export default defineConfig({
       description:
         'Let your website drive Claude Code on your users’ own computers: approvals, streaming, site tools and skills, with the process and the results kept on your site.',
       logo: { light: './src/assets/logo-light.svg', dark: './src/assets/logo-dark.svg', replacesTitle: false },
+      // brand/favicon.svg (adapts to prefers-color-scheme); Starlight prefixes the base path.
+      favicon: '/favicon.svg',
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/ptmafia/uncage' }],
       editLink: { baseUrl: 'https://github.com/ptmafia/uncage/edit/main/apps/docs/' },
       lastUpdated: false,
@@ -75,26 +77,28 @@ export default defineConfig({
       locales: {
         root: { label: 'English', lang: 'en' },
         'zh-cn': { label: '简体中文', lang: 'zh-CN' },
+        ja: { label: '日本語', lang: 'ja' },
       },
       components: {
         PageTitle: './src/components/PageTitle.astro',
       },
       head: [
-        { tag: 'link', attrs: { rel: 'alternate', type: 'text/plain', title: 'llms.txt', href: '/uncage/llms.txt' } },
+        { tag: 'link', attrs: { rel: 'alternate', type: 'text/plain', title: 'llms.txt', href: '/docs/llms.txt' } },
+        { tag: 'link', attrs: { rel: 'apple-touch-icon', sizes: '180x180', href: '/docs/apple-touch-icon.png' } },
       ],
       plugins: [
         ...apiPlugins.map((p) => p.plugin),
-        starlightLinksValidator({ errorOnFallbackPages: false, exclude: ['/uncage/llms.txt', '/uncage/llms-full.txt', '/uncage/skills/**', '/uncage/**/*.md'] }),
+        starlightLinksValidator({ errorOnFallbackPages: false, exclude: ['/docs/llms*.txt', '/docs/skills/**', '/docs/**/*.md'] }),
       ],
       sidebar: [
         ...sections.map((sec) => ({
           label: sec.label,
-          translations: { 'zh-CN': sec.zh },
+          translations: { 'zh-CN': sec.zh, ja: sec.ja },
           items: sec.items.map((slug) => ({ slug })),
         })),
         {
           label: 'API (generated)',
-          translations: { 'zh-CN': 'API（自动生成）' },
+          translations: { 'zh-CN': 'API（自动生成）', ja: 'API（自動生成）' },
           collapsed: true,
           items: apiPlugins.map((p) => p.sidebarGroup),
         },

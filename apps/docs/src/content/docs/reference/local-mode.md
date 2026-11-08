@@ -28,7 +28,7 @@ Settings are stored per session. Before the first prompt they belong to the draf
 `bypassPermissions` lets the agent run any command and edit any file without asking. It is off by default and never offered then; a crafted request gets `403 policy_denied`.
 
 - **Local Mode:** set `security.allowBypass: true` in `uncage.config.yaml`, or start the daemon with `UNCAGE_ALLOW_BYPASS=1`. `uncage serve` then prints a warning.
-- **Connected Mode:** only the user, with `localPolicy.allowBypass: true` in `~/.uncage/agent.yaml` on their computer ([local policy](/uncage/guides/local-policy/)).
+- **Connected Mode:** only the user, with `localPolicy.allowBypass: true` in `~/.uncage/agent.yaml` on their computer ([local policy](/docs/guides/local-policy/)).
 
 Even then, choosing it in the UI asks for confirmation, and a red banner stays on while it is active.
 
@@ -87,7 +87,7 @@ Proxy environment (in your app): `UNCAGE_URL` (default `http://127.0.0.1:4783`),
 
 ## Embedding the daemon
 
-Instead of `uncage serve`, you can run the engine inside your own Node process: `createUncage()` from `@uncage/core` with `createUncageServer()` from `@uncage/server`. See the [generated API reference](/uncage/api/core/).
+Instead of `uncage serve`, you can run the engine inside your own Node process: `createUncage()` from `@uncage/core` with `createUncageServer()` from `@uncage/server`. See the [generated API reference](/docs/api/core/).
 
 ## Codex status
 

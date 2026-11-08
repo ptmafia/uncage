@@ -1,0 +1,91 @@
+---
+title: 试用演示
+description: 用两条命令把你自己的 Mac 连接到一个在线的 Uncage 网站，让它做一个落地页，看你自己的 Claude Code 搭好页面并通过网站工具发布，浏览器里会弹出审批卡片。
+---
+
+import { Image } from 'astro:assets';
+import DemoLink from '../../../../components/DemoLink.astro';
+import connect from '../../../../assets/demo/connect.png';
+import deviceApprove from '../../../../assets/demo/device-approve.png';
+import chatRunning from '../../../../assets/demo/chat-running.png';
+import approvalCard from '../../../../assets/demo/approval-card.png';
+import chatDone from '../../../../assets/demo/chat-done.png';
+import assets from '../../../../assets/demo/assets.png';
+import assetPreview from '../../../../assets/demo/asset-preview.png';
+import offline from '../../../../assets/demo/offline.png';
+
+这个演示是一个用 Uncage 搭建的小网站（即 [`connected-demo` 示例](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo)）。你把自己的电脑连接上去，让它做一个落地页。你自己的 Claude Code 在你的电脑上做好页面，再通过网站工具发布到网站上，每一步需要确认的操作都由你在浏览器里批准。整个过程约五分钟。
+
+<DemoLink />
+
+## 开始之前
+
+- 一台 Mac（Uncage 守护进程运行在 macOS 上）。
+- Node.js 22 或更高版本。
+- 已安装并登录 Claude Code：`npm i -g @anthropic-ai/claude-code`，然后运行一次 `claude` 并输入 `/login`。
+
+## 以访客身份进入
+
+打开演示网站，点击 **以访客身份进入**。网站会给这个浏览器分配一个随机的访客账号，不需要注册。随后对话框会显示 **连接你的电脑** 和两条命令。
+
+<Image src={connect} alt="演示网站的对话框里显示“连接你的电脑”卡片：第 1 步用 curl 命令安装 Uncage CLI，第 2 步用演示网站的地址运行 uncage setup，下方提示正在等待电脑上线。" />
+
+## 连接你的电脑
+
+在终端里运行这两条命令，把 `<demo>` 换成演示网站的地址：
+
+```sh
+curl -fsSL <demo>/api/uncage/install.sh | bash
+uncage setup <demo>
+```
+
+也可以用 `npm i -g @uncage/cli` 代替第一条命令来安装 CLI。`uncage setup` 会打印一个验证码，并在浏览器里打开演示网站的授权页。
+
+<Image src={deviceApprove} alt="授权页“连接这台电脑?”写明了请求连接的电脑，用大字显示验证码，并提供“拒绝”和“批准”两个按钮。" />
+
+*确认页面上的 **验证码** 和终端里的一致，然后点击 **批准**。对话框会显示你的电脑名，旁边是绿点，表示电脑在线。*
+
+## 让它做一个落地页
+
+发送一条消息，例如“做一个介绍 Uncage 的落地页并发布”。Claude Code 在你的电脑上、用你自己的登录运行，工作目录是 `~/Uncage/` 下它自己的一个文件夹。它会加载网站的 `landing-page` 技能，调用网站工具 `create_asset`，写好页面，然后请求运行 `publish_asset`。
+
+<Image src={chatRunning} alt="运行中的对话框：Skill 和 mcp__site__create_asset 两个步骤已打勾，Claude Code 正在思考下一步。" />
+
+*步骤会随着执行实时出现在对话框里。`mcp__site__create_asset` 是网站工具：它以你的访客账号在网站的服务器上运行，不需要询问。*
+
+Claude Code 的权限模式不自动放行的步骤（输入框下方显示 **每次询问**），比如运行命令或写文件，会先问你。`publish_asset` 定义时设置了 `requiresConfirmation`，所以无论在哪种模式下，网站都会在每次调用前问你。每次询问都是一张审批卡片，你回应之前运行会一直等待。
+
+<Image src={approvalCard} alt="mcp__site__publish_asset 的审批卡片，显示调用 publish_asset 以及素材 ID 和文件夹 landing、工作目录，下方是“拒绝”和“允许执行”两个按钮。" />
+
+*`publish_asset` 的审批卡片。点击 **允许执行** 或 **拒绝**。点击 **允许执行** 后，网站会从你的电脑上复制页面所在的文件夹并发布。运行命令、写文件等步骤也会出现同样的卡片。*
+
+<Image src={chatDone} alt="已完成的对话：Claude Code 的总结说明落地页已发布在“素材”页面，并介绍了页面的首屏、特性、如何开始和结尾几个部分，下方是“完成”和用时。" />
+
+*运行结束后，Claude Code 会总结它做了什么。网站的 `landing-page` 技能会把 Uncage 的相关事实提供给它，供它写页面时参考。*
+
+## 在网站上查看结果
+
+打开 **素材**（`/assets`）。已发布的页面会列在这里，点击即可在沙箱预览中查看。页面保存在网站上，而不是你的电脑上，并且只有你能打开。
+
+<Image src={assets} alt="“素材”页面列出了一个落地页，带有“已发布”标记。" />
+
+<Image src={assetPreview} alt="沙箱预览中的素材页面：一个深色落地页，标题为“让网站驱动你自己的 Claude Code”，带有“已发布”标记。" />
+
+现在合上笔记本，或者停掉守护进程（`uncage agent uninstall` 会停止后台守护进程）。对话仍然可以查看，因为网站保存了它；页头里的电脑会显示为离线。运行 `uncage agent` 即可让它重新上线。
+
+<Image src={offline} alt="已完成对话的末尾出现提示：电脑已离线，正在等待重新连接，并提示在那台电脑上运行 uncage agent。" />
+
+*提示内容为“你的电脑离线了，等待重新连接…”。*
+
+## 关于你的数据
+
+- 你以访客身份登录演示网站，身份由你使用的浏览器识别。换一个浏览器就看不到你的任何对话和页面。
+- 演示网站是公开、共享的。除非部署方把数据放在持久化卷上，每次部署和重启都会清空全部数据。素材（你创建的页面）在最后一次创建或发布 24 小时后删除。
+- 已发布页面的页面请求仅限所有者：只有你的访客账号能打开它。页面加载的文件由页面无法猜测的 ID 保护。
+- 不要在演示网站里放任何私密内容。
+
+用完后要断开你的电脑：运行 `uncage sites` 列出它连接的网站，再用演示网站的 ID 运行 `uncage sites remove <id>` 移除它。见 [CLI 参考](/docs/zh-cn/reference/cli/)。
+
+## 自己运行演示
+
+演示网站的源码就是一个普通的 Uncage Connected 模式网站。要在你自己的电脑上运行，请按照[示例的 README](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo#run-it-single-node) 操作。要搭建你自己的网站，接着看[快速上手：Connected 模式](/docs/zh-cn/start/quickstart-connected/)。

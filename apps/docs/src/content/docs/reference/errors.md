@@ -14,7 +14,7 @@ In React, `useUncageError()` returns it as `{ error: { code, message, hint, … 
 | Code | Status | Retry | Meaning and what to do |
 | --- | --- | --- | --- |
 | `unauthorized` | 401 | no | No signed-in user (`getUser` returned `null`), a missing or wrong daemon token, or an unknown machine token. Sign in; in Local Mode check `UNCAGE_TOKEN`. |
-| `forbidden_origin` | 403 | no | A cross-site request to the hub, or the proxy’s `Host` / `Origin` checks failed. The message names the header. See [Troubleshooting](/uncage/reference/troubleshooting/#403-forbidden_origin). |
+| `forbidden_origin` | 403 | no | A cross-site request to the hub, or the proxy’s `Host` / `Origin` checks failed. The message names the header. See [Troubleshooting](/docs/reference/troubleshooting/#403-forbidden_origin). |
 | `not_found` | 404 | no | No such session, run, approval or attachment, **or it belongs to another user**. Also a missing path in `ctx.files.read`, or a tool call for a run the hub does not know (`details.reason: 'run_not_indexed'`). |
 | `invalid_request` | 400 | no | The body or parameters do not match the schema. For site tools: arguments did not match `input` (the handler did not run), or a file-channel path left the workspace or named a folder for `read`. |
 | `machine_offline` | 409 | yes | The user’s computer is not connected. The UI waits for it; the user should start the agent (`uncage agent`, or check the background service). |
@@ -31,7 +31,7 @@ In React, `useUncageError()` returns it as `{ error: { code, message, hint, … 
 | `event_replay_unavailable` | 410 | no | The requested events are gone. Fetch a fresh snapshot and resume from its `lastSequence`. |
 | `runtime_unavailable` | 503 | no | The runtime (Claude Code, Codex) is not installed on that machine. |
 | `auth_required` | 401 | no | The runtime is not signed in. Run `claude`, then `/login`. |
-| `unsupported_capability` | 422 | no | The runtime cannot do this, e.g. site tools on a Codex session. |
+| `unsupported_capability` | 422 | no | The runtime cannot do this, e.g. an attachment type, a setting or an approval option it does not support. (Site tools on a Codex session are not refused: the run starts without them and shows a `site_tools_unsupported` warning.) |
 | `runtime_disconnected` | 502 | yes | The runtime process died mid-run. Start a new run; history is kept. |
 | `invalid_workspace` | 400 | no | Local Mode: the workspace is outside `workspace.allowedRoots`. |
 | `store_locked` | 423 | yes | Another process uses the same data directory (a second daemon, or two hubs on one PGlite folder). |
@@ -41,4 +41,4 @@ In React, `useUncageError()` returns it as `{ error: { code, message, hint, … 
 
 ## Tool errors seen by the model
 
-When a site tool fails, Claude Code receives the error as the tool result and usually tries to recover, so **the message is part of your product**: “No order ord_9 in your account.” helps; “TypeError: cannot read properties of undefined” does not, and may leak internals. See [Define tools → Errors](/uncage/guides/define-tools/#errors).
+When a site tool fails, Claude Code receives the error as the tool result and usually tries to recover, so **the message is part of your product**: “No order ord_9 in your account.” helps; “TypeError: cannot read properties of undefined” does not, and may leak internals. See [Define tools → Errors](/docs/guides/define-tools/#errors).

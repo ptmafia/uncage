@@ -96,7 +96,7 @@ sequenceDiagram
 ### 2. Send a task
 
 1. The user types in `<AgentChat>`. The browser calls the hub’s browser API (the same shapes as the Local Mode daemon’s `/v1` API).
-2. For every run, the hub calls your `selectManifest({ user, prompt, sessionId, runtime })` to pick the tools and skills this run may use. Without it, every registered tool and skill is offered. A runtime without site tool support (Codex) gets the skills only, and the session shows a `site_tools_unsupported` warning.
+2. For every run, the hub calls your `selectManifest({ user, prompt, sessionId, runtime })` to pick the tools and skills this run may use. Without it, every registered tool and skill is offered. A runtime without site tool support (Codex) gets the skills only, and the session shows a `site_tools_unsupported` warning. (The Codex runtime receives the skills but does not use them yet.)
 3. The hub sends `startRun` to the computer with the prompt and the **manifest**: the tools’ names, descriptions and JSON Schemas, and the skills’ text. No code.
 4. The agent runs Claude Code in `~/Uncage/<site host>/<session id>/`. Site tools appear to Claude Code as `mcp__site__<name>`. Skills are written to `.claude/skills/<name>/SKILL.md` in that folder.
 5. Every event (text, tool steps, approvals, run state) is numbered and stored locally first, then sent to the hub and on to the browser over SSE.
@@ -126,6 +126,6 @@ Your handler stored the files, so your own pages can show them. With `sessionSto
 
 ## Next
 
-- [Connected Mode quickstart](/uncage/start/quickstart-connected/): build all of this into a Next.js app.
-- [Concepts](/uncage/concepts/): the vocabulary, one section per idea.
-- [Trust model](/uncage/concepts/trust-model/): what a website can and cannot do on a user’s computer.
+- [Connected Mode quickstart](/docs/start/quickstart-connected/): build all of this into a Next.js app.
+- [Concepts](/docs/concepts/): the vocabulary, one section per idea.
+- [Trust model](/docs/concepts/trust-model/): what a website can and cannot do on a user’s computer.

@@ -1,0 +1,29 @@
+---
+/** The horizontal lockup from /brand, inlined with brand-token colours so it follows light/dark. */
+import horizontal from '../../../../brand/logo-horizontal.svg?raw';
+import mark from '../../../../brand/logo-mark.svg?raw';
+
+interface Props {
+  variant?: 'horizontal' | 'mark';
+  height?: number;
+  class?: string;
+}
+
+const { variant = 'horizontal', height = 28, class: className } = Astro.props;
+const src = variant === 'mark' ? mark : horizontal;
+const svg = src
+  .replace(/#c4651a/g, 'var(--uc-accent)')
+  .replace(/#1f2328/g, 'var(--uc-ink)')
+  // Decorative here: the surrounding link carries the accessible name.
+  .replace(/ role="img" aria-label="Uncage"/, ' aria-hidden="true" focusable="false"')
+  .replace(/ width="\d+" height="\d+"/, ` height="${height}" style="width:auto;height:${height}px"`);
+---
+
+<span class:list={['logo', className]} set:html={svg} />
+
+<style>
+  .logo {
+    display: inline-flex;
+    line-height: 0;
+  }
+</style>

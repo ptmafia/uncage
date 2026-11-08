@@ -1,0 +1,76 @@
+---
+/** A shell command (one line, or several run in order) with a copy button. Several lines are copied joined by ` && `. */
+import Icon from './Icon.astro';
+import { getDict, type Locale } from '../i18n/index.ts';
+
+interface Props {
+  cmd: string | string[];
+  locale: Locale;
+  class?: string;
+}
+
+const { cmd, locale, class: className } = Astro.props;
+const t = getDict(locale);
+const lines = Array.isArray(cmd) ? cmd : [cmd];
+const copy = lines.join(' && ');
+---
+
+<div class:list={['cmd', className, { multi: lines.length > 1 }]}>
+  <code>{lines.map((line) => <span class="line"><span class="ps" aria-hidden="true">$</span> {line}</span>)}</code>
+  <button type="button" class="copy" data-copy={copy} data-copied-label={t.a11y.copied} aria-label={`${t.a11y.copy}: ${copy}`} title={t.a11y.copy}>
+    <Icon name="copy" size={16} class="idle" />
+    <Icon name="check" size={16} class="done" />
+  </button>
+</div>
+
+<style>
+  .cmd {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    padding: 4px 4px 4px 14px;
+    background: var(--surface);
+    border: 1px solid var(--uc-line);
+    border-radius: 12px;
+    box-shadow: var(--shadow-sm);
+    color: var(--uc-ink);
+  }
+  .cmd.multi {
+    gap: 14px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  code {
+    font-size: 14px;
+    white-space: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .line {
+    display: block;
+  }
+  .multi .line + .line {
+    margin-top: 4px;
+  }
+  .ps {
+    color: var(--uc-accent-ink);
+    user-select: none;
+  }
+  .copy {
+    color: var(--uc-ink-2);
+  }
+  @media (max-width: 480px) {
+    .cmd {
+      padding-left: 12px;
+    }
+    code {
+      font-size: 13px;
+    }
+  }
+  @media (max-width: 400px) {
+    code {
+      font-size: 12px;
+    }
+  }
+</style>

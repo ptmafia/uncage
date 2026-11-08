@@ -1,0 +1,93 @@
+---
+title: デモを試す
+description: 2つのコマンドで自分のMacを公開中のUncageサイトに接続してランディングページを依頼し、自分のClaude Codeがページを作ってサイトのツールで公開する様子を、ブラウザでの承認カードとあわせて確認します。
+---
+
+import { Image } from 'astro:assets';
+import DemoLink from '../../../../components/DemoLink.astro';
+import connect from '../../../../assets/demo/connect.png';
+import deviceApprove from '../../../../assets/demo/device-approve.png';
+import chatRunning from '../../../../assets/demo/chat-running.png';
+import approvalCard from '../../../../assets/demo/approval-card.png';
+import chatDone from '../../../../assets/demo/chat-done.png';
+import assets from '../../../../assets/demo/assets.png';
+import assetPreview from '../../../../assets/demo/asset-preview.png';
+import offline from '../../../../assets/demo/offline.png';
+
+このデモは、Uncageで作った小さなウェブサイトです（[`connected-demo`のサンプル](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo)）。自分のコンピュータをデモに接続し、ランディングページを依頼します。自分のClaude Codeが自分のコンピュータ上でページを作り、サイトのツールを使ってサイトに公開します。確認が必要なステップは、ブラウザであなたが承認します。所要時間は約5分です。
+
+デモの画面は中国語です。このページでは、各ラベルに意味を添えて示します（例：**允许执行**（1回だけ許可））。
+
+<DemoLink />
+
+## 始める前に
+
+- Mac（UncageのエージェントはmacOSで動作します）。
+- Node.js 22以降。
+- Claude Codeがインストール済みで、サインインしていること：`npm i -g @anthropic-ai/claude-code`を実行し、`claude`を一度起動して`/login`と入力します。
+
+## ゲストとしてサインインする
+
+デモを開き、**以访客身份进入**（ゲストとして入る）をクリックします。サイトがこのブラウザにランダムなゲストアカウントを割り当てるので、登録は不要です。チャットに**连接你的电脑**（コンピュータを接続）と2つのコマンドが表示されます。
+
+<Image src={connect} alt="デモのチャットに「连接你的电脑」（コンピュータを接続）カードが表示されています。手順1はcurlコマンドでUncage CLIをインストールし、手順2はデモのアドレスでuncage setupを実行します。その下に、コンピュータがオンラインになるのを待っている旨が表示されています。" />
+
+## コンピュータを接続する
+
+ターミナルで、`<demo>`をデモのアドレスに置き換えて2つのコマンドを実行します：
+
+```sh
+curl -fsSL <demo>/api/uncage/install.sh | bash
+uncage setup <demo>
+```
+
+1つ目のコマンドの代わりに`npm i -g @uncage/cli`でCLIをインストールしてもかまいません。`uncage setup`はコードを表示し、ブラウザでデモの承認ページを開きます。
+
+<Image src={deviceApprove} alt="承認ページ「连接这台电脑?」（このコンピュータを接続しますか）。接続を求めているコンピュータの名前、大きな文字の验证码（確認コード）、拒绝（拒否）と批准（承認）のボタンが表示されています。" />
+
+***验证码**（確認コード）がターミナルに表示されたものと一致していることを確認し、**批准**（承認）をクリックします。チャットにコンピュータ名と緑の点が表示されれば、オンラインです。*
+
+## ランディングページを依頼する
+
+たとえば「做一个介绍 Uncage 的落地页并发布」（Uncageを紹介するランディングページを作って公開して）と送信します。Claude Codeはあなたのコンピュータ上で、あなた自身のログインで、`~/Uncage/`の下の専用フォルダで動きます。サイトの`landing-page`スキルを読み込み、サイトツール`create_asset`を呼び出してページを書き、`publish_asset`の実行を求めます。
+
+<Image src={chatRunning} alt="実行中のチャット。Skillとmcp__site__create_assetの各ステップにチェックが付き、Claude Codeが次のステップを考えています。" />
+
+*ステップは実行に合わせてチャットに表示されます。`mcp__site__create_asset`はサイトのツールで、サイトのサーバー上であなたのゲストアカウントとして実行され、確認は不要です。*
+
+Claude Codeは、パーミッションモードが自動では許可しないステップ（コンポーザーには**每次询问**（毎回確認）と表示されています）、たとえばコマンドの実行やファイルの書き込みの前に確認を求めます。`publish_asset`は`requiresConfirmation`付きで定義されているので、どのモードでも、サイトは呼び出しのたびに確認します。どの確認も承認カードとして表示され、あなたが応答するまで実行は待機します。
+
+<Image src={approvalCard} alt="mcp__site__publish_assetの承認カード。アセットIDとフォルダlandingを指定したpublish_assetの呼び出しと作業フォルダが表示され、拒绝（拒否）と允许执行（1回だけ許可）のボタンがあります。" />
+
+*`publish_asset`の承認カード。**允许执行**（1回だけ許可）か**拒绝**（拒否）をクリックします。**允许执行**をクリックすると、サイトがページのフォルダをあなたのコンピュータからコピーして公開します。コマンドの実行やファイルの書き込みなどのステップにも同じ形のカードが出ます。*
+
+<Image src={chatDone} alt="完了した会話。Claude Codeの要約に、ランディングページが素材ページで公開されたこと、ページのヒーロー、特長、始め方、締めくくりの内容が書かれ、下に完成（完了）と所要時間が表示されています。" />
+
+*実行が終わると、Claude Codeが作った内容を要約します。ページを書くためのUncageの事実は、サイトの`landing-page`スキルが渡します。*
+
+## サイトで結果を見る
+
+**素材**（アセット、`/assets`）を開きます。公開されたページが一覧に表示され、クリックするとサンドボックス化されたプレビューで見られます。ページはあなたのコンピュータではなくウェブサイトにあり、開けるのはあなただけです。
+
+<Image src={assets} alt="素材（アセット）ページに、已发布（公開済み）バッジの付いたランディングページが1件表示されています。" />
+
+<Image src={assetPreview} alt="サンドボックス化されたプレビューに表示されたアセットのページ。見出し「让网站驱动你自己的 Claude Code」の暗い色のランディングページで、已发布（公開済み）バッジが付いています。" />
+
+ここでノートパソコンを閉じるか、エージェントを停止します（`uncage agent uninstall`でバックグラウンドのエージェントが停止します）。会話はサイトが保持しているので読めるままで、ヘッダーのコンピュータはオフラインと表示されます。`uncage agent`を実行すると戻ります。
+
+<Image src={offline} alt="完了した会話の末尾に、コンピュータがオフラインで再接続を待っていること、そのコンピュータでuncage agentを実行するよう促す通知が表示されています。" />
+
+*通知の文言は「你的电脑离线了，等待重新连接…」（コンピュータがオフラインです。再接続を待っています）です。*
+
+## データの扱い
+
+- デモにはゲストとしてサインインしており、使っているブラウザで識別されます。別のブラウザからは、あなたの会話やページは一切見えません。
+- デモは公開の共有環境です。運営者が永続ボリュームに保存していない限り、すべてのデータはデプロイや再起動のたびに消去されます。アセット（あなたが作ったページ）は、最後に作成または公開されてから24時間後に削除されます。
+- 公開ページへのリクエストは所有者限定で、開けるのはあなたのゲストアカウントだけです。ページが読み込むファイルは、推測できないページのIDで保護されています。
+- デモには個人的な情報を入力しないでください。
+
+使い終わってコンピュータを切断するには、`uncage sites`で接続中のサイトを一覧表示し、デモのIDを指定して`uncage sites remove <id>`を実行します。[CLIリファレンス](/docs/ja/reference/cli/)を参照してください。
+
+## デモを自分で動かす
+
+デモのソースは、通常のUncage Connected モードのサイトです。自分のマシンで動かすには、[サンプルのREADME](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo#run-it-single-node)に従ってください。自分のサイトを構築するには、[クイックスタート：Connected モード](/docs/ja/start/quickstart-connected/)に進んでください。

@@ -1,0 +1,38 @@
+{
+  "name": "site",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Uncage official website (Astro): the homepage in English, Chinese and Japanese",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check && tsc --noEmit && tsc --noEmit -p src/snippets && vitest run",
+    "typecheck": "astro sync && tsc --noEmit && tsc --noEmit -p src/snippets",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "og": "node scripts/og.mjs",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@astrojs/sitemap": "^3.7.4",
+    "astro": "^7.4.7"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.12",
+    "@playwright/test": "^1.65.0",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@uncage/hub": "workspace:*",
+    "@uncage/react": "workspace:*",
+    "@uncage/react-ui": "workspace:*",
+    "react": "^19.3.1",
+    "typescript": "^6.0.3",
+    "vitest": "^5.1.0",
+    "zod": "^4.6.7"
+  }
+}

@@ -1,16 +1,16 @@
 ---
-title: 快速上手：Local Mode
+title: 快速上手：Local 模式
 description: 在运行你应用的那台机器上，通过本地的 Uncage 服务（uncage serve）和同源代理运行 Claude Code，并使用现成的对话界面。约 5 分钟。
 ---
 
-Local Mode 适合和 agent 跑在**同一台机器**上的应用：开发者面板、内部工具、桌面类应用。Uncage 服务 `uncage serve`（英文叫 daemon）用这台机器的 Claude 登录运行 Claude Code；你的应用通过一个同源代理访问它，代理在服务器端加上服务的令牌。
+Local 模式适合和 agent 跑在**同一台机器**上的应用：开发者面板、内部工具、桌面类应用。Uncage 服务 `uncage serve`（英文叫 daemon）用这台机器的 Claude 登录运行 Claude Code；你的应用通过一个同源代理访问它，代理在服务器端加上服务的令牌。
 
-如果你的用户各自有自己的电脑，请改用 [Connected Mode](/uncage/zh-cn/start/quickstart-connected/)。
+如果你的用户各自有自己的电脑，请改用 [Connected 模式](/docs/zh-cn/start/quickstart-connected/)。
 
 ## 复制给你的 coding agent 的提示词
 
 ```text wrap
-Add Uncage Local Mode to this Next.js (App Router) app, following https://ptmafia.github.io/uncage/start/quickstart-local.md exactly.
+Add Uncage Local Mode to this Next.js (App Router) app, following https://uncage.vercel.app/docs/start/quickstart-local.md exactly.
 1. npm i @uncage/server @uncage/react-ui @uncage/cli
 2. Create app/api/uncage/[...path]/route.ts with createUncageHandler from @uncage/server/proxy (runtime 'nodejs', dynamic 'force-dynamic', export GET, POST, PATCH).
 3. Create a page that renders <UncageProvider><AgentChat /></UncageProvider> from @uncage/react-ui inside a full-height container, and import '@uncage/react-ui/styles.css'.
@@ -74,7 +74,7 @@ npx uncage serve --workspace /absolute/path/to/the/project/the/agent/works/in
 Uncage listening on http://127.0.0.1:4783 · workspace /…/project · runtimes: claude ✓, codex ✗ (not installed)
 ```
 
-用 `npx uncage doctor` 检查一切。每一行是 ✓ 或 ✗，每个 ✗ 都会打印准确的 `fix:` 命令。Codex 显示 “not installed” 没关系，它是可选的。
+用 `npx uncage doctor` 检查一切。每一行是 ✓ 或 ✗，每个 ✗ 都会打印准确的 `fix:` 命令。Codex 显示“not installed” 没关系，它是可选的。
 
 ## 5. 运行你的应用
 
@@ -82,10 +82,10 @@ Uncage listening on http://127.0.0.1:4783 · workspace /…/project · runtimes:
 npm run dev
 ```
 
-打开 `http://localhost:3000`，选择 **Claude Code**，然后问一句，比如“扫描这个仓库的结构，然后运行测试”。
+打开 `http://localhost:3000`，选择 **Claude Code**，然后问一句，比如“扫描这个仓库并运行测试”。
 
-- 执行命令和修改文件会弹出审批卡片：**允许执行 / 拒绝**。
-- **停止**会取消这次运行，并结束它的进程。
+- 执行命令和修改文件会弹出审批卡片：**Allow once**（允许执行）/ **Deny**（拒绝）。设置 `locale="zh-CN"` 后，界面会显示中文。
+- **Stop**（停止）会取消这次运行，并结束它的进程。
 - 随时刷新：`<AgentChat>` 把打开的对话记在 `?session=<id>` 里，历史和待审批项都会回来。
 
 ## 整体结构
@@ -115,9 +115,9 @@ app.listen(3000);
 
 - **前后端分离的 Vite 或 webpack SPA**：开发代理要保留浏览器的 `Host`（`changeOrigin: false`）。用 `changeOrigin: true` 时，所有 POST 都会得到 403 `forbidden_origin`，因为代理会拿 `Origin` 和被改写的 `Host` 比较。
 
-[Local Mode in depth](/uncage/reference/local-mode/)（英文）介绍输入框的各项控制、附件、配置（`uncage.config.yaml`）和 Local Mode 的安全模型。[CLI 参考](/uncage/reference/cli/)（英文）列出了所有参数。
+[Local 模式详解](/docs/zh-cn/reference/local-mode/)介绍输入框的各项控制、附件、配置（`uncage.config.yaml`）和 Local 模式的安全模型。[CLI 参考](/docs/zh-cn/reference/cli/)列出了所有参数。
 
-## 下一步（英文）
+## 下一步
 
-- [Custom UI with hooks](/uncage/guides/custom-ui/)：用 `@uncage/react` 构建自己的对话界面。
-- [Troubleshooting](/uncage/reference/troubleshooting/)：`forbidden_origin`、端口、登录。
+- [用 hooks 自定义界面](/docs/zh-cn/guides/custom-ui/)：用 `@uncage/react` 构建自己的对话界面。
+- [故障排查](/docs/zh-cn/reference/troubleshooting/)：`forbidden_origin`、端口、登录。

@@ -1,0 +1,69 @@
+---
+import Icon from './Icon.astro';
+import Logo from './Logo.astro';
+import { TRY_DEMO, docsPath, getDict, type Locale } from '../i18n/index.ts';
+
+interface Props {
+  locale: Locale;
+}
+
+const { locale } = Astro.props;
+const t = getDict(locale).final;
+---
+
+<section class="final" aria-labelledby="final-title">
+  <div class="wrap">
+    <div class="panel">
+      <Logo variant="mark" height={44} class="mark" />
+      <h2 class="h2" id="final-title">{t.title}</h2>
+      <p class="sub">{t.sub}</p>
+      <div class="ctas">
+        <a class="btn primary" href={docsPath(locale, TRY_DEMO)} data-cta="final">
+          {t.primary}
+          <Icon name="arrow" size={16} class="arrow" />
+        </a>
+        <a class="btn ghost" href={docsPath(locale)}>{t.secondary}</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .final {
+    padding: clamp(48px, 7vw, 88px) 0 clamp(64px, 9vw, 104px);
+    border-top: 1px solid var(--uc-line);
+  }
+  .panel {
+    position: relative;
+    overflow: hidden;
+    text-align: center;
+    padding: clamp(48px, 7vw, 88px) clamp(20px, 5vw, 64px);
+    border-radius: 28px;
+    border: 1px solid var(--uc-line);
+    background:
+      radial-gradient(60% 80% at 50% 0%, color-mix(in srgb, var(--uc-accent-soft) 90%, transparent), transparent 70%),
+      var(--surface);
+  }
+  .panel :global(.mark) {
+    justify-content: center;
+    margin-bottom: 24px;
+  }
+  .h2 {
+    font-size: clamp(32px, 4.6vw, 52px);
+    max-width: 820px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .sub {
+    margin: 0 auto 32px;
+    /* A short centred line: wrap it evenly, and at phrase boundaries in ja (no 「のた / めに」 orphans). */
+    text-wrap: balance;
+    word-break: auto-phrase;
+  }
+  .ctas {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+</style>

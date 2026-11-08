@@ -9,10 +9,16 @@ import { mdPathOf } from '../lib/markdown';
 const { entry, lang } = Astro.locals.starlightRoute;
 const slug = entry.id.replace(/(^|\/)index$/, '');
 const href = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/${mdPathOf(slug)}`;
-const label = lang === 'zh-CN' ? '本页 Markdown' : 'View as Markdown';
+const locale = lang?.toLowerCase().startsWith('zh') ? 'zh' : lang?.toLowerCase().startsWith('ja') ? 'ja' : 'en';
+const label = { en: 'View as Markdown', zh: '本页 Markdown', ja: 'Markdownで表示' }[locale];
+const hint = {
+  en: 'Plain markdown of this page, for coding agents',
+  zh: '纯 Markdown 版本，适合交给 coding agent',
+  ja: 'このページのプレーンなMarkdown（コーディングエージェント向け）',
+}[locale];
 ---
 
 <div class="uc-title">
   <Default />
-  <a class="uc-md-link" href={href} title={lang === 'zh-CN' ? '纯 Markdown 版本，适合交给 coding agent' : 'Plain markdown of this page, for coding agents'}>{label}</a>
+  <a class="uc-md-link" href={href} title={hint}>{label}</a>
 </div>

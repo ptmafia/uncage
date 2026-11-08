@@ -3,7 +3,7 @@ title: Local policy and the user's computer
 description: 'What the end user controls on their own computer: ~/.uncage/agent.yaml and localPolicy (allowBypass, allowedPermissionModes), the activity log, folders, the background agent, disconnecting websites, and local extensions.'
 ---
 
-This page is about the **user’s side**: the computer that runs `uncage agent`. Website developers should know it too, because it sets the limits of what your site can ask for. The reasons are in the [trust model](/uncage/concepts/trust-model/).
+This page is about the **user’s side**: the computer that runs `uncage agent`. Website developers should know it too, because it sets the limits of what your site can ask for. The reasons are in the [trust model](/docs/concepts/trust-model/).
 
 ## Files and folders
 

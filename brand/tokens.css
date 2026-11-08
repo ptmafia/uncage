@@ -1,0 +1,59 @@
+/*
+ * Uncage brand tokens. Shared by the website (apps/site) and the help site (apps/docs).
+ * Light is the default; dark applies with [data-theme='dark'], or with the OS preference
+ * when no explicit [data-theme='light'] is set.
+ *
+ * --uc-accent is the brand orange (logo, large text, UI accents, 3:1+ on paper).
+ * --uc-accent-ink is the accent for running text/links: it meets WCAG AA (4.5:1) on paper, paper-2 and accent-soft.
+ */
+:root {
+  --uc-paper: #f7f3ec;
+  --uc-paper-2: #efe8dc;
+  --uc-ink: #1f2328;
+  --uc-ink-2: #4a4f57;
+  --uc-ink-3: #7b8089;
+  --uc-line: #e2d9ca;
+  --uc-accent: #c4651a;
+  --uc-accent-ink: #a14f0c;
+  --uc-accent-soft: #fbe7d3;
+  --uc-code: #1d1b18;
+  --uc-radius: 14px;
+  --uc-font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans', 'Noto Sans', system-ui, sans-serif;
+  --uc-font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  color-scheme: light;
+}
+
+/* Warm dark: contrast on --uc-paper is ink 15.1, ink-2 10.2, ink-3 5.9, accent 6.9 (all AA).
+   Keep in sync with the prefers-color-scheme block below: CSS cannot share one declaration block
+   between a selector and a media query, so the dark values are written twice. */
+[data-theme='dark'] {
+  --uc-paper: #171512;
+  --uc-paper-2: #211e1a;
+  --uc-ink: #efe9df;
+  --uc-ink-2: #c9c1b4;
+  --uc-ink-3: #9a9286;
+  --uc-line: #34302a;
+  --uc-accent: #e08a45;
+  --uc-accent-ink: #e08a45;
+  --uc-accent-soft: #3a2616;
+  --uc-code: #0f0e0c;
+  color-scheme: dark;
+}
+
+/* Keep in sync with [data-theme='dark'] above. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --uc-paper: #171512;
+    --uc-paper-2: #211e1a;
+    --uc-ink: #efe9df;
+    --uc-ink-2: #c9c1b4;
+    --uc-ink-3: #9a9286;
+    --uc-line: #34302a;
+    --uc-accent: #e08a45;
+    --uc-accent-ink: #e08a45;
+    --uc-accent-soft: #3a2616;
+    --uc-code: #0f0e0c;
+    color-scheme: dark;
+  }
+}

@@ -87,7 +87,7 @@ export function ConnectButton({ onConnected }: Pick<ConnectMachineProps, 'onConn
 }
 ```
 
-`variant="dialog"` (default) is a modal with Cancel, Esc and backdrop click; `variant="inline"` embeds it in the page. `<MachineStatus onSelect>` is the header’s computer menu. `<ApproveDevice>` is the `/device` page ([guide](/uncage/guides/auth-and-device-approval/)). All of them must be inside an `UncageProvider`, except `<ApproveDevice>`, which is presentational.
+`variant="dialog"` (default) is a modal with Cancel, Esc and backdrop click; `variant="inline"` embeds it in the page. `<MachineStatus onSelect>` is the header’s computer menu. `<ApproveDevice>` is the `/device` page ([guide](/docs/guides/auth-and-device-approval/)). All of them must be inside an `UncageProvider`, except `<ApproveDevice>`, which is presentational.
 
 ## 3. Headless hooks
 
@@ -259,7 +259,7 @@ export function HeadlessChat() {
 ## Lower levels
 
 - **`@uncage/client`**: the browser transport without React: REST calls plus a resumable SSE subscription (`createUncageClient({ baseUrl })`). About 5 KB minified.
-- **The HTTP API** itself: see [HTTP API](/uncage/reference/http-api/). Types are in `@uncage/protocol`.
+- **The HTTP API** itself: see [HTTP API](/docs/reference/http-api/). Types are in `@uncage/protocol`.
 
 ## Wording
 

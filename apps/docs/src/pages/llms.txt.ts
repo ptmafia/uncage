@@ -33,6 +33,7 @@ export const GET: APIRoute = async () => {
   const api = entries.filter((e) => isApiPage(e) && /^api\/[^/]+$/.test(e.id)).sort((a, b) => a.id.localeCompare(b.id));
   out.push('## Optional', '');
   out.push(`- [简体中文 (zh-CN) overview](${mdUrl('zh-cn')}): Chinese versions of the overview, quickstarts and concepts live under /zh-cn/.`);
+  out.push(`- [日本語 (ja) overview](${mdUrl('ja')}): Japanese versions of the overview, quickstarts and concepts live under /ja/.`);
   for (const e of api) out.push(`- [API: ${e.data.title}](${mdUrl(slugOf(e))}): Generated TypeScript API reference.`);
   out.push('');
   return new Response(out.join('\n'), { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });

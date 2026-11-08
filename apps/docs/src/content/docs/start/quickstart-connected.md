@@ -17,8 +17,8 @@ You play both roles: the website developer, then the user who connects a compute
 If you use Claude Code, Codex or another coding agent, paste this into it instead of following the steps by hand:
 
 ```text wrap
-Add Uncage Connected Mode to this Next.js (App Router) app, following https://ptmafia.github.io/uncage/start/quickstart-connected.md exactly.
-Read https://ptmafia.github.io/uncage/skills/uncage/SKILL.md first and follow its rules.
+Add Uncage Connected Mode to this Next.js (App Router) app, following https://uncage.vercel.app/docs/start/quickstart-connected.md exactly.
+Read https://uncage.vercel.app/docs/skills/uncage/SKILL.md first and follow its rules.
 1. Install @uncage/hub, @uncage/react-ui and zod.
 2. Create lib/auth.ts, lib/tools.ts, lib/uncage-hub.ts, lib/hub-registry.ts, server.ts, app/uncage/page.tsx, app/device/page.tsx, app/device/actions.ts, app/device/approve-page.tsx and the headers in next.config.ts, as on that page.
 3. Wire lib/auth.ts to this app's existing sign-in (find how the app reads the current user). Do not keep the development user unless the app has no sign-in at all.
@@ -33,7 +33,7 @@ Verify: start the dev server, then curl -s http://localhost:3000/api/uncage/inst
 - **User side (your own Mac for this test):** macOS, Node.js 22+, and Claude Code installed and signed in: `npm i -g @anthropic-ai/claude-code`, then run `claude` once and type `/login`.
 
 :::caution[Why a custom server]
-The hub keeps a WebSocket open to every connected computer, so it needs a long-running Node process with access to the HTTP server. Next.js route handlers alone cannot accept WebSocket upgrades, and serverless platforms (such as Vercel functions) cannot host the hub. On Vercel, run the hub as its own Node service; see [Mount the hub](/uncage/guides/mount-the-hub/#serverless-hosting-vercel-netlify).
+The hub keeps a WebSocket open to every connected computer, so it needs a long-running Node process with access to the HTTP server. Next.js route handlers alone cannot accept WebSocket upgrades, and serverless platforms (such as Vercel functions) cannot host the hub. On Vercel, run the hub as its own Node service; see [Mount the hub](/docs/guides/mount-the-hub/#serverless-hosting-vercel-netlify).
 :::
 
 ## 1. Install
@@ -44,7 +44,7 @@ npm i @uncage/hub @uncage/react-ui zod
 
 ## 2. Who is signed in
 
-The hub asks your app who the user is, on every browser request. For this quickstart, use a fixed development user. The [auth guide](/uncage/guides/auth-and-device-approval/) shows how to connect a real sign-in.
+The hub asks your app who the user is, on every browser request. For this quickstart, use a fixed development user. The [auth guide](/docs/guides/auth-and-device-approval/) shows how to connect a real sign-in.
 
 ```ts title="lib/auth.ts"
 import type { HubUser } from '@uncage/hub';
@@ -392,8 +392,8 @@ The repository’s [`examples/connected-demo`](https://github.com/ptmafia/uncage
 
 ## Next
 
-- [Define tools](/uncage/guides/define-tools/): validation, errors, confirmation, the file channel.
-- [Write skills](/uncage/guides/write-skills/) and [choose them per run](/uncage/guides/select-manifest/).
-- [Auth and device approval](/uncage/guides/auth-and-device-approval/): connect your real sign-in.
-- [Multi-node](/uncage/guides/multi-node/): Postgres + Redis behind a load balancer.
-- **Before you deploy behind a proxy:** set the client IP (`trust proxy` or `rateLimits.clientIp`), or every user shares one `uncage setup` rate-limit bucket. See [behind a proxy](/uncage/guides/mount-the-hub/#behind-a-reverse-proxy-or-load-balancer).
+- [Define tools](/docs/guides/define-tools/): validation, errors, confirmation, the file channel.
+- [Write skills](/docs/guides/write-skills/) and [choose them per run](/docs/guides/select-manifest/).
+- [Auth and device approval](/docs/guides/auth-and-device-approval/): connect your real sign-in.
+- [Multi-node](/docs/guides/multi-node/): Postgres + Redis behind a load balancer.
+- **Before you deploy behind a proxy:** set the client IP (`trust proxy` or `rateLimits.clientIp`), or every user shares one `uncage setup` rate-limit bucket. See [behind a proxy](/docs/guides/mount-the-hub/#behind-a-reverse-proxy-or-load-balancer).

@@ -1,0 +1,25 @@
+---
+/**
+ * "Open the demo" button. The hosted demo URL comes from PUBLIC_DEMO_URL at build time; when it is
+ * not set (local builds, forks) the page links to the instructions for running the demo locally.
+ * The label follows the page's locale (en, zh-CN, ja).
+ */
+const demoUrl = import.meta.env.PUBLIC_DEMO_URL as string | undefined;
+const localUrl = 'https://github.com/ptmafia/uncage/tree/main/examples/connected-demo#run-it-single-node';
+
+const labels = {
+  en: { open: 'Open the demo', local: 'Run the demo locally' },
+  'zh-CN': { open: '打开演示', local: '在本地运行演示' },
+  ja: { open: 'デモを開く', local: 'デモをローカルで動かす' },
+} as const;
+const lang = Astro.locals.starlightRoute?.lang;
+const t = labels[lang === 'zh-CN' || lang === 'ja' ? lang : 'en'];
+---
+
+{
+  demoUrl ? (
+    <a class="sl-link-button primary" href={demoUrl} target="_blank" rel="noopener">{t.open}</a>
+  ) : (
+    <a class="sl-link-button primary" href={localUrl} target="_blank" rel="noopener">{t.local}</a>
+  )
+}

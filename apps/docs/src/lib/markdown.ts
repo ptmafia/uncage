@@ -5,7 +5,7 @@
  * the `.md` version of the target page).
  */
 import type { CollectionEntry } from 'astro:content';
-import { SITE_URL } from '../nav.mjs';
+import { SITE_URL, translatedLocales } from '../nav.mjs';
 
 export type DocsEntry = CollectionEntry<'docs'>;
 
@@ -22,22 +22,34 @@ export function mdPathOf(slug: string): string {
 export const htmlUrl = (slug: string): string => `${SITE_URL}/${slug === '' ? '' : `${slug}/`}`;
 export const mdUrl = (slug: string): string => `${SITE_URL}/${mdPathOf(slug)}`;
 
-/** `](/uncage/guides/x/#a)` → `](https://…/uncage/guides/x.md#a)`. Other links are left alone. */
-export function absolutizeLinks(body: string): string {
-  return body.replace(/\]\(\/uncage\/([^)\s#]*?)\/?(#[^)\s]*)?\)/g, (_m, path: string, hash: string | undefined) => {
+/** `](/docs/guides/x/#a)` → `](https://…/docs/guides/x.md#a)`. Other links are left alone. */
+export function toMarkdownLinks(body: string): string {
+  return body.replace(/\]\(\/docs\/([^)\s#]*?)\/?(#[^)\s]*)?\)/g, (_m, path: string, hash: string | undefined) => {
     const isFile = /\.[a-z]+$/i.test(path);
     const target = isFile ? `${SITE_URL}/${path}` : mdUrl(path);
     return `](${target}${hash ?? ''})`;
   });
 }
 
+/** MDX pages (imports, `<Image>`, components) become plain markdown: screenshots turn into their alt text. */
+export function stripMdx(body: string): string {
+  return body
+    .replace(/^import\s+(?:[^'"\n]*?\sfrom\s+)?['"][^'"\n]+['"];?[ \t]*\n?/gm, '') // side-effect imports and single-line imports
+    .replace(/^import\s[^'"]*?\sfrom\s+['"][^'"\n]+['"];?[ \t]*\n?/gm, '') // multi-line imports
+    .replace(/<Image\b[^>]*?\balt=(?:"([^"]*)"|'([^']*)'|\{\s*(?:"([^"]*)"|'([^']*)'|`([^`]*)`)\s*\})[^>]*?\/>/gs, (_m, ...g) => `*(Screenshot: ${g.slice(0, 5).find((x) => x) ?? ''})*`)
+    .replace(/^[ \t]*<[A-Z][\w.]*(?:\s[^>]*)?\/>[ \t]*$\n?/gms, '') // self-closing components, with props
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^\n+/, '');
+}
+
 export function toMarkdown(entry: DocsEntry): string {
   const { title, description } = entry.data;
-  const body = absolutizeLinks((entry.body ?? '').trim());
+  const body = toMarkdownLinks(stripMdx((entry.body ?? '').trim()));
   const head = `# ${title}\n\n${description ? `> ${description}\n\n` : ''}`;
   const source = `<!-- ${htmlUrl(slugOf(entry))} -->\n\n`;
   return `${head}${source}${body}\n`;
 }
 
 export const isApiPage = (entry: DocsEntry): boolean => entry.id.startsWith('api/');
-export const isZhPage = (entry: DocsEntry): boolean => entry.id.startsWith('zh-cn/');
+export const isTranslatedId = (id: string): boolean => translatedLocales.some((l) => id === l || id.startsWith(`${l}/`));
+export const isTranslatedPage = (entry: DocsEntry): boolean => isTranslatedId(entry.id);

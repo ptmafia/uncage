@@ -8,6 +8,8 @@
   },
   "scripts": {
     "build": "turbo run build --filter=!docs",
+    "build:web": "node scripts/build-web.mjs",
+    "check:web": "node scripts/check-web-links.mjs",
     "dev": "turbo run dev --parallel",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck --filter=!docs",

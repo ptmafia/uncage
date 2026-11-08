@@ -50,10 +50,10 @@ These are the trade-offs the user accepts by connecting a computer:
 
 Uncage cannot protect against a website that misuses its own users’ trust, but it gives you the pieces to deserve it:
 
-- **Authenticate every request.** `getUser(req)` must return the real signed-in user or `null`. See [Auth and device approval](/uncage/guides/auth-and-device-approval/).
+- **Authenticate every request.** `getUser(req)` must return the real signed-in user or `null`. See [Auth and device approval](/docs/guides/auth-and-device-approval/).
 - **Protect `/device`.** Approving a code links a computer to an account. Serve it only to the signed-in user, refuse framing, and decide with a CSRF-protected POST.
 - **Check ownership in tool handlers.** `ctx.user` is the session owner; use it for every lookup (`WHERE owner = ctx.user.id`).
 - **Throw user-safe errors.** A handler’s thrown message is shown to the user and the model.
 - **Use `requiresConfirmation`** for any tool that publishes, sends, pays or deletes.
 
-See also [Security](/uncage/reference/security/) for the transport, tokens and limits.
+See also [Security](/docs/reference/security/) for the transport, tokens and limits.

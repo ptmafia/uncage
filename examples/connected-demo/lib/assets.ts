@@ -146,3 +146,42 @@ export async function readAssetFile(id: string, path: string): Promise<{ data: B
     return null;
   }
 }
+
+/**
+ * Whether `viewer` may read a published asset's files. Drafts are never readable. In public demo
+ * mode only the owner may, since guests share one origin and must not see each other's pages.
+ */
+export function canReadAsset(asset: Asset, viewer: string | null, publicMode: boolean): boolean {
+  if (asset.status !== 'published') return false;
+  return publicMode ? viewer !== null && viewer === asset.owner : true;
+}
+
+/**
+ * Whether a request to /asset-files must pass the owner check, judged by its `Sec-Fetch-Dest`.
+ * Sub-resources (style, script, image...) come from the opaque-origin sandboxed iframe and do not
+ * carry the Lax session cookie, so they are not checked: the unguessable asset id guards them.
+ * Requests that open a file as a page are always checked. So is a `fetch()`-style request
+ * (`empty`) that does carry a signed-in user who is not the owner: a cookieless one is a
+ * sub-resource of the sandboxed page, a signed-in non-owner is another guest reading the file.
+ */
+export function needsOwnerCheck(dest: string | null, viewer: string | null = null, owner?: string): boolean {
+  if (dest === 'empty') return viewer !== null && viewer !== owner;
+  return dest === null || ['document', 'iframe', 'frame', 'embed', 'object'].includes(dest);
+}
+
+/** Deletes assets last created or published more than `maxAgeMs` ago (public demo housekeeping); returns how many. */
+export async function purgeAssetsOlderThan(maxAgeMs: number, now: number = Date.now()): Promise<number> {
+  const ids = await readdir(root()).catch(() => [] as string[]);
+  let removed = 0;
+  for (const id of ids) {
+    if (!isAssetId(id)) continue;
+    const asset = await getAsset(id);
+    // Age counts from the later of creation and the last publish.
+    const created = asset ? Math.max(Date.parse(asset.createdAt), Date.parse(asset.publishedAt ?? asset.createdAt)) : Number.NaN;
+    // An unreadable or unparsable meta.json is junk: remove it too.
+    if (Number.isFinite(created) && now - created <= maxAgeMs) continue;
+    await rm(join(root(), id), { recursive: true, force: true });
+    removed += 1;
+  }
+  return removed;
+}

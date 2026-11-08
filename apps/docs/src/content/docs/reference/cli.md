@@ -76,7 +76,7 @@ Starts the local daemon on `127.0.0.1` (loopback only).
 | `--data-dir <dir>` | `~/.uncage/data` (sessions and events) |
 | `--token-file <file>` | `~/.uncage/token` (the bearer token, created with mode 600) |
 
-Optional `uncage.config.yaml` in the working directory: see [Local Mode in depth](/uncage/reference/local-mode/#configuration).
+Optional `uncage.config.yaml` in the working directory: see [Local Mode in depth](/docs/reference/local-mode/#configuration).
 
 ### `uncage doctor`
 
@@ -103,4 +103,4 @@ The daemon is found via `--url`, `--port`, `UNCAGE_URL`, `UNCAGE_PORT`, `uncage.
 | `UNCAGE_TOKEN` | the Local Mode proxy | The daemon token, if it is not in `~/.uncage/token` |
 | `UNCAGE_ALLOWED_HOSTS` | the Local Mode proxy | Allowed `Host` names (comma-separated) |
 
-In Connected Mode, bypass is controlled only by `localPolicy.allowBypass` in `~/.uncage/agent.yaml` ([local policy](/uncage/guides/local-policy/)).
+In Connected Mode, bypass is controlled only by `localPolicy.allowBypass` in `~/.uncage/agent.yaml` ([local policy](/docs/guides/local-policy/)).

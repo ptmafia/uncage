@@ -1,0 +1,93 @@
+---
+title: Try the demo
+description: Connect your own Mac to a live Uncage site in two commands, ask for a landing page, and watch your own Claude Code build it and publish it through the site's tools, with approval cards in the browser.
+---
+
+import { Image } from 'astro:assets';
+import DemoLink from '../../../components/DemoLink.astro';
+import connect from '../../../assets/demo/connect.png';
+import deviceApprove from '../../../assets/demo/device-approve.png';
+import chatRunning from '../../../assets/demo/chat-running.png';
+import approvalCard from '../../../assets/demo/approval-card.png';
+import chatDone from '../../../assets/demo/chat-done.png';
+import assets from '../../../assets/demo/assets.png';
+import assetPreview from '../../../assets/demo/asset-preview.png';
+import offline from '../../../assets/demo/offline.png';
+
+The demo is a small website built with Uncage (the [`connected-demo` example](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo)). You connect your own computer to it and ask for a landing page. Your own Claude Code builds the page on your computer and publishes it to the site through the site's tools, and you approve the steps in the browser. It takes about five minutes.
+
+The demo's interface is in Chinese. This page gives each label with its meaning, for example **允许执行** (Allow once).
+
+<DemoLink />
+
+## Before you start
+
+- A Mac (the Uncage agent runs on macOS).
+- Node.js 22 or newer.
+- Claude Code installed and signed in: `npm i -g @anthropic-ai/claude-code`, then run `claude` once and type `/login`.
+
+## Sign in as a guest
+
+Open the demo and click **以访客身份进入** (Enter as a guest). The site gives this browser a random guest account; there is nothing to sign up for. The chat then shows **连接你的电脑** (Connect your computer) with two commands.
+
+<Image src={connect} alt="The demo's chat with the card 连接你的电脑: step 1 installs the Uncage CLI with a curl command, step 2 runs uncage setup with the demo's address, and a line says it is waiting for the computer to come online." />
+
+## Connect your computer
+
+In a terminal, run the two commands, with the demo's address in place of `<demo>`:
+
+```sh
+curl -fsSL <demo>/api/uncage/install.sh | bash
+uncage setup <demo>
+```
+
+Or install the CLI with `npm i -g @uncage/cli` instead of the first command. `uncage setup` prints a code and opens the demo's approval page in your browser.
+
+<Image src={deviceApprove} alt="The approval page 连接这台电脑? names the computer asking to connect, shows the 验证码 (verification code) in large letters, and offers 拒绝 (Deny) and 批准 (Approve)." />
+
+*Check that the **验证码** (verification code) matches the one in your terminal, then click **批准** (Approve). The chat shows your computer's name with a green dot: it is online.*
+
+## Ask for a landing page
+
+Send, for example, 「做一个介绍 Uncage 的落地页并发布」 ("build a landing page about Uncage and publish it"). Claude Code runs on your computer, under your own login, in a folder of its own under `~/Uncage/`. It loads the site's `landing-page` skill, calls the site tool `create_asset`, writes the page, and then asks to run `publish_asset`.
+
+<Image src={chatRunning} alt="The chat while the run is going: the steps Skill and mcp__site__create_asset with check marks, and Claude Code thinking about the next step." />
+
+*The steps appear in the chat as they happen. `mcp__site__create_asset` is the site's tool: it runs on the site's server, as your guest account, and needs no question.*
+
+Claude Code asks before steps that its permission mode does not allow on its own (the composer shows **每次询问**, Ask every time), such as running a command or writing a file. `publish_asset` is defined with `requiresConfirmation`, so the site asks before every call, in every mode. Each question is an approval card, and the run waits until you answer.
+
+<Image src={approvalCard} alt="An approval card for mcp__site__publish_asset, showing the call publish_asset with the asset ID and the folder landing, the working folder, and the buttons 拒绝 (Deny) and 允许执行 (Allow once)." />
+
+*The approval card for `publish_asset`. Click **允许执行** (Allow once) or **拒绝** (Deny). After **允许执行**, the site copies the page's folder from your computer and publishes it. Steps such as a command or a file write get the same kind of card.*
+
+<Image src={chatDone} alt="The finished conversation: Claude Code's summary says the landing page is published at /assets, and describes the page's hero, features, how to start and closing sections, with 完成 (Done) and the time taken below." />
+
+*When the run is done, Claude Code summarizes what it built. The site's `landing-page` skill gives it the facts about Uncage to build from.*
+
+## See the result on the site
+
+Open **素材** (Assets, `/assets`). The published page is listed there; click it to see it in a sandboxed preview. The page lives on the website, not on your computer, and only you can open it.
+
+<Image src={assets} alt="The 素材 (Assets) page lists one landing page with the badge 已发布 (Published)." />
+
+<Image src={assetPreview} alt="The asset's page in the sandboxed preview: a dark landing page headed 让网站驱动你自己的 Claude Code (Let your website drive your own Claude Code), with the badge 已发布 (Published)." />
+
+Now close the lid, or stop the agent (`uncage agent uninstall` stops the background agent). The conversation stays readable, because the site keeps it, and the computer in the header turns offline. Run `uncage agent` to bring it back.
+
+<Image src={offline} alt="The end of the finished conversation, with a notice that the computer is offline and waiting to reconnect, which says to run uncage agent on that computer." />
+
+*The notice reads "你的电脑离线了，等待重新连接…" (Your computer is offline, waiting to reconnect).*
+
+## About your data
+
+- You are signed in to the demo as a guest, identified by the browser you use. Another browser sees none of your conversations or pages.
+- The demo is public and shared. Unless its host keeps it on a persistent volume, all of its data is cleared on every deploy and restart. Assets (the pages you create) are removed 24 hours after they were last created or published.
+- Requests for a published page are owner-only: only your guest account can open it. The files the page loads are guarded by the page's unguessable ID.
+- Do not put anything private in the demo.
+
+To disconnect your computer when you are done, run `uncage sites` to list the sites it is connected to and `uncage sites remove <id>` with the demo's ID to remove it. See the [CLI reference](/docs/reference/cli/).
+
+## Run the demo yourself
+
+The demo's source is an ordinary Uncage Connected Mode site. To run it on your own machine, follow [the example's README](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo#run-it-single-node). To build your own, continue with [Quickstart: Connected Mode](/docs/start/quickstart-connected/).

@@ -16,7 +16,7 @@ One Node `http` server (`server.ts`) carries everything:
 | `/` | `<AgentChat>` in Connected Mode. With no computer yet, its empty state is `<ConnectMachine>` (install, then `uncage setup <this site>`). |
 | `/assets` | The user's assets (gallery) |
 | `/assets/[id]` | One asset, previewed in `<iframe sandbox="allow-scripts">` |
-| `/asset-files/[id]/…` | The published files, sent with a strict CSP (`lib/asset-csp.ts`): `sandbox allow-scripts`, `default-src 'none'`, `connect-src 'none'`; inline styles/scripts plus the asset's own files (`<origin>/asset-files/<id>/`, e.g. `css/app.css`), nothing else. Published means public: anyone with the link can open it. |
+| `/asset-files/[id]/…` | The published files, sent with a strict CSP (`lib/asset-csp.ts`): `sandbox allow-scripts`, `default-src 'none'`, `connect-src 'none'`; inline styles/scripts plus the asset's own files (`<origin>/asset-files/<id>/`, e.g. `css/app.css`), nothing else. Published means public: anyone with the link can open it (in public demo mode, page requests are owner-only). |
 | `/device` | `<ApproveDevice>`, where `uncage setup` sends the user. It sends `frame-ancestors 'none'` and `X-Frame-Options: DENY`, and the decision is a Server Action (a POST that Next.js only accepts from this site's Origin). |
 | `/login` | **Demo-only sign-in**: a username in an HMAC-signed cookie, with no password. Replace it with your real authentication; the hub only needs `getUser(req)`. |
 
@@ -26,7 +26,7 @@ The tools and the skill are in `lib/tools.ts` and `lib/skills.ts`.
 
 - `create_asset({ title, kind: 'landing-page' })` runs without confirmation. It creates a draft owned by the user and returns `assetId`.
 - `publish_asset({ assetId, dir })` has `requiresConfirmation`, so the user gets an approval card in the chat. It pulls `dir` from the session workspace on the machine (`ctx.files.pull`, at most 20 MB), stores the files under the demo data dir and marks the asset published. A user can only publish their own assets.
-- The skill `landing-page` describes the page to build: one folder, `index.html` as the entry, inline CSS and JS, no CDNs or remote resources. Then the agent calls `create_asset` → `publish_asset`.
+- The skill `landing-page` describes the page to build: one folder, `index.html` as the entry, inline CSS and JS, no CDNs or remote resources. Then the agent calls `create_asset` → `publish_asset`. It ends with a short "About Uncage" section of facts (linking `DOCS_URL`, or the public help site), so a page about Uncage describes the real product.
 
 The machine only ever gets the tools' names, descriptions and JSON Schemas, and the skill text. The tool handlers run here.
 
@@ -56,7 +56,9 @@ pnpm start                          # production: http://localhost:3200
 
 To keep your real `~/.uncage` and `~/Uncage` untouched while trying it, prefix both commands with `UNCAGE_HOME=/tmp/uncage-demo`. `HOME` is not changed, so Claude Code keeps its login.
 
-Environment: `PORT` (3200), `HOST` (127.0.0.1), `PUBLIC_URL` (`http://localhost:$PORT`, the URL users open and give to `uncage setup`), `DEMO_DATA_DIR` (`./.data`: the hub's PGlite store, the assets and the cookie secret), `DEMO_SECRET` (cookie key, at least 32 bytes; shorter values are ignored with a warning; otherwise generated into the data dir).
+Environment: `PORT` (3200), `HOST` (127.0.0.1), `PUBLIC_URL` (`http://localhost:$PORT`, the URL users open and give to `uncage setup`), `DEMO_DATA_DIR` (`./.data`: the hub's PGlite store, the assets and the cookie secret), `DEMO_SECRET` (cookie key, at least 32 bytes; shorter values are ignored with a warning; otherwise generated into the data dir), `TRUST_PROXY=1` / `CLIENT_IP_HEADER=<header>` (where per-IP rate limits find the client behind a proxy; leave both unset without one, see [DEPLOY.md](DEPLOY.md)).
+
+Public demo mode: `DEMO_PUBLIC=1` replaces the sign-in form with a random guest account, shows a banner, makes page requests owner-only (the page's sub-resources are guarded by the unguessable asset id), deletes assets last created or published more than 24 hours ago (at start and hourly), caps each guest at 20 assets and hides Log out (the guest identity is the key to the linked computer). `DOCS_URL` (for example `https://uncage.example/docs/`) adds a link to the docs in the banner. To host it, see [DEPLOY.md](DEPLOY.md).
 
 ## Run it (multi-node)
 

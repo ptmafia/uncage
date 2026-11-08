@@ -1,11 +1,35 @@
 import type { SkillSpec } from '@uncage/protocol';
+import { docsUrl } from './config.ts';
+
+/** The help site linked from the skill when `DOCS_URL` is not set. */
+export const DEFAULT_DOCS_URL = 'https://uncage.vercel.app/docs/';
+
+/** Facts about Uncage, so a page "about Uncage" describes the real product instead of guessing. */
+function aboutUncage(docs: string): string {
+  return `## About Uncage (use these facts when the page is about Uncage)
+Uncage is an open-source (MIT) set of npm packages that lets a website drive each user's own
+Claude Code on the user's own computer. This website is built with it.
+- The website gives the instructions; the user's own Claude Code does the work on their machine,
+  under their own login. The user connects a computer once with two commands
+  (\`curl -fsSL <site>/api/uncage/install.sh | bash\`, then \`uncage setup <site>\`) and approves it in the browser.
+- The website offers **site tools** (like \`create_asset\` and \`publish_asset\` here), which run on the
+  website's server as the signed-in user, and **skills** (like this one) that describe its formats.
+- **Approvals**: Claude Code's permission prompts and the site tools that need confirmation show an
+  approval card in the website's chat, and that step waits until the user answers. The website never sends code or shell commands to the user's computer.
+- The process and the results stay on the website: the conversation stays readable after the
+  computer goes offline, and published pages are stored and served by the website.
+- Documentation: ${docs}
+Do not invent other features, pricing, customers or statistics.
+`;
+}
 
 /** How to build a landing page this website can publish. Sent to the machine as plain text. */
-export const landingPageSkill: SkillSpec = {
-  name: 'landing-page',
-  description:
-    'Build a single-folder static landing page and publish it to the website with the create_asset and publish_asset tools.',
-  markdown: `# Landing page for this website
+export function makeLandingPageSkill(env: Record<string, string | undefined> = process.env): SkillSpec {
+  return {
+    name: 'landing-page',
+    description:
+      'Build a single-folder static landing page and publish it to the website with the create_asset and publish_asset tools.',
+    markdown: `# Landing page for this website
 
 Use this when the user asks for a landing page (落地页), product page or marketing page.
 
@@ -25,7 +49,11 @@ Use this when the user asks for a landing page (落地页), product page or mark
 3. Call \`publish_asset\` with \`{ "assetId": "<assetId>", "dir": "landing" }\`. The user confirms
    it in the website; if they decline, stop and ask what to change.
 4. Tell the user the page is published and can be seen on the website's Assets page.
-`,
-};
+
+${aboutUncage(docsUrl(env) ?? DEFAULT_DOCS_URL)}`,
+  };
+}
+
+export const landingPageSkill: SkillSpec = makeLandingPageSkill();
 
 export const demoSkills: SkillSpec[] = [landingPageSkill];

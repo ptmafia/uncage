@@ -1,0 +1,114 @@
+---
+import Icon from './Icon.astro';
+import { getDict, localeInfo, localePath, locales, type Locale } from '../i18n/index.ts';
+
+interface Props {
+  locale: Locale;
+  path?: string;
+  /** Opens upward (footer). */
+  up?: boolean;
+}
+
+const { locale, path = '/', up = false } = Astro.props;
+const t = getDict(locale);
+---
+
+<details class:list={['lang', { up }]} data-dropdown>
+  <summary aria-label={`${localeInfo[locale].short}: ${t.a11y.language}, ${localeInfo[locale].label}`}>
+    <Icon name="globe" size={17} />
+    <span class="cur">{localeInfo[locale].short}</span>
+    <Icon name="chevron" size={14} class="chev" />
+  </summary>
+  <ul role="list">
+    {
+      locales.map((l) => (
+        <li>
+          <a
+            href={localePath(l, path)}
+            hreflang={localeInfo[l].lang}
+            lang={localeInfo[l].lang}
+            aria-current={l === locale ? 'true' : undefined}
+            data-lang-pick={l}
+          >
+            {localeInfo[l].label}
+            {l === locale && <Icon name="check" size={15} />}
+          </a>
+        </li>
+      ))
+    }
+  </ul>
+</details>
+
+<style>
+  .lang {
+    position: relative;
+  }
+  summary {
+    list-style: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 36px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    color: var(--uc-ink-2);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    user-select: none;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  summary:hover {
+    color: var(--uc-ink);
+    background: color-mix(in srgb, var(--uc-ink) 6%, transparent);
+  }
+  summary :global(.chev) {
+    transition: transform 0.15s ease;
+  }
+  .lang[open] summary :global(.chev) {
+    transform: rotate(180deg);
+  }
+  ul {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    z-index: 70;
+    min-width: 168px;
+    margin: 0;
+    padding: 6px;
+    list-style: none;
+    background: var(--surface);
+    border: 1px solid var(--uc-line);
+    border-radius: 12px;
+    box-shadow: 0 16px 32px -16px rgb(60 40 10 / 0.3);
+  }
+  .up ul {
+    top: auto;
+    bottom: calc(100% + 6px);
+    left: 0;
+    right: auto;
+  }
+  ul a {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 14px;
+    color: var(--uc-ink-2);
+  }
+  ul a:hover {
+    background: var(--uc-paper);
+    color: var(--uc-ink);
+  }
+  ul a[aria-current] {
+    color: var(--uc-ink);
+    font-weight: 600;
+  }
+  ul a :global(svg) {
+    color: var(--uc-accent);
+  }
+</style>

@@ -1,24 +1,24 @@
-name: Docs
+name: Web
 
-# Builds the help site (apps/docs) and deploys it to GitHub Pages: https://ptmafia.github.io/uncage/
-# One-time setup: repository Settings → Pages → Build and deployment → Source: GitHub Actions.
+# Builds the official site (apps/site) and the help site (apps/docs) as one static output and checks it.
+# Deployment is Vercel's Git integration (vercel.json at the repo root); this workflow needs no secrets.
+# Browser e2e (apps/site `pnpm e2e`) stays local-only.
 on:
+  pull_request:
   push:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: false
 
 jobs:
-  build:
-    if: github.repository == 'ptmafia/uncage'
+  web:
+    name: Web
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -28,20 +28,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Only the packages the site documents (not the example apps).
-      - run: pnpm exec turbo run build --filter='docs^...'
+      - run: pnpm build:web
+      - run: pnpm check:web
       - run: pnpm --filter docs check:snippets
-      - run: pnpm --filter docs build
-      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
-        with:
-          path: apps/docs/dist
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+      - run: pnpm --filter docs exec node scripts/check-i18n.ts

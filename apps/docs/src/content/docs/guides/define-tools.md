@@ -35,7 +35,7 @@ and pass it to the hub: `createHub({ …, tools: [lookupOrder] })`.
 1. The user’s computer only ever receives the tool’s **name**, **description** and the **JSON Schema** of `input` (generated with `z.toJSONSchema`). Claude Code sees the tool as `mcp__site__lookup_order`.
 2. When Claude Code calls it, the agent sends the call over its WebSocket. The hub node holding that connection checks that:
    - the session belongs to this computer and to its user;
-   - the run was started through the hub, and the tool was in **this run’s manifest** (see [selectManifest](/uncage/guides/select-manifest/));
+   - the run was started through the hub, and the tool was in **this run’s manifest** (see [selectManifest](/docs/guides/select-manifest/));
    - the arguments match `input`. They are parsed with it, so zod defaults and transforms apply. A mismatch fails with `invalid_request` and the handler is not called.
 3. Your handler runs **in your backend** with the parsed arguments and a `ctx`.
 4. The return value goes back to Claude Code as the tool result. The call is recorded in the hub’s store (`store.listToolCalls(sessionId)`), and the browser sees it in the session’s events as a normal tool step.
@@ -100,7 +100,7 @@ export const sendInvoice = defineTool({
 });
 ```
 
-With `requiresConfirmation: true`, every call shows an approval card in your UI (category `mcp`, titled with the tool’s description, showing `send_invoice({"invoiceId":…,"to":…})`). The handler only runs after **Allow**. This happens in every permission mode, including `bypassPermissions` and `auto`. If the user denies, Claude Code is told and usually asks what to change.
+With `requiresConfirmation: true`, every call shows an approval card in your UI (category `mcp`, titled with the tool’s description, showing `send_invoice({"invoiceId":…,"to":…})`). The handler only runs after **Allow once**. This happens in every permission mode, including `bypassPermissions` and `auto`. If the user denies, Claude Code is told and usually asks what to change.
 
 Use it for anything that publishes, sends, pays, deletes or is visible to other people. Tools without it run without a card (Claude Code may still show the step).
 
@@ -185,7 +185,7 @@ export const createAsset = defineTool({
 });
 ```
 
-A [skill](/uncage/guides/write-skills/) is the right place for the longer recipe (“first create_asset, then write the files, then publish_asset”).
+A [skill](/docs/guides/write-skills/) is the right place for the longer recipe (“first create_asset, then write the files, then publish_asset”).
 
 ## Testing a handler
 
@@ -230,4 +230,4 @@ describe('lookup_order', () => {
 | `ctx.files.pull` | 50 MiB total, 10 MiB per file |
 | `ctx.files.read` | 10 MiB |
 
-Codex sessions do not support site tools yet: a run with tools on a Codex session is refused with `unsupported_capability`.
+Codex sessions do not support site tools yet. A run on a Codex session is not refused: the hub drops the tools, the skills still go, and the session shows a `system.warning` with code `site_tools_unsupported`. See [Choose tools and skills per run](/docs/guides/select-manifest/).

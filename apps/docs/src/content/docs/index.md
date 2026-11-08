@@ -6,13 +6,13 @@ hero:
   tagline: Your website gives the instructions. Your user’s own Claude Code does the work, on their computer, and calls your website’s tools. The process and the results stay on your site.
   actions:
     - text: Connected Mode quickstart
-      link: /uncage/start/quickstart-connected/
+      link: /docs/start/quickstart-connected/
       icon: right-arrow
     - text: How it works
-      link: /uncage/start/how-it-works/
+      link: /docs/start/how-it-works/
       variant: minimal
     - text: For coding agents
-      link: /uncage/start/for-coding-agents/
+      link: /docs/start/for-coding-agents/
       variant: minimal
 ---
 
@@ -50,13 +50,13 @@ It has two modes. Both use the same protocol, the same React hooks and the same 
 - It never shares one Claude login among users. Every machine uses its owner’s own Claude Code.
 - A website can never switch on “bypass permissions”. Only the user can, in a file on their own computer.
 
-See [the trust model](/uncage/concepts/trust-model/) for the full list.
+See [the trust model](/docs/concepts/trust-model/) for the full list.
 
 ## Where to start
 
-- **Building a website?** Read [How it works](/uncage/start/how-it-works/), then do the [Connected Mode quickstart](/uncage/start/quickstart-connected/) (about 15 minutes).
-- **The agent runs on the same machine as your app?** The [Local Mode quickstart](/uncage/start/quickstart-local/) takes 5 minutes.
-- **Using a coding agent?** Give it [the Uncage skill](/uncage/skills/uncage/SKILL.md) or [`llms.txt`](/uncage/llms.txt). Every page is also available as plain markdown: add `.md` to its URL. See [For coding agents](/uncage/start/for-coding-agents/).
+- **Building a website?** Read [How it works](/docs/start/how-it-works/), then do the [Connected Mode quickstart](/docs/start/quickstart-connected/) (about 15 minutes).
+- **The agent runs on the same machine as your app?** The [Local Mode quickstart](/docs/start/quickstart-local/) takes 5 minutes.
+- **Using a coding agent?** Give it [the Uncage skill](/docs/skills/uncage/SKILL.md) or [`llms.txt`](/docs/llms.txt). Every page is also available as plain markdown: add `.md` to its URL. See [For coding agents](/docs/start/for-coding-agents/).
 
 :::note[Status]
 Connected Mode is part of Uncage 0.2 (`@uncage/hub`, `@uncage/agent`, and the `uncage setup` / `uncage agent` commands in `@uncage/cli`). The agent side runs on **macOS** only, with Node.js 22 or newer. Claude Code is verified live; Codex is implemented but has not been run against a real binary, and it does not support site tools yet. Details: [compatibility](https://github.com/ptmafia/uncage/blob/main/docs/compatibility.md).

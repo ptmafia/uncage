@@ -51,7 +51,7 @@ const hub = await createHub({ publicUrl, getUser, tools, skills: [landingPage] }
 
 ## How a skill reaches Claude Code
 
-1. When a run starts, the hub puts the skills chosen for it (all of them, unless you use [`selectManifest`](/uncage/guides/select-manifest/)) into the run’s manifest, as text.
+1. When a run starts, the hub puts the skills chosen for it (all of them, unless you use [`selectManifest`](/docs/guides/select-manifest/)) into the run’s manifest, as text.
 2. The agent writes each one to the session workspace before Claude Code starts:
 
    ```text
@@ -87,4 +87,4 @@ Skills are data. The hub never sends code for the computer to execute: a templat
 
 `createHub` throws at startup on an invalid or duplicate skill.
 
-Skills work with Claude Code. Codex sessions currently ignore them.
+Skills are sent with every run, Codex runs included. The Claude Code runtime installs them in the session folder (`.claude/skills/`). The Codex runtime receives them but does not use them yet: it reports skill support as `unknown`, so skills on Codex are not verified.

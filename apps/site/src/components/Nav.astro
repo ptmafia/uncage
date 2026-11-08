@@ -1,0 +1,236 @@
+---
+import Icon from './Icon.astro';
+import LangSwitcher from './LangSwitcher.astro';
+import Logo from './Logo.astro';
+import { GITHUB_URL, TRY_DEMO, docsPath, getDict, localePath, type Locale } from '../i18n/index.ts';
+
+interface Props {
+  locale: Locale;
+  path?: string;
+}
+
+const { locale, path = '/' } = Astro.props;
+const t = getDict(locale);
+const links = [
+  { href: localePath(locale, '#features'), label: t.nav.product },
+  { href: localePath(locale, '#how'), label: t.nav.how },
+  { href: localePath(locale, '#security'), label: t.nav.security },
+  { href: docsPath(locale), label: t.nav.docs, id: 'nav-docs' },
+  { href: docsPath(locale, TRY_DEMO), label: t.nav.demo },
+];
+---
+
+<header class="top">
+  <nav class="wrap bar" aria-label={t.a11y.mainNav}>
+    <a class="brand" href={localePath(locale)} aria-label={t.a11y.home}>
+      <Logo height={28} />
+    </a>
+    <ul class="links" role="list">
+      {
+        links.map((l) => (
+          <li>
+            <a href={l.href} data-nav={l.id}>
+              {l.label}
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+    <div class="right">
+      <LangSwitcher locale={locale} path={path} />
+      <a class="btn ghost sm gh" href={GITHUB_URL} rel="noopener">
+        <Icon name="github" size={16} />
+        <span class="gh-label">GitHub</span>
+      </a>
+      <a class="btn primary sm cta" href={docsPath(locale, TRY_DEMO)}>{t.nav.tryDemo}</a>
+      <details class="menu" data-dropdown>
+        <summary aria-label={t.a11y.menu}>
+          <Icon name="menu" size={20} class="i-open" />
+          <Icon name="x" size={20} class="i-close" />
+        </summary>
+        <div class="sheet">
+          <ul role="list">
+            {
+              links.map((l) => (
+                <li>
+                  <a href={l.href}>{l.label}</a>
+                </li>
+              ))
+            }
+            <li>
+              <a href={GITHUB_URL} rel="noopener">GitHub</a>
+            </li>
+          </ul>
+        </div>
+      </details>
+    </div>
+  </nav>
+</header>
+
+<style>
+  .top {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: var(--nav-bg);
+    backdrop-filter: saturate(1.4) blur(14px);
+    -webkit-backdrop-filter: saturate(1.4) blur(14px);
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.2s ease;
+  }
+  @supports (animation-timeline: scroll()) {
+    .top {
+      animation: nav-line linear both;
+      animation-timeline: scroll();
+      animation-range: 0 80px;
+    }
+    @keyframes nav-line {
+      to {
+        border-bottom-color: var(--uc-line);
+      }
+    }
+  }
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: 32px;
+    height: 68px;
+  }
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    border-radius: 8px;
+  }
+  .links {
+    display: flex;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .links a {
+    display: inline-flex;
+    padding: 8px 12px;
+    border-radius: 999px;
+    font-size: 15px;
+    color: var(--uc-ink-2);
+    transition:
+      color 0.15s ease,
+      background-color 0.15s ease;
+  }
+  .links a:hover {
+    color: var(--uc-ink);
+    background: color-mix(in srgb, var(--uc-ink) 6%, transparent);
+  }
+  .right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .menu {
+    display: none;
+    position: relative;
+  }
+  .menu summary {
+    list-style: none;
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 999px;
+    cursor: pointer;
+    color: var(--uc-ink);
+  }
+  .menu summary::-webkit-details-marker {
+    display: none;
+  }
+  .menu summary:hover {
+    background: color-mix(in srgb, var(--uc-ink) 6%, transparent);
+  }
+  .menu :global(.i-close),
+  .menu[open] :global(.i-open) {
+    display: none;
+  }
+  .menu[open] :global(.i-close) {
+    display: block;
+  }
+  .sheet {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 10px);
+    width: min(280px, calc(100vw - 24px));
+    padding: 8px;
+    background: var(--surface);
+    border: 1px solid var(--uc-line);
+    border-radius: 16px;
+    box-shadow: 0 24px 48px -20px rgb(60 40 10 / 0.35);
+  }
+  .sheet ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .sheet a {
+    display: block;
+    padding: 12px 14px;
+    border-radius: 10px;
+    font-size: 16px;
+    color: var(--uc-ink);
+  }
+  .sheet a:hover {
+    background: var(--uc-paper);
+  }
+
+  @media (max-width: 1020px) {
+    .links {
+      display: none;
+    }
+    .menu {
+      display: block;
+    }
+  }
+  @media (max-width: 640px) {
+    .bar {
+      height: 60px;
+    }
+    .gh {
+      display: none;
+    }
+    .right {
+      gap: 4px;
+    }
+    .right :global(.lang .cur) {
+      display: none;
+    }
+  }
+  @media (max-width: 380px) {
+    /* Down to 320: brand, language, Try the demo and the menu button fit in one row. */
+    .bar {
+      gap: 8px;
+    }
+    .right {
+      gap: 2px;
+    }
+    .right > :global(*) {
+      flex-shrink: 0;
+    }
+    .cta {
+      padding: 7px 10px;
+      font-size: 13px;
+    }
+  }
+  @media (max-width: 340px) {
+    /* The inline style on the logo svg sets its height, hence !important. */
+    .brand :global(svg) {
+      height: 22px !important;
+    }
+    .right :global(.lang .chev) {
+      display: none;
+    }
+    .cta {
+      padding: 7px 8px;
+    }
+  }
+</style>

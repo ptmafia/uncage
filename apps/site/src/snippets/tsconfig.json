@@ -1,0 +1,17 @@
+{
+  // The homepage code samples, type-checked against the workspace packages (strict, React JSX).
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "jsx": "react-jsx",
+    "types": ["node"],
+    "lib": ["ES2023", "DOM"]
+  },
+  "include": ["**/*.ts", "**/*.tsx"]
+}

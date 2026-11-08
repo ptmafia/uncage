@@ -72,7 +72,7 @@ export function toolCalls(store: HubStore, sessionId: string): Promise<ToolCallR
 }
 ```
 
-`SessionRecord.snapshot` holds the latest snapshot when `sessionStorage` is `'site'`. The [generated reference](/uncage/api/hub/) lists every `HubStore` method. Treat the store as read-only from your code; the hub owns its tables.
+`SessionRecord.snapshot` holds the latest snapshot when `sessionStorage` is `'site'`. The [generated reference](/docs/api/hub/) lists every `HubStore` method. Treat the store as read-only from your code; the hub owns its tables.
 
 ## The tool-call audit (both modes)
 
