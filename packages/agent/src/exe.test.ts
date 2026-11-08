@@ -113,7 +113,8 @@ describe('resolveCommand', () => {
     expect((await resolveCommand('x', [], o))?.file).toBe(join(npm, 'node.exe'));
   });
 
-  it('on POSIX finds an executable on PATH and skips non-executable files', async () => {
+  // POSIX PATH (colon-separated) and execute bits: not meaningful with Windows paths.
+  it.skipIf(process.platform === 'win32')('on POSIX finds an executable on PATH and skips non-executable files', async () => {
     const d = await tmp();
     await writeFile(join(d, 'tool'), '#!/bin/sh\n');
     await writeFile(join(d, 'plain'), '');
@@ -121,7 +122,7 @@ describe('resolveCommand', () => {
     await chmod(join(d, 'plain'), 0o644);
     const o = { platform: 'linux' as const, env: { PATH: `/nonexistent:${d}` } };
     expect(await resolveCommand('tool', ['x'], o)).toEqual({ file: join(d, 'tool'), args: ['x'], via: 'direct' });
-    if (process.platform !== 'win32') expect(await resolveCommand('plain', [], o)).toBeNull();
+    expect(await resolveCommand('plain', [], o)).toBeNull();
     expect(await resolveCommand('missing', [], o)).toBeNull();
   });
 });
@@ -147,7 +148,7 @@ describe('selfUpgradeCommand', () => {
     ]);
   });
 
-  it('on POSIX prefers the npm beside the running node', async () => {
+  it.skipIf(process.platform === 'win32')('on POSIX prefers the npm beside the running node', async () => {
     const d = await tmp();
     await writeFile(join(d, 'npm'), '#!/bin/sh\n');
     await chmod(join(d, 'npm'), 0o755);

@@ -100,14 +100,14 @@ jobs:
           echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" >> "$GITHUB_ENV"
           XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user show-environment > /dev/null && echo "user systemd ready" || echo "no user systemd (the real service test will skip)"
       - name: Agent tests
-        run: pnpm --filter @uncage/agent test
+        run: pnpm --filter @uncage/agent exec vitest run --reporter=default --reporter=github-actions
       - name: CLI tests (services, doctor, setup; the real service on Windows and Ubuntu)
-        run: pnpm --filter @uncage/cli exec vitest run --reporter=verbose
+        run: pnpm --filter @uncage/cli exec vitest run --reporter=verbose --reporter=github-actions
       - name: Runtime tests (Windows not-found mapping, resolved executables)
         run: pnpm --filter @uncage/runtime-claude --filter @uncage/runtime-codex test
       - name: Installer tests (static checks; install.ps1 scenarios under powershell.exe and pwsh)
         # Verbose: every scenario and shell is listed; a failing one prints its full output.
-        run: pnpm --filter @uncage/hub exec vitest run src/install --reporter=verbose
+        run: pnpm --filter @uncage/hub exec vitest run src/install --reporter=verbose --reporter=github-actions
       - name: Upload installer scenario logs
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

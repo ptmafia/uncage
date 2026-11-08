@@ -1,5 +1,12 @@
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { checkUserOnly } from './perms.js';
+
+/** 0600 on POSIX; a user-only ACL on Windows. */
+async function expectUserOnly(p: string): Promise<void> {
+  if (process.platform === 'win32') expect((await checkUserOnly(p)).ok).toBe(true);
+  else expect(((await stat(p)).mode & 0o777).toString(8)).toBe('600');
+}
 import { defineTool } from '@uncage/hub';
 import type { MachineInfo, Run, Session, UncageEvent } from '@uncage/protocol';
 import { createFakeAdapter, type FakeStep } from '@uncage/testkit';
@@ -212,7 +219,7 @@ describe('agent ↔ real hub', () => {
     const start = entries.find((e) => e.name === 'startRun')!;
     expect(start).toMatchObject({ kind: 'command', ok: true, detail: { sessionId: session.id, prompt: '[redacted 21 chars]' } });
     expect(entries.find((e) => e.name === 'createSession')).toMatchObject({ ok: true });
-    expect(((await stat(join(h, '.uncage', 'sites', site.id, 'activity.log'))).mode & 0o777).toString(8)).toBe('600');
+    await expectUserOnly(join(h, '.uncage', 'sites', site.id, 'activity.log'));
   });
 
   it('attachments sent through the hub land in the session workspace', async () => {
@@ -396,8 +403,8 @@ describe('agent ↔ real hub', () => {
     await online(t2);
     const a = await createSession(t1);
     const b = await createSession(t2);
-    expect(a.workspace).toContain(`${siteHost(s1.url)}/${a.id}`);
-    expect(b.workspace).toContain(`${siteHost(s2.url)}/${b.id}`);
+    expect(a.workspace).toContain(join(siteHost(s1.url), a.id));
+    expect(b.workspace).toContain(join(siteHost(s2.url), b.id));
     // Sessions are separate per site.
     expect(((await (await t1.as('alice', '/sessions')).json()) as Session[]).map((s) => s.id)).toEqual([a.id]);
     expect(((await (await t2.as('alice', '/sessions')).json()) as Session[]).map((s) => s.id)).toEqual([b.id]);
@@ -543,6 +550,6 @@ describe('agent ↔ real hub', () => {
   it('agent.yaml is written 0600', async () => {
     const h = await home();
     await updateAgentSites(h, () => []);
-    expect(((await stat(agentConfigPath(h))).mode & 0o777).toString(8)).toBe('600');
+    await expectUserOnly(agentConfigPath(h));
   });
 });

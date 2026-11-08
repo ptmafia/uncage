@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
@@ -235,7 +236,10 @@ describe('agent ↔ fake hub (protocol edges)', () => {
 
     it('refuses a symlink that points outside the workspace', async () => {
       const { hub, ws, sessionId } = await pullSetup();
-      await symlink('/etc', join(ws, 'escape'));
+      // A folder outside the workspace holding a `hosts` file (a junction on Windows: no admin needed).
+      const outside = await mkdtemp(join(tmpdir(), 'uncage-outside-'));
+      await writeFile(join(outside, 'hosts'), '127.0.0.1 localhost\n');
+      await symlink(outside, join(ws, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
       hub.send({ t: 'file_pull', id: 'p2', sessionId, path: 'escape/hosts', maxBytes: 1000 });
       expect(await resultFor(hub, 'p2')).toMatchObject({ t: 'result', ok: false, error: { code: 'invalid_request', message: expect.stringContaining('outside') } });
       expect(hub.framesOf('file_chunk').filter((c) => c.id === 'p2')).toEqual([]);

@@ -78,7 +78,7 @@ describe('uncage setup', () => {
     const home = await tmpHome();
     const exec = okExec();
     const a = approver(hub);
-    const site = await runSetup({ url: origin, home, fetch, exec, out: a.out, noDaemon: true, sleep: fastSleep, machine: { name: 'Mac', os: 'darwin' } });
+    const site = await runSetup({ url: origin, home, fetch, exec, out: a.out, noDaemon: true, platform: 'darwin', sleep: fastSleep, machine: { name: 'Mac', os: 'darwin' } });
 
     expect(site.url).toBe(`${origin}/api/uncage`); // /api/uncage appended
     expect(exec).toHaveBeenCalledWith('open', [expect.stringContaining('/device?code=')]);
