@@ -7,6 +7,7 @@
  *   FAKE_ACP_IGNORE_CANCEL=1 ignore `session/cancel`
  *   FAKE_ACP_AUTH=required   `session/new` fails with -32000 (auth required)
  *   FAKE_ACP_MODES           comma-separated session mode ids (current: the first); `session/set_mode` switches
+ *   FAKE_ACP_SET_MODE=fail   `session/set_mode` fails
  *   FAKE_ACP_RECORD          append every received JSON-RPC message (requests, notifications and the client's
  *                            responses) to this JSONL file; the first line is `{"fake":"start","pid":<pid>}`; scenario notes
  *                            are lines with a `fake` key (e.g. `{"fake":"mcp","listedTools":[…]}`)
@@ -46,6 +47,7 @@ const app = createFakeAcpAgent({
   ignoreCancel: env.FAKE_ACP_IGNORE_CANCEL === '1',
   authRequired: env.FAKE_ACP_AUTH === 'required',
   ...(env.FAKE_ACP_MODES ? { modes: env.FAKE_ACP_MODES.split(',') } : {}),
+  failSetMode: env.FAKE_ACP_SET_MODE === 'fail',
   note: (entry) => {
     if (record) appendFileSync(record, `${JSON.stringify(entry)}\n`);
   },

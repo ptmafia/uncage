@@ -52,13 +52,25 @@ describe('permissionDecision', () => {
     expect(permissionDecision(req({ kind: 'edit' }), o)).toHaveProperty('ask');
   });
 
-  it('a site tool (mcp__site__<n> or <n>) is auto-allowed: its MCP handler confirms', () => {
-    const o = { ...base, siteToolNames: new Set(['publish']) };
+  it('a site tool request is auto-allowed only by exact mcp__site__<n>, or a bare name of kind other/unset', () => {
+    const o = { ...base, siteToolNames: new Set(['publish', 'bash']) };
+    const named = (name: string, more: Partial<RequestPermissionRequest['toolCall']> = {}) => req({ ...more, name } as Partial<RequestPermissionRequest['toolCall']>);
     expect(permissionDecision(req({ title: 'mcp__site__publish' }), o)).toEqual({ auto: 'allow' });
-    expect(permissionDecision(req({ title: 'publish' }), o)).toEqual({ auto: 'allow' });
+    expect(permissionDecision(named('mcp__site__publish', { title: 'Publish' }), o)).toEqual({ auto: 'allow' });
     expect(permissionDecision(req({ title: 'Publish', kind: 'other' }), { ...o, known: { title: 'mcp__site__publish' } })).toEqual({ auto: 'allow' });
+    expect(permissionDecision(named('publish'), o)).toEqual({ auto: 'allow' });
+    expect(permissionDecision(named('publish', { kind: 'other' }), o)).toEqual({ auto: 'allow' });
+    // A bare title never counts; neither do other servers or unknown tools.
+    expect(permissionDecision(req({ title: 'publish' }), o)).toHaveProperty('ask');
     expect(permissionDecision(req({ title: 'mcp__site__other' }), o)).toHaveProperty('ask');
     expect(permissionDecision(req({ title: 'mcp__evil__publish' }), o)).toHaveProperty('ask');
+    // A native tool sharing a site tool's name asks: bash (execute) while a site tool `bash` exists.
+    expect(permissionDecision(named('bash', { title: 'bash', kind: 'execute', rawInput: { command: 'rm -rf /' } }), o)).toMatchObject({ ask: { category: 'shell' } });
+    for (const kind of ['execute', 'edit', 'delete', 'move', 'fetch'] as const) {
+      expect(permissionDecision(named('publish', { kind }), o)).toHaveProperty('ask');
+      expect(permissionDecision(req({ title: 'mcp__site__publish', kind }), o)).toHaveProperty('ask');
+    }
+    expect(permissionDecision(named('publish'), { ...o, known: { title: 'x', kind: 'execute' } })).toHaveProperty('ask');
   });
 
   it('without an allow_once option the request is cancelled with a warning (never allow_always)', () => {

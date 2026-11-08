@@ -13,7 +13,8 @@ const adapter = acpAdapter({ id: 'acp-claude', displayName: 'Claude Code (ACP)',
 - Approvals offer allow once / deny. "Always" options are never selected, because an agent may store them outside the session.
 - Permission modes: `default` (ask), `acceptEdits` (edits, deletes and moves are allowed without asking) and, only with `allowBypass: true`, `bypassPermissions`. When the agent has a session mode with the same id, Uncage switches to it too.
 - Site tools (connected mode) are served by a loopback MCP server for each run, with a bearer token, and passed to the agent in `mcpServers` as `site`: over HTTP when the agent supports it, otherwise through a small stdio bridge. Tools that need confirmation ask in Uncage before every call. `mcp: 'off'` turns site tools off.
-- ACP has no skills: site skills are added as text to the first prompt of each new session (`skills: 'prompt'`). Inline shell forms in skill text are neutralized.
+- ACP has no skills: on every run the site's skills are written to `<cwd>/.uncage/skills/<name>/` (SKILL.md and files), and the first prompt of each new session includes them as text with the paths of those files (`skills: 'prompt'`). Inline shell forms in skill markdown are neutralized.
+- If the agent cannot switch to the website's permission mode and would stay in a looser one, the run fails with `policy_denied`.
 - Thoughts, usage, commands and mode updates are not shown; a plan appears as one "Plan" step with a checklist.
 
 **Status: experimental.** Verified with a fake ACP agent (in `@uncage/testkit`); see the compatibility matrix for real agents.

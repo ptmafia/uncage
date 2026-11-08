@@ -24,13 +24,23 @@ export interface PermissionPolicy {
 export type PermissionDecision = { auto: 'allow' } | { ask: NativeApprovalInput } | { auto: 'cancel'; warning: string };
 
 const SITE_PREFIX = `mcp__${SITE_MCP_SERVER}__`;
+/** Kinds a site tool call never has: a request of these kinds always gets a card. */
+const NATIVE_KINDS: ReadonlySet<ToolKind> = new Set(['execute', 'edit', 'delete', 'move', 'fetch']);
 
-function isSiteTool(names: Array<string | null | undefined>, siteToolNames: ReadonlySet<string>): boolean {
-  return names.some((n) => {
-    if (!n) return false;
-    const bare = n.startsWith(SITE_PREFIX) ? n.slice(SITE_PREFIX.length) : n;
-    return siteToolNames.has(bare);
-  });
+/**
+ * A request for one of the run's site tools (confirmed by the `site` MCP handler, not here): the
+ * name or title is exactly `mcp__site__<n>`, or the `name` (never the title) is a bare `<n>` with
+ * kind unset or `other`. Never for execute / edit / delete / move / fetch requests, so a native tool
+ * that happens to share a site tool's name still asks.
+ */
+function isSiteToolRequest(call: RequestPermissionRequest['toolCall'], o: PermissionPolicy): boolean {
+  const kind = call.kind ?? o.known?.kind;
+  if (kind && NATIVE_KINDS.has(kind)) return false;
+  const prefixed = (n: string | null | undefined): boolean =>
+    typeof n === 'string' && n.startsWith(SITE_PREFIX) && o.siteToolNames.has(n.slice(SITE_PREFIX.length));
+  const name = (call as { name?: string | null }).name;
+  if ([name, call.title, o.known?.title].some(prefixed)) return true;
+  return typeof name === 'string' && o.siteToolNames.has(name) && (!kind || kind === 'other');
 }
 
 /**
@@ -44,8 +54,7 @@ export function permissionDecision(req: RequestPermissionRequest, o: PermissionP
     return { auto: 'cancel', warning: 'The agent asked for a permission without an "allow once" choice; Uncage declined it.' };
   }
   const call = req.toolCall;
-  const name = (call as { name?: string | null }).name;
-  if (isSiteTool([name, call.title, o.known?.title], o.siteToolNames)) return { auto: 'allow' };
+  if (isSiteToolRequest(call, o)) return { auto: 'allow' };
   if (o.mode === 'bypassPermissions' && o.allowBypass) return { auto: 'allow' };
   const kind = call.kind ?? o.known?.kind;
   if (o.mode === 'acceptEdits' && kind && EDIT_KINDS.has(kind)) return { auto: 'allow' };

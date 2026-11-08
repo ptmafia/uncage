@@ -24,13 +24,14 @@ import {
   type RuntimeEvent,
   type RuntimeProbe,
 } from '@uncage/protocol';
+import { materializeSkills, type MaterializedSkill } from '@uncage/protocol/node';
 import { NO_ALLOW_ONCE_WARNING, permissionDecision, toPermissionResponse } from './approvals.js';
 import { defaultCapabilities, mapCapabilities } from './capabilities.js';
 import { createAcpMapper } from './map.js';
 import { AcpProtocolError, startAcpProcess, type AcpProcess } from './process.js';
 import { toPromptBlocks } from './prompt.js';
 import { siteMcpDeclaration, startSiteMcpServer, type SiteMcpServer } from './site-mcp.js';
-import { skillsPreamble } from './skills.js';
+import { ACP_SKILLS_ROOT, skillsPreamble } from './skills.js';
 
 export interface AcpAdapterOptions {
   /** Runtime id, `acp-<name>` (/^acp-[a-z][a-z0-9-]{0,31}$/). */
@@ -67,6 +68,10 @@ const NOT_FOUND = -32002;
 const DISCONNECTED: RuntimeEvent = { type: 'run.interrupted', reason: 'runtime_disconnected' };
 const ABORTED_EVENT: RuntimeEvent = { type: 'run.interrupted', reason: 'aborted' };
 const ABORTED = Symbol('aborted');
+
+/** How much a permission mode allows without asking; an unknown agent mode counts as looser than any. */
+const MODE_LOOSENESS: Record<string, number> = { default: 0, acceptEdits: 1, bypassPermissions: 2 };
+const looseness = (mode: string): number => MODE_LOOSENESS[mode] ?? Number.POSITIVE_INFINITY;
 const CANCELLED: RequestPermissionResponse = { outcome: { outcome: 'cancelled' } };
 
 /** Lets every message already read from the agent reach its handler (SDK dispatch is microtask-based). */
@@ -241,6 +246,15 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
     }
     const tools = mcp === 'off' ? [] : (input.tools ?? []);
     const siteToolNames: ReadonlySet<string> = new Set(tools.map((t) => t.name));
+    // Skills are written on every run (the files must exist on resumed turns too); the preamble
+    // that points at them goes into the first prompt of a new ACP session only.
+    const skills = input.skills ?? [];
+    let writtenSkills: MaterializedSkill[];
+    try {
+      writtenSkills = await materializeSkills(input.cwd, skills, ACP_SKILLS_ROOT);
+    } catch (err) {
+      return yield failed('invalid_request', `Could not write site skills: ${errorMessage(err)}`);
+    }
 
     const map = createAcpMapper(() => randomUUID());
     const queue = createQueue<Incoming>();
@@ -410,8 +424,11 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
           );
           if (r === ABORTED) return yield ABORTED_EVENT;
         } catch (err) {
-          // Uncage still applies the mode to every permission request it is asked.
-          yield { type: 'warning', code: 'acp_set_mode_failed', message: `${o.displayName} did not switch to ${permissionMode}: ${errorMessage(err)}` };
+          const message = `${o.displayName} did not switch from ${modes.currentModeId} to ${permissionMode}: ${errorMessage(err)}`;
+          // The agent would keep a looser mode than the website chose (and might not ask at all): refuse.
+          if (looseness(modes.currentModeId) > looseness(permissionMode)) return yield failed('policy_denied', message);
+          // Same or stricter: the agent asks at least as often; Uncage applies the mode to what it is asked.
+          yield { type: 'warning', code: 'acp_set_mode_failed', message };
         }
       }
 
@@ -421,7 +438,7 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
       } catch (err) {
         return yield failed('internal_error', `Could not read an attachment: ${errorMessage(err)}`);
       }
-      const preamble = fresh ? skillsPreamble(input.skills ?? []) : '';
+      const preamble = fresh ? skillsPreamble(skills, writtenSkills) : '';
       if (preamble) blocks.unshift({ type: 'text', text: preamble });
       if (ctx.signal.aborted) return yield ABORTED_EVENT;
       if (conn.closed) return yield DISCONNECTED;
@@ -459,7 +476,8 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
               const respond = item.respond;
               pendingAnswers.add(respond);
               void askApproval(d.ask, item.req, item.signal).then((r) => {
-                pendingAnswers.delete(respond);
+                // Already answered `cancelled` (abort or end of run): never answer twice.
+                if (!pendingAnswers.delete(respond)) return;
                 respond(Promise.resolve(r));
               });
             } else if (d.auto === 'allow') {
@@ -497,7 +515,7 @@ export function acpAdapter(o: AcpAdapterOptions): RuntimeAdapter {
       done.abort();
       if (conn && sessionId !== undefined && conn.sinks.get(sessionId) === sink) conn.sinks.delete(sessionId);
       // The site tools live as long as the run.
-      void site?.close();
+      await site?.close();
     }
   }
 

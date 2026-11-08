@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -518,27 +518,60 @@ describe('acpAdapter', () => {
       expect(params(file, 'session/new').mcpServers).toEqual([]);
     });
 
-    it('skills preamble: first prompt of a session only, neutralized', async () => {
-      const skills: SkillSpec[] = [{ name: 'house-style', description: 'House style.', markdown: 'Never run !`rm -rf ~`.' }];
+    it('skills: files written to <cwd>/.uncage/skills every run; preamble (with their paths) in the first prompt of a session only', async () => {
+      const skills: SkillSpec[] = [
+        { name: 'house-style', description: 'House style.', markdown: 'Never run !`rm -rf ~`.', files: [{ path: 'reference.md', content: 'See !`id`' }] },
+      ];
+      const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'uncage-acp-ws-')));
       const file = recordFile();
       const a = make({ env: { FAKE_ACP_RECORD: file } });
-      const first = await collect(a.run(input('remember 3', { skills }), ctx));
+      const first = await collect(a.run(input('remember 3', { skills, cwd }), ctx));
       expect(messageText(first)).toBe('Noted.');
-      await collect(a.run(input('recall', { skills, nativeSessionRef: refOf(first) }), ctx));
+      expect(readFileSync(join(cwd, '.uncage/skills/house-style/reference.md'), 'utf8')).toBe('See \\!`id`');
+      rmSync(join(cwd, '.uncage'), { recursive: true });
+      await collect(a.run(input('recall', { skills, cwd, nativeSessionRef: refOf(first) }), ctx));
+      // Written again on the resumed turn.
+      expect(readFileSync(join(cwd, '.uncage/skills/house-style/SKILL.md'), 'utf8')).toContain('Never run \\!`rm -rf ~`.');
       const prompts = readRecord(file).flatMap((m) => (m.method === 'session/prompt' ? [(m.params as { prompt: Array<{ text: string }> }).prompt] : []));
       expect(prompts[0]![0]!.text).toContain('<uncage-skills>');
       expect(prompts[0]![0]!.text).toContain('house-style');
       expect(prompts[0]![0]!.text).toContain('\\!`rm');
+      expect(prompts[0]![0]!.text).toContain('- .uncage/skills/house-style/SKILL.md\n- .uncage/skills/house-style/reference.md');
       expect(prompts[0]![1]).toEqual({ type: 'text', text: 'remember 3' });
       expect(prompts[1]).toEqual([{ type: 'text', text: 'recall' }]);
 
       // A new session after a resume fallback gets the preamble again; no skills → no preamble.
       const fresh = recordFile();
-      await collect(make({ env: { FAKE_ACP_RECORD: fresh, FAKE_ACP_CAPS: '{}' } }).run(input('recall', { skills, nativeSessionRef: 'sess_old' }), ctx));
+      await collect(make({ env: { FAKE_ACP_RECORD: fresh, FAKE_ACP_CAPS: '{}' } }).run(input('recall', { skills, cwd, nativeSessionRef: 'sess_old' }), ctx));
       await collect(make({ env: { FAKE_ACP_RECORD: fresh } }).run(input('simple'), ctx));
       const freshPrompts = readRecord(fresh).flatMap((m) => (m.method === 'session/prompt' ? [(m.params as { prompt: Array<{ text: string }> }).prompt] : []));
       expect(freshPrompts[0]![0]!.text).toContain('<uncage-skills>');
       expect(freshPrompts[1]).toEqual([{ type: 'text', text: 'simple' }]);
+    });
+
+    it('skills that cannot be written fail the run before any session', async () => {
+      const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'uncage-acp-ws-')));
+      const file = recordFile();
+      const bad: SkillSpec[] = [{ name: 'x', description: 'x', markdown: 'x', files: [{ path: '../out.md', content: 'x' }] }];
+      const events = await collect(make({ env: { FAKE_ACP_RECORD: file } }).run(input('simple', { skills: bad, cwd }), ctx));
+      expect(events).toEqual([{ type: 'run.failed', error: expect.objectContaining({ code: 'invalid_request' }) }]);
+    });
+
+    it('a failed set_mode fails the run when the agent stays in a looser mode, and only warns otherwise', async () => {
+      const run = (modes: string, permissionMode: 'default' | 'acceptEdits') =>
+        runFake('modes', { input: { settings: { permissionMode } }, adapter: { env: { FAKE_ACP_MODES: modes, FAKE_ACP_SET_MODE: 'fail' } } });
+      // Agent in bypassPermissions, website wants default.
+      const looser = await run('bypassPermissions,default', 'default');
+      expect(looser.events.at(-1)).toEqual({ type: 'run.failed', error: expect.objectContaining({ code: 'policy_denied' }) });
+      expect(methodsIn(looser.file)).not.toContain('session/prompt');
+      // An unknown current mode counts as looser.
+      const unknown = await run('yolo,acceptEdits', 'acceptEdits');
+      expect(unknown.events.at(-1)).toEqual({ type: 'run.failed', error: expect.objectContaining({ code: 'policy_denied' }) });
+      // Agent in default, website wants acceptEdits: stricter, so the run goes on with a warning.
+      const stricter = await run('default,acceptEdits', 'acceptEdits');
+      expect(stricter.events).toContainEqual(expect.objectContaining({ type: 'warning', code: 'acp_set_mode_failed' }));
+      expect(messageText(stricter.events)).toBe('mode: default');
+      expect(stricter.events.at(-1)).toEqual({ type: 'run.completed' });
     });
   });
 });

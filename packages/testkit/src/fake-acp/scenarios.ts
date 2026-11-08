@@ -59,6 +59,8 @@ export interface FakeAcpOptions {
   writeRaw?(messages: object[]): void;
   /** Session mode ids offered by `session/new` / `load` / `resume` (current: the first). None by default. */
   modes?: string[];
+  /** `session/set_mode` fails (internal error). */
+  failSetMode?: boolean;
   /** Records an observation (e.g. the tools listed by `site-tool`); the server appends it to the record file. */
   note?(entry: object): void;
 }
@@ -356,6 +358,7 @@ export function createFakeAcpAgent(o: FakeAcpOptions): AgentApp {
     })
     .onRequest(methods.agent.session.setMode, ({ params }) => {
       const s = getSession(params.sessionId);
+      if (o.failSetMode) throw RequestError.internalError(undefined, 'set_mode is broken');
       if (!o.modes?.includes(params.modeId)) throw RequestError.invalidParams(undefined, `unknown mode ${params.modeId}`);
       s.mode = params.modeId;
       return {};
