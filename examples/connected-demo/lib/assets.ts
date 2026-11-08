@@ -159,13 +159,17 @@ export function canReadAsset(asset: Asset, viewer: string | null, publicMode: bo
 /**
  * Whether a request to /asset-files must pass the owner check, judged by its `Sec-Fetch-Dest`.
  * Sub-resources (style, script, image...) come from the opaque-origin sandboxed iframe and do not
- * carry the Lax session cookie, so only requests that open a file as a page are checked.
+ * carry the Lax session cookie, so they are not checked: the unguessable asset id guards them.
+ * Requests that open a file as a page are always checked. So is a `fetch()`-style request
+ * (`empty`) that does carry a signed-in user who is not the owner: a cookieless one is a
+ * sub-resource of the sandboxed page, a signed-in non-owner is another guest reading the file.
  */
-export function needsOwnerCheck(dest: string | null): boolean {
+export function needsOwnerCheck(dest: string | null, viewer: string | null = null, owner?: string): boolean {
+  if (dest === 'empty') return viewer !== null && viewer !== owner;
   return dest === null || ['document', 'iframe', 'frame', 'embed', 'object'].includes(dest);
 }
 
-/** Deletes assets created more than `maxAgeMs` ago (public demo housekeeping); returns how many. */
+/** Deletes assets last created or published more than `maxAgeMs` ago (public demo housekeeping); returns how many. */
 export async function purgeAssetsOlderThan(maxAgeMs: number, now: number = Date.now()): Promise<number> {
   const ids = await readdir(root()).catch(() => [] as string[]);
   let removed = 0;

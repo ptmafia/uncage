@@ -10,6 +10,7 @@ import { isPublicDemo, publicUrl } from './config.ts';
 import { isSameOrigin } from './csrf.ts';
 import { forwardedClient } from './hub.ts';
 import { safeNext } from './session-utils.ts';
+import { DEFAULT_DOCS_URL, landingPageSkill, makeLandingPageSkill } from './skills.ts';
 import { createAssetTool, pageRelative, publishAssetTool } from './tools.ts';
 
 let dir: string;
@@ -262,5 +263,42 @@ describe('public demo asset access and cleanup', () => {
     expect(canReadAsset(p, 'bob', needsOwnerCheck('style'))).toBe(true);
     expect(canReadAsset(p, 'alice', needsOwnerCheck('iframe'))).toBe(true);
     expect(canReadAsset(a, 'bob', needsOwnerCheck('style'))).toBe(false); // draft
+  });
+
+  it('owner-checks fetch-style (empty) requests only when a signed-in non-owner sends them', async () => {
+    const a = await createAsset({ owner: 'alice', title: 'x', kind: 'landing-page', sessionId: 's' });
+    const p = await publishAsset(a.id, [{ path: 'index.html', data: enc('x') }]);
+    // Cookieless (from the sandboxed iframe): readable, guarded by the unguessable id.
+    expect(needsOwnerCheck('empty', null, 'alice')).toBe(false);
+    expect(canReadAsset(p, null, needsOwnerCheck('empty', null, p.owner))).toBe(true);
+    // Another signed-in guest: checked and refused.
+    expect(needsOwnerCheck('empty', 'bob', 'alice')).toBe(true);
+    expect(canReadAsset(p, 'bob', needsOwnerCheck('empty', 'bob', p.owner))).toBe(false);
+    // The owner: readable.
+    expect(canReadAsset(p, 'alice', needsOwnerCheck('empty', 'alice', p.owner))).toBe(true);
+    // Other sub-resource kinds stay unchecked even with a user; page-like ones stay checked without one.
+    expect(needsOwnerCheck('style', 'bob', 'alice')).toBe(false);
+    expect(needsOwnerCheck('document', null, 'alice')).toBe(true);
+  });
+});
+
+describe('landing-page skill', () => {
+  it('keeps its rules and carries accurate facts about Uncage', () => {
+    const text = makeLandingPageSkill({}).markdown;
+    expect(landingPageSkill.name).toBe('landing-page');
+    for (const rule of ['create_asset', 'publish_asset', 'No external resources', 'landing/index.html']) expect(text).toContain(rule);
+    expect(text).toContain('## About Uncage');
+    expect(text).toContain('npm packages');
+    expect(text).toContain("each user's own\nClaude Code");
+    expect(text).toContain('**site tools**');
+    expect(text).toContain('**skills**');
+    expect(text).toContain('**Approvals**');
+    expect(text).toContain('stay on the website');
+    expect(text).toContain('MIT');
+    expect(text).toContain(`Documentation: ${DEFAULT_DOCS_URL}`);
+    expect(DEFAULT_DOCS_URL).toBe('https://uncage.vercel.app/docs/');
+  });
+  it('links the docs from DOCS_URL when it is set', () => {
+    expect(makeLandingPageSkill({ DOCS_URL: 'https://uncage.example/docs/' }).markdown).toContain('Documentation: https://uncage.example/docs/');
   });
 });

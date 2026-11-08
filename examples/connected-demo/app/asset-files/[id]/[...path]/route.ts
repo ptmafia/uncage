@@ -10,9 +10,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const asset = await getAsset(id);
   // The same 404 for unknown, unpublished and not-yours, so existence does not leak.
   if (!asset) return notFound();
-  // Sub-resources from the sandboxed iframe carry no cookie, so only page-like requests are owner-checked.
-  const publicMode = isPublicDemo() && needsOwnerCheck(req.headers.get('sec-fetch-dest'));
-  if (!canReadAsset(asset, userFromRequest(req)?.id ?? null, publicMode)) return notFound();
+  // Sub-resources from the sandboxed iframe carry no cookie, so they are not owner-checked;
+  // page-like requests and signed-in non-owners are (see needsOwnerCheck).
+  const viewer = userFromRequest(req)?.id ?? null;
+  const publicMode = isPublicDemo() && needsOwnerCheck(req.headers.get('sec-fetch-dest'), viewer, asset.owner);
+  if (!canReadAsset(asset, viewer, publicMode)) return notFound();
   const file = await readAssetFile(id, path.join('/'));
   if (!file) return notFound();
   return new Response(new Uint8Array(file.data), {
