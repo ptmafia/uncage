@@ -5,7 +5,7 @@
 import { defineTool, type SiteTool } from '@uncage/hub';
 import { z } from 'zod';
 import { assetStore } from './assets.ts';
-import { isPublicDemo } from './config.ts';
+import { isPublicDemo, maxTotalBytes } from './config.ts';
 import { demoMode } from './mode.ts';
 
 /** Total bytes one publish may pull from the machine. */
@@ -33,10 +33,11 @@ export const createAssetTool = defineTool({
   }),
   handler: async ({ title, kind }, ctx) => {
     // Public demo: the store refuses the next asset once the guest keeps PUBLIC_MAX_ASSETS_PER_OWNER
-    // (atomically on Postgres, so parallel calls cannot pass the limit).
+    // (atomically on Postgres, so parallel calls cannot pass the limit), or once the demo's total
+    // storage (DEMO_MAX_TOTAL_MB) is full.
     const asset = await assetStore().create(
       { owner: ctx.user.id, title, kind, sessionId: ctx.sessionId },
-      isPublicDemo() ? { maxPerOwner: PUBLIC_MAX_ASSETS_PER_OWNER } : {},
+      isPublicDemo() ? { maxPerOwner: PUBLIC_MAX_ASSETS_PER_OWNER, maxTotalBytes: maxTotalBytes() } : {},
     );
     return {
       assetId: asset.id,
@@ -77,7 +78,8 @@ export const publishAssetTool = defineTool({
     const pull = ctx.files.pull(dir, { maxBytes: publishMaxBytes() });
     const files: Array<{ path: string; data: Uint8Array }> = [];
     for await (const f of pull) files.push({ path: pageRelative(dir, f.path), data: f.data });
-    const published = await store.publish(assetId, files);
+    // Public demo: every visitor shares one storage cap (DEMO_MAX_TOTAL_MB), so nobody fills the database.
+    const published = await store.publish(assetId, files, isPublicDemo() ? { maxTotalBytes: maxTotalBytes() } : {});
     return {
       assetId,
       status: published.status,

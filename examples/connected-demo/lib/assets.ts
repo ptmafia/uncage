@@ -46,13 +46,34 @@ export class AssetQuotaError extends Error {
   }
 }
 
+/** `create` / `publish` refused: the demo's total storage cap (`DEMO_MAX_TOTAL_MB`) is reached. */
+export class AssetStorageFullError extends Error {
+  readonly maxTotalBytes: number;
+  constructor(maxTotalBytes: number) {
+    super(
+      `This demo's storage is full right now (all visitors share ${Math.round(maxTotalBytes / (1024 * 1024))} MB). Please try again later: pages are cleared 24 hours after they were last created or published.`,
+    );
+    this.maxTotalBytes = maxTotalBytes;
+    this.name = 'AssetStorageFullError';
+  }
+}
+
+/** Storage limits of a public demo. */
+export interface AssetLimits {
+  /** Assets one owner may keep (AssetQuotaError). */
+  maxPerOwner?: number;
+  /** Bytes of published files every owner together may keep (AssetStorageFullError). */
+  maxTotalBytes?: number;
+}
+
 export interface AssetStore {
   /**
    * With `maxPerOwner`, refuses (AssetQuotaError) when the owner already keeps that many. Postgres
    * counts and inserts under a per-owner lock, so concurrent creates never pass the limit; the file
-   * store checks best-effort.
+   * store checks best-effort. With `maxTotalBytes`, refuses (AssetStorageFullError) once the stored
+   * files of all owners reach it.
    */
-  create(o: { owner: string; title: string; kind: AssetKind; sessionId: string }, limits?: { maxPerOwner?: number }): Promise<Asset>;
+  create(o: { owner: string; title: string; kind: AssetKind; sessionId: string }, limits?: AssetLimits): Promise<Asset>;
   get(id: string): Promise<Asset | null>;
   /** `owner`'s assets, newest first. */
   list(owner: string): Promise<Asset[]>;
@@ -61,7 +82,9 @@ export interface AssetStore {
    * Stores the page's files (replacing an earlier publish) and marks the asset published. Paths are
    * relative to the page root and must include `index.html`.
    */
-  publish(id: string, files: Array<{ path: string; data: Uint8Array }>): Promise<Asset>;
+  publish(id: string, files: Array<{ path: string; data: Uint8Array }>, limits?: Pick<AssetLimits, 'maxTotalBytes'>): Promise<Asset>;
+  /** Bytes of published files kept, all owners together (`except` leaves one asset out). */
+  totalBytes(except?: string): Promise<number>;
   /** One file of a published asset, or null (unknown, unpublished, or a path outside the page). */
   readFile(id: string, path: string): Promise<{ data: Uint8Array; contentType: string } | null>;
   /** Deletes assets last created or published more than `maxAgeMs` ago (public demo housekeeping); returns how many. */
@@ -94,6 +117,8 @@ function checkPublish(files: Array<{ path: string; data: Uint8Array }>): void {
   if (bad) throw new Error(`Unsupported file name: ${bad.path}`);
   if (!files.some((f) => f.path === 'index.html')) throw new Error('The folder has no index.html at its top level.');
 }
+
+const filesBytes = (files: Array<{ data: Uint8Array }>): number => files.reduce((n, f) => n + f.data.byteLength, 0);
 
 const published = (asset: Asset, files: Array<{ path: string; data: Uint8Array }>): Asset => ({
   ...asset,
@@ -141,6 +166,7 @@ export function fileAssetStore(dir: string): AssetStore {
   const store: AssetStore = {
     async create(o, limits) {
       if (limits?.maxPerOwner !== undefined && (await store.count(o.owner)) >= limits.maxPerOwner) throw new AssetQuotaError(limits.maxPerOwner);
+      if (limits?.maxTotalBytes !== undefined && (await store.totalBytes()) >= limits.maxTotalBytes) throw new AssetStorageFullError(limits.maxTotalBytes);
       const asset = newAsset(o);
       await writeMeta(asset);
       return asset;
@@ -161,10 +187,23 @@ export function fileAssetStore(dir: string): AssetStore {
     async count(owner) {
       return (await store.list(owner)).length;
     },
-    async publish(id, files) {
+    async totalBytes(except) {
+      const ids = await readdir(dir).catch(() => [] as string[]);
+      let n = 0;
+      for (const id of ids) {
+        if (id === except) continue;
+        for (const f of (await store.get(id))?.files ?? []) n += f.size;
+      }
+      return n;
+    },
+    async publish(id, files, limits) {
       const asset = await store.get(id);
       if (!asset) throw new Error(`Unknown asset ${id}`);
       checkPublish(files);
+      // Best effort (no lock): the replaced files of this asset do not count.
+      if (limits?.maxTotalBytes !== undefined && (await store.totalBytes(id)) + filesBytes(files) > limits.maxTotalBytes) {
+        throw new AssetStorageFullError(limits.maxTotalBytes);
+      }
       const base = join(dir, id);
       const staging = join(base, `files.${randomBytes(4).toString('hex')}.tmp`);
       const live = join(base, 'files');
@@ -329,6 +368,10 @@ export function postgresAssetStore(pool: PgPoolLike): AssetStore {
           const [row] = await q<{ n: number | string }>('SELECT count(*)::int AS n FROM demo_assets WHERE owner = $1', [o.owner]);
           if (Number(row?.n ?? 0) >= limits.maxPerOwner) throw new AssetQuotaError(limits.maxPerOwner);
         }
+        if (limits?.maxTotalBytes !== undefined) {
+          const [row] = await q<{ n: number | string }>('SELECT coalesce(sum(octet_length(data)), 0)::bigint AS n FROM demo_asset_files');
+          if (Number(row?.n ?? 0) >= limits.maxTotalBytes) throw new AssetStorageFullError(limits.maxTotalBytes);
+        }
         await q('INSERT INTO demo_assets (id, owner, title, kind, status, session_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz)', [
           a.id,
           a.owner,
@@ -353,13 +396,26 @@ export function postgresAssetStore(pool: PgPoolLike): AssetStore {
       const [row] = await query<{ n: number | string }>('SELECT count(*)::int AS n FROM demo_assets WHERE owner = $1', [owner]);
       return Number(row?.n ?? 0);
     },
-    async publish(id, files) {
+    async totalBytes(except) {
+      const [row] = await query<{ n: number | string }>(
+        'SELECT coalesce(sum(octet_length(data)), 0)::bigint AS n FROM demo_asset_files WHERE asset_id IS DISTINCT FROM $1',
+        [except ?? null],
+      );
+      return Number(row?.n ?? 0);
+    },
+    async publish(id, files, limits) {
       const asset = await store.get(id);
       if (!asset) throw new Error(`Unknown asset ${id}`);
       checkPublish(files);
       const next = published(asset, files);
       // One transaction: readers see the old files or the new ones, never a mix.
       await inTransaction(async (q) => {
+        if (limits?.maxTotalBytes !== undefined) {
+          // One site-wide lock: concurrent publishes count and write one after another.
+          await q('SELECT pg_advisory_xact_lock($1, hashtext($2))', [SCHEMA_LOCK, '<total-storage>']);
+          const [row] = await q<{ n: number | string }>('SELECT coalesce(sum(octet_length(data)), 0)::bigint AS n FROM demo_asset_files WHERE asset_id <> $1', [id]);
+          if (Number(row?.n ?? 0) + filesBytes(files) > limits.maxTotalBytes) throw new AssetStorageFullError(limits.maxTotalBytes);
+        }
         await q('DELETE FROM demo_asset_files WHERE asset_id = $1', [id]);
         for (const f of files) {
           await q('INSERT INTO demo_asset_files (asset_id, path, data) VALUES ($1, $2, $3)', [id, f.path, Buffer.from(f.data.buffer, f.data.byteOffset, f.data.byteLength)]);

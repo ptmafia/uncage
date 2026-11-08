@@ -7,9 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assetCsp } from './asset-csp.ts';
 import { PGlite } from '@electric-sql/pglite';
 import type { PgPoolLike } from '@uncage/hub';
-import { AssetQuotaError, assetStore, canReadAsset, fileAssetStore, needsOwnerCheck, postgresAssetStore, type AssetStore } from './assets.ts';
+import { AssetQuotaError, AssetStorageFullError, assetStore, canReadAsset, fileAssetStore, needsOwnerCheck, postgresAssetStore, type AssetStore } from './assets.ts';
 import { guestUsername, normalizeUsername, readCookie, secret, signUser, verifyUser } from './auth.ts';
-import { docsUrl, isPublicDemo, publicUrl } from './config.ts';
+import { DEFAULT_MAX_TOTAL_MB, docsUrl, isPublicDemo, maxTotalBytes, publicUrl } from './config.ts';
 import { isSameOrigin } from './csrf.ts';
 import { clientIpResolver, createDemoHub, forwardedClient } from './hub.ts';
 import { getHub, publishHub } from './hub-registry.ts';
@@ -106,6 +106,14 @@ describe('public demo settings', () => {
     expect(publicUrl({ RAILWAY_PUBLIC_DOMAIN: 'x.up.railway.app' })).toBe('https://x.up.railway.app');
     expect(publicUrl({ RENDER_EXTERNAL_URL: 'https://x.onrender.com/' })).toBe('https://x.onrender.com');
     expect(publicUrl({ PORT: '4000' })).toBe('http://localhost:4000');
+    // Vercel: the production domain when PUBLIC_URL is not set (never localhost).
+    expect(publicUrl({ VERCEL: '1', VERCEL_PROJECT_PRODUCTION_URL: 'demo.vercel.app' })).toBe('https://demo.vercel.app');
+    expect(publicUrl({ VERCEL: '1', VERCEL_PROJECT_PRODUCTION_URL: 'demo.vercel.app', PUBLIC_URL: 'https://demo.example' })).toBe('https://demo.example');
+    expect(publicUrl({ VERCEL_PROJECT_PRODUCTION_URL: 'demo.vercel.app', PORT: '1' })).toBe('http://localhost:1');
+    expect(maxTotalBytes({})).toBe(DEFAULT_MAX_TOTAL_MB * 1024 * 1024);
+    expect(DEFAULT_MAX_TOTAL_MB).toBe(200);
+    expect(maxTotalBytes({ DEMO_MAX_TOTAL_MB: '50' })).toBe(50 * 1024 * 1024);
+    expect(maxTotalBytes({ DEMO_MAX_TOTAL_MB: 'lots' })).toBe(200 * 1024 * 1024);
   });
 });
 
@@ -476,6 +484,25 @@ describe.each([
     expect(await store.readFile(old.id, 'index.html')).toBeNull();
     expect(await store.get(fresh.id)).toBeNull();
   });
+
+  it('a total storage cap refuses publishes and creates past it, with a friendly error; republishing does not count twice', async () => {
+    const limits = { maxTotalBytes: 100 };
+    const a = await store.create({ owner: 'alice', title: 'a', kind: 'landing-page', sessionId: 's' }, limits);
+    await store.publish(a.id, [{ path: 'index.html', data: new Uint8Array(60) }], limits);
+    // Replacing a's files with the same size fits (its old files do not count).
+    await store.publish(a.id, [{ path: 'index.html', data: new Uint8Array(60) }], limits);
+    expect(await store.totalBytes()).toBe(60);
+    const b = await store.create({ owner: 'bob', title: 'b', kind: 'landing-page', sessionId: 's' }, limits);
+    const full = store.publish(b.id, [{ path: 'index.html', data: new Uint8Array(50) }], limits);
+    await expect(full).rejects.toBeInstanceOf(AssetStorageFullError);
+    await expect(full).rejects.toThrow(/storage is full.*try again later/);
+    expect(await store.readFile(b.id, 'index.html')).toBeNull();
+    await store.publish(b.id, [{ path: 'index.html', data: new Uint8Array(40) }], limits);
+    // Now at the cap: no new asset.
+    await expect(store.create({ owner: 'carol', title: 'c', kind: 'landing-page', sessionId: 's' }, limits)).rejects.toBeInstanceOf(AssetStorageFullError);
+    // Without limits (not a public demo) nothing is refused.
+    await store.create({ owner: 'carol', title: 'c', kind: 'landing-page', sessionId: 's' });
+  });
 });
 
 describe('two modes: traditional (server.ts) and FaaS (next start / Vercel)', () => {
@@ -501,6 +528,12 @@ describe('two modes: traditional (server.ts) and FaaS (next start / Vercel)', ()
     expect(() => requireFaasEnv({ DATABASE_URL: 'postgres://x' })).toThrow(/DEMO_SECRET/);
     expect(() => requireFaasEnv({ DATABASE_URL: 'postgres://x' })).not.toThrow(/DATABASE_URL/);
     expect(() => requireFaasEnv({ DEMO_SECRET: 's'.repeat(32) })).toThrow(/DATABASE_URL/);
+    // In production a public URL is required (PUBLIC_URL, or the platform's: Vercel's production domain).
+    const ok = { DATABASE_URL: 'postgres://x', DEMO_SECRET: 's'.repeat(32) };
+    expect(() => requireFaasEnv(ok)).not.toThrow();
+    expect(() => requireFaasEnv({ ...ok, NODE_ENV: 'production' })).toThrow(/PUBLIC_URL/);
+    expect(() => requireFaasEnv({ ...ok, NODE_ENV: 'production', PUBLIC_URL: 'https://demo.example' })).not.toThrow();
+    expect(() => requireFaasEnv({ ...ok, NODE_ENV: 'production', VERCEL: '1', VERCEL_PROJECT_PRODUCTION_URL: 'demo.vercel.app' })).not.toThrow();
     expect(() => requireFaasEnv({ DATABASE_URL: 'postgres://x', DEMO_SECRET: 'short' })).toThrow(/DEMO_SECRET is shorter than 32 bytes/);
     expect(() => requireFaasEnv({ DATABASE_URL: 'postgres://x', DEMO_SECRET: 's'.repeat(32) })).not.toThrow();
     // The hub refuses to start, and so does the cookie key: FaaS mode never falls back to the disk.

@@ -17,6 +17,7 @@ Two ways to host the same code: **Railway** runs `server.ts` (traditional mode: 
    - `TRUST_PROXY=1`：限流按 `X-Forwarded-For` 最右边一项识别访客。Railway 的边缘会覆盖这个请求头，所以最右边一项就是真实客户端。
    - `CLIENT_IP_HEADER`（可选，优先于 `TRUST_PROXY`）：从指定请求头取访客 IP。自定义域名经过 Cloudflare 代理时，`X-Forwarded-For` 里是 Cloudflare 的地址，所有访客会共用一个限流桶：这时在 Railway 上设 `CLIENT_IP_HEADER=x-real-ip`（或用 Cloudflare 的 `cf-connecting-ip`）。不经过代理直接 `docker run` 暴露容器时，两个都不要设，否则访客可以伪造自己的限流键。
    - `PUBLIC_URL`：仅在使用自定义域名时设置（否则自动取 Railway 提供的域名）。
+   - `DEMO_MAX_TOTAL_MB`（可选，默认 200）：公开模式下所有访客发布的页面加起来最多占用的空间（MB）。达到上限后 `create_asset` / `publish_asset` 会告诉 AI 演示存储已满、请稍后再试。
 4. Networking → Generate Domain，得到公开地址。健康检查路径为 `/login`。
 
 **什么会被清除、何时清除**
@@ -39,11 +40,13 @@ Two ways to host the same code: **Railway** runs `server.ts` (traditional mode: 
 2. Vercel：Add New → Project，导入本仓库。Root Directory 设为 `examples/connected-demo`（保持勾选“Include files outside of the root directory”，它要用到 `packages/*`）。Framework 为 Next.js。
 3. Build Command 设为 `cd ../.. && pnpm exec turbo run build --filter=connected-demo...`（先构建 demo 用到的工作区包，再 `next build`）。Install Command 保持默认（Vercel 识别 pnpm 工作区）。
 4. 在 Environment Variables 中添加：
+   - `ENABLE_EXPERIMENTAL_COREPACK=1`（必需）：让 Vercel 使用仓库 `packageManager` 字段固定的 pnpm 版本（pnpm 10）。
    - `DATABASE_URL`（必需）：Postgres 连接串。表在首次使用时自动创建。
    - `DEMO_SECRET`（必需）：至少 32 字节的 cookie 密钥，用 `openssl rand -base64 48` 生成。FaaS 模式没有数据目录可以存放自动生成的密钥，缺少它时 Hub 和登录都会拒绝启动，并说明缺了哪个变量。
    - `CRON_SECRET`（推荐）：Vercel Cron 调用 `/api/uncage/maintenance` 时带上的 `Authorization: Bearer` 密钥。不设置时该端点返回 404，只靠顺带清理。
-   - `PUBLIC_URL`：用户打开、交给 `uncage setup` 的地址，例如 `https://<项目>.vercel.app` 或你的自定义域名。
+   - `PUBLIC_URL`：用户打开、交给 `uncage setup` 的地址，例如你的自定义域名。在 Vercel 上不设置时取项目的生产域名（`VERCEL_PROJECT_PRODUCTION_URL`，即 `https://<项目>.vercel.app`）。在 Vercel、Railway、Render 以外以 FaaS 模式运行（`NODE_ENV=production`）时**必需**：缺少它时 Hub 和登录都会拒绝启动，而不是把 `http://localhost` 交给用户。
    - `DEMO_PUBLIC=1`：公开模式（随机访客登录、页面请求仅限所有者、每位访客最多 20 个资产且每次发布最多 5 MB、24 小时清理）。
+   - `DEMO_MAX_TOTAL_MB`（可选，默认 200）：公开模式下所有访客的页面加起来最多占用的空间（MB）。资产和 Hub 共用同一个 Postgres，这个上限防止数据库被占满（例如 Neon 免费版约 0.5 GB）。
    - `DOCS_URL`（可选）：横幅里的帮助站链接。
    - 不要设置 `TRUST_PROXY` / `CLIENT_IP_HEADER`：在 Vercel 上自动使用其边缘写入的客户端地址（`x-real-ip`）。只有在 Vercel 前面还有别的代理或 CDN 时，才用 `CLIENT_IP_HEADER` 指向那个代理的客户端 IP 请求头。
    - `UNCAGE_STREAM_MAX_MS`（可选，默认 250000）：Hub 主动结束并轮换长连接的时间，必须小于路由的 `maxDuration`（300 秒）。如果你的套餐函数时长上限更低，把它调到上限以下。
@@ -81,6 +84,7 @@ These steps use Railway to host the connected demo as a public demo (visitors ge
    - `TRUST_PROXY=1`: rate limits identify visitors by the rightmost `X-Forwarded-For` entry. Railway's edge overwrites that header, so the rightmost entry is the real client.
    - `CLIENT_IP_HEADER` (optional, wins over `TRUST_PROXY`): read the visitor's IP from this header. Behind a Cloudflare-proxied custom domain, `X-Forwarded-For` holds a Cloudflare address and all visitors share one rate-limit bucket: set `CLIENT_IP_HEADER=x-real-ip` on Railway (or Cloudflare's `cf-connecting-ip`). When you expose the container directly with `docker run` and no proxy, set neither, or visitors can choose their own rate-limit key.
    - `PUBLIC_URL`: only when you use a custom domain (otherwise the Railway domain is picked up automatically).
+   - `DEMO_MAX_TOTAL_MB` (optional, default 200): in public mode, the space (MB) the pages of all visitors together may take. At the cap `create_asset` / `publish_asset` tell the AI the demo's storage is full and to try again later.
 4. Networking → Generate Domain to get the public address. The health check path is `/login`.
 
 **What is cleared, and when**
@@ -103,11 +107,13 @@ The same code runs without `server.ts`: the Next.js route `app/api/uncage/[[...p
 2. Vercel: Add New → Project, and import this repository. Set Root Directory to `examples/connected-demo` (keep "Include files outside of the root directory" on: it needs `packages/*`). Framework: Next.js.
 3. Set Build Command to `cd ../.. && pnpm exec turbo run build --filter=connected-demo...` (builds the workspace packages the demo uses, then `next build`). Leave Install Command at its default (Vercel detects the pnpm workspace).
 4. Under Environment Variables add:
+   - `ENABLE_EXPERIMENTAL_COREPACK=1` (required): makes Vercel use the pnpm version pinned in the repository's `packageManager` field (pnpm 10).
    - `DATABASE_URL` (required): the Postgres connection string. Tables are created on first use.
    - `DEMO_SECRET` (required): a cookie key of at least 32 bytes; generate one with `openssl rand -base64 48`. FaaS mode has no data dir to keep a generated key in, so without it the hub and sign-in refuse to start and name the missing variable.
    - `CRON_SECRET` (recommended): the `Authorization: Bearer` secret Vercel Cron sends to `/api/uncage/maintenance`. Without it that endpoint is a 404 and only the opportunistic cleanup runs.
-   - `PUBLIC_URL`: the address users open and give to `uncage setup`, such as `https://<project>.vercel.app` or your custom domain.
+   - `PUBLIC_URL`: the address users open and give to `uncage setup`, such as your custom domain. Unset on Vercel, the project's production domain is used (`VERCEL_PROJECT_PRODUCTION_URL`, i.e. `https://<project>.vercel.app`). **Required** when running in FaaS mode (`NODE_ENV=production`) anywhere other than Vercel, Railway or Render: without it the hub and sign-in refuse to start rather than hand users `http://localhost`.
    - `DEMO_PUBLIC=1`: public mode (random guest sign-in, owner-only page requests, at most 20 assets per guest and 5 MB per publish, 24 hour cleanup).
+   - `DEMO_MAX_TOTAL_MB` (optional, default 200): in public mode, the space (MB) the pages of all visitors together may take. The assets share the hub's Postgres, so the cap keeps the database from filling up (Neon's free tier is about 0.5 GB).
    - `DOCS_URL` (optional): the docs link in the banner.
    - Do not set `TRUST_PROXY` / `CLIENT_IP_HEADER`: on Vercel the client address its edge sets (`x-real-ip`) is used automatically. Only with another proxy or CDN in front of Vercel, point `CLIENT_IP_HEADER` at that proxy's client-IP header.
    - `UNCAGE_STREAM_MAX_MS` (optional, default 250000): when the hub ends and rotates long-lived streams. Keep it below the route's `maxDuration` (300 s), and below your plan's function duration limit if that is lower.

@@ -11,6 +11,8 @@
  *
  * No setting picks the mode: whoever started the process did.
  */
+import { platformUrl } from './config.ts';
+
 const HUB_KEY = Symbol.for('uncage.connected-demo.hub');
 
 export type DemoMode = 'traditional' | 'faas';
@@ -28,7 +30,8 @@ export const PUBLISHED_HUB_KEY = HUB_KEY;
 
 /**
  * FaaS mode keeps nothing on local disk: throws, naming every missing variable, unless
- * `DATABASE_URL` and a `DEMO_SECRET` of at least 32 bytes are set.
+ * `DATABASE_URL` and a `DEMO_SECRET` of at least 32 bytes are set, and (with `NODE_ENV=production`)
+ * a public URL: `PUBLIC_URL`, or the platform's (Vercel's production domain, Railway, Render).
  */
 export function requireFaasEnv(env: Record<string, string | undefined> = process.env): void {
   const problems: string[] = [];
@@ -36,6 +39,10 @@ export function requireFaasEnv(env: Record<string, string | undefined> = process
   if (!env.DEMO_SECRET) problems.push(`DEMO_SECRET (the sign-in cookie key, at least ${MIN_SECRET_BYTES} bytes: openssl rand -base64 48)`);
   else if (new TextEncoder().encode(env.DEMO_SECRET).byteLength < MIN_SECRET_BYTES) {
     problems.push(`DEMO_SECRET is shorter than ${MIN_SECRET_BYTES} bytes (generate one with: openssl rand -base64 48)`);
+  }
+  // A production deploy must not hand out `uncage setup http://localhost:…` (or an asset CSP for it).
+  if (env.NODE_ENV === 'production' && !env.PUBLIC_URL?.trim() && !platformUrl(env)) {
+    problems.push('PUBLIC_URL (the address users open, e.g. https://demo.example.com; on Vercel it defaults to the production domain)');
   }
   if (problems.length > 0) {
     throw new Error(
