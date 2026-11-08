@@ -6,8 +6,10 @@
 
 推荐复用现在那个 `connected-demo` 项目（它的网址会从报错页变成官网）。也可以新建项目，设置相同。
 
+> **合并前先确认网址。** 确保 Vercel 项目名是 `uncage`，并且 https://uncage.vercel.app 能打开这个项目（这个分支的预览部署就够了）。如果这个名字已被占用，**先停下来定好最终域名**：每个 npm 包的 homepage、各个 README 和帮助站的默认地址（`apps/docs/src/nav.mjs` 的 `SITE_ORIGIN`）都指向它，要在合并前一次性改完。
+
 1. 打开项目 → **Settings → General**：
-   - **Project Name**：改成 `uncage`（网址变为 `uncage.vercel.app`，如果被占用就用分配到的名字）。
+   - **Project Name**：改成 `uncage`（网址变为 `uncage.vercel.app`；如果被占用，见上面的提示，不要直接用分配到的名字）。
    - **Root Directory**：留空（仓库根目录 `./`）。
    - **Framework Preset**：`Other`。
    - **Build / Install / Output**：全部关掉 Override，由仓库根目录的 `vercel.json` 决定（`node scripts/build-web.mjs`，输出 `apps/site/dist`）。

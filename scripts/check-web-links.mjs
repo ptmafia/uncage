@@ -14,7 +14,7 @@ const args = process.argv.slice(2);
 const dir = path.resolve(root, args.includes('--dir') ? args[args.indexOf('--dir') + 1] : 'apps/site/dist');
 const ORIGIN = 'https://site.invalid';
 /** The canonical origin the builds write into absolute URLs (canonical, hreflang, og:image). */
-const SITE_ORIGIN = new URL(process.env.SITE_URL ?? 'https://uncage.vercel.app').origin;
+const SITE_ORIGIN = new URL(process.env.SITE_URL || 'https://uncage.vercel.app').origin;
 const ENTRIES = ['/', '/zh/', '/ja/', '/docs/', '/docs/zh-cn/', '/docs/ja/', '/robots.txt', '/sitemap-index.xml', '/docs/sitemap-index.xml'];
 const isInternal = (/** @type {URL} */ u) => u.origin === ORIGIN || u.origin === SITE_ORIGIN;
 

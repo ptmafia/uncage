@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assetCsp } from './asset-csp.ts';
 import { canReadAsset, createAsset, getAsset, listAssets, needsOwnerCheck, publishAsset, purgeAssetsOlderThan, readAssetFile } from './assets.ts';
 import { guestUsername, normalizeUsername, readCookie, secret, signUser, verifyUser } from './auth.ts';
-import { isPublicDemo, publicUrl } from './config.ts';
+import { docsUrl, isPublicDemo, publicUrl } from './config.ts';
 import { isSameOrigin } from './csrf.ts';
 import { forwardedClient } from './hub.ts';
 import { safeNext } from './session-utils.ts';
@@ -300,5 +300,12 @@ describe('landing-page skill', () => {
   });
   it('links the docs from DOCS_URL when it is set', () => {
     expect(makeLandingPageSkill({ DOCS_URL: 'https://uncage.example/docs/' }).markdown).toContain('Documentation: https://uncage.example/docs/');
+  });
+  it('normalizes DOCS_URL like the help site normalizes SITE_URL', () => {
+    expect(docsUrl({})).toBeUndefined();
+    expect(docsUrl({ DOCS_URL: '' })).toBeUndefined();
+    expect(docsUrl({ DOCS_URL: 'https://uncage.example/docs' })).toBe('https://uncage.example/docs/');
+    expect(docsUrl({ DOCS_URL: 'https://uncage.example/docs//' })).toBe('https://uncage.example/docs/');
+    expect(makeLandingPageSkill({ DOCS_URL: '' }).markdown).toContain(`Documentation: ${DEFAULT_DOCS_URL}`);
   });
 });

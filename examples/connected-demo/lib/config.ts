@@ -35,5 +35,7 @@ export function isPublicDemo(env: Env = process.env): boolean {
 
 /** Where the banner's "documentation" link points (`DOCS_URL`), if set. */
 export function docsUrl(env: Env = process.env): string | undefined {
-  return env.DOCS_URL || undefined;
+  // Same rule as the help site's SITE_URL: empty counts as unset, trailing slashes collapse (here to one, it is a directory).
+  const url = env.DOCS_URL?.trim().replace(/\/+$/, '');
+  return url ? `${url}/` : undefined;
 }
