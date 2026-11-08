@@ -131,6 +131,9 @@ export async function createAgent(o: CreateAgentOptions): Promise<Agent> {
       logger.warn({ minAgentVersion: min, current: version }, 'website requires a newer agent; upgrading with npm');
       const cmd = o.upgradeCommand ?? (await selfUpgradeCommand());
       try {
+        // Backstop: a test must never run the real global `npm i -g` (it happened once). Tests inject
+        // `exec` or `upgradeCommand`; anything else under Vitest fails like a failed upgrade.
+        if (!o.exec && !o.upgradeCommand && process.env.VITEST) throw new Error('self-upgrade refused under Vitest (inject exec or upgradeCommand)');
         await exec(...cmd);
       } catch (err) {
         logger.error({ err: (err as Error).message }, `self-upgrade failed; run: npm i -g @uncage/cli@latest`);
