@@ -27,6 +27,6 @@
     "@uncage/agent": "workspace:*",
     "@uncage/protocol": "workspace:*",
     "@uncage/testkit": "workspace:*",
-    "wrangler": "^4.158.0"
+    "wrangler": "~4.158.0"
   }
 }

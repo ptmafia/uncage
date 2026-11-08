@@ -21,6 +21,11 @@ export interface Env {
   DEMO_SECRET: string;
   /** The Worker's public origin, e.g. `https://uncage-demo.example.workers.dev`. */
   PUBLIC_URL: string;
+  /**
+   * `"1"` opens the demo sign-in (`POST /login`: anyone becomes any user, no password) on a
+   * non-local host. Only for a throwaway demo; a real site replaces `getUser` below instead.
+   */
+  ALLOW_DEMO_LOGIN?: string;
   /** Enables `GET|POST /api/uncage/maintenance` with `Authorization: Bearer <CRON_SECRET>`. */
   CRON_SECRET?: string;
 }
@@ -29,10 +34,11 @@ export interface Env {
 export function newPool(env: Env): PgPoolLike {
   const pool = new pg.Pool({ connectionString: env.HYPERDRIVE.connectionString, max: 5 });
   let ending = false;
-  // An idle connection dying must not become an uncaught error. While the pool ends, workerd
-  // reports its idle sockets closing as "This socket has been closed": expected, not logged.
+  // An idle connection dying must not become an uncaught error. workerd closes a request's
+  // sockets when the request is over (and while the pool ends), which pg reports on idle clients
+  // as "This socket has been closed": expected for a per-request pool, so not logged.
   pool.on('error', (err) => {
-    if (!ending) console.error('postgres pool error:', err.message);
+    if (!ending && !/socket has been closed/i.test(err.message)) console.error('postgres pool error:', err.message);
   });
   const end = pool.end.bind(pool);
   return Object.assign(pool, {
@@ -54,6 +60,8 @@ export async function makeHub(env: Env, pool: PgPoolLike): Promise<{ hub: Hub; c
   try {
     const hub = await createHub({
       publicUrl: env.PUBLIC_URL,
+      // THE auth seam: return your website's signed-in user here (`{ id, name }` or null). The
+      // demo cookie from src/auth.ts is a stand-in that is unsafe on a public host.
       getUser: (req) => userFromRequest(req, env.DEMO_SECRET),
       store,
       cluster,

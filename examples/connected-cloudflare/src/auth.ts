@@ -1,7 +1,12 @@
 /**
- * Demo sign-in: `GET /login?user=<name>` sets a cookie `<name>.<HMAC-SHA256(name)>` signed with
- * `DEMO_SECRET` through `crypto.subtle` (no Node APIs). Replace it with your website's real auth:
- * the hub only needs `getUser(req)` → `{ id, name }` or `null`.
+ * ⚠️  DEMO SIGN-IN — NOT AUTHENTICATION. ⚠️
+ * Anyone who can reach `POST /login` can sign in as ANY user name, with no password. It is
+ * therefore refused unless the Worker is reached as localhost / 127.0.0.1 / [::1] or
+ * `ALLOW_DEMO_LOGIN=1` is set (only for a throwaway demo). In a real website delete this file
+ * and the /login route, and return your own signed-in user from `getUser` in src/hub.ts — that
+ * is the only seam the hub uses for browser requests (`{ id, name }` or `null`).
+ *
+ * The cookie is `<name>.<HMAC-SHA256(name)>` signed with `DEMO_SECRET` via `crypto.subtle`.
  */
 import type { HubUser } from '@uncage/hub';
 
@@ -10,15 +15,31 @@ export const COOKIE = 'cf_demo_user';
 export const MIN_SECRET_BYTES = 32;
 const NAME = /^[A-Za-z0-9_-]{1,32}$/;
 
+/** Why `secret` cannot sign cookies, or `null` when it is fine. Checked once per request in worker.ts. */
+export function secretProblem(secret: string | undefined): string | null {
+  return secret && new TextEncoder().encode(secret).length >= MIN_SECRET_BYTES
+    ? null
+    : `DEMO_SECRET must be set to at least ${MIN_SECRET_BYTES} bytes: \`openssl rand -hex 32\`, then \`wrangler secret put DEMO_SECRET\` (deployed) or DEMO_SECRET=… in .dev.vars (wrangler dev).`;
+}
+
+/**
+ * Whether the demo sign-in may be used for this request: only on a local host, or when
+ * `ALLOW_DEMO_LOGIN=1` explicitly opens it (anyone can then sign in as anyone).
+ */
+export function demoLoginAllowed(req: Request, allow: string | undefined): boolean {
+  if (allow === '1') return true;
+  const host = new URL(req.url).hostname;
+  return host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+}
+
 export const validUserName = (name: string): boolean => NAME.test(name);
 
 const encoder = new TextEncoder();
 const keys = new Map<string, Promise<CryptoKey>>();
 
 function hmacKey(secret: string | undefined): Promise<CryptoKey> {
-  if (!secret || encoder.encode(secret).length < MIN_SECRET_BYTES) {
-    throw new Error(`DEMO_SECRET must be set to at least ${MIN_SECRET_BYTES} bytes (wrangler secret put DEMO_SECRET, or .dev.vars for wrangler dev).`);
-  }
+  const problem = secretProblem(secret);
+  if (problem || !secret) throw new Error(problem ?? 'DEMO_SECRET is missing.');
   let key = keys.get(secret);
   if (!key) {
     key = crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);

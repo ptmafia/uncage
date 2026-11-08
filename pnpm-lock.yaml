@@ -249,7 +249,7 @@ importers:
         specifier: workspace:*
         version: link:../../packages/testkit
       wrangler:
-        specifier: ^4.158.0
+        specifier: ~4.158.0
         version: 4.158.0(@types/node@26.6.6)
 
   examples/connected-demo:

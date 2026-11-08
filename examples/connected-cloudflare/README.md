@@ -7,9 +7,12 @@ dependency; agents connect over the HTTP streaming transport (Workers serve no W
 | Route | What |
 | --- | --- |
 | `/api/uncage/*` | The hub (browser API, device login, `install.sh`, agent transport) through `fetchOnce` |
-| `GET /login?user=<name>` | Demo sign-in: a cookie signed with `DEMO_SECRET` (HMAC via `crypto.subtle`). Use your real auth instead |
+| `GET\|POST /login` | **Demo sign-in, no password** (form posts a name; cookie signed with `DEMO_SECRET`). Refused unless the host is localhost / 127.0.0.1 / [::1] or `ALLOW_DEMO_LOGIN=1`. See [Security](#security) |
 | `GET\|POST /device` | Approve the code `uncage setup` prints |
 | `GET /notes` | The signed-in user's notes (JSON), written by `save_note` |
+
+> **Security:** the demo sign-in lets anyone become any user. It is off on public hosts by default;
+> a real website plugs its own sign-in into `getUser` in `src/hub.ts`. See [Security](#security).
 
 Files: `src/worker.ts` (routes), `src/hub.ts` (`makeHub`, `Env`), `src/tools.ts` (`save_note`,
 notes table), `src/skills.ts` (`notes` skill), `src/auth.ts` (demo cookie), `scripts/smoke.ts`.
@@ -40,13 +43,13 @@ pnpm install && pnpm build
 docker run -d --rm --name uncage-pg -p 127.0.0.1:5432:5432 \
   -e POSTGRES_USER=uncage -e POSTGRES_PASSWORD=uncage postgres:16-alpine
 cd examples/connected-cloudflare
-cp .dev.vars.example .dev.vars   # then put a random DEMO_SECRET (>= 32 bytes) in it
+cp .dev.vars.example .dev.vars   # then set DEMO_SECRET=$(openssl rand -hex 32) in it
 pnpm dev                         # http://localhost:8787
 ```
 
 Postgres on another port: `CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgres://uncage:uncage@127.0.0.1:<port>/uncage pnpm dev`.
 
-Then sign in at `http://localhost:8787/login?user=me`, and connect a computer:
+Then sign in at `http://localhost:8787/login` (pick any name), and connect a computer:
 
 ```bash
 curl -fsSL http://localhost:8787/api/uncage/install.sh | bash
@@ -60,20 +63,44 @@ uncage setup http://localhost:8787
 | `HYPERDRIVE` | `wrangler.toml` `[[hyperdrive]]` | Postgres. `wrangler dev` uses `localConnectionString` |
 | `PUBLIC_URL` | `wrangler.toml` `[vars]` | The Worker's public origin (agents and `install.sh` use it) |
 | `DEMO_SECRET` | secret / `.dev.vars` | ≥ 32 bytes; signs the demo cookie |
+| `ALLOW_DEMO_LOGIN` | `[vars]`, optional | `1` opens the password-less demo sign-in on a public host. Throwaway demos only |
 | `CRON_SECRET` | secret, optional | Enables `GET\|POST /api/uncage/maintenance` with `Authorization: Bearer <secret>` |
 
 ## Deploy (not verified on a real Cloudflare account yet)
 
-```bash
-pnpm exec wrangler hyperdrive create uncage --connection-string="postgres://USER:PASSWORD@HOST:5432/DB"
-# put the printed id into wrangler.toml, and PUBLIC_URL = your workers.dev / custom domain URL
-pnpm exec wrangler secret put DEMO_SECRET
-pnpm exec wrangler deploy
-```
+1. Create the Hyperdrive config and put the printed id into `wrangler.toml` (`[[hyperdrive]] id`):
+   ```bash
+   pnpm exec wrangler login
+   pnpm exec wrangler hyperdrive create uncage --connection-string="postgres://USER:PASSWORD@HOST:5432/DB"
+   ```
+2. Deploy once to create the Worker and learn its URL (requests answer a 500 setup message until
+   the secret exists):
+   ```bash
+   pnpm exec wrangler deploy        # prints https://uncage-connected-cloudflare.<account>.workers.dev
+   ```
+   (Running `wrangler secret put` before the first deploy also works: it offers to create the Worker.)
+3. Set the secret: `openssl rand -hex 32 | pnpm exec wrangler secret put DEMO_SECRET`.
+4. Set `PUBLIC_URL` in `wrangler.toml` `[vars]` to that URL (or your custom domain) and deploy again:
+   agents and `install.sh` use it, so a wrong value breaks `uncage setup`.
+5. Replace the demo sign-in with your own (see [Security](#security)) — on the deployed host
+   `/login` is refused unless you set `ALLOW_DEMO_LOGIN = "1"` in `[vars]`.
 
 Without a maintenance secret, requests run the hub's maintenance opportunistically (in the
 background through `waitUntil`). With `CRON_SECRET`, a Cron Trigger or any scheduler can call the
 maintenance endpoint instead.
+
+## Security
+
+- **`getUser` in `src/hub.ts` is the auth seam.** The hub asks it who sends each browser request;
+  return your website's signed-in user (`{ id, name }`) or `null`. Everything else — which machines
+  and sessions a user sees, who approves a device code, as whom `save_note` runs — follows from it.
+- `src/auth.ts` and `/login` are a **stand-in with no password**: anyone who reaches `POST /login`
+  can sign in as any name, see that user's notes and approve devices for them. That is why it only
+  answers on localhost / 127.0.0.1 / [::1] unless `ALLOW_DEMO_LOGIN=1`. Delete it in a real site.
+- Sign-in is `POST` from the site's own form only (Origin checked; cookie `HttpOnly; SameSite=Lax`,
+  `Secure` on https), so another site cannot sign a visitor in as someone else; `/device` decisions
+  are `POST` with the same Origin check.
+- `DEMO_SECRET` (≥ 32 bytes) signs the cookie; without it every route answers a 500 setup message.
 
 ## Verify
 
@@ -97,5 +124,9 @@ maintenance endpoint instead.
 - **Does a long agent stream hit Workers' limits?** Workers limit CPU time, not wall-clock time, and
   a waiting stream uses almost no CPU. The hub still ends each stream after 250 s
   (`stream.maxDurationMs`) and the agent reconnects at once without losing anything.
+- **Why is wrangler pinned to `~4.158.0`?** Every wrangler release since 4.117 depends on a
+  prerelease-numbered miniflare 5.x (exact pin); the last one on a stable miniflare (4.116) ships a
+  workerd from 2026-07-30, older than this example's `compatibility_date = "2026-10-01"`. The tilde
+  keeps the tested wrangler / miniflare / workerd set.
 - **Neon / another driver?** Any `pg.Pool`-shaped object works with `postgresHubStore({ pool })`
   and `postgresCluster({ pool })`.

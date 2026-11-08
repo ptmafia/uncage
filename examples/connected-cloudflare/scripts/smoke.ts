@@ -4,7 +4,7 @@
  *   UNCAGE_HOME=$(mktemp -d) node scripts/smoke.ts [--url http://localhost:8787] [--runtime claude-code|fake] [--user smoke]
  *
  * 1. `install.sh` is served and `GET /api/uncage/agent/info` offers only the `http` transport.
- * 2. Signs in (`/login`), connects a computer with the real `uncage setup <url> --no-daemon
+ * 2. Signs in (`POST /login`, the demo sign-in: local hosts only unless ALLOW_DEMO_LOGIN=1), connects a computer with the real `uncage setup <url> --no-daemon
  *    --no-browser` and approves its code on `/device`.
  * 3. Starts the agent: `--runtime claude-code` (default) runs the real `uncage agent` with your
  *    Claude Code; `--runtime fake` runs the agent in this process with a scripted runtime instead.
@@ -60,7 +60,13 @@ async function main(): Promise<void> {
   step('agent/info offers only http');
 
   // 2. Sign in, then connect a computer through the device flow.
-  const login = await fetch(`${base}/login?user=${encodeURIComponent(values.user)}`, { redirect: 'manual' });
+  // The demo sign-in (POST, local hosts only unless the Worker sets ALLOW_DEMO_LOGIN=1).
+  const login = await fetch(`${base}/login`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { origin: base, 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ user: values.user }),
+  });
   const cookie = login.headers.get('set-cookie')?.split(';')[0];
   check(login.status === 303 && cookie, `login answered ${login.status}`);
   step(`signed in as ${values.user}`);
