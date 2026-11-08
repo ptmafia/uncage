@@ -18,7 +18,7 @@ Run it in Terminal. The answers come from your keyboard even though the script a
 ### What it checks and installs
 
 1. **The computer.** macOS on Apple silicon or Intel. Anything else stops with exit code 3.
-2. **Node.js 22 or newer.** If `node` is older or missing, it installs Node.js 22 with the first version manager it finds (see the table below). Without one, it uses Homebrew (`brew install node@22`, which is keg-only and does not replace your `node`), and without Homebrew it installs fnm into `~/.local/share/fnm`. Then a separate question: “Use Node 22 as your default?” With **n**, your default stays as it is and the script uses Node.js 22 by its full path.
+2. **Node.js 22 or newer.** If `node` is older or missing, it installs Node.js 22 with the first version manager it finds (see the table below). Without one, it uses Homebrew (`brew install node@22`, which is keg-only and does not replace your `node`), and without Homebrew it installs fnm into `~/.local/share/fnm`. Then a separate question: “Use Node.js 22 as your default Node.js?” With **n**, your default stays as it is and the script uses Node.js 22 by its full path.
 3. **npm’s global folder.** If it is not writable without `sudo`, the script offers to move it to `~/.npm-global` (never for an nvm Node, which does not allow it).
 4. **The Uncage CLI.** `npm install -g @uncage/cli` with the version range the website asks for.
 5. **Coding agents.** Claude Code, Codex and ACP agents that are installed. With none, it prints how to install Claude Code and stops; run the command again afterwards.
@@ -113,9 +113,10 @@ Run it in PowerShell (Windows PowerShell 5.1 or PowerShell 7), as your normal us
 ### What it checks and installs
 
 1. **The computer.** Windows on x64 or arm64.
-2. **Node.js 22 or newer**, with nvm-windows, fnm or volta when one is installed. Without one, it installs fnm for your user: with winget (`winget install --id Schniz.fnm`, a per-user package with no admin prompt), else from fnm’s release zip into `%LOCALAPPDATA%\fnm`. It never installs Node.js through winget, because that package asks for admin rights. Then the same “Use Node 22 as your default?” question.
-3. **The Uncage CLI.** `npm install -g @uncage/cli`. The script runs it as `uncage.cmd`.
-4. **Coding agents**, then the offer to run `uncage setup`, as on macOS.
+2. **Node.js 22 or newer**, with nvm-windows, fnm or volta when one is installed. Without one, it installs fnm for your user: with winget (`winget install --id Schniz.fnm`, a per-user package with no admin prompt), else from fnm’s release zip into `%LOCALAPPDATA%\fnm`. It never installs Node.js through winget, because that package asks for admin rights. Then the same “Use Node.js 22 as your default Node.js?” question.
+3. **npm's global folder.** If it is not writable, the script offers to move it to `%USERPROFILE%\.npm-global`.
+4. **The Uncage CLI.** `npm install -g @uncage/cli`. The script runs it as `uncage.cmd`.
+5. **Coding agents**, then the offer to run `uncage setup`, as on macOS.
 
 Folders it adds to PATH go into your user `Path` (not your PowerShell profile). Open a new terminal afterwards.
 

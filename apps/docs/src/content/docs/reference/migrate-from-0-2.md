@@ -136,6 +136,7 @@ Retention done by maintenance: run manifests never answered 1 h, others 7 days; 
 - **Site tool calls survive dropped connections**: the call and its result are stored, so an agent’s retry gets the stored result instead of a second run (exactly once (on FaaS platforms: when the hub is given the platform's `waitUntil`; see [Workers → FAQ](/docs/deploy/cloudflare-workers/#do-site-tools-run-exactly-once-on-workers))). If the instance running a handler dies, the call fails with “Site tool "<name>" timed out on the website. Please try again.” and is never re-run (at most once). `ctx.signal` now aborts on timeout, when the run ends, or when the hub closes, but no longer when the computer’s connection drops. Details: [Define tools](/docs/guides/define-tools/#when-connections-drop-or-instances-stop).
 - **Browser event streams rotate** every `stream.maxDurationMs` (an `event: reconnect` frame). `@uncage/client` resumes with `Last-Event-ID` by itself; custom SSE clients should reconnect on it.
 - **Computers can connect over HTTP streaming** when WebSockets fail (three failed attempts), and try WebSocket again every 30 minutes.
+- **`<ConnectMachine>` shows one command**: the site's installer in "macOS / Linux" and "Windows" tabs that start on the visitor's OS (`install.windows` is now shown), with `uncage setup <url>` under "Already have the CLI?". The numbered two-step list (`ol.uc-connect-steps`, `.uc-connect-num`) is gone; update any CSS that targets it.
 
 ## Checklist
 

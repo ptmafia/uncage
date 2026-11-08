@@ -14,7 +14,7 @@ Prerequisite: Claude Code installed and logged in (`npm i -g @anthropic-ai/claud
 
 ## Connected Mode (0.2)
 
-End users install the CLI globally, either with the website's installer (`curl -fsSL https://your.site/api/uncage/install.sh | bash`) or with `npm i -g @uncage/cli`, then:
+End users install the CLI globally, either with the website's installer (`curl -fsSL https://your.site/api/uncage/install.sh | bash` on macOS and Linux, `irm https://your.site/api/uncage/install.ps1 | iex` on Windows) or with `npm i -g @uncage/cli`, then:
 
 ```sh
 uncage setup https://your.site   # connect this computer to a website (approve in the browser)

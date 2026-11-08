@@ -30,7 +30,7 @@ Verify: start the dev server, then curl -s http://localhost:3000/api/uncage/inst
 ## Before you start
 
 - **Website side:** a Next.js 16 app (App Router) that you run with Node. Node.js **22.18 or newer**, because the custom server below is a `.ts` file that Node runs directly. Starting fresh: `npx create-next-app@latest my-site` (TypeScript, App Router).
-- **User side (your own computer for this test):** Node.js 22+ (the installer below can set it up), and Claude Code installed and signed in: `npm i -g @anthropic-ai/claude-code`, then run `claude` once and type `/login`. macOS, Linux or Windows (macOS is verified on real devices; Linux and Windows are CI verified, awaiting real-device confirmation).
+- **User side (your own computer for this test):** Node.js 22+ (the installer below can set it up), and Claude Code installed and signed in: `npm i -g @anthropic-ai/claude-code`, then run `claude` once and type `/login`. macOS, Linux or Windows (macOS is verified on a real device; Linux and Windows are CI verified, awaiting real-device confirmation).
 
 :::note[Why a custom server]
 This quickstart uses **traditional mode**: the hub keeps a WebSocket open to every connected computer and stores its data in an embedded database folder, so you need nothing else. That takes a long-running Node process with access to the HTTP server, which Next.js route handlers alone do not give. Deploying to **Vercel** or another serverless platform instead? Use [Next.js on Vercel](/docs/deploy/vercel/) (a route handler and Postgres, no custom server). Which one: [Choose a deployment mode](/docs/start/choose-deployment-mode/).

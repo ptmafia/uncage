@@ -10,7 +10,7 @@ The hub runs on these platforms through the same `hub.fetch` that Vercel and Wor
 :::
 
 :::caution[Netlify: short limit]
-Netlify documents a **60-second execution limit for streaming functions** (and 20 MB per streamed response). The hub works within it, with caveats: set `UNCAGE_STREAM_MAX_MS` to about `50000` (streams rotate every ~50 s, so more reconnects and more invocations than on Vercel), and keep `toolTimeoutMs` well under 60 s (for example `40_000`), because every site tool call must finish inside one invocation. If your tools need longer, use [Vercel](/docs/deploy/vercel/) or [traditional mode](/docs/deploy/node/).
+Netlify documents a **60-second execution limit for streaming functions** (and 20 MB per streamed response). The hub works within it, with caveats: set the hub's `stream.maxDurationMs` to about `50000` (the example `hub.ts` below reads it from `UNCAGE_STREAM_MAX_MS`; streams rotate every ~50 s, so more reconnects and more invocations than on Vercel), and keep `toolTimeoutMs` well under 60 s (for example `40_000`), because every site tool call must finish inside one invocation. If your tools need longer, use [Vercel](/docs/deploy/vercel/) or [traditional mode](/docs/deploy/node/).
 :::
 
 ## Prerequisites
@@ -52,7 +52,8 @@ async function createAppHub(): Promise<Hub> {
   const pool = new pg.Pool({ connectionString: url, max: 5 });
   pool.on('error', (err) => console.error('postgres pool error:', err.message));
   const ipHeader = process.env.CLIENT_IP_HEADER?.toLowerCase();
-  const publicUrl = process.env.PUBLIC_URL ?? (process.env.VERCEL ? undefined : 'http://localhost:3000');
+  const publicUrl =
+    process.env.PUBLIC_URL ?? (process.env.NODE_ENV === 'production' || process.env.VERCEL ? undefined : 'http://localhost:3000');
   if (!publicUrl) throw new Error('PUBLIC_URL is not set: set it to your site’s https:// origin.');
   return createHub({
     publicUrl, // what users open; localhost only for local development
@@ -150,7 +151,7 @@ The names are this page’s choice; the hub reads no environment variables itsel
 ## Deploy
 
 1. **Create the database** and set `DATABASE_URL` and `PUBLIC_URL` on the platform.
-2. **Find the request time limit** of your plan in the platform’s docs, and set `UNCAGE_STREAM_MAX_MS` below it (skip if it is 300 s or more).
+2. **Find the request time limit** of your plan in the platform’s docs, and set the hub's `stream.maxDurationMs` below it (`UNCAGE_STREAM_MAX_MS` in the example; skip if it is 300 s or more).
 3. **Deploy** the way the platform expects (for Netlify, `netlify deploy --prod` with the function above; for Bun or Deno, run `bun server.ts` or `deno serve --port 3000 server.ts` on your host).
 4. **Optional:** schedule a daily call to `/api/uncage/maintenance` with the `CRON_SECRET` bearer token. Without it, maintenance still runs opportunistically on requests.
 
@@ -178,4 +179,4 @@ The hub works with any `stream.maxDurationMs` above a few seconds, but each rota
 
 ### 504s, cut connections
 
-A request outlived the platform limit: lower `UNCAGE_STREAM_MAX_MS`, and keep `toolTimeoutMs` (120 s by default) below the limit too. A connection cut by a proxy or the network is harmless: the agent reconnects with its cursor, and nothing is lost or delivered twice.
+A request outlived the platform limit: lower `stream.maxDurationMs` (`UNCAGE_STREAM_MAX_MS` in the example), and keep `toolTimeoutMs` (120 s by default) below the limit too. A connection cut by a proxy or the network is harmless: the agent reconnects with its cursor, and nothing is lost or delivered twice.

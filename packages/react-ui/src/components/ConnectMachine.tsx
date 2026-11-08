@@ -1,7 +1,7 @@
 import type { MachineInfo } from '@uncage/protocol';
 import { useMachines, useUncageStore } from '@uncage/react';
 import { CheckCircle2, ChevronRight, Laptop } from 'lucide-react';
-import { useEffect, useId, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { cx, useUi } from '../context.js';
 import { errorText } from '../i18n.js';
 import { CopyCommand } from './CopyCommand.js';
@@ -29,6 +29,9 @@ export interface ConnectMachineProps {
 const FOCUSABLE =
   'button:not([disabled]):not([tabindex="-1"]), [href]:not([tabindex="-1"]), summary:not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])';
 
+/** `useLayoutEffect` in the browser (runs before paint, so the detected tab shows without a flash); `useEffect` on the server, where layout effects warn. */
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
+
 /** The visitor's OS from the browser (`userAgentData.platform`, else `platform`); macOS / Linux when unknown. */
 function detectOs(nav: { platform?: string; userAgentData?: { platform?: string } } | undefined = globalThis.navigator): 'unix' | 'windows' {
   const p = nav?.userAgentData?.platform ?? nav?.platform ?? '';
@@ -51,8 +54,9 @@ export function ConnectMachine({ variant = 'dialog', onClose, onConnected, class
   const id = useId();
   const [tab, setTab] = useState<'unix' | 'windows'>('unix');
   // After mount, not in the initializer: the server render (and hydration) must match, and Node has a
-  // `navigator` of its own, which describes the server.
-  useEffect(() => {
+  // `navigator` of its own, which describes the server. A layout effect, so the browser never paints
+  // the default tab first.
+  useIsomorphicLayoutEffect(() => {
     setTab(detectOs());
   }, []);
   const [installFailed, setInstallFailed] = useState<typeof error>();

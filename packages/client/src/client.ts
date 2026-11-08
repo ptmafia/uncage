@@ -33,7 +33,7 @@ export interface InstallInfo {
   install: string;
   /** `uncage setup <url>`: pairs the computer with this website and starts the agent. */
   setup: string;
-  /** Windows install command; `null` until Windows is supported. */
+  /** Windows install command; `null` when the hub serves no Windows installer (custom clients). */
   windows: string | null;
 }
 

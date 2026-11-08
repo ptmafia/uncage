@@ -9,7 +9,7 @@ The one-command installers and the background agent on macOS, Linux and Windows.
 
 ### `uncage: command not found` after installing
 
-Open a new terminal: the installer adds folders to `PATH` for new terminals only (macOS and Linux: the `# >>> uncage >>>` block in your shell profile; Windows: your user `Path`). If you answered **n** to “Use Node.js 22 as your default?”, the installer printed the full path of `uncage` and the `PATH` line to use; run that, or run the installer again and answer **Y**. With fish, add the line the installer printed to your config yourself.
+Open a new terminal: the installer adds folders to `PATH` for new terminals only (macOS and Linux: the `# >>> uncage >>>` block in your shell profile; Windows: your user `Path`). If you answered **n** to “Use Node.js 22 as your default Node.js?”, the installer printed the full path of `uncage` and the `PATH` line to use; run that, or run the installer again and answer **Y**. With fish, add the line the installer printed to your config yourself.
 
 ### The background agent’s Node.js was removed
 
