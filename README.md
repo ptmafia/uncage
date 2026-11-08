@@ -6,7 +6,7 @@
 
 Your website gives the instructions. Each user’s own Claude Code does the work, on their own computer, under their own login, and calls your website’s tools as that user. The conversation, the approvals and the results stay on your site.
 
-- **One command for the user, on macOS, Linux or Windows.** Your page shows `curl -fsSL https://your.site/api/uncage/install.sh | bash` (on Windows `irm https://your.site/api/uncage/install.ps1 | iex`). The installer checks the computer, asks `[Y/n]` before each step (Node.js 22 through the user’s own version manager, then the CLI), without `sudo` or admin rights, and offers to run `uncage setup https://your.site`. The user approves the computer in the browser, a background agent dials out to your site, and the page shows it online. No ports, no tunnels.
+- **One command for the user, on macOS, Linux or Windows.** Your page shows `curl -fsSL https://your.site/api/uncage/install.sh | bash` (on Windows `irm https://your.site/api/uncage/install.ps1 | iex`). The installer checks the computer, asks `[Y/n]` before each step (Node.js 22 through the user’s own version manager, then the CLI), without `sudo` on macOS and Linux and without UAC on Windows (a per-user install; the Windows standard-user path is CI verified only, see [compatibility](docs/compatibility.md)), and offers to run `uncage setup https://your.site`. The user approves the computer in the browser, a background agent dials out to your site, and the page shows it online. No ports, no tunnels.
 - **A chat on your site.** `<AgentChat>` streams answers and tool steps, shows Allow / Deny cards, Stop, attachments, model and permission pickers, and keeps history across reloads.
 - **Your capabilities, your rules.** Declare site tools with `defineTool` (zod schema + handler). The handler runs in your backend as the signed-in user and can pull files from the run’s workspace. Give Claude Code your formats and templates as skills.
 - **Safe by construction.** Your site never sends code or shell to the user’s computer, only tool schemas, skill text and a fixed set of commands. Bypassing approvals can only be enabled by the user, locally. Everything a site does is logged on the user’s computer.
@@ -18,7 +18,7 @@ Your website gives the instructions. Each user’s own Claude Code does the work
 
 ## Try it in 5 minutes
 
-Run the reference website and connect your own computer to it. You need macOS, Linux or Windows, Node.js 22.18+, pnpm, and Claude Code installed and signed in (`npm i -g @anthropic-ai/claude-code`, run `claude`, type `/login`).
+Run the reference website and connect your own computer to it. You need macOS or Linux (the demo itself is verified there; on Windows, the installer and the agent are CI verified, the demo scripts are not yet), Node.js 22.18+, pnpm, and Claude Code installed and signed in (`npm i -g @anthropic-ai/claude-code`, run `claude`, type `/login`).
 
 ```sh
 git clone https://github.com/ptmafia/uncage && cd uncage

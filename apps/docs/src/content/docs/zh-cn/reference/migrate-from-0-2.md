@@ -136,6 +136,10 @@ Fetch → Node 适配器移到了独立的子路径：`import { toNodeHandler } 
 - **网站工具调用能挺过连接断开**：调用和结果都会存储，所以守护进程重试时拿到的是已存储的结果，而不是再执行一次（恰好一次；在 FaaS 平台上的前提是把平台的 `waitUntil` 交给 hub，见 [Workers → 常见问题](/docs/zh-cn/deploy/cloudflare-workers/#在-workers-上网站工具会恰好执行一次吗)）。如果运行 handler 的实例挂掉，这次调用会以“Site tool "<name>" timed out on the website. Please try again.”失败，并且不会重试（最多执行一次）。`ctx.signal` 现在会在超时、运行结束或 hub 关闭时中止，但电脑的连接断开时不再中止。详见[定义网站工具](/docs/zh-cn/guides/define-tools/#连接断开或实例停止时)。
 - **浏览器的事件流会轮换**，每 `stream.maxDurationMs` 一次（发送一个 `event: reconnect` 帧）。`@uncage/client` 会自动带着 `Last-Event-ID` 续接；自定义的 SSE 客户端收到它时应当重连。
 - **WebSocket 连不上时（连续失败三次），电脑可以改用 HTTP 流式传输连接**，之后每 30 分钟重试一次 WebSocket。
+- **默认会检测并启动 ACP agent。** `uncage serve`、`uncage doctor` 和 `uncage agent` 现在会注册命令在 PATH 上的 ACP 预设，并从 ACP 注册表中检测已安装的 agent（`presets: auto`、`autoDetect: true`）。每次启动时，它们都会把这些程序（例如 `opencode acp`）运行一次，用来做 ACP `initialize` 握手。要关闭，请在 `~/.uncage/agent.yaml`（Local 模式下是 `uncage.config.yaml`）中设置 `runtimes.acp.autoDetect: false`（不检测、不握手）和 `presets: off`。见[使用任意 ACP agent](/docs/zh-cn/guides/use-any-acp-agent/)。
+- **每天一次注册表下载。** 守护进程最多每天一次从 `cdn.agentclientprotocol.com` 下载 ACP 注册表及其图标。要关闭，请在守护进程的环境中设置 `UNCAGE_ACP_REGISTRY_REFRESH=0`（此时使用 Uncage 自带的那一份）。
+- **新的运行时 id 和新的 `skills` 取值。** 运行时列表里现在可能出现 `acp-*` 运行时（`acp-claude`、`acp-gemini` 等），`RuntimeCapabilities.skills` 在 0.2 的取值之外还可能是 `'prompt'`（技能写入 `.uncage/skills/`，并在第一条提示中列出）。按运行时 id 或 `skills` 取值做分支的自定义 UI 需要同时处理这两种情况。
+- **对共用数据库运行 0.3 之前，先停掉所有 0.2 的 hub 节点。** 0.3 的迁移会给工具调用（`machine_id`、`call_id`）加一个唯一索引，仍在写同一个数据库的 0.2 节点会违反它，导致其工具调用失败。请先停掉全部 0.2 节点，再启动 0.3（由第一个节点执行迁移），然后启动其余节点：不支持 0.2 与 0.3 混合的滚动升级。
 - **`<ConnectMachine>` 只显示一条命令**：网站的安装脚本，放在“macOS / Linux”和“Windows”两个标签页里，默认打开访客所用系统的那一页（现在会显示 `install.windows`）；`uncage setup <url>` 放在“已经装好 CLI？”下面。原来带编号的两步列表（`ol.uc-connect-steps`、`.uc-connect-num`）已经移除，如有 CSS 针对它们，请一并更新。
 
 ## 检查清单

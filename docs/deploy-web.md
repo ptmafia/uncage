@@ -1,6 +1,6 @@
-# 上线清单：官网 + 帮助站（Vercel）与在线 demo（Railway）
+# 上线清单：官网 + 帮助站（Vercel）与在线 demo（Railway 或 Vercel）
 
-官网（`/`、`/zh/`、`/ja/`）和帮助站（`/docs/`）是**一个** Vercel 静态部署；在线 demo 是一个 Railway 服务（需要常驻 Node 进程和 WebSocket，Vercel 托管不了）。两边互相引用对方的地址，所以按下面顺序做。
+官网（`/`、`/zh/`、`/ja/`）和帮助站（`/docs/`）是**一个** Vercel 静态部署；在线 demo 可以放在 Railway（传统模式：一个常驻 Node 进程，WebSocket）或另一个 Vercel 项目（FaaS 模式：Next.js 加一个 Postgres，HTTP 流式传输），两种都行，见 `examples/connected-demo/DEPLOY.md`。两边互相引用对方的地址，所以按下面顺序做。
 
 ## 1. Vercel：官网 + 帮助站
 
@@ -21,7 +21,9 @@
 3. **Deployments → Redeploy**（或合并 PR 后自动部署）。
 4. 可选：**Settings → Domains** 绑定自定义域名，然后把 `SITE_URL` 改成该域名并重新部署。
 
-## 2. Railway：在线 demo
+## 2. 在线 demo：Railway 或 Vercel
+
+**选项 A：Railway（传统模式）。**
 
 照 `examples/connected-demo/DEPLOY.md` 操作，要点：
 
@@ -34,7 +36,9 @@
    - 自定义域名走 Cloudflare 代理时再加 `CLIENT_IP_HEADER=x-real-ip`（或 `cf-connecting-ip`），否则所有访客共用一个限流桶。
    - `railway.json` 设置了 `watchPatterns`：只有 demo、`packages/`、`pnpm-lock.yaml` 或 `.dockerignore` 变化时才重新部署（没有 Volume 时每次部署都会清空数据）。
 4. **Networking → Generate Domain**，得到 `https://xxx.up.railway.app`。
-5. 回到 Vercel，把这个地址填进 `PUBLIC_DEMO_URL`，重新部署。
+5. 回到官网的 Vercel 项目，把这个地址（Vercel 方案则是 demo 项目的 `https://<项目>.vercel.app`）填进 `PUBLIC_DEMO_URL`，重新部署。
+
+**选项 B：Vercel（FaaS 模式）。** 在 Vercel 里**另建一个项目**，和第 1 步的官网项目分开（`connected-demo` 这个项目已经改作官网，所以 demo 项目要换一个新名字，例如 `uncage-demo`）。Root Directory 设为 `examples/connected-demo`，并准备一个 Postgres（例如 Vercel Marketplace 里的 Neon，用带连接池的连接串）。构建命令、环境变量（`DATABASE_URL`、`DEMO_PUBLIC=1`、`DEMO_SECRET`、`CRON_SECRET`、`PUBLIC_URL`）和每天一次的维护 Cron，全部照 `examples/connected-demo/DEPLOY.md` 的 “Vercel (FaaS mode)” 一节。网页里发送的附件在这种模式下最大 4 MB。
 
 费用：Railway Hobby $5/月（含 $5 用量，demo 一般够用）。想零成本可用 Render 免费档（会休眠，冷启动约 30 秒，重启清数据）。
 

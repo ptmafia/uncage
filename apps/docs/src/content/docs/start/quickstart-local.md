@@ -20,7 +20,7 @@ Verify: run "npx uncage doctor" and report each line; with "npx uncage serve --w
 
 ## 1. Prerequisites
 
-- macOS, Node.js **22 or newer** (`node -v`).
+- macOS, Linux or Windows, and Node.js **22 or newer** (`node -v`). `uncage serve` runs wherever the CLI does; macOS is verified on real devices, Linux and Windows are CI verified and await real-device confirmation.
 - Claude Code installed and signed in: `npm i -g @anthropic-ai/claude-code`, then run `claude` once and type `/login`.
 - A Next.js (App Router) app. Starting fresh: `npx create-next-app@latest my-app` (TypeScript, App Router).
 

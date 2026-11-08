@@ -41,7 +41,7 @@ export const en: Dict = {
     installLabel: 'One command, one approval',
   },
   flow: {
-    label: 'How a request flows: a chat on your site, a WebSocket opened by the user’s computer, and Claude Code running there.',
+    label: 'How a request flows: a chat on your site, a WebSocket or HTTPS stream opened by the user’s computer, and Claude Code running there.',
     browserTitle: 'your.site',
     online: 'Machine online',
     userMessage: 'Build a landing page for our launch and publish it',
@@ -49,7 +49,7 @@ export const en: Dict = {
     assistant: 'Page written. Publish it to your site?',
     allow: 'Allow once',
     deny: 'Deny',
-    wire: 'WebSocket, dialed out by the user’s machine',
+    wire: 'WebSocket or HTTPS streaming, dialed out by the user’s machine',
     termSkill: 'loaded skill',
     termWrite: 'wrote',
     termWaiting: 'waiting for approval…',
@@ -81,7 +81,7 @@ export const en: Dict = {
   how: {
     kicker: 'How it works',
     title: 'Three moving parts. One protocol.',
-    sub: 'The browser talks to your site. Your site talks to the user’s machine over a socket the machine opened itself. Nothing else.',
+    sub: 'The browser talks to your site. Your site talks to the user’s machine over a WebSocket or HTTPS stream the machine opened itself. Nothing else.',
     steps: [
       {
         tag: 'Connect',
@@ -134,11 +134,11 @@ export const en: Dict = {
       },
       {
         title: 'Any ACP agent',
-        body: 'Gemini CLI, OpenCode, Claude Code’s ACP adapter: any agent that speaks the Agent Client Protocol shows up in the runtime picker.',
+        body: 'Claude Code through its ACP adapter (verified live), and any agent that speaks the Agent Client Protocol, such as Gemini CLI or OpenCode, shows up in the runtime picker.',
       },
       {
         title: 'macOS, Windows and Linux',
-        body: 'One command installs everything on macOS, Windows or Linux. The agent runs as a per-user background service; no admin rights needed.',
+        body: 'One command installs everything on macOS, Windows or Linux. The agent runs as a per-user background service: no sudo on macOS and Linux, a per-user install on Windows. macOS is verified on real devices; Windows and Linux are CI verified, real-device confirmation pending.',
       },
     ],
     soon: [

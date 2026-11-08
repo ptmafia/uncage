@@ -49,7 +49,7 @@ export const zh: Dict = {
     installLabel: '一条命令，一次批准',
   },
   flow: {
-    label: '一次请求的流向：你网站上的对话，由用户电脑主动建立的 WebSocket 连接，以及在这台电脑上运行的 Claude Code。',
+    label: '一次请求的流向：你网站上的对话，由用户电脑主动建立的 WebSocket 或 HTTPS 流式连接，以及在这台电脑上运行的 Claude Code。',
     browserTitle: 'your.site',
     online: '电脑在线',
     userMessage: '为这次发布做一个落地页并上线',
@@ -57,7 +57,7 @@ export const zh: Dict = {
     assistant: '页面已写好。要发布到你的网站吗？',
     allow: '允许执行',
     deny: '拒绝',
-    wire: 'WebSocket，由用户电脑主动发起',
+    wire: 'WebSocket 或 HTTPS 流式传输，由用户电脑主动发起',
     termSkill: '已加载技能',
     termWrite: '已写入',
     termWaiting: '等待审批…',
@@ -137,11 +137,11 @@ export const zh: Dict = {
       },
       {
         title: '任意 ACP agent',
-        body: 'Gemini CLI、OpenCode、Claude Code 的 ACP 适配器：任何支持 Agent Client Protocol 的 agent 都会出现在运行时选择器里。',
+        body: '通过 ACP 适配器接入 Claude Code（已实机验证），以及任何支持 Agent Client Protocol 的 agent（如 Gemini CLI、OpenCode），都会出现在运行时选择器里。',
       },
       {
         title: 'macOS、Windows 与 Linux',
-        body: '一条命令，在 macOS、Windows 或 Linux 上装好一切。守护进程作为当前用户的后台服务运行，无需管理员权限。',
+        body: '一条命令，在 macOS、Windows 或 Linux 上装好一切。守护进程作为当前用户的后台服务运行：macOS 和 Linux 无需 sudo，Windows 为按用户安装。macOS 已在真机上验证；Windows 和 Linux 已通过 CI 验证，真机确认待完成。',
       },
     ],
     soon: [

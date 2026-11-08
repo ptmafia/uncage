@@ -50,7 +50,7 @@ export const ja: Dict = {
     installLabel: 'コマンド1つ、承認1回',
   },
   flow: {
-    label: 'リクエストの流れ：あなたのサイトのチャット、ユーザーのコンピュータから接続するWebSocket、そしてそのコンピュータで動くClaude Code。',
+    label: 'リクエストの流れ：あなたのサイトのチャット、ユーザーのコンピュータから接続するWebSocketまたはHTTPSストリーミング、そしてそのコンピュータで動くClaude Code。',
     browserTitle: 'your.site',
     online: 'コンピュータはオンライン',
     userMessage: 'ローンチ用のランディングページを作って、公開して',
@@ -58,7 +58,7 @@ export const ja: Dict = {
     assistant: 'ページができました。サイトに公開しますか？',
     allow: 'Allow once',
     deny: 'Deny',
-    wire: 'WebSocket（ユーザーのコンピュータから接続）',
+    wire: 'WebSocketまたはHTTPSストリーミング（ユーザーのコンピュータから接続）',
     termSkill: 'スキルを読み込み',
     termWrite: '書き込み',
     termWaiting: '承認待ち…',
@@ -90,7 +90,7 @@ export const ja: Dict = {
   how: {
     kicker: '仕組み',
     title: '構成要素は3つ。プロトコルは1つ。',
-    sub: 'ブラウザが話す相手はあなたのサイト。あなたのサイトは、ユーザーのコンピュータが自ら開いたソケットで、そのコンピュータと話します。経路はそれだけです。',
+    sub: 'ブラウザが話す相手はあなたのサイト。あなたのサイトは、ユーザーのコンピュータが自ら開いたWebSocketまたはHTTPSストリームで、そのコンピュータと話します。経路はそれだけです。',
     steps: [
       {
         tag: '接続',
@@ -143,11 +143,11 @@ export const ja: Dict = {
       },
       {
         title: 'あらゆるACPエージェント',
-        body: 'Gemini CLI、OpenCode、Claude CodeのACPアダプターなど、Agent Client Protocolに対応したエージェントならどれでもランタイムの選択肢に表示されます。',
+        body: 'ACPアダプター経由のClaude Code（実機で検証済み）と、Gemini CLIやOpenCodeなどAgent Client Protocolに対応したエージェントが、ランタイムの選択肢に表示されます。',
       },
       {
         title: 'macOS・Windows・Linux',
-        body: 'macOS、Windows、Linuxのどれでも、コマンド1つで必要なものがすべて入ります。エージェントはユーザーごとのバックグラウンドサービスとして動くため、管理者権限は要りません。',
+        body: 'macOS、Windows、Linuxのどれでも、コマンド1つで必要なものがすべて入ります。エージェントはユーザーごとのバックグラウンドサービスとして動きます。macOSとLinuxではsudoは不要、Windowsはユーザー単位のインストールです。macOSは実機で検証済みで、WindowsとLinuxはCIで検証済み、実機での確認待ちです。',
       },
     ],
     soon: [
