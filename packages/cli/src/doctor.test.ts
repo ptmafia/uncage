@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { RuntimeAdapter, RuntimeProbe } from '@uncage/protocol';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from './config.js';
@@ -154,7 +154,7 @@ describe('doctor flags: --port, --url, UNCAGE_URL, --workspace, --help (F5)', ()
     );
     expect(() => parseDoctorArgs(['--port', 'abc'], {}, config, cwd)).toThrow(/--port/);
     const o = parseDoctorArgs(['--workspace', 'ws', '--data-dir', 'd', '--token-file', 't'], {}, config, cwd);
-    expect(o).toMatchObject({ workspace: '/here/ws', dataDir: '/here/d', tokenFile: '/here/t', help: false });
+    expect(o).toMatchObject({ workspace: resolve(cwd, 'ws'), dataDir: resolve(cwd, 'd'), tokenFile: resolve(cwd, 't'), help: false });
   });
 
   it('--help / -h is accepted and documents --port and UNCAGE_URL', async () => {

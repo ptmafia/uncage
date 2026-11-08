@@ -20,6 +20,7 @@ import { agentService, type AgentService } from './service/index.js';
 import { connectedHome, daemonHomeConflict } from './home.js';
 import { installAgentService, runSetup, SETUP_HELP } from './setup.js';
 import { listSites, removeSite, SITES_HELP } from './sites.js';
+import { superviseAgent, watchSupervisor } from './supervise.js';
 import { versionOutput } from './version.js';
 
 const HELP = `uncage - run AI coding agents behind a local, approval-gated API
@@ -185,6 +186,7 @@ async function main(argv: string[]): Promise<number> {
         help: { type: 'boolean', short: 'h', default: false },
         json: { type: 'boolean', default: false },
         'log-file': { type: 'string' },
+        supervise: { type: 'boolean', default: false },
       },
     });
     if (values.help) {
@@ -221,6 +223,20 @@ async function main(argv: string[]): Promise<number> {
       return 2;
     }
     const logFile = values['log-file'] ? resolve(cwd, values['log-file']) : undefined;
+    if (values.supervise) {
+      // Windows service: keep the agent running (Task Scheduler does not restart a non-zero exit).
+      let onStop: () => void = () => undefined;
+      const stopSignal = new Promise<void>((r) => (onStop = r));
+      for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK'] as const) process.on(sig, onStop);
+      return superviseAgent({
+        execPath: process.execPath,
+        entry: process.argv[1]!,
+        args: ['agent', ...(logFile ? ['--log-file', logFile] : [])],
+        ...(logFile ? { logFile } : {}),
+        stopSignal,
+      });
+    }
+    watchSupervisor();
     const agent = await runAgent({ home: connectedHome(), ...(logFile ? { logFile } : {}) });
     if (agent.sites === 0) {
       await agent.close();

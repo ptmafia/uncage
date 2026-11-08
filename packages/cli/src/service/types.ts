@@ -9,7 +9,10 @@ export interface ServiceSpec {
   nodePath: string;
   /** realpath of the CLI's `bin.js`. */
   cliEntry: string;
-  /** `['agent', '--log-file', <path>]` on Windows (tasks cannot redirect stdout), `['agent']` elsewhere. */
+  /**
+   * `['agent', '--supervise', '--log-file', <path>]` on Windows (tasks cannot redirect stdout, and
+   * Task Scheduler does not restart a program that exits non-zero), `['agent']` elsewhere.
+   */
   args: string[];
   env: { PATH: string; HOME: string };
   workingDir: string;

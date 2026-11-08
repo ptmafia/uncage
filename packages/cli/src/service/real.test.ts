@@ -7,7 +7,8 @@
 import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import type { ExecFn } from '@uncage/agent';
 import { describe, expect, it } from 'vitest';
@@ -22,15 +23,33 @@ const exec: ExecFn = async (file, args) => {
   return { stdout: r.stdout, stderr: r.stderr };
 };
 
-/** The fake agent: a heartbeat line (`<pid> <time>`) every 500 ms; exits 75 once when `die` appears. */
-const FAKE = `
+/** The built supervisor (Windows services run `bin.js agent --supervise`). */
+const SUPERVISE_JS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist', 'supervise.js');
+
+/**
+ * The fake agent: a heartbeat line (`<pid> <time> <args>`) every 500 ms; exits 75 once when `die`
+ * appears. With `--supervise` (Windows) it runs the real supervisor, which starts it again without.
+ */
+const FAKE = (supervise: string) => `
 const { appendFileSync, existsSync, rmSync } = require('node:fs');
 const { join } = require('node:path');
+const { pathToFileURL } = require('node:url');
 const dir = __dirname;
-setInterval(() => {
+const argv = process.argv.slice(2);
+if (argv.includes('--supervise')) {
+  import(pathToFileURL(${JSON.stringify(supervise)}).href).then(async (m) => {
+    process.exitCode = await m.superviseAgent({ execPath: process.execPath, entry: __filename, args: argv.filter((a) => a !== '--supervise'), restartDelayMs: 2000 });
+  });
+} else {
+  if (process.env.UNCAGE_SUPERVISOR_PID) {
+    const sup = Number(process.env.UNCAGE_SUPERVISOR_PID);
+    setInterval(() => { try { process.kill(sup, 0); } catch { process.exit(0); } }, 1000);
+  }
+  setInterval(() => {
   appendFileSync(join(dir, 'heartbeat'), process.pid + ' ' + Date.now() + ' ' + process.argv.slice(2).join(' ') + '\\n');
   if (existsSync(join(dir, 'die'))) { rmSync(join(dir, 'die')); process.exit(75); }
-}, 500);
+  }, 500);
+}
 `;
 
 async function beats(dir: string): Promise<Array<{ pid: string; at: number; args: string }>> {
@@ -65,12 +84,12 @@ describe.runIf(enabled)('real service (CI only)', () => {
       return;
     }
     const entry = join(dir, 'fake-agent.cjs');
-    await writeFile(entry, FAKE);
+    await writeFile(entry, FAKE(SUPERVISE_JS));
     const logsDir = join(dir, 'logs');
     const spec: ServiceSpec = {
       nodePath: await realpath(process.execPath),
       cliEntry: entry,
-      args: process.platform === 'win32' ? ['agent', '--log-file', join(logsDir, 'agent.log')] : ['agent'],
+      args: process.platform === 'win32' ? ['agent', '--supervise', '--log-file', join(logsDir, 'agent.log')] : ['agent'],
       env: { PATH: process.env.PATH ?? process.env.Path ?? '', HOME: homedir() },
       workingDir: dir,
       logsDir,
@@ -80,7 +99,7 @@ describe.runIf(enabled)('real service (CI only)', () => {
       const { definitionPath, notes } = await svc.install(spec);
       console.log(`[real.test] ${svc.kind} installed at ${definitionPath}${notes.length ? ` · ${notes.join(' ')}` : ''}`);
       const first = await until('the first heartbeat', async () => (await beats(dir))[0], 60_000);
-      expect(first.args).toBe(spec.args.join(' '));
+      expect(first.args).toBe(spec.args.filter((a) => a !== '--supervise').join(' '));
       const st = await svc.status();
       console.log(`[real.test] status: ${JSON.stringify({ ...st, spec: undefined })}`);
       expect(st).toMatchObject({ installed: true, nodeExists: true, spec });

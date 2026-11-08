@@ -57,7 +57,8 @@ export async function serviceSpec(o: {
   return {
     nodePath,
     cliEntry,
-    args: o.platform === 'win32' ? ['agent', '--log-file', p.join(logsDir, 'agent.log')] : ['agent'],
+    // Windows: a supervisor process restarts the agent (Task Scheduler does not restart a non-zero exit).
+    args: o.platform === 'win32' ? ['agent', '--supervise', '--log-file', p.join(logsDir, 'agent.log')] : ['agent'],
     env: { PATH: servicePath(nodePath, o.env, o.platform), HOME: o.home },
     workingDir: o.home,
     logsDir,

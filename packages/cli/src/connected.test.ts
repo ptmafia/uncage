@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ActivityLog, agentConfigPath, loadAgentConfig, updateAgentSites, type ExecFn } from '@uncage/agent';
+import { ActivityLog, agentConfigPath, checkUserOnly, loadAgentConfig, updateAgentSites, type ExecFn } from '@uncage/agent';
 import { createHub, type Hub } from '@uncage/hub';
 import { attachWebSocket, pgliteHubStore, toNodeHandler } from '@uncage/hub/node';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -87,7 +87,8 @@ describe('uncage setup', () => {
     expect(exec).toHaveBeenCalledTimes(1); // no launchctl
     const cfg = await loadAgentConfig(home);
     expect(cfg.sites).toEqual([expect.objectContaining({ id: site.id, machineId: site.machineId, token: site.token, machineKey: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) })]);
-    expect(((await stat(agentConfigPath(home))).mode & 0o777).toString(8)).toBe('600');
+    if (process.platform === 'win32') expect((await checkUserOnly(agentConfigPath(home))).ok).toBe(true);
+    else expect(((await stat(agentConfigPath(home))).mode & 0o777).toString(8)).toBe('600');
     expect(a.lines.join('\n')).not.toContain(site.token);
   });
 

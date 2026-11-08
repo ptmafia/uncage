@@ -52,7 +52,7 @@ describe('serviceSpec', () => {
     expect((await serviceSpec({ home: '/h', execPath: join(volta, 'node'), argv1: realBin, env: {}, platform: 'linux' })).nodePath).toBe(realNode);
   });
 
-  it('on Windows runs agent --log-file and keeps the Path (case-insensitive) with node first', async () => {
+  it('on Windows runs agent --supervise --log-file and keeps the Path (case-insensitive) with node first', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'uncage-spec-')));
     cleanups.push(root);
     await writeFile(join(root, 'node.exe'), '');
@@ -64,7 +64,7 @@ describe('serviceSpec', () => {
       env: { Path: 'C:\\Windows\\system32;C:\\Users\\u\\AppData\\Local\\fnm_multishells\\1_2;C:\\WINDOWS\\System32' },
       platform: 'win32',
     });
-    expect(win.args).toEqual(['agent', '--log-file', 'C:\\Users\\u\\.uncage\\logs\\agent.log']);
+    expect(win.args).toEqual(['agent', '--supervise', '--log-file', 'C:\\Users\\u\\.uncage\\logs\\agent.log']);
     expect(win.logsDir).toBe('C:\\Users\\u\\.uncage\\logs');
     expect(win.env.PATH.split(';').slice(1)).toEqual(['C:\\Windows\\system32']);
     expect(servicePath('/n/bin/node', {}, 'linux')).toBe('/n/bin:/usr/bin:/bin');
