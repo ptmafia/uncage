@@ -11,7 +11,11 @@ export interface HubUser {
 }
 
 export interface HubOptions {
-  /** The website's public origin, e.g. `https://app.example.com`. */
+  /**
+   * The website's public origin, e.g. `https://app.example.com`. It is embedded in install.sh for
+   * `uncage setup`, so it must be https (plain http only for localhost / 127.0.0.1 / [::1]) with no
+   * IPv6 literal other than `[::1]`: `createHub` refuses a plain-http LAN address.
+   */
   publicUrl: string;
   /** Where `fetch` is mounted. Defaults to `/api/uncage`. */
   basePath?: string;

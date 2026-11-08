@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -74,7 +74,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', { timeout: 90_000 },
     if (makeDefault) expect(sb.log().some((l) => makeDefault.test(l))).toBe(false);
     expect(sb.log().find((l) => /install -g @uncage\/cli/.test(l))).toMatch(/\/v?22\.23\.4\/.*npm install/); // the new Node's npm, not PATH's
     expect(r.stdout).toContain(`${sb.home}/`); // prints the absolute uncage path
-    expect(r.stdout).toMatch(/Node\.js 22 is not your default, so run it with: PATH="/);
+    expect(r.stdout).toMatch(/Node\.js 22 is not your default, so run the Uncage CLI with: PATH="/);
     expect(sb.log().find((l) => / setup /.test(l))).toBeUndefined();
   });
 
@@ -86,7 +86,91 @@ describe.skipIf(process.platform === 'win32')('install.sh', { timeout: 90_000 },
     const r = await sb.run({ manager: mgr, node: null, answers: 'y\ny\ny\nn\n' });
     expect(r.code, r.stderr).toBe(0);
     expect(sb.log().some((l) => makeDefault.test(l))).toBe(true);
+    expect(sb.log().filter((l) => /unalias|default system/.test(l))).toEqual([]);
     expect(r.stdout).toMatch(/Node\.js 22 is now your default/);
+  });
+
+  // nvm and fnm make the first version they install the default by themselves.
+  const aliasFile = { nvm: '.nvm/alias/default', fnm: 'Library/Application Support/fnm/aliases/default' } as const;
+  it.each(['nvm', 'fnm'] as const)('%s: the default it sets by itself for its first Node is undone on "n"', async (mgr) => {
+    const sb = sandbox();
+    const r = await sb.run({ manager: mgr, node: null, answers: 'y\nn\nn\n' });
+    expect(r.code, r.stderr).toBe(0);
+    expect(sb.log()).toContainEqual(expect.stringMatching(new RegExp(`${mgr} unalias default$`)));
+    expect(sb.read(aliasFile[mgr])).toBeNull();
+    expect(r.stdout).toMatch(new RegExp(`Undid the default ${mgr} sets`));
+    // An older Node on PATH: the default goes back to it ("system").
+    const old = sandbox();
+    const r2 = await old.run({ manager: mgr, node: '20.18.0', answers: 'y\nn\nn\n' });
+    expect(r2.code, r2.stderr).toBe(0);
+    expect(old.log()).toContainEqual(expect.stringMatching(mgr === 'nvm' ? /^nvm alias default system$/ : /fnm default system$/));
+    expect(old.read(aliasFile[mgr])?.trim()).toBe('system');
+    // --yes with an existing Node.js never keeps the automatic default either.
+    const yes = sandbox();
+    const r3 = await yes.run({ manager: mgr, node: '20.18.0', tty: false, args: ['--yes', '--no-setup'] });
+    expect(r3.code, r3.stderr).toBe(0);
+    expect(yes.read(aliasFile[mgr])?.trim()).toBe('system');
+  });
+
+  it.each(['nvm', 'fnm'] as const)('%s: an existing default alias is left alone', async (mgr) => {
+    const sb = sandbox();
+    mkdirSync(join(sb.home, aliasFile[mgr], '..'), { recursive: true });
+    writeFileSync(join(sb.home, aliasFile[mgr]), '20\n');
+    const r = await sb.run({ manager: mgr, node: null, answers: 'y\nn\nn\n' });
+    expect(r.code, r.stderr).toBe(0);
+    expect(sb.log().filter((l) => /unalias|default system|alias default|default 22/.test(l))).toEqual([]);
+    expect(sb.read(aliasFile[mgr])).toBe('20\n');
+  });
+
+  it('paths with spaces (fnm on macOS: ~/Library/Application Support/fnm) are quoted in printed commands', async () => {
+    const sb = sandbox();
+    const r = await sb.run({ manager: 'fnm', node: null, answers: 'y\nn\ny\nn\n' });
+    expect(r.code, r.stderr).toBe(0);
+    const bin = `${sb.home}/Library/Application Support/fnm/node-versions/v22.23.4/installation/bin`;
+    expect(sb.log()).toContainEqual(`${bin}/npm install -g @uncage/cli@^0.3`);
+    expect(r.stdout).toContain(`PATH="${bin}:$PATH" "${bin}/uncage" setup https://site.test`);
+    expect(r.stdout).toContain(`run the Uncage CLI with: PATH="${bin}:$PATH" "${bin}/uncage"`);
+    // With setup: the binary at that path really runs.
+    const r2 = await sb.run({ manager: 'fnm', node: null, answers: 'n\ny\n' });
+    expect(r2.code, r2.stderr).toBe(0);
+    expect(sb.log()).toContainEqual(`${bin}/uncage setup https://site.test`);
+  });
+
+  it('nvm: an unwritable npm folder inside nvm stops (no npm prefix, nvm refuses one)', async () => {
+    const sb = sandbox();
+    await sb.run({ manager: 'nvm', node: null, answers: 'y\nn\ny\nn\n' });
+    const ver = join(sb.home, '.nvm/versions/node/v22.23.4');
+    const ro = [join(ver, 'lib/node_modules'), join(ver, 'bin')];
+    for (const d of ro) chmodSync(d, 0o555);
+    try {
+      const r = await sb.run({ manager: 'nvm', node: null, answers: 'n\ny\ny\n' });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toMatch(/belongs to nvm/);
+      expect(sb.log().filter((l) => /config set|install -g/.test(l))).toEqual([]);
+      expect(existsSync(join(sb.home, '.npmrc'))).toBe(false);
+    } finally {
+      for (const d of ro) chmodSync(d, 0o755);
+    }
+  });
+
+  it('child processes never inherit the prompt descriptor (fd 3)', async () => {
+    const sb = sandbox();
+    const r = await sb.run({ answers: 'y\ny\n' });
+    expect(r.code, r.stderr).toBe(0);
+    expect(sb.log()).toContainEqual(expect.stringMatching(/uncage setup /));
+    expect(existsSync(join(sb.dir, 'fd3-open'))).toBe(false);
+  });
+
+  it('a symlinked profile stays a symlink and no temp file is left', async () => {
+    const sb = sandbox();
+    mkdirSync(join(sb.home, 'dotfiles'));
+    writeFileSync(join(sb.home, 'dotfiles/zshrc'), 'export KEEP=1\n');
+    symlinkSync(join(sb.home, 'dotfiles/zshrc'), join(sb.home, '.zshrc'));
+    const r = await sb.run({ brew: true, node: null, answers: 'y\ny\nn\n' });
+    expect(r.code, r.stderr).toBe(0);
+    expect(lstatSync(join(sb.home, '.zshrc')).isSymbolicLink()).toBe(true);
+    expect(readFileSync(join(sb.home, 'dotfiles/zshrc'), 'utf8')).toMatch(/^export KEEP=1\n\n# >>> uncage >>>\n/);
+    expect(readdirSync(sb.home).filter((f) => f.includes('uncage-tmp'))).toEqual([]);
   });
 
   it('a manager that already has Node 22 is used without installing again', async () => {
@@ -137,6 +221,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', { timeout: 90_000 },
     const r = await sb.run({ uname: 'Linux', arch: 'x86_64', shell: '/bin/bash', node: null, answers: 'y\ny\ny\nn\n', agents: ['claude'] });
     expect(r.code, r.stderr).toBe(0);
     expect(sb.log().join('\n')).toMatch(/fnm-installer --install-dir .*\/\.local\/share\/fnm --skip-shell --force-no-brew/);
+    expect(sb.log()).toContainEqual(expect.stringMatching(/curl --proto =https --tlsv1\.2 -fsSL https:\/\/fnm\.vercel\.app\/install -o /));
     expect(sb.log()).toContainEqual(expect.stringMatching(/\.local\/share\/fnm\/fnm install 22$/));
     expect(sb.log()).toContainEqual(expect.stringMatching(/\.local\/share\/fnm\/fnm default 22$/));
     expect(sb.rawLog().join('\n')).not.toMatch(/\b(sudo|apt|apt-get|dnf|yum|pacman|zypper)\b/);
@@ -148,6 +233,14 @@ describe.skipIf(process.platform === 'win32')('install.sh', { timeout: 90_000 },
     const r2 = await mac.run({ node: null, answers: 'y\nn\ny\nn\n' });
     expect(r2.code, r2.stderr).toBe(0);
     expect(mac.log().join('\n')).toMatch(/fnm-installer --install-dir .*\/\.local\/share\/fnm --skip-shell --force-no-brew/);
+  });
+
+  it('a failed download exits 1 and removes its temp folder', async () => {
+    const sb = sandbox();
+    const r = await sb.run({ uname: 'Linux', node: null, curlFails: true, answers: 'y\n' });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/curl https:\/\/fnm\.vercel\.app\/install failed/);
+    expect(readdirSync(join(sb.dir, 'tmp'))).toEqual([]);
   });
 
   it('Linux without unzip: stops with exit 1, the reason and the manual commands', async () => {
@@ -196,7 +289,7 @@ describe.skipIf(process.platform === 'win32')('install.sh', { timeout: 90_000 },
     await sb.run({ answers: 'y\nn\n' });
     const r = await sb.run({ tty: false, timeoutMs: 10_000 });
     expect(r.code).toBe(0);
-    expect(r.stdout).toContain(`uncage setup ${SITE}`);
+    expect(r.stdout).toContain(`/usr/bin/uncage" setup ${SITE}`);
     expect(sb.log().filter((l) => / setup /.test(l))).toEqual([]);
   });
 
@@ -324,7 +417,8 @@ describe.skipIf(process.platform === 'win32')('install.sh', { timeout: 90_000 },
     const r = await sb.run({ answers: 'y\nn\n' });
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain(`EXTRA-STEP ${SITE}`);
-    expect(r.stdout.indexOf('EXTRA-STEP')).toBeGreaterThan(r.stdout.indexOf('Uncage CLI installed'));
+    expect(r.stdout.indexOf('EXTRA-STEP')).toBeGreaterThan(r.stdout.indexOf("Running the website's extra install step..."));
+    expect(r.stdout.indexOf("Running the website's extra install step...")).toBeGreaterThan(r.stdout.indexOf('Uncage CLI installed'));
     expect(sb.read('ext-ran')).toMatch(/usr\/bin\/uncage/);
     const failing = sandbox({ shAfterCli: 'exit 7' });
     const f = await failing.run({ answers: 'y\ny\n' });

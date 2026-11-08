@@ -40,6 +40,8 @@ export interface SandboxRunOptions {
   npmReadOnly?: boolean;
   /** `npm install -g` fails. */
   npmFails?: boolean;
+  /** `curl` fails (exit 22). */
+  curlFails?: boolean;
   /** $SHELL. Default '/bin/zsh'. */
   shell?: string;
   /** Arguments after `bash -s --`. */
@@ -115,7 +117,8 @@ esac`,
   );
   fake(
     join(tpl, 'npm'),
-    `prefix=$(cd "$(dirname "$0")/.." && pwd)
+    `if { : <&3; } 2>/dev/null; then echo "npm $*" >> "$SB/fd3-open"; fi
+prefix=$(cd "$(dirname "$0")/.." && pwd)
 if [ -f "$HOME/.npmrc" ]; then p=$(grep '^prefix=' "$HOME/.npmrc" | tail -n 1 | cut -d= -f2-); [ -n "$p" ] && prefix=$p; fi
 case "\${1:-} \${2:-}" in
   "--version "*) echo 10.9.2 ;;
@@ -133,17 +136,24 @@ esac`,
   );
   fake(
     join(tpl, 'uncage'),
-    `case "\${1:-}" in
+    `if { : <&3; } 2>/dev/null; then echo "uncage $*" >> "$SB/fd3-open"; fi
+case "\${1:-}" in
   --version) cat "$(dirname "$0")/.uncage-version"; echo ;;
   runtimes) if [ -f "$SB/acp" ]; then echo '[{"id":"acp-gemini","status": "available"}]'; else echo "unknown command" >&2; exit 1; fi ;;
 esac`,
   );
+  // fnm: like the real one, the first install becomes the default (aliases/default). Without
+  // FNM_DIR its data dir on macOS is "~/Library/Application Support/fnm" (a path with a space).
   fake(
     join(tpl, 'fnm'),
     `. "$TPL/lib.sh"
-d="\${FNM_DIR:-$HOME/.local/share/fnm}/node-versions/v22.23.4/installation/bin"
+root=\${FNM_DIR:-}
+if [ -z "$root" ]; then if [ "$(uname -s)" = Darwin ]; then root="$HOME/Library/Application Support/fnm"; else root="$HOME/.local/share/fnm"; fi; fi
+d="$root/node-versions/v22.23.4/installation/bin"
 case "\${1:-}" in
-  install) put_node "$d" 22.23.4 ;;
+  install) put_node "$d" 22.23.4; if [ ! -e "$root/aliases/default" ]; then mkdir -p "$root/aliases"; echo 22.23.4 > "$root/aliases/default"; fi ;;
+  default) mkdir -p "$root/aliases"; echo "$2" > "$root/aliases/default" ;;
+  unalias) rm -f "$root/aliases/$2" ;;
   exec) [ -x "$d/node" ] || exit 1; shift 2; PATH="$d:$PATH" "$@" ;;
 esac`,
   );
@@ -168,8 +178,8 @@ mkdir -p "$d"; cat '${tpl}/fnm' > "$d/fnm"; chmod +x "$d/fnm"
     if (o.npmFails) writeFileSync(join(dir, 'npm-fails'), '');
     if (o.acp) writeFileSync(join(dir, 'acp'), '');
     fake(join(fakebin, 'uname'), `case "\${1:-}" in -m) echo '${o.arch ?? 'arm64'}' ;; *) echo '${o.uname ?? 'Darwin'}' ;; esac`);
-    fake(join(fakebin, 'curl'), `out=''; url=''
-while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift ;; -*) ;; *) url=$1 ;; esac; shift; done
+    fake(join(fakebin, 'curl'), `${o.curlFails ? 'exit 22\n' : ''}out=''; url=''
+while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift ;; --proto) shift ;; -*) ;; *) url=$1 ;; esac; shift; done
 [ "$url" = https://fnm.vercel.app/install ] && [ -n "$out" ] || exit 22
 cat "$TPL/fnm-installer" > "$out"`);
     if (o.unzip !== false) fake(join(fakebin, 'unzip'), 'exit 0');
@@ -218,7 +228,9 @@ nvm() {
   echo "nvm $*" >> '${logFile}'
   local d="$NVM_DIR/versions/node/v22.23.4/bin"
   case "\${1:-}" in
-    install) put_node "$d" 22.23.4 ;;
+    install) put_node "$d" 22.23.4; if [ ! -e "$NVM_DIR/alias/default" ]; then mkdir -p "$NVM_DIR/alias"; echo 22 > "$NVM_DIR/alias/default"; fi ;;
+    alias) mkdir -p "$NVM_DIR/alias"; echo "$3" > "$NVM_DIR/alias/$2" ;;
+    unalias) rm -f "$NVM_DIR/alias/$2" ;;
     which) if [ -x "$d/node" ]; then echo "$d/node"; else echo "N/A: version \\"$2\\" is not yet installed." ; return 1; fi ;;
   esac
 }

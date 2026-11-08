@@ -86,6 +86,12 @@ describe('render', () => {
     expect(s).not.toContain('@@');
   });
 
+  it('the values are substituted before the extension is inserted (its text stays literal)', () => {
+    const s = installScript({ cliRange: '^0.3', siteUrl: 'https://a.test', extend: { shAfterCli: 'echo "@@SITE_URL@@ @@CLI_RANGE@@"' } });
+    expect(s).toContain('echo "@@SITE_URL@@ @@CLI_RANGE@@"');
+    expect(s).toContain("SITE_URL='https://a.test'");
+  });
+
   it('embedded.ts matches the assets (run pnpm --filter @uncage/hub embed:installers)', () => {
     const r = spawnSync(process.execPath, ['scripts/embed-installers.mjs', '--check'], { cwd: pkgDir, encoding: 'utf8' });
     expect(r.status, r.stderr).toBe(0);

@@ -194,7 +194,7 @@ safe_path() {
 }
 
 # Runs a command with the chosen Node first on PATH (npm and uncage start with `env node`).
-with_node() { PATH="$NODE_BIN:$PATH" "$@"; }
+with_node() { PATH="$NODE_BIN:$PATH" "$@" 3<&-; }
 
 semver_of() {
   local re='([0-9]+)\.([0-9]+)\.([0-9]+)'
@@ -253,7 +253,7 @@ detect_platform() {
 # Sets NODE_VER for the node binary $1 ('' when it does not run).
 node_version() {
   local out=''
-  out="$("$1" --version 2>/dev/null </dev/null || true)"
+  out="$("$1" --version 2>/dev/null </dev/null 3<&- || true)"
   NODE_VER="$(semver_of "$out")"
 }
 
@@ -272,8 +272,8 @@ use_node() {
   NPM_PREFIX=''
   NPM_WRITABLE=0
   [ -n "$NPM" ] || return 0
-  NPM_VER="$(with_node "$NPM" --version 2>/dev/null </dev/null || true)"
-  NPM_PREFIX="$(with_node "$NPM" config get prefix 2>/dev/null </dev/null || true)"
+  NPM_VER="$(with_node "$NPM" --version 2>/dev/null </dev/null 3<&- || true)"
+  NPM_PREFIX="$(with_node "$NPM" config get prefix 2>/dev/null </dev/null 3<&- || true)"
   if [ -n "$NPM_PREFIX" ] && dir_writable "$NPM_PREFIX/lib/node_modules" && dir_writable "$NPM_PREFIX/bin"; then
     NPM_WRITABLE=1
   fi
@@ -292,7 +292,7 @@ detect_cli() {
   [ -n "$c" ] || return 0
   UNCAGE=$c
   local out=''
-  out="$(with_node "$UNCAGE" --version 2>/dev/null </dev/null || true)"
+  out="$(with_node "$UNCAGE" --version 2>/dev/null </dev/null 3<&- || true)"
   CLI_VER="$(semver_of "$out")"
 }
 
@@ -322,7 +322,7 @@ detect_manager() {
     NVM_SH="$nvm_dir/nvm.sh"
   elif [ -n "$BREW" ]; then
     local bp=''
-    bp="$("$BREW" --prefix 2>/dev/null </dev/null || true)"
+    bp="$("$BREW" --prefix 2>/dev/null </dev/null 3<&- || true)"
     if [ -n "$bp" ] && [ -s "$bp/opt/nvm/nvm.sh" ]; then NVM_SH="$bp/opt/nvm/nvm.sh"; fi
   fi
   if [ -n "$NVM_SH" ]; then
@@ -380,6 +380,8 @@ detect() {
   UNCAGE=''
   CLI_VER=''
   NODE_IS_DEFAULT=1
+  INSTALLED_NOW=0
+  HAD_DEFAULT=1
   if [ -n "$PATH_NODE" ]; then
     node_version "$PATH_NODE"
     PATH_NODE_VER=$NODE_VER
@@ -522,8 +524,12 @@ add_profile_lines() {
   done
   if [ "$state" = 0 ] && [ -n "$before" ]; then before="$before$nl"; fi
   mkdir -p "$(dirname_of "$file")"
-  # Rewrites the same file (keeps a symlinked profile a symlink).
-  printf '%s%s\n%s%s\n%s' "$before" "$BLOCK_START" "$block" "$BLOCK_END" "$after" >"$file"
+  # The whole new content goes to a temp file first, then `cat` rewrites the same file (a
+  # symlinked profile stays a symlink, and an interrupted write never leaves it half-written).
+  local tmpf="$file.uncage-tmp.$$"
+  printf '%s%s\n%s%s\n%s' "$before" "$BLOCK_START" "$block" "$BLOCK_END" "$after" >"$tmpf"
+  cat "$tmpf" >"$file"
+  rm -f "$tmpf"
   say path_added "$file"
 }
 
@@ -537,6 +543,7 @@ path_line() {
 # ---- step 2: Node.js 22 -----------------------------------------------------------------------
 
 nvm_run() {
+  mkdir -p "$NVM_DIR"
   set +euo pipefail
   # shellcheck disable=SC1090
   . "$NVM_SH" --no-use
@@ -546,23 +553,72 @@ nvm_run() {
   return $rc
 }
 
-mgr_install() {
+# nvm and fnm make the first version they install the default by themselves. The alias file
+# tells whether a default existed before this run.
+fnm_dir() {
+  if [ -n "${FNM_DIR:-}" ]; then
+    printf '%s' "$FNM_DIR"
+  elif [ -d "$HOME/.fnm" ]; then
+    printf '%s' "$HOME/.fnm"
+  elif [ -n "${XDG_DATA_HOME:-}" ]; then
+    printf '%s' "$XDG_DATA_HOME/fnm"
+  elif [ "$OS" = macos ]; then
+    printf '%s' "$HOME/Library/Application Support/fnm"
+  else
+    printf '%s' "$HOME/.local/share/fnm"
+  fi
+}
+
+has_default_alias() {
+  local a=''
   case "$MGR" in
-    nvm) nvm_run install "$NODE_MAJOR" </dev/null ;;
-    fnm) "$FNM" install "$NODE_MAJOR" </dev/null ;;
-    mise) "$MISE" install "node@$NODE_MAJOR" </dev/null ;;
+    nvm) a="$NVM_DIR/alias/default" ;;
+    fnm) a="$(fnm_dir)/aliases/default" ;;
+    *) return 0 ;;
+  esac
+  [ -e "$a" ] || [ -L "$a" ]
+}
+
+# Call right before installing Node with the manager.
+record_default() {
+  INSTALLED_NOW=1
+  HAD_DEFAULT=1
+  if ! has_default_alias; then HAD_DEFAULT=0; fi
+}
+
+# The user kept their default: undo the default nvm / fnm created by themselves.
+restore_default() {
+  if [ "$INSTALLED_NOW" != 1 ] || [ "$HAD_DEFAULT" != 0 ] || ! has_default_alias; then return 0; fi
+  local how=unalias
+  [ -n "$PATH_NODE" ] && how=system
+  case "$MGR:$how" in
+    nvm:system) nvm_run alias default system </dev/null 3<&- || fail_step "nvm alias default system" "nvm alias default system" ;;
+    nvm:unalias) nvm_run unalias default </dev/null 3<&- || fail_step "nvm unalias default" "nvm unalias default" ;;
+    fnm:system) "$FNM" default system </dev/null 3<&- || fail_step "fnm default system" "fnm default system" ;;
+    fnm:unalias) "$FNM" unalias default </dev/null 3<&- || fail_step "fnm unalias default" "fnm unalias default" ;;
+    *) return 0 ;;
+  esac
+  say default_restored "$MGR_LABEL"
+}
+
+mgr_install() {
+  record_default
+  case "$MGR" in
+    nvm) nvm_run install "$NODE_MAJOR" </dev/null 3<&- ;;
+    fnm) "$FNM" install "$NODE_MAJOR" </dev/null 3<&- ;;
+    mise) "$MISE" install "node@$NODE_MAJOR" </dev/null 3<&- ;;
     asdf)
       local plugins=''
-      plugins="$("$ASDF" plugin list 2>/dev/null </dev/null || true)"
+      plugins="$("$ASDF" plugin list 2>/dev/null </dev/null 3<&- || true)"
       case $'\n'"$plugins"$'\n' in
         *$'\n'nodejs$'\n'*) ;;
-        *) "$ASDF" plugin add nodejs </dev/null ;;
+        *) "$ASDF" plugin add nodejs </dev/null 3<&- ;;
       esac
-      "$ASDF" install nodejs "latest:$NODE_MAJOR" </dev/null
+      "$ASDF" install nodejs "latest:$NODE_MAJOR" </dev/null 3<&-
       ;;
     # `volta install` would also make it the default: fetch only, `install` after a Y.
-    volta) "$VOLTA" fetch "node@$NODE_MAJOR" </dev/null ;;
-    n) "$N_CMD" download "$NODE_MAJOR" </dev/null ;;
+    volta) "$VOLTA" fetch "node@$NODE_MAJOR" </dev/null 3<&- ;;
+    n) "$N_CMD" download "$NODE_MAJOR" </dev/null 3<&- ;;
   esac
 }
 
@@ -572,15 +628,15 @@ mgr_node_path() {
   local p='' d=''
   case "$MGR" in
     nvm) p="$(nvm_run which "$NODE_MAJOR" 2>/dev/null || true)" ;;
-    fnm) p="$("$FNM" exec "--using=$NODE_MAJOR" node -p process.execPath 2>/dev/null </dev/null || true)" ;;
+    fnm) p="$("$FNM" exec "--using=$NODE_MAJOR" node -p process.execPath 2>/dev/null </dev/null 3<&- || true)" ;;
     mise)
-      d="$("$MISE" where "node@$NODE_MAJOR" 2>/dev/null </dev/null || true)"
+      d="$("$MISE" where "node@$NODE_MAJOR" 2>/dev/null </dev/null 3<&- || true)"
       [ -n "$d" ] && p="$d/bin/node"
       ;;
     asdf)
       local list='' line=''
       ASDF_VER=''
-      list="$("$ASDF" list nodejs "$NODE_MAJOR" 2>/dev/null </dev/null || true)"
+      list="$("$ASDF" list nodejs "$NODE_MAJOR" 2>/dev/null </dev/null 3<&- || true)"
       while IFS= read -r line; do
         line="${line//[ *]/}"
         case "$line" in "$NODE_MAJOR".*) ASDF_VER=$line ;; esac
@@ -588,12 +644,12 @@ mgr_node_path() {
 $list
 EOF
       if [ -n "$ASDF_VER" ]; then
-        d="$("$ASDF" where nodejs "$ASDF_VER" 2>/dev/null </dev/null || true)"
+        d="$("$ASDF" where nodejs "$ASDF_VER" 2>/dev/null </dev/null 3<&- || true)"
         [ -n "$d" ] && p="$d/bin/node"
       fi
       ;;
-    volta) p="$("$VOLTA" run --node "$NODE_MAJOR" node -p process.execPath 2>/dev/null </dev/null || true)" ;;
-    n) p="$("$N_CMD" which "$NODE_MAJOR" 2>/dev/null </dev/null || true)" ;;
+    volta) p="$("$VOLTA" run --node "$NODE_MAJOR" node -p process.execPath 2>/dev/null </dev/null 3<&- || true)" ;;
+    n) p="$("$N_CMD" which "$NODE_MAJOR" 2>/dev/null </dev/null 3<&- || true)" ;;
   esac
   p="${p%%$'\n'*}"
   if [ -n "$p" ] && [ -x "$p" ]; then
@@ -605,15 +661,15 @@ EOF
 
 mgr_make_default() {
   case "$MGR" in
-    nvm) nvm_run alias default "$NODE_MAJOR" </dev/null ;;
+    nvm) nvm_run alias default "$NODE_MAJOR" </dev/null 3<&- ;;
     fnm)
-      "$FNM" default "$NODE_MAJOR" </dev/null
+      "$FNM" default "$NODE_MAJOR" </dev/null 3<&-
       if [ "$FNM_OWN" = 1 ]; then own_fnm_profile; fi
       ;;
-    mise) "$MISE" use -g "node@$NODE_MAJOR" </dev/null ;;
-    asdf) "$ASDF" set -u nodejs "$ASDF_VER" </dev/null || "$ASDF" global nodejs "$ASDF_VER" </dev/null ;;
-    volta) "$VOLTA" install "node@$NODE_MAJOR" </dev/null ;;
-    n) "$N_CMD" "$NODE_MAJOR" </dev/null ;;
+    mise) "$MISE" use -g "node@$NODE_MAJOR" </dev/null 3<&- ;;
+    asdf) "$ASDF" set -u nodejs "$ASDF_VER" </dev/null 3<&- || "$ASDF" global nodejs "$ASDF_VER" </dev/null 3<&- ;;
+    volta) "$VOLTA" install "node@$NODE_MAJOR" </dev/null 3<&- ;;
+    n) "$N_CMD" "$NODE_MAJOR" </dev/null 3<&- ;;
     brew) add_profile_lines "$(path_line "$NEW_NODE_BIN")" ;;
   esac
 }
@@ -650,18 +706,21 @@ install_own_fnm() {
     exit 1
   fi
   ask ask_node_fnm "$(home_rel "$OWN_FNM_DIR")" || decline_node
-  local tmp=''
-  tmp="$(mktemp -d "${TMPDIR:-/tmp}/uncage-install.XXXXXX")"
+  UNCAGE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/uncage-install.XXXXXX")"
+  trap 'rm -rf "$UNCAGE_TMP"' EXIT
+  local tmp="$UNCAGE_TMP"
   # Downloaded to a file first: a cut-off download never runs half a script.
-  curl -fsSL "$FNM_INSTALL_URL" -o "$tmp/fnm-installer" </dev/null ||
+  curl --proto '=https' --tlsv1.2 -fsSL "$FNM_INSTALL_URL" -o "$tmp/fnm-installer" </dev/null 3<&- ||
     fail_step "curl $FNM_INSTALL_URL" "curl -fsSL $FNM_INSTALL_URL | bash -s -- --install-dir \"\$HOME/.local/share/fnm\" --skip-shell --force-no-brew"
-  bash "$tmp/fnm-installer" --install-dir "$OWN_FNM_DIR" --skip-shell --force-no-brew </dev/null ||
+  bash "$tmp/fnm-installer" --install-dir "$OWN_FNM_DIR" --skip-shell --force-no-brew </dev/null 3<&- ||
     fail_step "fnm install" "curl -fsSL $FNM_INSTALL_URL | bash -s -- --install-dir \"\$HOME/.local/share/fnm\" --skip-shell --force-no-brew"
   rm -rf "$tmp"
+  trap - EXIT
   [ -x "$OWN_FNM_DIR/fnm" ] || fail_step "fnm install" "curl -fsSL $FNM_INSTALL_URL | bash"
   MGR=fnm MGR_LABEL=fnm FNM="$OWN_FNM_DIR/fnm" FNM_OWN=1
   export FNM_DIR="$OWN_FNM_DIR"
-  "$FNM" install "$NODE_MAJOR" </dev/null || fail_step "fnm install $NODE_MAJOR" "\"\$HOME/.local/share/fnm/fnm\" install $NODE_MAJOR"
+  record_default
+  "$FNM" install "$NODE_MAJOR" </dev/null 3<&- || fail_step "fnm install $NODE_MAJOR" "\"\$HOME/.local/share/fnm/fnm\" install $NODE_MAJOR"
 }
 
 step_node() {
@@ -679,13 +738,13 @@ step_node() {
   elif [ "$OS" = macos ] && [ -n "$BREW" ]; then
     MGR=brew MGR_LABEL=Homebrew
     local bp=''
-    bp="$("$BREW" --prefix 2>/dev/null </dev/null || true)"
+    bp="$("$BREW" --prefix 2>/dev/null </dev/null 3<&- || true)"
     local keg="$bp/opt/node@$NODE_MAJOR/bin/node"
     if [ -n "$bp" ] && [ -x "$keg" ]; then
       say node_found_mgr Homebrew "$keg"
     else
       ask ask_node_brew || decline_node
-      "$BREW" install "node@$NODE_MAJOR" </dev/null || fail_step "brew install node@$NODE_MAJOR" "brew install node@$NODE_MAJOR"
+      "$BREW" install "node@$NODE_MAJOR" </dev/null 3<&- || fail_step "brew install node@$NODE_MAJOR" "brew install node@$NODE_MAJOR"
       [ -x "$keg" ] || fail_step "brew install node@$NODE_MAJOR" "brew install node@$NODE_MAJOR"
     fi
     node_version "$keg"
@@ -711,6 +770,7 @@ step_node() {
     say default_done
   else
     NODE_IS_DEFAULT=0
+    restore_default
     say default_kept "$NEW_NODE"
   fi
   use_node "$NEW_NODE"
@@ -723,6 +783,15 @@ step_node() {
 
 step_npm_prefix() {
   [ "$NPM_WRITABLE" = 1 ] && return 0
+  # nvm refuses to work with a `prefix` in ~/.npmrc: never set one for an nvm Node.
+  if [ "$MGR" = nvm ]; then
+    case "$NODE" in
+      "$NVM_DIR"/*)
+        warn nvm_prefix "$NPM_PREFIX"
+        exit 1
+        ;;
+    esac
+  fi
   if ! ask ask_npm_prefix "$NPM_PREFIX" "$(home_rel "$NPM_GLOBAL")"; then
     say declined
     cmd_line "npm config set prefix \"\$HOME/.npm-global\""
@@ -730,7 +799,7 @@ step_npm_prefix() {
     exit 0
   fi
   mkdir -p "$NPM_GLOBAL/bin" "$NPM_GLOBAL/lib"
-  with_node "$NPM" config set prefix "$NPM_GLOBAL" </dev/null || fail_step "npm config set prefix" "npm config set prefix \"\$HOME/.npm-global\""
+  with_node "$NPM" config set prefix "$NPM_GLOBAL" </dev/null 3<&- || fail_step "npm config set prefix" "npm config set prefix \"\$HOME/.npm-global\""
   NPM_PREFIX="$NPM_GLOBAL"
   NPM_WRITABLE=1
   say npm_prefix_done "$NPM_GLOBAL"
@@ -751,7 +820,7 @@ step_cli() {
     cmd_line "npm install -g \"$spec\""
     exit 0
   fi
-  with_node "$NPM" install -g "$spec" </dev/null || fail_step "npm install -g $spec" "PATH=\"$NODE_BIN:\$PATH\" \"$NPM\" install -g \"$spec\""
+  with_node "$NPM" install -g "$spec" </dev/null 3<&- || fail_step "npm install -g $spec" "PATH=\"$NODE_BIN:\$PATH\" \"$NPM\" install -g \"$spec\""
   UNCAGE=''
   if [ -x "$NPM_PREFIX/bin/uncage" ]; then UNCAGE="$NPM_PREFIX/bin/uncage"; else UNCAGE="$(find_cmd uncage)"; fi
   [ -n "$UNCAGE" ] || fail_step "npm install -g $spec" "PATH=\"$NODE_BIN:\$PATH\" \"$NPM\" install -g \"$spec\""
@@ -762,10 +831,11 @@ step_cli() {
 
 run_extension() {
   [ -n "$UNCAGE_EXT" ] || return 0
+  say extension_running
   if ! (
     export PATH="$NODE_BIN:$PATH" UNCAGE_BIN="$UNCAGE" UNCAGE_NODE="$NODE" UNCAGE_SITE_URL="$SITE_URL"
     eval "$UNCAGE_EXT"
-  ) </dev/null; then
+  ) </dev/null 3<&-; then
     uncage_msg extension_step
     fail_step "$M"
   fi
@@ -776,16 +846,16 @@ run_extension() {
 # ACP agents count too, once the CLI knows them (`uncage runtimes --json`, when it exists).
 acp_available() {
   local out=''
-  out="$(with_node "$UNCAGE" runtimes --json 2>/dev/null </dev/null || true)"
+  out="$(with_node "$UNCAGE" runtimes --json 2>/dev/null </dev/null 3<&- || true)"
   local re='"status"[[:space:]]*:[[:space:]]*"available"'
   [[ "$out" =~ $re ]]
 }
 
 print_where() {
   if [ "$NODE_IS_DEFAULT" = 1 ]; then
-    say uncage_path "$UNCAGE"
+    say uncage_path "\"$UNCAGE\""
   else
-    say not_default_hint "$UNCAGE" "$NODE_BIN"
+    say not_default_hint "$NODE_BIN" "\"$UNCAGE\""
   fi
 }
 
@@ -796,7 +866,7 @@ step_setup() {
     print_where
     exit 0
   fi
-  local setup_cmd="$UNCAGE setup $SITE_URL"
+  local setup_cmd="\"$UNCAGE\" setup $SITE_URL"
   if [ "$NODE_IS_DEFAULT" != 1 ]; then setup_cmd="PATH=\"$NODE_BIN:\$PATH\" $setup_cmd"; fi
   if [ "$NO_SETUP" = 1 ]; then
     print_where
@@ -814,9 +884,9 @@ step_setup() {
     exit 0
   fi
   if [ "$TTY_OPEN" = 1 ]; then
-    with_node "$UNCAGE" setup "$SITE_URL" <&3 || fail_step "uncage setup" "$setup_cmd"
+    with_node "$UNCAGE" setup "$SITE_URL" <&3 3<&- || fail_step "uncage setup" "$setup_cmd"
   else
-    with_node "$UNCAGE" setup "$SITE_URL" </dev/null || fail_step "uncage setup" "$setup_cmd"
+    with_node "$UNCAGE" setup "$SITE_URL" </dev/null 3<&- || fail_step "uncage setup" "$setup_cmd"
   fi
   print_where
   say done

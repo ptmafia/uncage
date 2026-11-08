@@ -21,7 +21,9 @@ const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
 /**
  * The site URL embedded in the installers (`uncage setup <url>`): `https://host[:port][/path]` with
  * `[A-Za-z0-9._~/-]` only, so it is inert inside any shell or PowerShell quoting. Plain http only
- * for localhost / 127.0.0.1 / [::1] (the CLI refuses anything else). Throws otherwise.
+ * for localhost / 127.0.0.1 / [::1] (the CLI refuses anything else). Throws otherwise, so a hub
+ * whose public URL is a plain-http LAN address (`http://192.168.1.5:3000`, `http://my-mac.local`)
+ * or an IPv6 literal other than `[::1]` does not start: give it an https URL.
  */
 export function assertScriptUrl(url: string): string {
   const m = SCRIPT_URL.exec(url);
@@ -35,7 +37,12 @@ export function assertScriptUrl(url: string): string {
 }
 
 export interface InstallScriptExtension {
-  /** Bash run after the CLI is installed, before the agent check (static text, ≤ 16 KiB, no NUL). */
+  /**
+   * Bash run after the CLI is installed, before the agent check (static text, ≤ 16 KiB, no NUL).
+   * It runs in a subshell under `set -euo pipefail` (a failing command or an unset variable stops
+   * it), with stdin from /dev/null, Node 22 first on PATH and `UNCAGE_BIN`, `UNCAGE_NODE`,
+   * `UNCAGE_SITE_URL` set. A non-zero exit fails the install (exit 1) before the setup prompt.
+   */
   shAfterCli?: string;
   /** PowerShell for install.ps1 at the same point (ASCII only, ≤ 16 KiB). */
   ps1AfterCli?: string;
@@ -139,9 +146,10 @@ export function installScript(o: InstallScriptOptions): string {
   const url = assertScriptUrl(o.siteUrl);
   const ext = assertInstallExtension(o.extend);
   let s = INSTALL_SH_TEMPLATE;
-  s = replaceOnce(s, '# @@MESSAGES@@', shMessages(ext.agentHelp));
-  s = replaceOnce(s, '# @@EXTENSION@@', shExtension(ext.shAfterCli));
+  // The values first, so text inside the messages or the extension is never substituted.
   s = replaceOnce(s, '@@CLI_RANGE@@', range);
   s = replaceOnce(s, '@@SITE_URL@@', url);
+  s = replaceOnce(s, '# @@MESSAGES@@', shMessages(ext.agentHelp));
+  s = replaceOnce(s, '# @@EXTENSION@@', shExtension(ext.shAfterCli));
   return s;
 }

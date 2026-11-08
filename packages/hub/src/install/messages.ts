@@ -45,6 +45,7 @@ const en = {
   default_done: '✓ Node.js 22 is now your default. Open a new terminal to use it.',
   default_kept: 'Your default Node.js is unchanged. Uncage uses %s.',
   default_kept_yes: 'Your default Node.js is unchanged (--yes never replaces an existing Node.js).',
+  default_restored: '✓ Undid the default %s sets for its first Node.js, so your default stays as it was.',
   node_required: 'Uncage needs Node.js 22. Nothing else was changed. To install it yourself:',
   need_unzip: 'uncage: installing fnm needs unzip, which is not installed. This installer never runs your system package manager.',
   need_curl: 'uncage: installing fnm needs curl, which is not installed.',
@@ -53,6 +54,7 @@ const en = {
   manual_fix: 'Fix the error above, or run it yourself, then run this installer again:',
   ask_npm_prefix: 'npm cannot install into %s without admin rights. Use %s instead (added to your PATH)?',
   npm_prefix_done: '✓ npm installs global packages into %s',
+  nvm_prefix: 'uncage: npm cannot write to its global folder %s, which belongs to nvm. nvm does not work with a custom npm prefix, so fix the permissions of that folder (or reinstall that Node.js with nvm), then run this installer again.',
   path_added: '✓ Updated the uncage block in %s (open a new terminal to use it)',
   path_fish: 'Add these lines to ~/.config/fish/config.fish:',
   declined: 'Skipped. Nothing else was changed. To do it yourself:',
@@ -60,6 +62,7 @@ const en = {
   cli_skip: '✓ Uncage CLI %s is already installed (%s)',
   cli_installed: '✓ Uncage CLI installed (%s)',
   extension_step: "The website's extra install step",
+  extension_running: "Running the website's extra install step...",
   no_agent: [
     'No AI coding agent found. Uncage needs one, for example Claude Code:',
     '    curl -fsSL https://claude.ai/install.sh | bash',
@@ -69,7 +72,7 @@ const en = {
   ask_setup: 'Connect this computer to %s now?',
   setup_later: 'Connect it later with: %s',
   uncage_path: 'The Uncage CLI is at %s',
-  not_default_hint: 'The Uncage CLI is at %s. Node.js 22 is not your default, so run it with: PATH="%s:$PATH" uncage ...',
+  not_default_hint: 'Node.js 22 is not your default, so run the Uncage CLI with: PATH="%s:$PATH" %s',
   done: 'Done.',
 } as const;
 
@@ -94,7 +97,7 @@ const zh: Record<InstallMessageKey, string> = {
   node_ok: '✓ Node.js %s（%s）',
   node_missing: '✗ 未找到 Node.js（Uncage 需要 Node.js ≥ 22）',
   node_old: '✗ Node.js %s 版本过低（Uncage 需要 Node.js ≥ 22）',
-  npm_missing: '✗ Node.js 旁边没有 npm（Uncage 需要带 npm 的 Node.js ≥ 22）',
+  npm_missing: '✗ Node.js 所在目录中没有 npm（Uncage 需要带 npm 的 Node.js ≥ 22）',
   later: '· Node.js 22 就绪后再检测 npm 和 Uncage CLI',
   npm_ok: '✓ npm %s，全局目录可写（%s）',
   npm_not_writable: '✗ npm %s：全局目录 %s 没有管理员权限无法写入',
@@ -118,6 +121,7 @@ const zh: Record<InstallMessageKey, string> = {
   default_done: '✓ Node.js 22 已设为默认。打开新终端即可使用。',
   default_kept: '你的默认 Node.js 保持不变。Uncage 使用 %s。',
   default_kept_yes: '你的默认 Node.js 保持不变（--yes 不会替换已有的 Node.js）。',
+  default_restored: '✓ 已撤销 %s 为首个 Node.js 自动设置的默认版本，你的默认版本保持原样。',
   node_required: 'Uncage 需要 Node.js 22。未做其他更改。自行安装：',
   need_unzip: 'uncage：安装 fnm 需要 unzip，但它没有安装。本安装脚本不会调用系统包管理器。',
   need_curl: 'uncage：安装 fnm 需要 curl，但它没有安装。',
@@ -126,6 +130,7 @@ const zh: Record<InstallMessageKey, string> = {
   manual_fix: '请解决上面的错误，或自行运行以下命令，然后重新运行本安装脚本：',
   ask_npm_prefix: 'npm 没有管理员权限无法安装到 %s。改用 %s（并加入 PATH）？',
   npm_prefix_done: '✓ npm 的全局包将安装到 %s',
+  nvm_prefix: 'uncage：npm 无法写入属于 nvm 的全局目录 %s。nvm 不支持自定义 npm prefix，请修复该目录的权限（或用 nvm 重新安装该 Node.js），然后重新运行本安装脚本。',
   path_added: '✓ 已更新 %s 中的 uncage 配置块（打开新终端生效）',
   path_fish: '请把以下几行加入 ~/.config/fish/config.fish：',
   declined: '已跳过。未做其他更改。自行完成：',
@@ -133,8 +138,9 @@ const zh: Record<InstallMessageKey, string> = {
   cli_skip: '✓ 已安装 Uncage CLI %s（%s）',
   cli_installed: '✓ Uncage CLI 已安装（%s）',
   extension_step: '网站的附加安装步骤',
+  extension_running: '正在运行网站的附加安装步骤……',
   no_agent: [
-    '未找到 AI 编程 agent。Uncage 需要一个，例如 Claude Code：',
+    '未找到 AI 编程助手。Uncage 需要一个，例如 Claude Code：',
     '    curl -fsSL https://claude.ai/install.sh | bash',
     '    https://code.claude.com/docs/en/setup',
     '安装后重新运行这条命令即可。',
@@ -142,13 +148,13 @@ const zh: Record<InstallMessageKey, string> = {
   ask_setup: '现在把这台电脑连接到 %s？',
   setup_later: '稍后连接：%s',
   uncage_path: 'Uncage CLI 位于 %s',
-  not_default_hint: 'Uncage CLI 位于 %s。Node.js 22 不是默认版本，请这样运行：PATH="%s:$PATH" uncage ...',
+  not_default_hint: 'Node.js 22 不是默认版本，请这样运行 Uncage CLI：PATH="%s:$PATH" %s',
   done: '完成。',
 };
 
 const ja: Record<InstallMessageKey, string> = {
   help: [
-    'Uncage インストーラー：このコンピューターを確認し、足りないものを各ステップの [Y/n] のあとでインストールし、最後に ウェブサイトに接続します。',
+    'Uncage インストーラー：このコンピューターを確認し、足りないものを各ステップの [Y/n] のあとでインストールし、最後にウェブサイトに接続します。',
     '',
     '使い方：curl -fsSL <site>/api/uncage/install.sh | bash [-s -- オプション]',
     '  -y, --yes       すべてのインストール手順を承認（ターミナル不要）',
@@ -164,7 +170,7 @@ const ja: Record<InstallMessageKey, string> = {
   node_ok: '✓ Node.js %s（%s）',
   node_missing: '✗ Node.js が見つかりません（Uncage には Node.js ≥ 22 が必要です）',
   node_old: '✗ Node.js %s は古すぎます（Uncage には Node.js ≥ 22 が必要です）',
-  npm_missing: '✗ Node.js の隣に npm がありません（Uncage には npm 付きの Node.js ≥ 22 が必要です）',
+  npm_missing: '✗ Node.js と同じ場所に npm がありません（Uncage には npm 付きの Node.js ≥ 22 が必要です）',
   later: '· npm と Uncage CLI は Node.js 22 の準備ができてから確認します',
   npm_ok: '✓ npm %s、グローバルフォルダーに書き込み可能（%s）',
   npm_not_writable: '✗ npm %s：グローバルフォルダー %s には管理者権限なしで書き込めません',
@@ -188,6 +194,7 @@ const ja: Record<InstallMessageKey, string> = {
   default_done: '✓ Node.js 22 が既定になりました。新しいターミナルを開くと使えます。',
   default_kept: '既定の Node.js は変更していません。Uncage は %s を使います。',
   default_kept_yes: '既定の Node.js は変更していません（--yes は既存の Node.js を置き換えません）。',
+  default_restored: '✓ %s が最初の Node.js に自動で設定した既定を元に戻しました。既定はこれまでのままです。',
   node_required: 'Uncage には Node.js 22 が必要です。ほかは何も変更していません。自分でインストールするには：',
   need_unzip: 'uncage：fnm のインストールには unzip が必要ですが、インストールされていません。このインストーラーはシステムのパッケージマネージャーを実行しません。',
   need_curl: 'uncage：fnm のインストールには curl が必要ですが、インストールされていません。',
@@ -196,6 +203,7 @@ const ja: Record<InstallMessageKey, string> = {
   manual_fix: '上のエラーを解決するか、次のコマンドを自分で実行してから、このインストーラーを再実行してください：',
   ask_npm_prefix: 'npm は管理者権限なしで %s にインストールできません。代わりに %s を使いますか（PATH に追加します）？',
   npm_prefix_done: '✓ npm のグローバルパッケージは %s にインストールされます',
+  nvm_prefix: 'uncage：npm は nvm のグローバルフォルダー %s に書き込めません。nvm は独自の npm prefix に対応していないため、そのフォルダーの権限を直すか（または nvm でその Node.js を再インストールして）から、このインストーラーを再実行してください。',
   path_added: '✓ %s の uncage ブロックを更新しました（新しいターミナルで有効になります）',
   path_fish: '次の行を ~/.config/fish/config.fish に追加してください：',
   declined: 'スキップしました。ほかは何も変更していません。自分で行うには：',
@@ -203,6 +211,7 @@ const ja: Record<InstallMessageKey, string> = {
   cli_skip: '✓ Uncage CLI %s はインストール済みです（%s）',
   cli_installed: '✓ Uncage CLI をインストールしました（%s）',
   extension_step: 'ウェブサイトの追加インストール手順',
+  extension_running: 'ウェブサイトの追加インストール手順を実行しています...',
   no_agent: [
     'AI コーディングエージェントが見つかりません。Uncage には、たとえば Claude Code が必要です：',
     '    curl -fsSL https://claude.ai/install.sh | bash',
@@ -212,7 +221,7 @@ const ja: Record<InstallMessageKey, string> = {
   ask_setup: 'このコンピューターを今すぐ %s に接続しますか？',
   setup_later: 'あとで接続するには：%s',
   uncage_path: 'Uncage CLI の場所：%s',
-  not_default_hint: 'Uncage CLI の場所：%s。Node.js 22 は既定ではないので、次のように実行してください：PATH="%s:$PATH" uncage ...',
+  not_default_hint: 'Node.js 22 は既定ではないので、Uncage CLI は次のように実行してください：PATH="%s:$PATH" %s',
   done: '完了しました。',
 };
 
