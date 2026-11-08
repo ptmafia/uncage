@@ -32,6 +32,14 @@ const GIVE_UP_MS = 10 * 60_000;
 
 const byteLength = (s: string): number => Buffer.byteLength(s, 'utf8');
 
+/** The hub did not accept a message within the resend window: it is given up for good (not retried). */
+export class UpstreamGaveUpError extends Error {
+  constructor() {
+    super('The website did not accept the message in time.');
+    this.name = 'UpstreamGaveUpError';
+  }
+}
+
 /** A fresh idempotent upstream id (`up_` + 22 base64url chars). */
 export const newUpstreamId = (): string => `up_${randomBytes(16).toString('base64url')}`;
 
@@ -214,7 +222,7 @@ export function dialHttp(o: DialOptions): AgentLink {
     for (const it of items) {
       if (now - it.firstAt <= GIVE_UP_MS) continue;
       log.error({ site, t: it.msg.t }, 'upstream message not accepted by the website in time; giving up');
-      it.reject(new UncageError('machine_offline', { message: 'The website did not accept the message in time.' }));
+      it.reject(new UpstreamGaveUpError());
       const i = queue.indexOf(it);
       if (i >= 0) queue.splice(i, 1);
       calls.delete(it);

@@ -41,7 +41,7 @@ export function dialWs(o: DialOptions): AgentLink {
     if (byteLength(raw) > MAX_FRAME_BYTES) return Promise.reject(new FrameTooLargeError(f.t));
     return new Promise((resolve, reject) => {
       if (!ws || ws.readyState !== WebSocket.OPEN) return reject(new UncageError('machine_offline'));
-      ws.send(raw, (err) => (err ? reject(err) : resolve()));
+      ws.send(raw, (err) => (err ? reject(new UncageError('machine_offline', { message: `The connection to the website was lost: ${err.message}` })) : resolve()));
     });
   };
 

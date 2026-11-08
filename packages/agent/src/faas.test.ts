@@ -487,3 +487,44 @@ describe('command dedupe (scripted hub)', () => {
     expect(h.posted[5]).toEqual(h.posted[4]);
   });
 });
+
+describe('unsent command results (scripted hub)', () => {
+  /** `scriptedHub`, except every POST carrying a `result` gets `answer` (and never reaches the recorder). */
+  function refusingHub(answer: () => Response) {
+    const h = scriptedHub([command(1, 'cmd_x', 'createSession', { runtime: 'fake' })]);
+    let resultPosts = 0;
+    let connects = 0;
+    const f = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/agent/connect')) connects++;
+      if (url.endsWith('/agent/events') && typeof init?.body === 'string' && init.body.includes('"t":"result"')) {
+        resultPosts++;
+        return answer();
+      }
+      return h.fetch(input, init);
+    }) as typeof fetch;
+    return { fetch: f, resultPosts: () => resultPosts, connects: () => connects };
+  }
+  const busy = (a: SiteAgent) => (a as unknown as { busy(): boolean }).busy();
+
+  it('a result the hub refuses for good (4xx) is dropped at once; busy() is false again', async () => {
+    const h = refusingHub(() => Response.json({ error: { code: 'invalid_request', message: 'bad result', retryable: false } }, { status: 400 }));
+    const { agent, logger } = await siteAgent(scriptedSite, [], { fetch: h.fetch });
+    await until(() => logger.lines.some((l) => l.msg === 'command result given up'), 5000, 'given up');
+    expect(h.resultPosts()).toBe(1);
+    expect(busy(agent)).toBe(false);
+    expect(logger.lines.filter((l) => l.msg === 'command result given up')).toHaveLength(1);
+  });
+
+  it('a result whose link keeps closing is given up after 5 attempts (one per welcome), logged once', async () => {
+    const h = refusingHub(() => Response.json({ error: { code: 'invalid_request', message: 'closed', retryable: false, details: { reason: 'link_closed' } } }, { status: 400 }));
+    const { agent, logger } = await siteAgent(scriptedSite, [], { fetch: h.fetch });
+    await until(() => logger.lines.some((l) => l.msg === 'command result given up'), 10_000, 'given up');
+    expect(h.resultPosts()).toBe(5);
+    expect(h.connects()).toBeGreaterThanOrEqual(6);
+    await sleep(300);
+    expect(h.resultPosts()).toBe(5); // never re-sent after that
+    expect(logger.lines.filter((l) => l.msg === 'command result given up')).toHaveLength(1);
+    await until(() => !busy(agent), 2000, 'idle');
+  });
+});

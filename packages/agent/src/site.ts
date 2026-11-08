@@ -127,6 +127,9 @@ interface PendingTool {
 const COMMAND_CACHE = 1000;
 /** Byte budget of the cached results (dedupe cache, and results not yet accepted by the hub). */
 const COMMAND_CACHE_BYTES = 32 * 1024 * 1024;
+/** An unsent result is given up after this many send attempts (one per welcome) or this age. */
+const UNSENT_MAX_ATTEMPTS = 5;
+const UNSENT_MAX_AGE_MS = 10 * 60_000;
 /** Read-only commands: running one again is harmless, so their (possibly large) results are not cached. */
 const READ_ONLY_OPS = new Set<HubCommandOp>(['readEvents', 'snapshot', 'listSessions']);
 /** `GET /agent/info` is re-read at most this often. */
@@ -207,7 +210,7 @@ export class SiteAgent {
    * Results the hub has not accepted yet (the link ended first): re-sent after every welcome. The hub
    * routes a late result to the waiting request, or drops it quietly if that request gave up.
    */
-  private readonly unsentResults = new Map<string, { frame: AgentFrame; bytes: number }>();
+  private readonly unsentResults = new Map<string, { frame: AgentFrame; bytes: number; firstAt: number; attempts: number }>();
   private unsentBytes = 0;
   private runningCommands = 0;
   /** Frames handed to the link and not yet accepted (HTTP: not yet `processed`). */
@@ -565,33 +568,36 @@ export class SiteAgent {
 
   /** Sends a command result; until the hub accepts it, it waits in `unsentResults` (re-sent after the next welcome). */
   private async deliverResult(id: string, frame: AgentFrame): Promise<void> {
-    if (!this.unsentResults.has(id)) {
-      const bytes = byteLength(JSON.stringify(frame));
-      this.unsentResults.set(id, { frame, bytes });
-      this.unsentBytes += bytes;
-      while (this.unsentBytes > (this.o.commandCacheBytes ?? COMMAND_CACHE_BYTES) && this.unsentResults.size > 1) {
-        const [oldId, old] = this.unsentResults.entries().next().value!;
-        this.unsentResults.delete(oldId);
-        this.unsentBytes -= old.bytes;
-      }
+    let u = this.unsentResults.get(id);
+    if (!u) {
+      u = { frame, bytes: byteLength(JSON.stringify(frame)), firstAt: Date.now(), attempts: 0 };
+      this.unsentResults.set(id, u);
+      this.unsentBytes += u.bytes;
+      this.trimCache();
     }
+    if (u.attempts >= UNSENT_MAX_ATTEMPTS || Date.now() - u.firstAt > UNSENT_MAX_AGE_MS) {
+      this.dropUnsent(id, 'the website did not accept it in time');
+      return;
+    }
+    u.attempts++;
     try {
       await this.sendResult(frame);
-      const u = this.unsentResults.get(id);
-      if (u) {
-        this.unsentResults.delete(id);
-        this.unsentBytes -= u.bytes;
-      }
+      this.dropUnsent(id);
     } catch (err) {
-      if (err instanceof FrameTooLargeError) {
-        const u = this.unsentResults.get(id);
-        if (u) {
-          this.unsentResults.delete(id);
-          this.unsentBytes -= u.bytes;
-        }
-      }
-      this.log.warn({ site: this.site.id, err: (err as Error).message }, 'could not send result; will retry after reconnecting');
+      // Only a lost link is worth another try (after the next welcome); a refusal is permanent.
+      if (err instanceof UncageError && err.code === 'machine_offline') {
+        this.log.warn({ site: this.site.id, err: err.message }, 'could not send result; will retry after reconnecting');
+      } else this.dropUnsent(id, (err as Error).message);
     }
+  }
+
+  /** Forgets an unsent result; with `why`, logs once that it was given up. */
+  private dropUnsent(id: string, why?: string): void {
+    const u = this.unsentResults.get(id);
+    if (!u) return;
+    this.unsentResults.delete(id);
+    this.unsentBytes -= u.bytes;
+    if (why) this.log.error({ site: this.site.id, commandId: id, why }, 'command result given up');
   }
 
   private cacheCommand(id: string, frame: AgentFrame | null): void {
@@ -599,9 +605,20 @@ export class SiteAgent {
     const bytes = frame ? byteLength(JSON.stringify(frame)) : 0;
     this.commands.set(id, { frame, bytes });
     this.commandBytes += bytes;
-    while (this.commands.size > COMMAND_CACHE || (this.commandBytes > (this.o.commandCacheBytes ?? COMMAND_CACHE_BYTES) && this.commands.size > 1)) {
-      const [oldId] = this.commands.keys();
-      this.uncacheCommand(oldId!);
+    this.trimCache();
+  }
+
+  /**
+   * One byte budget (`commandCacheBytes`, default 32 MiB) for the dedupe cache and the unsent results
+   * together: the oldest dedupe entries go first, then the oldest unsent results. At most
+   * `COMMAND_CACHE` dedupe entries. The newest entry always stays.
+   */
+  private trimCache(): void {
+    const budget = this.o.commandCacheBytes ?? COMMAND_CACHE_BYTES;
+    while (this.commands.size > COMMAND_CACHE) this.uncacheCommand(this.commands.keys().next().value!);
+    while (this.commandBytes + this.unsentBytes > budget && this.commands.size > 1) this.uncacheCommand(this.commands.keys().next().value!);
+    while (this.commandBytes + this.unsentBytes > budget && this.unsentResults.size > 1) {
+      this.dropUnsent(this.unsentResults.keys().next().value!, 'over the memory budget for unsent results');
     }
   }
 
