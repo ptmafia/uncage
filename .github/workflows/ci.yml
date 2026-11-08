@@ -31,7 +31,10 @@ jobs:
       - run: pnpm build
       - run: pnpm typecheck
       - run: pnpm lint
-      - run: pnpm test
+      # One package at a time on CI: every package's tests boot PGlite (WASM) and/or jsdom, and
+      # running all of them at once oversubscribes the runner's few vCPUs so cold starts blow
+      # past per-test timeouts (seen on ubuntu-latest: hub suite 430 s, first tests timing out).
+      - run: pnpm exec turbo run test --concurrency=1
       - name: Install Playwright Chromium
         run: pnpm --dir e2e exec playwright install --with-deps chromium
       - name: E2E (mock daemon)
