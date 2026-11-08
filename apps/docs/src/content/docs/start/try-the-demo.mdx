@@ -1,17 +1,20 @@
 ---
 title: Try the demo
-description: Connect your own Mac to a live Uncage site in two commands and watch your own Claude Code save and publish a note through the site's tools, with an approval card in the browser.
+description: Connect your own Mac to a live Uncage site in two commands, ask for a landing page, and watch your own Claude Code build it and publish it through the site's tools, with approval cards in the browser.
 ---
 
 import { Image } from 'astro:assets';
 import DemoLink from '../../../components/DemoLink.astro';
-import chatApproval from '../../../assets/demo/chat-approval.png';
-import chatDone from '../../../assets/demo/chat-done.png';
-import chatAfterReload from '../../../assets/demo/chat-after-reload.png';
-import notes from '../../../assets/demo/notes.png';
-import chatOffline from '../../../assets/demo/chat-offline.png';
+import connect from '../../../assets/demo/connect.png';
+import deviceApprove from '../../../assets/demo/device-approve.png';
+import chatRunning from '../../../assets/demo/chat-running.png';
+import approvalCard from '../../../assets/demo/approval-card.png';
+import assets from '../../../assets/demo/assets.png';
+import offline from '../../../assets/demo/offline.png';
 
-The demo is a small notes site built with Uncage (the [`connected-demo` example](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo)). You connect your own computer to it, ask your own Claude Code to save a note and publish it, and approve the publish in the browser. It takes about five minutes.
+The demo is a small website built with Uncage (the [`connected-demo` example](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo)). You connect your own computer to it and ask for a landing page. Your own Claude Code builds the page on your computer and publishes it to the site through the site's tools, and you approve the steps in the browser. It takes about five minutes.
+
+The demo's interface is in Chinese. This page gives each label with its meaning, for example **允许执行** (Allow once).
 
 <DemoLink />
 
@@ -21,48 +24,58 @@ The demo is a small notes site built with Uncage (the [`connected-demo` example]
 - Node.js 22 or newer.
 - Claude Code installed and signed in: `npm i -g @anthropic-ai/claude-code`, then run `claude` once and type `/login`.
 
+## Sign in as a guest
+
+Open the demo and click **以访客身份进入** (Enter as a guest). The site gives this browser a random guest account; there is nothing to sign up for. The chat then shows **连接你的电脑** (Connect your computer) with two commands.
+
+<Image src={connect} alt="The demo's chat with the card 连接你的电脑: step 1 installs the Uncage CLI with a curl command, step 2 runs uncage setup with the demo's address, and a line says it is waiting for the computer to come online." />
+
 ## Connect your computer
 
-Open the demo site. The chat offers **Connect your computer** with two commands. In a terminal, run them, with the demo's address in place of `<demo>`:
+In a terminal, run the two commands, with the demo's address in place of `<demo>`:
 
 ```sh
 curl -fsSL <demo>/api/uncage/install.sh | bash
 uncage setup <demo>
 ```
 
-Without a global install you can run the second one as `npx uncage setup <demo>`. `uncage setup` prints a code and opens the demo's approval page. Check that the code matches the one in your terminal and click **Approve**. The chat then shows **Connected** with your computer's name.
+Without a global install you can run the second one as `npx uncage setup <demo>`. `uncage setup` prints a code and opens the demo's approval page in your browser.
 
-## What you will see
+<Image src={deviceApprove} alt="The approval page 连接这台电脑? names the computer asking to connect, shows the 验证码 (verification code) in large letters, and offers 拒绝 (Deny) and 批准 (Approve)." />
 
-Ask the chat to save a note and publish it, for example: “Save a note titled hello with the text ‘hi from Uncage’, then publish it.”
+*Check that the **验证码** (verification code) matches the one in your terminal, then click **批准** (Approve). The chat shows your computer's name with a green dot: it is online.*
 
-Claude Code runs on your computer, under your own login, and calls the demo site's tools. Saving a note needs no question. Publishing does, so the chat shows an approval card first and nothing runs until you answer.
+## Ask for a landing page
 
-<Image src={chatApproval} alt="The chat shows two steps: save_note done, publish_note waiting for you, with an approval card offering Deny and Allow once." />
+Send, for example, 「做一个介绍 Uncage 的落地页并发布」 ("build a landing page about Uncage and publish it"). Claude Code runs on your computer, under your own login, in a folder of its own under `~/Uncage/`. It loads the site's `landing-page` skill, calls the site tool `create_asset`, writes the page, and then asks to run `publish_asset`.
 
-*The approval card. `publish_note` is defined with `requiresConfirmation`, so the site asks you before every call. The run waits; if you do not answer, nothing happens.*
+<Image src={chatRunning} alt="The chat while the run is going: the steps Skill, a Bash command, ToolSearch, WebSearch and mcp__site__create_asset, each with a check mark, and 已允许 (Allowed) after the approved ones." />
 
-<Image src={chatDone} alt="After Allow once the run finishes and Claude Code reports the note as saved and published." />
+*The steps appear in the chat as they happen. `mcp__site__create_asset` is the site's tool: it runs on the site's server, as your guest account, and needs no question.*
 
-*After **Allow once**, the tool runs on the site's server as you, and Claude Code reports back.*
+Claude Code asks before steps that its permission mode does not allow on its own (the composer shows **每次询问**, Ask every time), such as running a command or writing a file. `publish_asset` is defined with `requiresConfirmation`, so the site asks before every call, in every mode. Each question is an approval card, and the run waits until you answer.
 
-<Image src={notes} alt="The site's Notes page lists the note hello with a published badge." />
+<Image src={approvalCard} alt="An approval card titled 需要你确认: Bash, showing the command, its folder and a short reason, with the buttons 拒绝 (Deny) and 允许执行 (Allow once)." />
 
-*The result lives on the website, not on your computer: the Notes page shows the note you just published. Published pages can be opened only by their owner, which is the guest identity of that browser.*
+*An approval card, here for a command. Click **允许执行** (Allow once) or **拒绝** (Deny). The `publish_asset` card looks the same; after **允许执行**, the site copies the page's folder from your computer and publishes it.*
 
-<Image src={chatAfterReload} alt="The same conversation after reloading the page, with all steps and the answer still there." />
+## See the result on the site
 
-*Reload the page: the conversation is still there. The site keeps the history of every session.*
+Open **素材** (Assets, `/assets`). The published page is listed there; click it to see it in a sandboxed preview. The page lives on the website, not on your computer, and only you can open it.
 
-<Image src={chatOffline} alt="The chat with a notice that the computer is offline, while the whole earlier conversation stays readable." />
+<Image src={assets} alt="The 素材 (Assets) page lists one landing page with the badge 已发布 (Published)." />
 
-*Close the lid or stop the agent: the earlier conversation stays readable, and the chat says your computer is offline and waits for it to reconnect (`uncage agent` starts it again).*
+Now close the lid, or stop the agent (`uncage agent uninstall` stops the background agent). The conversation stays readable, because the site keeps it, and the computer in the header turns offline. Run `uncage agent` to bring it back.
+
+<Image src={offline} alt="The end of the finished conversation, with a notice that the computer is offline and waiting to reconnect, which says to run uncage agent on that computer." />
+
+*The notice reads "你的电脑离线了，等待重新连接…" (Your computer is offline, waiting to reconnect).*
 
 ## About your data
 
-- You are signed in to the demo as a guest, identified by the browser you use. Another browser sees none of your notes.
-- The demo is public and shared. All of its data is cleared on every deploy and restart, and assets (notes and published pages) are removed 24 hours after they were last created or published.
-- Published pages can be viewed only by their owner.
+- You are signed in to the demo as a guest, identified by the browser you use. Another browser sees none of your conversations or pages.
+- The demo is public and shared. Unless its host keeps it on a persistent volume, all of its data is cleared on every deploy and restart. Assets (the pages you create) are removed 24 hours after they were last created or published.
+- Requests for a published page are owner-only: only your guest account can open it. The files the page loads are guarded by the page's unguessable ID.
 - Do not put anything private in the demo.
 
 To disconnect your computer when you are done, run `uncage sites` to list the sites it is connected to and `uncage sites remove <id>` with the demo's ID to remove it. See the [CLI reference](/docs/reference/cli/).
