@@ -6,7 +6,7 @@
 
 Your website gives the instructions. Each user’s own Claude Code does the work, on their own computer, under their own login, and calls your website’s tools as that user. The conversation, the approvals and the results stay on your site.
 
-- **Two commands for the user.** Your page shows `curl -fsSL https://your.site/api/uncage/install.sh | bash` (on Windows `irm https://your.site/api/uncage/install.ps1 | iex`) and `uncage setup https://your.site`. The installer checks the computer and asks `[Y/n]` before each step, without `sudo` or admin rights. The user approves the computer in the browser, a background agent dials out to your site, and the page shows it online. No ports, no tunnels.
+- **One command for the user, on macOS, Linux or Windows.** Your page shows `curl -fsSL https://your.site/api/uncage/install.sh | bash` (on Windows `irm https://your.site/api/uncage/install.ps1 | iex`). The installer checks the computer, asks `[Y/n]` before each step (Node.js 22 through the user’s own version manager, then the CLI), without `sudo` or admin rights, and runs `uncage setup https://your.site`. The user approves the computer in the browser, a background agent dials out to your site, and the page shows it online. No ports, no tunnels.
 - **A chat on your site.** `<AgentChat>` streams answers and tool steps, shows Allow / Deny cards, Stop, attachments, model and permission pickers, and keeps history across reloads.
 - **Your capabilities, your rules.** Declare site tools with `defineTool` (zod schema + handler). The handler runs in your backend as the signed-in user and can pull files from the run’s workspace. Give Claude Code your formats and templates as skills.
 - **Safe by construction.** Your site never sends code or shell to the user’s computer, only tool schemas, skill text and a fixed set of commands. Bypassing approvals can only be enabled by the user, locally. Everything a site does is logged on the user’s computer.
@@ -18,7 +18,7 @@ Your website gives the instructions. Each user’s own Claude Code does the work
 
 ## Try it in 5 minutes
 
-Run the reference website and connect your own Mac to it. You need macOS, Node.js 22.18+, pnpm, and Claude Code installed and signed in (`npm i -g @anthropic-ai/claude-code`, run `claude`, type `/login`).
+Run the reference website and connect your own computer to it. You need macOS, Linux or Windows, Node.js 22.18+, pnpm, and Claude Code installed and signed in (`npm i -g @anthropic-ai/claude-code`, run `claude`, type `/login`).
 
 ```sh
 git clone https://github.com/ptmafia/uncage && cd uncage
@@ -35,7 +35,7 @@ cd examples/connected-demo && pnpm start        # http://localhost:3200
    ```
 
    `setup` opens `/device?code=…`: check that the code matches and click **批准** (approve). (Prefix both commands with `UNCAGE_HOME=/tmp/uncage-demo` to leave your `~/.uncage` untouched.)
-3. Send **做一个介绍 Uncage 的落地页并发布** (“build a landing page about Uncage and publish it”). Claude Code works on your Mac in `~/Uncage/localhost-3200/<session>/`, calls the site’s `create_asset` tool, writes the page, and asks you to confirm `publish_asset`, which pulls the folder from your Mac into the site.
+3. Send **做一个介绍 Uncage 的落地页并发布** (“build a landing page about Uncage and publish it”). Claude Code works on your computer in `~/Uncage/localhost-3200/<session>/`, calls the site’s `create_asset` tool, writes the page, and asks you to confirm `publish_asset`, which pulls the folder from your computer into the site.
 4. Open **素材** (`/assets`) to see the published page. Stop the agent and reload the chat: the whole conversation is still there.
 
 ## Add it to your website

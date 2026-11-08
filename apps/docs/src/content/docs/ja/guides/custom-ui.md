@@ -58,7 +58,7 @@ Connected モードでは、`<AgentChat>`はさらに次のように動作しま
 
 ## 2. 部品を使う
 
-`<ConnectMachine>`は「コンピュータを接続する」フローを単独で提供します。インストールコマンド（macOSタブ。Windowsは「coming soon」）、コピーボタン付きの`uncage setup <url>`コマンド、「Waiting for your computer…」から「Connected: &lt;name&gt;」に切り替わるライブ表示（表示中は3秒ごとにポーリングします）、ブラウザを開けないコンピュータ向けのヘルプが含まれます。設定ページ、オンボーディングのステップ、ダイアログなどに配置してください。
+`<ConnectMachine>`は「コンピュータを接続する」フローを単独で提供します。「macOS / Linux」と「Windows」のタブに入ったインストールコマンド1つ（訪問者のOSのタブを最初に開きます）、CLIがすでにあるコンピュータ向けの`uncage setup <url>`、コピーボタン、「Waiting for your computer…」から「Connected: &lt;name&gt;」に切り替わるライブ表示（表示中は3秒ごとにポーリングします）、ブラウザを開けないコンピュータ向けのヘルプが含まれます。設定ページ、オンボーディングのステップ、ダイアログなどに配置してください。
 
 ```tsx title="connect-button.tsx"
 'use client';
@@ -145,8 +145,11 @@ function Connect() {
   return (
     <section>
       <h2>Connect your computer</h2>
-      <p>Run these two commands in Terminal on your Mac:</p>
+      <p>Run this command on your computer (macOS, Linux):</p>
       <pre>{install.install}</pre>
+      {install.windows && <p>On Windows, in PowerShell:</p>}
+      {install.windows && <pre>{install.windows}</pre>}
+      <p>Already have the CLI? Run:</p>
       <pre>{install.setup}</pre>
       <p>Waiting for your computer…</p>
     </section>

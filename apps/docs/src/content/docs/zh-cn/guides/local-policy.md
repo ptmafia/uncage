@@ -14,7 +14,9 @@ description: 终端用户在自己电脑上能控制什么：~/.uncage/agent.yam
 | `~/.uncage/sites/<site id>/activity.log` | 该网站在这台电脑上做过的事（JSON lines） |
 | `~/Uncage/<site host>/<session id>/` | 每个会话一个目录；Claude Code 在这里工作 |
 | `~/.uncage/logs/agent.log`、`agent.err.log` | 后台守护进程的输出 |
-| `~/Library/LaunchAgents/dev.uncage.agent.plist` | 让守护进程保持运行的 launchd 服务 |
+| `~/Library/LaunchAgents/dev.uncage.agent.plist` | macOS：让守护进程保持运行的 launchd 服务 |
+| `~/.config/systemd/user/uncage-agent.service` | Linux：systemd 用户服务 |
+| 计划任务 `UncageAgent` | Windows：计划任务（任务计划程序拒绝时，改为 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下的 `UncageAgent` 项） |
 
 `UNCAGE_HOME=/absolute/path` 可以在开发和测试时迁移 `~/.uncage` 和 `~/Uncage`（后台服务不能使用它：先运行 `uncage setup <url> --no-daemon`，再带着同一个变量在前台运行 `uncage agent`）。`HOME` 不变，所以 Claude Code 的登录状态保持不变。
 
@@ -101,7 +103,11 @@ uncage sites remove app.example.com   # disconnect
 
 ## 后台守护进程
 
-- `uncage setup <url>` 把它安装成 launchd 用户级服务（LaunchAgent）：登录时启动，崩溃或自我升级后由 launchd 重启（正常退出后不会重启，例如没有剩余网站时）。
+- `uncage setup <url>`（或 `uncage agent install`）把它安装成按用户运行的后台服务，固定使用运行这条命令的 Node.js。不需要管理员权限。
+  - **macOS：** launchd 用户级服务（LaunchAgent）。登录时启动，崩溃或自我升级后由 launchd 重启（正常退出后不会重启，例如没有剩余网站时）。
+  - **Linux：** systemd 用户服务（`Restart=on-failure`）。除非开启了驻留（linger），注销时会停止：`loginctl enable-linger $USER`。没有用户级 systemd 时，请在前台运行 `uncage agent`。
+  - **Windows：** 登录时启动的计划任务，只针对当前用户、最低权限；无法创建计划任务时改用注册表的 Run 项。一个小的监督进程会在守护进程崩溃或自我升级后将其重启。
+- `uncage agent status` 显示服务、是否在运行以及它使用的 Node.js。如果那个 Node.js 被删除了（Homebrew 升级、删除了 nvm 或 fnm 的某个版本），请重新运行 `uncage agent install`。
 - `uncage agent uninstall` 停止它并移除服务。`agent.yaml` 和数据会保留。
 - `uncage agent` 在前台运行它（先停掉服务）。设置 `UNCAGE_LOG_LEVEL=debug` 可以输出更多信息。
 - 升级：如果某个 hub 要求更新的守护进程（`upgrade_required`），守护进程会运行一次 `npm i -g @uncage/cli@latest`，然后重启。

@@ -10,7 +10,7 @@ curl -fsSL https://your.site/api/uncage/install.sh | bash        # macOS, Linux
 irm https://your.site/api/uncage/install.ps1 | iex               # Windows PowerShell
 ```
 
-安装脚本会检查电脑（Node.js 22+、npm、已安装的 coding agent），在每个步骤之前询问 `[Y/n]`（如果用户有版本管理器，就用它安装 Node.js；绝不使用 `sudo` 或管理员权限），安装 `@uncage/cli`，并询问是否为那个网站运行 `uncage setup`。
+安装脚本会检查电脑（Node.js 22+、npm、已安装的 coding agent），在每个步骤之前询问 `[Y/n]`（如果用户有版本管理器，就用它安装 Node.js；绝不使用 `sudo` 或管理员权限），安装 `@uncage/cli`，并询问是否为那个网站运行 `uncage setup`。参数、退出码和各操作系统的细节见[在你的电脑上安装](/docs/zh-cn/start/install-on-your-computer/)。
 
 ### `uncage --version`
 
@@ -63,7 +63,7 @@ uncage agent status [--json]       # installed? running? which Node.js?
 | `status` | 服务类型、是否已安装并在运行、服务定义文件、固定使用的 Node.js（以及它是否还存在）、CLI 入口和日志目录（`~/.uncage/logs`）。`--json` 以 JSON 输出同样的内容。 |
 | `--supervise` | 内部使用：Windows 计划任务运行的是 `uncage agent --supervise`，它会在守护进程崩溃或自我升级后将其重启（任务计划程序本身不会这样做）。macOS 和 Linux 上不需要。 |
 
-在 Linux 上，除非开启了 lingering，用户服务会在注销时停止：`uncage doctor` 会提示你，运行 `loginctl enable-linger $USER` 即可解决。Linux 和 Windows 已通过 CI 验证，尚待真机确认；macOS 已在真机上验证。
+在 Linux 上，除非开启了驻留（linger），用户服务会在注销时停止：`uncage doctor` 会提示你，运行 `loginctl enable-linger $USER` 即可解决。Linux 和 Windows 已通过 CI 验证，尚待真机确认；macOS 已在真机上验证。
 
 ### `uncage sites`
 
@@ -132,7 +132,7 @@ uncage doctor [--port <n> | --url <url>] [--workspace <dir>] [--data-dir <dir>] 
 uncage doctor --export-events <sessionId> [--out <file>] [--include-content] [--port <n> | --url <url>]
 ```
 
-检查 Node、数据目录、令牌、正在运行的 Uncage 服务、Connected 模式的后台守护进程（是否已安装并在运行、固定使用的 Node.js 是否还在、Linux 的 lingering、每个已连接网站对应的守护进程版本）和运行时（Claude Code、Codex，以及每个 ACP agent 各一行 `runtime.acp-<id>`，来自 `uncage.config.yaml` 的 `runtimes.acp` 或自动检测）。每一行是 ✓ 或 ✗，每个 ✗ 都会打印一条 `fix:` 命令。ACP 的行是可选的：这些行出现 ✗（例如未安装，fix 为安装提示）不会改变退出码。`uncage.config.yaml` 用自己的 `command` 添加的每个 ACP agent，还会多一行警告，显示它运行的命令。当服务的工作区是一个没有忽略 `.uncage/` 的 git 仓库时，以及在把令牌发往非回环 URL 之前，它会给出警告（`!`，不致命）。
+检查 Node、数据目录、令牌、正在运行的 Uncage 服务、Connected 模式的后台守护进程（是否已安装并在运行、固定使用的 Node.js 是否还在、Linux 的驻留（linger）、每个已连接网站对应的守护进程版本）和运行时（Claude Code、Codex，以及每个 ACP agent 各一行 `runtime.acp-<id>`，来自 `uncage.config.yaml` 的 `runtimes.acp` 或自动检测）。每一行是 ✓ 或 ✗，每个 ✗ 都会打印一条 `fix:` 命令。ACP 的行是可选的：这些行出现 ✗（例如未安装，fix 为安装提示）不会改变退出码。`uncage.config.yaml` 用自己的 `command` 添加的每个 ACP agent，还会多一行警告，显示它运行的命令。当服务的工作区是一个没有忽略 `.uncage/` 的 git 仓库时，以及在把令牌发往非回环 URL 之前，它会给出警告（`!`，不致命）。
 
 `--export-events` 把一个会话的事件导出为 JSON，用于提交 bug 报告；除非加上 `--include-content`，内容会被脱敏。
 
@@ -150,5 +150,8 @@ uncage doctor --export-events <sessionId> [--out <file>] [--include-content] [--
 | `UNCAGE_ALLOW_BYPASS=1` | `serve` | 在 Local 模式下提供 `bypassPermissions`（会打印警告） |
 | `UNCAGE_TOKEN` | Local 模式的代理 | Uncage 服务的令牌，当它不在 `~/.uncage/token` 时使用 |
 | `UNCAGE_ALLOWED_HOSTS` | Local 模式的代理 | 允许的 `Host` 名称（逗号分隔） |
+| `UNCAGE_YES=1` | `install.sh`、`install.ps1` | 对每个安装步骤都回答“是”（`--yes` / `-Yes`） |
+| `UNCAGE_NO_SETUP=1` | `install.sh`、`install.ps1` | 只安装，不提议运行 `uncage setup`（`--no-setup` / `-NoSetup`） |
+| `UNCAGE_LANG` | `install.sh`、`install.ps1` | 安装脚本提示信息的语言：`en`、`zh` 或 `ja`（`--lang` / `-Lang`） |
 
 在 Connected 模式下，绕过权限只由 `~/.uncage/agent.yaml` 里的 `localPolicy.allowBypass` 控制（见[本地策略](/docs/zh-cn/guides/local-policy/)）。

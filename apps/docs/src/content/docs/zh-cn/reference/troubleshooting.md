@@ -1,7 +1,55 @@
 ---
 title: 故障排查
-description: 常见问题的解决方法：Connected 模式（电脑连不上、显示离线、需要更新守护进程、setup 出错、工具没被调用、Serverless 上的 504 和超时、连接被切断、连接池、代理后面的 WebSocket）和 Local 模式（Uncage 服务连不上、forbidden_origin、端口、登录）。
+description: 常见问题的解决方法：在电脑上安装（找不到命令、Node.js 被删除、Linux 的驻留和没有 systemd、Windows 执行策略、unzip）、Connected 模式（电脑连不上、显示离线、需要更新守护进程、setup 出错、工具没被调用、Serverless 上的 504 和超时、连接被切断、连接池、代理后面的 WebSocket）和 Local 模式（Uncage 服务连不上、forbidden_origin、端口、登录）。
 ---
+
+## 在电脑上安装
+
+一条命令的安装脚本，以及 macOS、Linux 和 Windows 上的后台守护进程。它们做了什么，见[在你的电脑上安装](/docs/zh-cn/start/install-on-your-computer/)。
+
+### 安装后提示 `uncage: command not found`
+
+请打开一个新终端：安装脚本对 `PATH` 的修改只在新终端里生效（macOS 和 Linux：shell 配置文件中的 `# >>> uncage >>>` 块；Windows：你的用户 `Path`）。如果你在“把 Node.js 22 设为你的默认 Node.js？”上回答了 **n**，安装脚本已经打印了 `uncage` 的完整路径和需要使用的 `PATH` 行；运行它，或者重新运行安装脚本并回答 **Y**。使用 fish 时，请自己把安装脚本打印的那一行加到配置里。
+
+### 后台守护进程使用的 Node.js 被删除了
+
+后台服务固定使用安装时的那个 Node.js。Homebrew 升级（`brew upgrade node` 或 `node@22`）会删除旧版本的目录，删除 nvm、fnm 等版本管理器里的某个版本也一样。`uncage doctor` 会显示 `✗ Background agent Node … no longer exists`。让服务改用你现在使用的 Node.js：
+
+```sh
+uncage agent install
+```
+
+### Linux：注销后守护进程停止了
+
+除非开启了驻留（linger），systemd 用户服务会在注销时停止（`uncage doctor` 会警告）。为你的用户开启它：
+
+```sh
+loginctl enable-linger $USER
+```
+
+大多数发行版不需要 `sudo` 就能执行；如果被拒绝，请联系管理员。
+
+### Linux 上没有 systemd
+
+部分容器和 WSL 环境没有用户级 systemd。这时 `uncage setup` 和 `uncage agent install` 会说明这一点，不安装服务。请在前台运行守护进程，例如放在 `tmux` 或 `screen` 里：
+
+```sh
+uncage agent
+```
+
+### Windows：“在此系统上禁止运行脚本”
+
+PowerShell 默认的执行策略会拒绝运行 `uncage.ps1`，这是 npm 在 `uncage.cmd` 旁边生成的 shim。请改用 `uncage.cmd`（例如 `uncage.cmd setup https://your.site`），或者为你的用户允许本地脚本：
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+安装脚本本身不受影响：`irm … | iex` 不需要脚本文件。
+
+### Linux：“安装 fnm 需要 unzip”
+
+没有 Node.js 版本管理器时，安装脚本会安装 fnm，而 fnm 的安装脚本需要 `unzip`。安装脚本从不调用你的包管理器，所以请自己安装 `unzip`（`sudo apt install unzip`、`sudo dnf install unzip` 等），再运行一次命令。也可以用你喜欢的任何方式安装 Node.js 22，然后再运行命令。
 
 ## Connected 模式
 

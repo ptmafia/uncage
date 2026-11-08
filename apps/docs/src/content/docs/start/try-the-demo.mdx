@@ -1,6 +1,6 @@
 ---
 title: Try the demo
-description: Connect your own Mac to a live Uncage site in two commands, ask for a landing page, and watch your own Claude Code build it and publish it through the site's tools, with approval cards in the browser.
+description: Connect your own computer (macOS, Linux or Windows) to a live Uncage site with one command, ask for a landing page, and watch your own Claude Code build it and publish it through the site's tools, with approval cards in the browser.
 ---
 
 import { Image } from 'astro:assets';
@@ -22,26 +22,25 @@ The demo's interface is in Chinese. This page gives each label with its meaning,
 
 ## Before you start
 
-- A Mac (the Uncage agent runs on macOS).
-- Node.js 22 or newer.
-- Claude Code installed and signed in: `npm i -g @anthropic-ai/claude-code`, then run `claude` once and type `/login`.
+- A computer with macOS, Linux or Windows. Node.js 22 is not needed up front: the command below installs it if it is missing.
+- Claude Code installed and signed in: `curl -fsSL https://claude.ai/install.sh | bash` (macOS, Linux) or `irm https://claude.ai/install.ps1 | iex` (Windows PowerShell), then run `claude` once and type `/login`.
 
 ## Sign in as a guest
 
-Open the demo and click **以访客身份进入** (Enter as a guest). The site gives this browser a random guest account; there is nothing to sign up for. The chat then shows **连接你的电脑** (Connect your computer) with two commands.
+Open the demo and click **以访客身份进入** (Enter as a guest). The site gives this browser a random guest account; there is nothing to sign up for. The chat then shows **连接你的电脑** (Connect your computer) with one command, on the tab of your operating system.
 
-<Image src={connect} alt="The demo's chat with the card 连接你的电脑: step 1 installs the Uncage CLI with a curl command, step 2 runs uncage setup with the demo's address, and a line says it is waiting for the computer to come online." />
+<Image src={connect} alt="The demo's chat with the card 连接你的电脑: under 在你的电脑上运行这条命令 (Run this command on your computer), the tabs macOS / Linux and Windows and the curl command with the demo's address; below it, 已经装好 CLI？ (Already have the CLI?) with the uncage setup command, and a line saying it is waiting for the computer to come online." />
 
 ## Connect your computer
 
-In a terminal, run the two commands, with the demo's address in place of `<demo>`:
+In a terminal (PowerShell on Windows), run the command the card shows, with the demo's address in place of `<demo>`:
 
 ```sh
-curl -fsSL <demo>/api/uncage/install.sh | bash
-uncage setup <demo>
+curl -fsSL <demo>/api/uncage/install.sh | bash        # macOS, Linux
+irm <demo>/api/uncage/install.ps1 | iex               # Windows PowerShell
 ```
 
-Or install the CLI with `npm i -g @uncage/cli` instead of the first command. `uncage setup` prints a code and opens the demo's approval page in your browser.
+It checks your computer and asks `[Y/n]` before installing anything that is missing (Node.js 22, the Uncage CLI); see [Install on your computer](/docs/start/install-on-your-computer/). At the end, answer **Y** to run `uncage setup` for the demo. Already have the CLI? Run `uncage setup <demo>` instead. Setup prints a code and opens the demo's approval page in your browser.
 
 <Image src={deviceApprove} alt="The approval page 连接这台电脑? names the computer asking to connect, shows the 验证码 (verification code) in large letters, and offers 拒绝 (Deny) and 批准 (Approve)." />
 

@@ -189,6 +189,16 @@ Other updates seen: `available_commands_update`, `config_option_update`, `usage_
 - No `agent_thought_chunk` arrived in these runs (the adapter can send them; Uncage drops them). `usage_update` arrives often (15 in the smoke) and is dropped.
 - Everything matched the plan; nothing in `@uncage/runtime-acp` had to change for this adapter.
 
+## Operating systems
+
+The user's side (the one-command installer, the CLI and the background agent) on each OS. Details of the service per OS are in the next section.
+
+| OS | How it was verified | Status |
+| --- | --- | --- |
+| macOS | Real device (macOS 26.6.2, arm64): live E2E with a real Claude Code, connected-demo end to end (2026-11-07) and `connected-live` after the platform merge (2026-11-08, 1/1); installer tests and the CI platform job on macos-latest | **Verified on a real device** |
+| Linux | CI on ubuntu-latest (agent and CLI suites, installer tests, shellcheck of the rendered install.sh, the real-service test); local Docker, the full chain on `debian:bookworm-slim` without Node (install.sh installed Node 22 with fnm and the CLI, setup approved, agent online, a run completed); a systemd-booted `debian:bookworm` container (linger, `uncage agent install`, the unit active and restarted after `kill -9`, doctor flagging a removed pinned Node) | **CI verified, awaiting real-device confirmation** |
+| Windows | CI on windows-latest: `install.ps1` executed under Windows PowerShell 5.1 and pwsh 7 (scenarios with fakes), the agent and CLI suites, and a real scheduled task (registered for the runner user, the agent restarted by its supervisor, uninstall leaving nothing). The runners are administrators, so the standard-user path and the Run-key fallback are not proven | **CI verified, awaiting real-device confirmation** |
+
 ## Operating systems: the background agent (`uncage agent install`)
 
 The agent runs as a per-user service, pinned to the Node binary that ran `uncage agent install` (its realpath, never a version-manager shim). `uncage doctor` checks that the pinned Node still exists and is at least 22 (fix: `uncage agent install`).

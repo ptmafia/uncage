@@ -1,7 +1,55 @@
 ---
 title: Troubleshooting
-description: Fixes for common problems in Connected Mode (computer not connecting, offline, agent update needed, setup errors, tools not called, 504s and timeouts on serverless, cut connections, poolers, WebSocket behind proxies) and Local Mode (daemon not reachable, forbidden_origin, ports, sign-in).
+description: Fixes for common problems installing on the computer (command not found, a removed Node.js, Linux lingering and no systemd, Windows execution policy, unzip), in Connected Mode (computer not connecting, offline, agent update needed, setup errors, tools not called, 504s and timeouts on serverless, cut connections, poolers, WebSocket behind proxies) and Local Mode (daemon not reachable, forbidden_origin, ports, sign-in).
 ---
+
+## Installing on the computer
+
+The one-command installers and the background agent on macOS, Linux and Windows. What they do: [Install on your computer](/docs/start/install-on-your-computer/).
+
+### `uncage: command not found` after installing
+
+Open a new terminal: the installer adds folders to `PATH` for new terminals only (macOS and Linux: the `# >>> uncage >>>` block in your shell profile; Windows: your user `Path`). If you answered **n** to “Use Node.js 22 as your default?”, the installer printed the full path of `uncage` and the `PATH` line to use; run that, or run the installer again and answer **Y**. With fish, add the line the installer printed to your config yourself.
+
+### The background agent’s Node.js was removed
+
+The service runs the exact Node.js it was installed with. A Homebrew upgrade (`brew upgrade node` or `node@22`) deletes the old version’s folder, and so does removing an nvm, fnm or other version-manager version. `uncage doctor` shows `✗ Background agent Node … no longer exists`. Pin the service to the Node.js you use now:
+
+```sh
+uncage agent install
+```
+
+### Linux: the agent stops when I log out
+
+A systemd user service stops at logout unless lingering is on (`uncage doctor` warns). Turn it on for your user:
+
+```sh
+loginctl enable-linger $USER
+```
+
+Most distributions let you do this without `sudo`; if yours refuses, ask an administrator.
+
+### Linux without systemd
+
+In some containers and WSL setups there is no user systemd. `uncage setup` and `uncage agent install` then say so and install no service. Run the agent in the foreground, for example in `tmux` or `screen`:
+
+```sh
+uncage agent
+```
+
+### Windows: “running scripts is disabled on this system”
+
+PowerShell’s default execution policy refuses `uncage.ps1`, the shim npm creates next to `uncage.cmd`. Run `uncage.cmd` instead (for example `uncage.cmd setup https://your.site`), or allow local scripts for your user:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+The installer itself is not affected: `irm … | iex` runs without a script file.
+
+### Linux: “installing fnm needs unzip”
+
+With no Node.js version manager, the installer installs fnm, whose installer needs `unzip`. The installer never runs your package manager, so install `unzip` yourself (`sudo apt install unzip`, `sudo dnf install unzip`, …) and run the command again. Or install Node.js 22 any way you like and then run the command again.
 
 ## Connected Mode
 

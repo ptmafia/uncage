@@ -66,7 +66,7 @@ sequenceDiagram
   participant A as uncage agent
   participant C as Claude Code
   Note over U,A: Connect (once per computer)
-  U->>A: curl …/install.sh | bash (or irm …/install.ps1 | iex), then uncage setup https://your.site
+  U->>A: curl …/install.sh | bash (or irm …/install.ps1 | iex), which runs uncage setup https://your.site
   A->>H: POST /device/code
   A-->>U: opens /device?code=ABCD-2345 in the browser
   U->>H: Approve (signed in, POST)
@@ -99,16 +99,16 @@ sequenceDiagram
 
 ### 1. 连接
 
-1. 你的页面显示连接命令。`<ConnectMachine>` 从 hub 读取它们（`GET /api/uncage/machines/install`）：
+1. 你的页面按用户的操作系统显示一条命令。`<ConnectMachine>` 从 hub 读取它（`GET /api/uncage/machines/install`），并默认打开访问者操作系统对应的标签页：
 
    ```sh
-   curl -fsSL https://your.site/api/uncage/install.sh | bash
-   uncage setup https://your.site
+   curl -fsSL https://your.site/api/uncage/install.sh | bash        # macOS, Linux
+   irm https://your.site/api/uncage/install.ps1 | iex               # Windows PowerShell
    ```
 
-   在 Windows 上，安装命令是 `irm https://your.site/api/uncage/install.ps1 | iex`。
+   对于已经装好 CLI 的电脑，它还会显示 `uncage setup https://your.site`。
 
-2. `install.sh`（macOS、Linux）和 `install.ps1`（Windows）是 hub 提供的固定脚本。它们会检查电脑（操作系统、Node.js 22+、npm、已安装的 coding agent），并在每个需要执行的步骤之前询问 `[Y/n]`：如果用户有自己的版本管理器（nvm、fnm、volta 等），就用它安装 Node.js（绝不使用 `sudo`，绝不需要管理员权限，不经用户同意也不会更改默认的 Node 版本）；如果全局 npm 目录不可写，就改用一个用户自己的 npm 目录；最后安装 `@uncage/cli`。它们从不安装 coding agent 本身；如果没找到，会给出 Claude Code 安装程序的地址。最后，它们会询问是否为这个网站运行 `uncage setup`。
+2. `install.sh`（macOS、Linux）和 `install.ps1`（Windows）是 hub 提供的固定脚本。它们会检查电脑（操作系统、Node.js 22+、npm、已安装的 coding agent），并在每个需要执行的步骤之前询问 `[Y/n]`：如果用户有自己的版本管理器（nvm、fnm、volta 等），就用它安装 Node.js（绝不使用 `sudo`，绝不需要管理员权限，不经用户同意也不会更改默认的 Node 版本）；如果全局 npm 目录不可写，就改用一个用户自己的 npm 目录；最后安装 `@uncage/cli`。它们从不安装 coding agent 本身；如果没找到，会给出 Claude Code 安装程序的地址。最后，它们会询问是否为这个网站运行 `uncage setup`。各操作系统的细节见[在你的电脑上安装](/docs/zh-cn/start/install-on-your-computer/)。
 3. `uncage setup` 发起设备登录：拿到一个 8 位验证码（10 分钟内有效），并打开 `https://your.site/device?code=…`。
 4. 已登录你网站的用户核对验证码，点击**批准**。你的审批页调用 `hub.approveDevice(code, user)`，把这台电脑绑定到该用户。
 5. CLI 拿到一个**机器令牌**（随机生成，每台电脑每个网站一枚），存到 `~/.uncage/agent.yaml`（权限 0600），并把守护进程安装成按用户运行的后台服务（macOS 上是 launchd，Linux 上是 systemd 用户服务，Windows 上是计划任务），服务使用的正是安装时的那个 Node.js。

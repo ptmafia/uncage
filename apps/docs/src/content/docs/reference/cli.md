@@ -10,7 +10,7 @@ curl -fsSL https://your.site/api/uncage/install.sh | bash        # macOS, Linux
 irm https://your.site/api/uncage/install.ps1 | iex               # Windows PowerShell
 ```
 
-The installers check the computer (Node.js 22+, npm, an installed coding agent), ask `[Y/n]` before each step (Node.js through the user’s version manager when there is one; never `sudo` or admin rights), install `@uncage/cli`, and offer to run `uncage setup` for that website.
+The installers check the computer (Node.js 22+, npm, an installed coding agent), ask `[Y/n]` before each step (Node.js through the user’s version manager when there is one; never `sudo` or admin rights), install `@uncage/cli`, and offer to run `uncage setup` for that website. Flags, exit codes and the per-OS details: [Install on your computer](/docs/start/install-on-your-computer/).
 
 ### `uncage --version`
 
@@ -150,5 +150,8 @@ The daemon is found via `--url`, `--port`, `UNCAGE_URL`, `UNCAGE_PORT`, `uncage.
 | `UNCAGE_ALLOW_BYPASS=1` | `serve` | Offer `bypassPermissions` in Local Mode (prints a warning) |
 | `UNCAGE_TOKEN` | the Local Mode proxy | The daemon token, if it is not in `~/.uncage/token` |
 | `UNCAGE_ALLOWED_HOSTS` | the Local Mode proxy | Allowed `Host` names (comma-separated) |
+| `UNCAGE_YES=1` | `install.sh`, `install.ps1` | Answer yes to every install step (`--yes` / `-Yes`) |
+| `UNCAGE_NO_SETUP=1` | `install.sh`, `install.ps1` | Install only; do not offer `uncage setup` (`--no-setup` / `-NoSetup`) |
+| `UNCAGE_LANG` | `install.sh`, `install.ps1` | `en`, `zh` or `ja` for the installer’s messages (`--lang` / `-Lang`) |
 
 In Connected Mode, bypass is controlled only by `localPolicy.allowBypass` in `~/.uncage/agent.yaml` ([local policy](/docs/guides/local-policy/)).

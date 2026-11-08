@@ -23,7 +23,7 @@ export const sections = [
     label: 'Start here',
     zh: '开始',
     ja: 'はじめに',
-    items: ['start/how-it-works', 'start/choose-deployment-mode', 'start/quickstart-connected', 'start/quickstart-local', 'start/try-the-demo', 'start/for-coding-agents'],
+    items: ['start/how-it-works', 'start/choose-deployment-mode', 'start/quickstart-connected', 'start/quickstart-local', 'start/try-the-demo', 'start/install-on-your-computer', 'start/for-coding-agents'],
   },
   {
     label: 'Deploy',

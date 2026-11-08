@@ -66,7 +66,7 @@ sequenceDiagram
   participant A as uncage agent
   participant C as Claude Code
   Note over U,A: Connect (once per computer)
-  U->>A: curl …/install.sh | bash (or irm …/install.ps1 | iex), then uncage setup https://your.site
+  U->>A: curl …/install.sh | bash (or irm …/install.ps1 | iex), which runs uncage setup https://your.site
   A->>H: POST /device/code
   A-->>U: opens /device?code=ABCD-2345 in the browser
   U->>H: Approve (signed in, POST)
@@ -99,16 +99,16 @@ sequenceDiagram
 
 ### 1. Connect
 
-1. Your page shows the commands. `<ConnectMachine>` renders them from the hub (`GET /api/uncage/machines/install`):
+1. Your page shows one command, for the user’s operating system. `<ConnectMachine>` renders it from the hub (`GET /api/uncage/machines/install`) and starts on the tab of the visitor’s OS:
 
    ```sh
-   curl -fsSL https://your.site/api/uncage/install.sh | bash
-   uncage setup https://your.site
+   curl -fsSL https://your.site/api/uncage/install.sh | bash        # macOS, Linux
+   irm https://your.site/api/uncage/install.ps1 | iex               # Windows PowerShell
    ```
 
-   On Windows the install command is `irm https://your.site/api/uncage/install.ps1 | iex`.
+   For a computer that already has the CLI, it also shows `uncage setup https://your.site`.
 
-2. `install.sh` (macOS, Linux) and `install.ps1` (Windows) are fixed scripts served by the hub. They check the computer (OS, Node.js 22+, npm, an installed coding agent) and ask `[Y/n]` before each step they need: Node.js through the user’s own version manager when there is one (nvm, fnm, volta, …; never `sudo`, never admin rights, the default Node version is not changed without a yes), a user-owned npm folder if the global one is not writable, then `@uncage/cli`. They never install the coding agent itself; they point to Claude Code’s installer if none is found. At the end they offer to run `uncage setup` for this website.
+2. `install.sh` (macOS, Linux) and `install.ps1` (Windows) are fixed scripts served by the hub. They check the computer (OS, Node.js 22+, npm, an installed coding agent) and ask `[Y/n]` before each step they need: Node.js through the user’s own version manager when there is one (nvm, fnm, volta, …; never `sudo`, never admin rights, the default Node version is not changed without a yes), a user-owned npm folder if the global one is not writable, then `@uncage/cli`. They never install the coding agent itself; they point to Claude Code’s installer if none is found. At the end they offer to run `uncage setup` for this website. Details per OS: [Install on your computer](/docs/start/install-on-your-computer/).
 3. `uncage setup` starts a device login. It gets an 8-character code (valid for 10 minutes) and opens `https://your.site/device?code=…`.
 4. The user, signed in to your site, checks the code and clicks **Approve**. Your approval page calls `hub.approveDevice(code, user)`. This binds the computer to that user.
 5. The CLI receives a **machine token** (random, one per computer and website), saves it in `~/.uncage/agent.yaml` (mode 0600), and installs the agent as a per-user background service (launchd on macOS, a systemd user service on Linux, a scheduled task on Windows) that runs the exact Node.js it was installed with.

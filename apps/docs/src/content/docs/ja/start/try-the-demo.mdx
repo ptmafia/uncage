@@ -1,6 +1,6 @@
 ---
 title: デモを試す
-description: 2つのコマンドで自分のMacを公開中のUncageサイトに接続してランディングページを依頼し、自分のClaude Codeがページを作ってサイトのツールで公開する様子を、ブラウザでの承認カードとあわせて確認します。
+description: コマンド1つで自分のコンピュータ（macOS、Linux、Windows）を公開中のUncageサイトに接続してランディングページを依頼し、自分のClaude Codeがページを作ってサイトのツールで公開する様子を、ブラウザでの承認カードとあわせて確認します。
 ---
 
 import { Image } from 'astro:assets';
@@ -22,26 +22,25 @@ import offline from '../../../../assets/demo/offline.png';
 
 ## 始める前に
 
-- Mac（UncageのエージェントはmacOSで動作します）。
-- Node.js 22以降。
-- Claude Codeがインストール済みで、サインインしていること：`npm i -g @anthropic-ai/claude-code`を実行し、`claude`を一度起動して`/login`と入力します。
+- macOS、Linux、Windowsのいずれかのコンピュータ。Node.js 22を事前に用意する必要はありません。なければ、下のコマンドがインストールします。
+- Claude Codeがインストール済みで、サインインしていること：`curl -fsSL https://claude.ai/install.sh | bash`（macOS、Linux）または`irm https://claude.ai/install.ps1 | iex`（Windows PowerShell）を実行し、`claude`を一度起動して`/login`と入力します。
 
 ## ゲストとしてサインインする
 
-デモを開き、**以访客身份进入**（ゲストとして入る）をクリックします。サイトがこのブラウザにランダムなゲストアカウントを割り当てるので、登録は不要です。チャットに**连接你的电脑**（コンピュータを接続）と2つのコマンドが表示されます。
+デモを開き、**以访客身份进入**（ゲストとして入る）をクリックします。サイトがこのブラウザにランダムなゲストアカウントを割り当てるので、登録は不要です。チャットに**连接你的电脑**（コンピュータを接続）とコマンドが1つ、あなたのOSのタブで表示されます。
 
-<Image src={connect} alt="デモのチャットに「连接你的电脑」（コンピュータを接続）カードが表示されています。手順1はcurlコマンドでUncage CLIをインストールし、手順2はデモのアドレスでuncage setupを実行します。その下に、コンピュータがオンラインになるのを待っている旨が表示されています。" />
+<Image src={connect} alt="デモのチャットに「连接你的电脑」（コンピュータを接続）カードが表示されています。「在你的电脑上运行这条命令」（このコマンドをコンピュータで実行）の下に、macOS / LinuxとWindowsのタブと、デモのアドレス入りのcurlコマンドがあります。その下に「已经装好 CLI？」（CLIはインストール済み？）とuncage setupコマンド、最後にコンピュータがオンラインになるのを待っている旨が表示されています。" />
 
 ## コンピュータを接続する
 
-ターミナルで、`<demo>`をデモのアドレスに置き換えて2つのコマンドを実行します：
+ターミナル（WindowsではPowerShell）で、`<demo>`をデモのアドレスに置き換えて、カードに表示されたコマンドを実行します。
 
 ```sh
-curl -fsSL <demo>/api/uncage/install.sh | bash
-uncage setup <demo>
+curl -fsSL <demo>/api/uncage/install.sh | bash        # macOS, Linux
+irm <demo>/api/uncage/install.ps1 | iex               # Windows PowerShell
 ```
 
-1つ目のコマンドの代わりに`npm i -g @uncage/cli`でCLIをインストールしてもかまいません。`uncage setup`はコードを表示し、ブラウザでデモの承認ページを開きます。
+コマンドはコンピュータを確認し、足りないもの（Node.js 22、Uncage CLI）をインストールする前に`[Y/n]`で尋ねます。詳しくは[コンピュータへのインストール](/docs/ja/start/install-on-your-computer/)を参照してください。最後に**Y**と答えると、デモ向けに`uncage setup`が実行されます。すでにCLIがある場合は、代わりに`uncage setup <demo>`を実行してください。setupはコードを表示し、ブラウザでデモの承認ページを開きます。
 
 <Image src={deviceApprove} alt="承認ページ「连接这台电脑?」（このコンピュータを接続しますか）。接続を求めているコンピュータの名前、大きな文字の验证码（確認コード）、拒绝（拒否）と批准（承認）のボタンが表示されています。" />
 

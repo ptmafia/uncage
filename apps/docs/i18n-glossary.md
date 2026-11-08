@@ -48,3 +48,7 @@ Rules for translators:
 | HTTP streaming | HTTP 流式传输 | HTTP ストリーミング | The `http` transport (`/agent/stream` + `/agent/events`). |
 | function instance | 函数实例 | 関数インスタンス | One running copy of a serverless function. |
 | maintenance | 维护任务 | メンテナンス | `HubOptions.maintenance`, the `/maintenance` endpoint, retention cleanup. |
+| version manager | 版本管理器 | バージョンマネージャー | nvm, fnm, mise, asdf, volta, n, nvm-windows (`start/install-on-your-computer`). |
+| background service | 后台服务 | バックグラウンドサービス | How the agent runs per user: launchd (macOS), a systemd user service (Linux), a scheduled task (Windows). |
+| scheduled task | 计划任务 | タスク スケジューラのタスク | The Windows Task Scheduler task `UncageAgent`. |
+| lingering | 驻留（linger） | linger（常駐） | systemd: `loginctl enable-linger` keeps a user's services running after logout. |

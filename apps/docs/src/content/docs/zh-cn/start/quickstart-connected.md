@@ -30,7 +30,7 @@ Verify: start the dev server, then curl -s http://localhost:3000/api/uncage/inst
 ## 开始之前
 
 - **网站一侧：** 一个用 Node 运行的 Next.js 16 应用（App Router）。Node.js **22.18 或更高**，因为下面的自定义服务器是一个由 Node 直接运行的 `.ts` 文件。从零开始：`npx create-next-app@latest my-site`（选 TypeScript、App Router）。
-- **用户一侧（这次测试就是你自己的电脑）：** Node.js 22+（下面的安装脚本可以帮你装好），并且已安装并登录 Claude Code：`npm i -g @anthropic-ai/claude-code`，然后运行一次 `claude` 并输入 `/login`。守护进程可以在 macOS 上运行；Linux 和 Windows 已通过 CI 验证，尚待真机确认。
+- **用户一侧（这次测试就是你自己的电脑）：** Node.js 22+（下面的安装脚本可以帮你装好），并且已安装并登录 Claude Code：`npm i -g @anthropic-ai/claude-code`，然后运行一次 `claude` 并输入 `/login`。系统为 macOS、Linux 或 Windows（macOS 已在真机上验证；Linux 和 Windows 已通过 CI 验证，尚待真机确认）。
 
 :::note[为什么需要自定义服务器]
 本快速上手使用**传统模式**：hub 和每台已连接的电脑各保持一条 WebSocket，并把数据存在一个嵌入式数据库目录里，所以不需要任何其他东西。这需要一个长期运行、能接触到 HTTP 服务器的 Node 进程，而单靠 Next.js 的 route handler 做不到。要部署到 **Vercel** 或其他 Serverless 平台？请看 [Vercel 上的 Next.js](/docs/zh-cn/deploy/vercel/)（一个 route handler 加 Postgres，不需要自定义服务器）。该选哪种：见[选择部署模式](/docs/zh-cn/start/choose-deployment-mode/)。
@@ -211,7 +211,7 @@ server.listen(port, () => console.log(`ready on http://localhost:${port}`));
 
 ## 6. 对话页面
 
-`<AgentChat>` 默认请求 `/api/uncage`。它会发现对面是 hub（而不是本地的 Uncage 服务），自动切换到 Connected 模式：还没有电脑时，显示带两条命令的 `<ConnectMachine>`；连上之后，标题栏显示这段对话运行在哪台电脑上。
+`<AgentChat>` 默认请求 `/api/uncage`。它会发现对面是 hub（而不是本地的 Uncage 服务），自动切换到 Connected 模式：还没有电脑时，显示带一条安装命令的 `<ConnectMachine>`；连上之后，标题栏显示这段对话运行在哪台电脑上。
 
 ```tsx title="app/uncage/page.tsx"
 'use client';
@@ -353,16 +353,16 @@ curl -s http://localhost:3000/api/uncage/install.sh | head -3
 
 ## 9. 连接你的电脑（用户一侧）
 
-打开 `http://localhost:3000/uncage`。对话框显示 **Connect your computer**（连接你的电脑） 和两条命令。真实部署时用户会复制这两条命令；本地测试时：
+打开 `http://localhost:3000/uncage`。对话框显示 **Connect your computer**（连接你的电脑）和一条命令，默认打开你的操作系统对应的标签页。真实部署时用户会复制这条命令；本地测试时：
 
-1. **安装 CLI。** 在 macOS 或 Linux 上运行 `curl -fsSL http://localhost:3000/api/uncage/install.sh | bash`；在 Windows（PowerShell）上运行 `irm http://localhost:3000/api/uncage/install.ps1 | iex`。安装脚本会先检查电脑（Node.js 22+、npm、coding agent），在每个需要执行的步骤之前询问 `[Y/n]`（如果你有 Node 版本管理器就用它；绝不使用 `sudo` 或管理员权限），安装 `@uncage/cli`，并询问是否替你运行 setup 命令。也可以直接安装：`npm i -g @uncage/cli`。
-2. **连接。** 运行页面上显示的 setup 命令：
+1. **运行这条命令。** 在 macOS 或 Linux 上运行 `curl -fsSL http://localhost:3000/api/uncage/install.sh | bash`；在 Windows（PowerShell）上运行 `irm http://localhost:3000/api/uncage/install.ps1 | iex`。安装脚本会先检查电脑（Node.js 22+、npm、coding agent），在每个需要执行的步骤之前询问 `[Y/n]`（如果你有 Node 版本管理器就用它；绝不使用 `sudo` 或管理员权限），安装 `@uncage/cli`，并询问是否替你运行 `uncage setup http://localhost:3000`：回答 **Y**。它在各操作系统上做了什么，见[在你的电脑上安装](/docs/zh-cn/start/install-on-your-computer/)。
+2. **已经装好 CLI**（`npm i -g @uncage/cli`）？那就改为运行页面上 **Already have the CLI?**（已经装好 CLI？）下面显示的 setup 命令：
 
    ```sh
    uncage setup http://localhost:3000
    ```
 
-   它会打印一个验证码，并打开 `http://localhost:3000/device?code=…`。确认验证码一致后点击 **Approve**（批准）。setup 会把机器令牌存到 `~/.uncage/agent.yaml`，并启动后台守护进程（按用户运行的服务：macOS 上是 launchd，Linux 上是 systemd，Windows 上是计划任务；用 `uncage agent status` 可以查看）。
+3. **批准。** setup 会打印一个验证码，并打开 `http://localhost:3000/device?code=…`。确认验证码一致后点击 **Approve**（批准）。setup 会把机器令牌存到 `~/.uncage/agent.yaml`，并启动后台守护进程（按用户运行的服务：macOS 上是 launchd，Linux 上是 systemd，Windows 上是计划任务；用 `uncage agent status` 可以查看）。
 
 回到对话页，状态从“Waiting for your computer…”（等待你的电脑上线…）变为 **Connected: &lt;你的电脑名&gt;**（已连接）。
 

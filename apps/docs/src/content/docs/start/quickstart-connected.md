@@ -30,7 +30,7 @@ Verify: start the dev server, then curl -s http://localhost:3000/api/uncage/inst
 ## Before you start
 
 - **Website side:** a Next.js 16 app (App Router) that you run with Node. Node.js **22.18 or newer**, because the custom server below is a `.ts` file that Node runs directly. Starting fresh: `npx create-next-app@latest my-site` (TypeScript, App Router).
-- **User side (your own computer for this test):** Node.js 22+ (the installer below can set it up), and Claude Code installed and signed in: `npm i -g @anthropic-ai/claude-code`, then run `claude` once and type `/login`. The agent runs on macOS; Linux and Windows are CI verified, awaiting real-device confirmation.
+- **User side (your own computer for this test):** Node.js 22+ (the installer below can set it up), and Claude Code installed and signed in: `npm i -g @anthropic-ai/claude-code`, then run `claude` once and type `/login`. macOS, Linux or Windows (macOS is verified on real devices; Linux and Windows are CI verified, awaiting real-device confirmation).
 
 :::note[Why a custom server]
 This quickstart uses **traditional mode**: the hub keeps a WebSocket open to every connected computer and stores its data in an embedded database folder, so you need nothing else. That takes a long-running Node process with access to the HTTP server, which Next.js route handlers alone do not give. Deploying to **Vercel** or another serverless platform instead? Use [Next.js on Vercel](/docs/deploy/vercel/) (a route handler and Postgres, no custom server). Which one: [Choose a deployment mode](/docs/start/choose-deployment-mode/).
@@ -211,7 +211,7 @@ Run it with Node instead of `next dev`. Node runs `server.ts` directly (it strip
 
 ## 6. The chat page
 
-`<AgentChat>` talks to `/api/uncage` by default. It notices that this is a hub (not a local daemon) and switches to Connected Mode by itself: with no computer yet, it shows `<ConnectMachine>` with the two commands; afterwards, the header shows which computer the conversation runs on.
+`<AgentChat>` talks to `/api/uncage` by default. It notices that this is a hub (not a local daemon) and switches to Connected Mode by itself: with no computer yet, it shows `<ConnectMachine>` with the one-command installer; afterwards, the header shows which computer the conversation runs on.
 
 ```tsx title="app/uncage/page.tsx"
 'use client';
@@ -353,16 +353,16 @@ It prints the start of the installer (`#!/usr/bin/env bash`, `# Uncage installer
 
 ## 9. Connect your computer (the user’s side)
 
-Open `http://localhost:3000/uncage`. The chat shows **Connect your computer** with two commands. On a real deployment the user copies both. For this local test:
+Open `http://localhost:3000/uncage`. The chat shows **Connect your computer** with one command, on the tab of your operating system. On a real deployment the user copies it. For this local test:
 
-1. **Install the CLI.** On macOS or Linux, `curl -fsSL http://localhost:3000/api/uncage/install.sh | bash`; on Windows (PowerShell), `irm http://localhost:3000/api/uncage/install.ps1 | iex`. The installer checks the computer first (Node.js 22+, npm, a coding agent), asks `[Y/n]` before each step it needs (using your Node version manager if you have one; never `sudo` or admin rights), installs `@uncage/cli`, and offers to run the setup command for you. Or install it directly: `npm i -g @uncage/cli`.
-2. **Connect.** Run the setup command the page shows:
+1. **Run the command.** On macOS or Linux, `curl -fsSL http://localhost:3000/api/uncage/install.sh | bash`; on Windows (PowerShell), `irm http://localhost:3000/api/uncage/install.ps1 | iex`. The installer checks the computer first (Node.js 22+, npm, a coding agent), asks `[Y/n]` before each step it needs (using your Node version manager if you have one; never `sudo` or admin rights), installs `@uncage/cli`, and offers to run `uncage setup http://localhost:3000` for you: answer **Y**. See [Install on your computer](/docs/start/install-on-your-computer/) for what it does on each OS.
+2. **Already have the CLI** (`npm i -g @uncage/cli`)? Run the setup command the page shows under **Already have the CLI?** instead:
 
    ```sh
    uncage setup http://localhost:3000
    ```
 
-   It prints a code and opens `http://localhost:3000/device?code=…`. Check that the code matches and click **Approve**. Setup saves the machine token in `~/.uncage/agent.yaml` and starts the background agent (a per-user service: launchd on macOS, systemd on Linux, a scheduled task on Windows; `uncage agent status` shows it).
+3. **Approve.** Setup prints a code and opens `http://localhost:3000/device?code=…`. Check that the code matches and click **Approve**. Setup saves the machine token in `~/.uncage/agent.yaml` and starts the background agent (a per-user service: launchd on macOS, systemd on Linux, a scheduled task on Windows; `uncage agent status` shows it).
 
 Back on the chat page, the status changes from “Waiting for your computer…” to **Connected: &lt;your computer’s name&gt;**.
 

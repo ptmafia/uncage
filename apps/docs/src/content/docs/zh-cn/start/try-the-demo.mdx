@@ -1,6 +1,6 @@
 ---
 title: 试用演示
-description: 用两条命令把你自己的 Mac 连接到一个在线的 Uncage 网站，让它做一个落地页，看你自己的 Claude Code 搭好页面并通过网站工具发布，浏览器里会弹出审批卡片。
+description: 用一条命令把你自己的电脑（macOS、Linux 或 Windows）连接到一个在线的 Uncage 网站，让它做一个落地页，看你自己的 Claude Code 搭好页面并通过网站工具发布，浏览器里会弹出审批卡片。
 ---
 
 import { Image } from 'astro:assets';
@@ -20,26 +20,25 @@ import offline from '../../../../assets/demo/offline.png';
 
 ## 开始之前
 
-- 一台 Mac（Uncage 守护进程运行在 macOS 上）。
-- Node.js 22 或更高版本。
-- 已安装并登录 Claude Code：`npm i -g @anthropic-ai/claude-code`，然后运行一次 `claude` 并输入 `/login`。
+- 一台装有 macOS、Linux 或 Windows 的电脑。不必事先准备 Node.js 22：缺少时，下面的命令会帮你安装。
+- 已安装并登录 Claude Code：`curl -fsSL https://claude.ai/install.sh | bash`（macOS、Linux）或 `irm https://claude.ai/install.ps1 | iex`（Windows PowerShell），然后运行一次 `claude` 并输入 `/login`。
 
 ## 以访客身份进入
 
-打开演示网站，点击 **以访客身份进入**。网站会给这个浏览器分配一个随机的访客账号，不需要注册。随后对话框会显示 **连接你的电脑** 和两条命令。
+打开演示网站，点击 **以访客身份进入**。网站会给这个浏览器分配一个随机的访客账号，不需要注册。随后对话框会显示 **连接你的电脑** 和一条命令，默认打开你的操作系统对应的标签页。
 
-<Image src={connect} alt="演示网站的对话框里显示“连接你的电脑”卡片：第 1 步用 curl 命令安装 Uncage CLI，第 2 步用演示网站的地址运行 uncage setup，下方提示正在等待电脑上线。" />
+<Image src={connect} alt="演示网站的对话框里显示“连接你的电脑”卡片：“在你的电脑上运行这条命令”下面是 macOS / Linux 和 Windows 两个标签页，以及带演示网站地址的 curl 命令；再往下是“已经装好 CLI？”和 uncage setup 命令，最后提示正在等待电脑上线。" />
 
 ## 连接你的电脑
 
-在终端里运行这两条命令，把 `<demo>` 换成演示网站的地址：
+在终端（Windows 上是 PowerShell）里运行卡片上显示的命令，把 `<demo>` 换成演示网站的地址：
 
 ```sh
-curl -fsSL <demo>/api/uncage/install.sh | bash
-uncage setup <demo>
+curl -fsSL <demo>/api/uncage/install.sh | bash        # macOS, Linux
+irm <demo>/api/uncage/install.ps1 | iex               # Windows PowerShell
 ```
 
-也可以用 `npm i -g @uncage/cli` 代替第一条命令来安装 CLI。`uncage setup` 会打印一个验证码，并在浏览器里打开演示网站的授权页。
+它会检查你的电脑，安装缺少的东西（Node.js 22、Uncage CLI）之前都会询问 `[Y/n]`；详见[在你的电脑上安装](/docs/zh-cn/start/install-on-your-computer/)。最后回答 **Y**，为演示网站运行 `uncage setup`。已经装好 CLI？那就直接运行 `uncage setup <demo>`。setup 会打印一个验证码，并在浏览器里打开演示网站的授权页。
 
 <Image src={deviceApprove} alt="授权页“连接这台电脑?”写明了请求连接的电脑，用大字显示验证码，并提供“拒绝”和“批准”两个按钮。" />
 

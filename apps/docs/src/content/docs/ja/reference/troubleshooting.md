@@ -1,7 +1,55 @@
 ---
 title: トラブルシューティング
-description: Connected モード（コンピュータが接続しない、オフラインになる、エージェントの更新が必要、セットアップのエラー、ツールが呼ばれない、サーバーレスでの504とタイムアウト、接続の切断、プーラー、プロキシの背後のWebSocket）とLocal モード（デーモンに到達できない、forbidden_origin、ポート、サインイン）でよくある問題の解決方法。
+description: コンピュータへのインストール（コマンドが見つからない、Node.jsの削除、Linuxのlingerとsystemdがない環境、Windowsの実行ポリシー、unzip）、Connected モード（コンピュータが接続しない、オフラインになる、エージェントの更新が必要、セットアップのエラー、ツールが呼ばれない、サーバーレスでの504とタイムアウト、接続の切断、プーラー、プロキシの背後のWebSocket）とLocal モード（デーモンに到達できない、forbidden_origin、ポート、サインイン）でよくある問題の解決方法。
 ---
+
+## コンピュータへのインストール
+
+コマンド1つのインストーラーと、macOS、Linux、Windowsでのバックグラウンドのエージェントについて。何をするかは[コンピュータへのインストール](/docs/ja/start/install-on-your-computer/)を参照してください。
+
+### インストール後に`uncage: command not found`と表示される
+
+新しいターミナルを開いてください。インストーラーによる`PATH`の変更は、新しく開いたターミナルにだけ反映されます（macOSとLinux：シェルの設定ファイルの`# >>> uncage >>>`ブロック、Windows：ユーザーの`Path`）。「Node.js 22を既定のNode.jsにしますか？」に**n**と答えた場合、インストーラーは`uncage`のフルパスと使うべき`PATH`の行を表示しています。それを実行するか、インストーラーをもう一度実行して**Y**と答えてください。fishでは、インストーラーが表示した行を自分で設定に追加してください。
+
+### バックグラウンドのエージェントが使うNode.jsが削除された
+
+サービスは、インストール時のNode.jsに固定されて動きます。Homebrewでのアップグレード（`brew upgrade node`または`node@22`）は古いバージョンのフォルダを削除し、nvmやfnmなどのバージョンマネージャーでバージョンを削除した場合も同じです。`uncage doctor`には`✗ Background agent Node … no longer exists`と表示されます。今使っているNode.jsにサービスを固定し直してください。
+
+```sh
+uncage agent install
+```
+
+### Linux：ログアウトするとエージェントが止まる
+
+linger（常駐）が有効でない限り、systemdのユーザーサービスはログアウト時に停止します（`uncage doctor`が警告します）。自分のユーザーで有効にしてください。
+
+```sh
+loginctl enable-linger $USER
+```
+
+ほとんどのディストリビューションでは`sudo`なしで実行できます。拒否された場合は管理者に依頼してください。
+
+### systemdのないLinux
+
+一部のコンテナやWSLには、ユーザー単位のsystemdがありません。その場合、`uncage setup`と`uncage agent install`はその旨を表示し、サービスをインストールしません。エージェントをフォアグラウンドで実行してください（たとえば`tmux`や`screen`の中で）。
+
+```sh
+uncage agent
+```
+
+### Windows：「このシステムではスクリプトの実行が無効になっている」
+
+PowerShellの既定の実行ポリシーは、npmが`uncage.cmd`の隣に作るシム`uncage.ps1`の実行を拒否します。代わりに`uncage.cmd`を使う（例：`uncage.cmd setup https://your.site`）か、自分のユーザーでローカルのスクリプトを許可してください。
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+インストーラー自体は影響を受けません。`irm … | iex`はスクリプトファイルを使わずに実行されるためです。
+
+### Linux：「fnmのインストールにはunzipが必要」
+
+Node.jsのバージョンマネージャーがない場合、インストーラーはfnmをインストールしますが、fnmのインストーラーには`unzip`が必要です。インストーラーはパッケージマネージャーを呼び出さないため、`unzip`を自分でインストールして（`sudo apt install unzip`、`sudo dnf install unzip`など）、もう一度コマンドを実行してください。好きな方法でNode.js 22をインストールしてから、コマンドを再実行してもかまいません。
 
 ## Connected モード
 

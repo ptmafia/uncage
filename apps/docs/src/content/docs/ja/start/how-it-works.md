@@ -66,7 +66,7 @@ sequenceDiagram
   participant A as uncage agent
   participant C as Claude Code
   Note over U,A: Connect (once per computer)
-  U->>A: curl …/install.sh | bash (or irm …/install.ps1 | iex), then uncage setup https://your.site
+  U->>A: curl …/install.sh | bash (or irm …/install.ps1 | iex), which runs uncage setup https://your.site
   A->>H: POST /device/code
   A-->>U: opens /device?code=ABCD-2345 in the browser
   U->>H: Approve (signed in, POST)
@@ -99,16 +99,16 @@ sequenceDiagram
 
 ### 1. 接続する
 
-1. ページにコマンドを表示します。`<ConnectMachine>`がハブ（`GET /api/uncage/machines/install`）から取得して描画します：
+1. ページには、ユーザーのOSに合ったコマンドを1つ表示します。`<ConnectMachine>`がハブ（`GET /api/uncage/machines/install`）から取得して描画し、訪問者のOSのタブを最初に開きます。
 
    ```sh
-   curl -fsSL https://your.site/api/uncage/install.sh | bash
-   uncage setup https://your.site
+   curl -fsSL https://your.site/api/uncage/install.sh | bash        # macOS, Linux
+   irm https://your.site/api/uncage/install.ps1 | iex               # Windows PowerShell
    ```
 
-   Windowsでのインストールコマンドは`irm https://your.site/api/uncage/install.ps1 | iex`です。
+   すでにCLIがあるコンピュータ向けに、`uncage setup https://your.site`も表示します。
 
-2. `install.sh`（macOS、Linux）と`install.ps1`（Windows）は、ハブが配信する固定のスクリプトです。コンピュータの状態（OS、Node.js 22以降、npm、インストール済みのコーディングエージェント）を確認し、必要な手順ごとに`[Y/n]`で確認を求めます。Node.jsは、ユーザー自身のバージョンマネージャー（nvm、fnm、voltaなど）があればそれを使ってインストールします（`sudo`や管理者権限は一切使わず、デフォルトのNodeのバージョンも同意なしには変更しません）。グローバルのnpmフォルダに書き込めない場合はユーザー所有のnpmフォルダを用意し、最後に`@uncage/cli`をインストールします。コーディングエージェント自体はインストールせず、見つからない場合はClaude Codeのインストーラーを案内します。最後に、このウェブサイト向けに`uncage setup`を実行するかどうかを尋ねます。
+2. `install.sh`（macOS、Linux）と`install.ps1`（Windows）は、ハブが配信する固定のスクリプトです。コンピュータの状態（OS、Node.js 22以降、npm、インストール済みのコーディングエージェント）を確認し、必要な手順ごとに`[Y/n]`で確認を求めます。Node.jsは、ユーザー自身のバージョンマネージャー（nvm、fnm、voltaなど）があればそれを使ってインストールします（`sudo`や管理者権限は一切使わず、デフォルトのNodeのバージョンも同意なしには変更しません）。グローバルのnpmフォルダに書き込めない場合はユーザー所有のnpmフォルダを用意し、最後に`@uncage/cli`をインストールします。コーディングエージェント自体はインストールせず、見つからない場合はClaude Codeのインストーラーを案内します。最後に、このウェブサイト向けに`uncage setup`を実行するかどうかを尋ねます。OSごとの詳細は[コンピュータへのインストール](/docs/ja/start/install-on-your-computer/)を参照してください。
 3. `uncage setup`がデバイスログインを開始します。8文字のコード（有効期間10分）を取得し、`https://your.site/device?code=…`を開きます。
 4. あなたのサイトにサインインしたユーザーがコードを確認し、**Approve**（承認）をクリックします。承認ページは`hub.approveDevice(code, user)`を呼び出します。これでコンピュータがそのユーザーに紐づけられます。
 5. CLIは**マシントークン**（ランダムな値で、コンピュータとウェブサイトの組み合わせごとに1つ）を受け取り、`~/.uncage/agent.yaml`（モード0600）に保存し、エージェントをユーザー単位のバックグラウンドサービス（macOSではlaunchd、Linuxではsystemdのユーザーサービス、Windowsではスケジュールされたタスク）としてインストールします。このサービスは、インストール時に使ったNode.jsそのもので動きます。

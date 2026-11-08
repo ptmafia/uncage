@@ -26,7 +26,7 @@ Uncageは、Claude Code（およびCodex）を、あなた自身のウェブUI�
 | --- | --- | --- |
 | エージェントを動かす人 | 各エンドユーザー。自分のコンピュータで、自分のClaude Codeのログインを使います | あなた。アプリを動かしているマシンで実行します |
 | サイトに追加するもの | Nodeバックエンドに`@uncage/hub`、ページに`<AgentChat>`、`/device`に承認ページ | 同一オリジンのプロキシルートと`<AgentChat>` |
-| ユーザーが行うこと | 2つのコマンドを一度だけ実行します：`curl -fsSL https://your.site/api/uncage/install.sh \| bash`、続けて`uncage setup https://your.site` | なし。あなたのマシンです |
+| ユーザーが行うこと | コマンドを1つ一度だけ実行し、ブラウザでコンピュータを承認します。macOSとLinuxでは`curl -fsSL https://your.site/api/uncage/install.sh \| bash`、Windowsでは`irm https://your.site/api/uncage/install.ps1 \| iex` | なし。あなたのマシンです |
 | 向いている用途 | ユーザーがClaude Codeを持っていて、あなたのプロダクトと連携させたいSaaS | 社内ツール、デスクトップ型アプリ、開発者向けダッシュボード |
 
 ## ユーザーが得られるもの
@@ -59,5 +59,5 @@ Uncageは、Claude Code（およびCodex）を、あなた自身のウェブUI�
 - **コーディングエージェントを使う場合**：[Uncageスキル](/docs/skills/uncage/SKILL.md)または[`llms.txt`](/docs/llms.txt)を渡してください。どのページもURLに`.md`を付ければプレーンなMarkdownで取得できます。[コーディングエージェント向け](/docs/ja/start/for-coding-agents/)を参照してください。
 
 :::note[ステータス]
-Connected モードはUncage 0.2に含まれます（`@uncage/hub`、`@uncage/agent`、および`@uncage/cli`の`uncage setup` / `uncage agent`コマンド）。エージェント側は**macOS**のみで動作し、Node.js 22以降が必要です。Claude Codeは実環境で検証済みです。Codexは実装済みですが実際のバイナリでの動作確認はまだで、サイトツールにも未対応です。詳細：[互換性](https://github.com/ptmafia/uncage/blob/main/docs/compatibility.md)。
+Connected モードはUncage 0.2に含まれます（`@uncage/hub`、`@uncage/agent`、および`@uncage/cli`の`uncage setup` / `uncage agent`コマンド）。エージェント側は**macOS、Linux、Windows**で、ユーザー単位のバックグラウンドサービスとして動作します。Node.js 22以降が必要です（インストーラーが用意します）。macOSは実機で検証済み、LinuxとWindowsはCIで検証済みで、実機での確認を待っている段階です。Claude Codeは実環境で検証済みです。Codexは実装済みですが実際のバイナリでの動作確認はまだで、サイトツールにも未対応です。詳細：[互換性](https://github.com/ptmafia/uncage/blob/main/docs/compatibility.md)。
 :::

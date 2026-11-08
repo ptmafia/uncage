@@ -30,7 +30,7 @@ Verify: start the dev server, then curl -s http://localhost:3000/api/uncage/inst
 ## 始める前に
 
 - **ウェブサイト側**：Nodeで動かすNext.js 16アプリ（App Router）。Node.jsは**22.18以降**が必要です。後述のカスタムサーバーは、Nodeが直接実行する`.ts`ファイルだからです。新規に始める場合：`npx create-next-app@latest my-site`（TypeScript、App Router）。
-- **ユーザー側（このテストではあなた自身のコンピュータ）**：Node.js 22以降（後述のインストーラーで用意できます）と、インストール済みでサインインしたClaude Code：`npm i -g @anthropic-ai/claude-code`を実行し、`claude`を一度起動して`/login`と入力します。エージェントはmacOSで動作します。LinuxとWindowsはCIで検証済みで、実機での確認を待っている段階です。
+- **ユーザー側（このテストではあなた自身のコンピュータ）**：Node.js 22以降（後述のインストーラーで用意できます）と、インストール済みでサインインしたClaude Code：`npm i -g @anthropic-ai/claude-code`を実行し、`claude`を一度起動して`/login`と入力します。OSはmacOS、Linux、Windowsのいずれか（macOSは実機で検証済み、LinuxとWindowsはCIで検証済みで、実機での確認を待っている段階です）。
 
 :::note[カスタムサーバーを使う理由]
 このクイックスタートでは**従来モード（常駐プロセス）**を使います。ハブは接続中のすべてのコンピュータとWebSocketを開いたままにし、データを組み込みデータベースのフォルダに保存するため、他に何も用意する必要がありません。そのためには、HTTPサーバーにアクセスできる常駐のNodeプロセスが必要ですが、Next.jsのルートハンドラーだけではそれが得られません。代わりに**Vercel**などのサーバーレスプラットフォームにデプロイする場合は、[VercelでNext.js](/docs/ja/deploy/vercel/)を参照してください（ルートハンドラーとPostgresを使い、カスタムサーバーは不要です）。どちらを選ぶべきかは、[デプロイモードを選ぶ](/docs/ja/start/choose-deployment-mode/)で説明しています。
@@ -211,7 +211,7 @@ server.listen(port, () => console.log(`ready on http://localhost:${port}`));
 
 ## 6. チャットページ
 
-`<AgentChat>`はデフォルトで`/api/uncage`と通信します。接続先がハブ（ローカルデーモンではない）であることを検出すると、自動的にConnected モードに切り替わります。まだコンピュータがなければ2つのコマンドを示す`<ConnectMachine>`を表示し、接続後はヘッダーに会話を実行しているコンピュータが表示されます。
+`<AgentChat>`はデフォルトで`/api/uncage`と通信します。接続先がハブ（ローカルデーモンではない）であることを検出すると、自動的にConnected モードに切り替わります。まだコンピュータがなければインストールコマンドを1つ示す`<ConnectMachine>`を表示し、接続後はヘッダーに会話を実行しているコンピュータが表示されます。
 
 ```tsx title="app/uncage/page.tsx"
 'use client';
@@ -353,16 +353,16 @@ curl -s http://localhost:3000/api/uncage/install.sh | head -3
 
 ## 9. コンピュータを接続する（ユーザー側）
 
-`http://localhost:3000/uncage`を開きます。チャットに**Connect your computer**（コンピュータを接続）と2つのコマンドが表示されます。本番環境ではユーザーが両方をコピーします。このローカルテストでは次のようにします：
+`http://localhost:3000/uncage`を開きます。チャットに**Connect your computer**（コンピュータを接続）とコマンドが1つ、あなたのOSのタブで表示されます。本番環境ではユーザーがこれをコピーします。このローカルテストでは次のようにします：
 
-1. **CLIをインストールします**。macOSまたはLinuxでは`curl -fsSL http://localhost:3000/api/uncage/install.sh | bash`、Windows（PowerShell）では`irm http://localhost:3000/api/uncage/install.ps1 | iex`を実行します。インストーラーはまずコンピュータの状態（Node.js 22以降、npm、コーディングエージェント）を確認し、必要な手順ごとに`[Y/n]`で確認を求め（Nodeのバージョンマネージャーがあればそれを使い、`sudo`や管理者権限は一切使いません）、`@uncage/cli`をインストールして、セットアップコマンドを代わりに実行するかどうかを尋ねます。直接`npm i -g @uncage/cli`でインストールしてもかまいません。
-2. **接続します**。ページに表示されているsetupコマンドを実行します：
+1. **コマンドを実行します**。macOSまたはLinuxでは`curl -fsSL http://localhost:3000/api/uncage/install.sh | bash`、Windows（PowerShell）では`irm http://localhost:3000/api/uncage/install.ps1 | iex`を実行します。インストーラーはまずコンピュータの状態（Node.js 22以降、npm、コーディングエージェント）を確認し、必要な手順ごとに`[Y/n]`で確認を求め（Nodeのバージョンマネージャーがあればそれを使い、`sudo`や管理者権限は一切使いません）、`@uncage/cli`をインストールして、`uncage setup http://localhost:3000`を代わりに実行するかどうかを尋ねます。**Y**と答えてください。OSごとの動作は[コンピュータへのインストール](/docs/ja/start/install-on-your-computer/)を参照してください。
+2. **すでにCLIがある**（`npm i -g @uncage/cli`）場合は、代わりにページの**Already have the CLI?**（CLIはインストール済み？）の下に表示されるsetupコマンドを実行します。
 
    ```sh
    uncage setup http://localhost:3000
    ```
 
-   コードが表示され、`http://localhost:3000/device?code=…`が開きます。コードが一致していることを確認し、**Approve**（承認）をクリックします。setupはマシントークンを`~/.uncage/agent.yaml`に保存し、バックグラウンドのエージェント（ユーザー単位のサービス。macOSではlaunchd、Linuxではsystemd、Windowsではスケジュールされたタスク。`uncage agent status`で確認できます）を起動します。
+3. **承認します**。setupはコードを表示し、`http://localhost:3000/device?code=…`を開きます。コードが一致していることを確認し、**Approve**（承認）をクリックします。setupはマシントークンを`~/.uncage/agent.yaml`に保存し、バックグラウンドのエージェント（ユーザー単位のサービス。macOSではlaunchd、Linuxではsystemd、Windowsではタスク スケジューラのタスク。`uncage agent status`で確認できます）を起動します。
 
 チャットページに戻ると、ステータスが「Waiting for your computer…」（コンピュータを待機中）から**Connected: &lt;コンピュータ名&gt;**（接続済み）に変わります。
 

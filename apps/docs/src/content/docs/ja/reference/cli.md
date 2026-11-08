@@ -10,7 +10,7 @@ curl -fsSL https://your.site/api/uncage/install.sh | bash        # macOS, Linux
 irm https://your.site/api/uncage/install.ps1 | iex               # Windows PowerShell
 ```
 
-インストーラーはコンピュータの状態（Node.js 22以降、npm、インストール済みのコーディングエージェント）を確認し、各手順の前に`[Y/n]`で確認を求め（Node.jsは、ユーザーのバージョンマネージャーがあればそれを使ってインストールします。`sudo`や管理者権限は一切使いません）、`@uncage/cli`をインストールして、そのウェブサイト向けに`uncage setup`を実行するかどうかを尋ねます。
+インストーラーはコンピュータの状態（Node.js 22以降、npm、インストール済みのコーディングエージェント）を確認し、各手順の前に`[Y/n]`で確認を求め（Node.jsは、ユーザーのバージョンマネージャーがあればそれを使ってインストールします。`sudo`や管理者権限は一切使いません）、`@uncage/cli`をインストールして、そのウェブサイト向けに`uncage setup`を実行するかどうかを尋ねます。フラグ、終了コード、OSごとの詳細は[コンピュータへのインストール](/docs/ja/start/install-on-your-computer/)を参照してください。
 
 ### `uncage --version`
 
@@ -35,7 +35,7 @@ uncage setup <url> [--no-daemon] [--no-browser]
 1. デバイスコードを要求し、リンクとコードを表示します。
 2. ブラウザでリンクを開きます（`open`）。サインイン中のユーザーがそこで承認します。
 3. 承認を待ち、サイトとマシントークンを`~/.uncage/agent.yaml`（モード0600）に保存します。
-4. `uncage agent install`と同様に、このユーザーのバックグラウンドのエージェントをインストールし、起動（または再起動）します。macOSではlaunchd（`~/Library/LaunchAgents/dev.uncage.agent.plist`）、Linuxではsystemdのユーザーサービス、Windowsではスケジュールされたタスクを使います。サービスマネージャーがない環境では、`uncage agent`をフォアグラウンドで実行する方法を表示します。
+4. `uncage agent install`と同様に、このユーザーのバックグラウンドのエージェントをインストールし、起動（または再起動）します。macOSではlaunchd（`~/Library/LaunchAgents/dev.uncage.agent.plist`）、Linuxではsystemdのユーザーサービス、Windowsではタスク スケジューラのタスクを使います。サービスマネージャーがない環境では、`uncage agent`をフォアグラウンドで実行する方法を表示します。
 
 | フラグ | |
 | --- | --- |
@@ -58,12 +58,12 @@ uncage agent status [--json]       # installed? running? which Node.js?
 | フラグ / サブコマンド | |
 | --- | --- |
 | `--log-file <path>` | ログをstderrではなくこのファイルに追記します。ログファイルのサイズは起動のたびに上限内に抑えられます。 |
-| `install` | ユーザー単位のバックグラウンドサービスをインストールして起動します。サービスは**このコマンドを実行しているNode.jsに固定されます**（バージョンマネージャーのシムではなく、実際のパス）。macOSではlaunchd、Linuxではsystemdのユーザーサービス、Windowsではスケジュールされたタスク（現在のユーザー、最小権限。タスクを作成できない場合はレジストリのRunエントリ）を使います。管理者権限は不要です。そのNode.jsを変更または削除した後は、もう一度実行してください。`UNCAGE_HOME`が設定されている間は拒否されます。 |
+| `install` | ユーザー単位のバックグラウンドサービスをインストールして起動します。サービスは**このコマンドを実行しているNode.jsに固定されます**（バージョンマネージャーのシムではなく、実際のパス）。macOSではlaunchd、Linuxではsystemdのユーザーサービス、Windowsではタスク スケジューラのタスク（現在のユーザー、最小権限。タスクを作成できない場合はレジストリのRunエントリ）を使います。管理者権限は不要です。そのNode.jsを変更または削除した後は、もう一度実行してください。`UNCAGE_HOME`が設定されている間は拒否されます。 |
 | `uninstall` | サービスを停止して削除します。`~/.uncage/agent.yaml`とデータは残ります。 |
 | `status` | サービスの種類、インストール済みか、実行中か、定義ファイル、固定されたNode.js（とそれがまだ存在するか）、CLIのエントリ、ログのフォルダ（`~/.uncage/logs`）を表示します。`--json`を付けると同じ内容をJSONで出力します。 |
-| `--supervise` | 内部用：Windowsのスケジュールされたタスクは`uncage agent --supervise`を実行し、クラッシュや自己アップグレードの後にエージェントを再起動します（タスクスケジューラはこれを行わないためです）。macOSとLinuxでは不要です。 |
+| `--supervise` | 内部用：Windowsのタスク スケジューラのタスクは`uncage agent --supervise`を実行し、クラッシュや自己アップグレードの後にエージェントを再起動します（タスク スケジューラはこれを行わないためです）。macOSとLinuxでは不要です。 |
 
-Linuxでは、lingeringが有効でない限り、ユーザーサービスはログアウト時に停止します。`uncage doctor`がこれを知らせ、`loginctl enable-linger $USER`で解決できます。LinuxとWindowsはCIで検証済みで、実機での確認を待っている段階です。macOSは実機で検証済みです。
+Linuxでは、linger（常駐）が有効でない限り、ユーザーサービスはログアウト時に停止します。`uncage doctor`がこれを知らせ、`loginctl enable-linger $USER`で解決できます。LinuxとWindowsはCIで検証済みで、実機での確認を待っている段階です。macOSは実機で検証済みです。
 
 ### `uncage sites`
 
@@ -132,7 +132,7 @@ uncage doctor [--port <n> | --url <url>] [--workspace <dir>] [--data-dir <dir>] 
 uncage doctor --export-events <sessionId> [--out <file>] [--include-content] [--port <n> | --url <url>]
 ```
 
-Node、データディレクトリ、トークン、実行中のデーモン、Connected モードのバックグラウンドのエージェント（インストール済みで実行中か、固定されたNode.jsがまだ存在するか、Linuxのlingering、接続中の各ウェブサイトのエージェントのバージョン）、ランタイム（Claude Code、Codex、そしてACP エージェントごとに1行の`runtime.acp-<id>`。`uncage.config.yaml`の`runtimes.acp`で設定したものか、自動検出したもの）をチェックします。各行は ✓ か ✗ で、✗ の行には必ず`fix:`コマンドが表示されます。ACPの行は任意扱いで、✗（たとえば未インストールで、fixはインストールのヒント）でも終了コードは変わりません。`uncage.config.yaml`が独自の`command`で追加したACP エージェントには、実行するコマンドを示す警告行も表示されます。デーモンのワークスペースが`.uncage/`を無視していないgitリポジトリである場合と、ループバック以外のURLにトークンを送る前には、警告（`!`、致命的ではない）を出します。
+Node、データディレクトリ、トークン、実行中のデーモン、Connected モードのバックグラウンドのエージェント（インストール済みで実行中か、固定されたNode.jsがまだ存在するか、Linuxのlinger（常駐）、接続中の各ウェブサイトのエージェントのバージョン）、ランタイム（Claude Code、Codex、そしてACP エージェントごとに1行の`runtime.acp-<id>`。`uncage.config.yaml`の`runtimes.acp`で設定したものか、自動検出したもの）をチェックします。各行は ✓ か ✗ で、✗ の行には必ず`fix:`コマンドが表示されます。ACPの行は任意扱いで、✗（たとえば未インストールで、fixはインストールのヒント）でも終了コードは変わりません。`uncage.config.yaml`が独自の`command`で追加したACP エージェントには、実行するコマンドを示す警告行も表示されます。デーモンのワークスペースが`.uncage/`を無視していないgitリポジトリである場合と、ループバック以外のURLにトークンを送る前には、警告（`!`、致命的ではない）を出します。
 
 `--export-events`は、バグ報告用にセッションのイベントをJSONで書き出します。`--include-content`を付けない限り、内容は秘匿化されます。
 
@@ -150,5 +150,8 @@ Node、データディレクトリ、トークン、実行中のデーモン、C
 | `UNCAGE_ALLOW_BYPASS=1` | `serve` | Local モードで`bypassPermissions`を提供します（警告を表示します） |
 | `UNCAGE_TOKEN` | Local モードのプロキシ | `~/.uncage/token`にない場合のデーモンのトークン |
 | `UNCAGE_ALLOWED_HOSTS` | Local モードのプロキシ | 許可する`Host`名（カンマ区切り） |
+| `UNCAGE_YES=1` | `install.sh`、`install.ps1` | すべてのインストール手順に「はい」と答えます（`--yes` / `-Yes`） |
+| `UNCAGE_NO_SETUP=1` | `install.sh`、`install.ps1` | インストールだけを行い、`uncage setup`を提案しません（`--no-setup` / `-NoSetup`） |
+| `UNCAGE_LANG` | `install.sh`、`install.ps1` | インストーラーのメッセージの言語：`en`、`zh`、`ja`（`--lang` / `-Lang`） |
 
 Connected モードでは、バイパスを制御できるのは`~/.uncage/agent.yaml`の`localPolicy.allowBypass`だけです（[ローカルポリシー](/docs/ja/guides/local-policy/)）。
