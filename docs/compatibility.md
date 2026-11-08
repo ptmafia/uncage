@@ -136,6 +136,22 @@ Run record, 2026-11-07. Environment: macOS 26.6.2 (arm64), Node 24.15.0, pnpm 10
 
 Observed live (Claude Code 2.1.318, default model). Claude Code called `create_asset` with no card (a tool without confirmation). In the full run it then raised cards for its own Bash (`ls`/`find` to look at the workspace), WebSearch (about Uncage) and Write (`landing/index.html`). Last came the `publish_asset` card: `publish_asset({"assetId":"a_…","dir":"landing"})`, with the id `create_asset` had returned. After Allow the site stored the single `index.html`. It was an inline-CSS dark landing page with one `<h1>` ("打开笼子，让 AI 真正动手做事") and no external resources, and it rendered in the sandboxed iframe. On the first standalone run the cards were WebSearch, Write and `publish_asset`. The exact steps vary between runs; the spec allows every card. Screenshots and process logs go to `e2e/connected/results/` (gitignored).
 
+## Operating systems: the background agent (`uncage agent install`)
+
+The agent runs as a per-user service, pinned to the Node binary that ran `uncage agent install` (its realpath, never a version-manager shim). `uncage doctor` checks that the pinned Node still exists and is at least 22 (fix: `uncage agent install`).
+
+| OS | Service | Status | What ran (2026-11-08) |
+| --- | --- | --- | --- |
+| macOS | launchd user agent `~/Library/LaunchAgents/dev.uncage.agent.plist` | Unchanged from 0.2 (the plist is byte-for-byte the same, the same `launchctl bootout` / `bootstrap gui/<uid>` calls) | Unit tests with an injected `launchctl` on macos-latest and locally. No real launchd install was made in this check |
+| Linux | systemd user unit `~/.config/systemd/user/uncage-agent.service` (`Restart=on-failure`, `RestartSec=10`); without a user systemd, the foreground (`uncage agent`) | **CI verified, awaiting real-device confirmation** | ubuntu-latest: agent and CLI suites, installer tests, shellcheck of the rendered install.sh, and the real-service test (`UNCAGE_SERVICE_TESTS=1`, see the CI run notice for whether the runner had a user systemd). Local Docker (`UNCAGE_DOCKER_TESTS=1 pnpm --filter @uncage/cli exec vitest run --project docker`): (1) `debian:bookworm-slim` without Node: install.sh from the real hub installed Node 22.23.4 with fnm and the CLI, setup was approved, the agent came online, and a codex run (testkit fake) completed; `uncage agent install` fell back to the foreground. (2) A systemd-booted `debian:bookworm`: enable-linger, `uncage agent install`, the unit active, restarted after `kill -9` (about 10 s), doctor flagged the pinned Node once it was removed |
+| Windows | Task Scheduler task `UncageAgent` (current user's logon, least privilege, no UAC), with an `HKCU\…\Run` fallback when Task Scheduler answers "Access is denied" | **CI verified, awaiting real-device confirmation** | windows-latest: agent and CLI suites (paths, icacls permissions, `.cmd` shims resolved without a shell), install.ps1 scenarios, and the real-service test: the task registered for the runner user, the agent restarted after exit 75 by its `--supervise` process, uninstall leaving nothing. GitHub's Windows runners are administrators, so the standard-user path (and the Run-key fallback) is not proven yet |
+
+Notes:
+
+- Windows: Task Scheduler's RestartOnFailure does not restart a program that exits non-zero (seen in CI), so the task runs `node bin.js agent --supervise --log-file <log>`. The supervisor restarts the agent (10 s after a failure, 1 s after a self-upgrade) and writes `supervisor.pid` beside the log; uninstall stops that process tree, because ending the task only stops `conhost`.
+- Linux: `loginctl enable-linger $USER` keeps the agent running after logout (doctor warns when it is off).
+- Manual check on a real device: `uncage agent install`, `uncage agent status`, log out and back in (Windows) or reboot, `uncage doctor`, then `uncage agent uninstall`.
+
 ## How to re-verify
 
 - Claude Code, full live E2E: `pnpm build && UNCAGE_LIVE=1 pnpm e2e:live`. It needs a logged-in `claude`, Google Chrome and Node ≥ 22.18, and it uses a little Claude usage (about 3 minutes of short runs). Codex must be absent for spec 1 as written. Ports 4795–4798 and 3102–3105 must be free. Facts the composer specs observe (model list, the picked model, plan-mode cards, the `auto` outcome) are written to `e2e/live/results/composer-live.json`.

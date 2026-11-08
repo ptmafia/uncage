@@ -5,7 +5,7 @@
  * Never on a developer machine: it writes a real task / unit and starts it.
  */
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -52,6 +52,12 @@ if (argv.includes('--supervise')) {
 }
 `;
 
+/** One line on the CI run page (job summary) and in the log. */
+async function report(line: string): Promise<void> {
+  console.log(`::notice title=real service::${line}`);
+  if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `- real service (${process.platform}): ${line}\n`).catch(() => undefined);
+}
+
 async function beats(dir: string): Promise<Array<{ pid: string; at: number; args: string }>> {
   const text = await readFile(join(dir, 'heartbeat'), 'utf8').catch(() => '');
   return text
@@ -79,7 +85,7 @@ describe.runIf(enabled)('real service (CI only)', () => {
     const deps: ServiceDeps = { platform: process.platform, home: process.platform === 'win32' ? dir : homedir(), env: process.env, exec };
     const kind = await detectServiceKind(deps);
     if (kind === 'none') {
-      console.log(`::notice title=real service (${process.platform})::skipped: no user systemd on this runner (systemctl --user show-environment failed)`);
+      await report('skipped: no user systemd on this runner (systemctl --user show-environment failed)');
       ctx.skip();
       return;
     }
@@ -112,7 +118,7 @@ describe.runIf(enabled)('real service (CI only)', () => {
         async () => (await beats(dir)).find((b) => b.pid !== first.pid && b.at > killedAt),
         90_000,
       );
-      console.log(`::notice title=real service (${svc.kind})::exit 75 → restarted after ${restarted.at - killedAt} ms (pid ${first.pid} → ${restarted.pid})`);
+      await report(`${svc.kind}: exit 75 → restarted after ${restarted.at - killedAt} ms (pid ${first.pid} → ${restarted.pid})`);
     } finally {
       const { removed } = await svc.uninstall();
       expect(removed).toBe(true);
@@ -126,6 +132,7 @@ describe.runIf(enabled)('real service (CI only)', () => {
     const n = (await beats(dir)).length;
     await new Promise((r) => setTimeout(r, 3_000));
     expect((await beats(dir)).length).toBe(n);
+    await report(`${svc.kind}: uninstalled, nothing left running`);
     await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   });
 });
