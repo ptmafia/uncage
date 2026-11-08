@@ -141,3 +141,36 @@ HTTP 流的具体帧格式（SSE vs NDJSON）、发件箱表结构、轮询与�
 - **验证（诚实原则）**：本机只装有 Claude Code，因此：(1) 用一个**假 ACP agent**（testkit）做完整契约测试（流式、工具调用、审批、取消、错误、MCP 注入）；(2) 用 **Claude Code 的 ACP 适配器**（官方/Zed 维护的 `claude-code-acp` 类包，以 npm 实际包名为准）做真实端到端（连接 → 运行 → 审批 → 站点工具）。其他 agent 在兼容矩阵里标注“协议兼容，未实机验证”，直到实测。
 - **文档（三语）**：新增 “Use any ACP agent / 接入任意 ACP agent / 任意の ACP エージェント”指南 + 兼容矩阵更新；官网 Features 增加 “Any ACP agent” 卡片（三语）。
 - **并行实现**：ACP 轨道与 FaaS 轨道相互独立（ACP 只依赖 `RuntimeAdapter` 接口和 agent 的运行时注册），由不同 subagent 在独立 worktree 并行实现，最后合并到 `feat/faas-mode`。
+
+## 10. 追加：一条命令安装 + 多操作系统（用户 2026-11-08 确认）
+
+**意图**：环境没准备好的用户也能一条命令装好。用户原话：“先做环境检测，如果除了 agent 之外的内容没有安装就直接让用户确认安装，整个过程用户输入 Y/N 即可”“支持多操作系统，比如 Windows 和 mac、Linux”“也有一些 nvm 用来做版本管理的吧”。
+
+**安装入口**（hub 提供，开发者可经 `installScript` 选项扩展）
+- macOS / Linux：`curl -fsSL <site>/api/uncage/install.sh | bash`
+- Windows：`irm <site>/api/uncage/install.ps1 | iex`
+- 官网 / 帮助站 / demo 按访问者系统自动显示对应命令（可切换）。文案改为“一条命令、一次批准”（三语）。
+
+**脚本流程**（两个脚本行为一致）
+1. 检测并列出：操作系统与架构、Node ≥ 22、npm、npm 全局目录写权限、已安装的 agent（Claude Code、Codex、已登记的 ACP agent）。
+2. Node 缺失或过低：**优先沿用用户已有的版本管理器**——macOS/Linux：nvm、fnm、volta、asdf、mise、n；Windows：nvm-windows、fnm、volta——用它装 22（不改用户默认版本，除非用户选择）；都没有时：macOS 有 Homebrew 用 brew，Windows 有 winget 用 winget，否则装 fnm（用户目录，免管理员）。不调用 apt/dnf。
+3. npm 全局目录不可写：改用用户目录前缀（`~/.npm-global`）并加入 PATH，免 sudo。
+4. 安装 `@uncage/cli`。
+5. agent 只检测不代装：一个都没有时给出 Claude Code 官方安装链接，装好重跑即可。
+6. 最后询问“现在把这台电脑连接到 <site>？[Y/n]”，Y 则执行 `uncage setup <site>`。
+- 每个确认都是 `[Y/n]`；`curl | bash` 下从 `/dev/tty` 读取；无终端（CI）时不阻塞：列出缺失项与手动命令后退出，或 `--yes` 全部确认。可重复运行（已完成步骤跳过）；每步失败给出原因与手动修复命令；提示语言跟随系统（中/英/日）。
+
+**agent 跨平台**
+- 后台服务：macOS launchd（现状）；Linux systemd 用户服务（无 systemd 时前台运行并提示）；Windows 计划任务（登录时启动，`schtasks`），均免管理员。`uncage agent install|uninstall|status` 三系统一致。
+- **服务固定 Node 绝对路径**（如 `~/.nvm/versions/node/v22.x/bin/node`），不依赖 PATH；该 Node 被卸载时 `uncage doctor` 检出并给出 `uncage agent install` 一键修复；`uncage --version` / `doctor` 显示实际使用的 Node。
+- 跨平台细节：路径、配置文件权限（Windows 用账户级 ACL 语义代替 0600）、Claude Code / Codex 在 Windows 的可执行文件名、换行。
+
+**验证（诚实原则）**
+- macOS：本机真实 Claude Code 全链路。
+- Linux：Docker 容器（真实 hub + 假 agent 运行时）全链路；systemd 用户服务在带 systemd 的容器里实测。
+- Windows：无实机——GitHub Actions 增加 Windows / Ubuntu / macOS 矩阵，跑 agent、CLI、安装脚本测试（`install.ps1` 在 Windows runner 真实执行）。兼容矩阵标注“CI 已验证，待实机确认”，直到用户实测。
+- 安装脚本：沙箱 + 假 `node`/`npm`/`brew`/`nvm`/`winget` 覆盖：全部就绪、缺 Node（有/无版本管理器）、npm 无权限、无终端、无 agent。
+
+**连带**：官网 “Windows & Linux agents” 由 Coming soon 改为已支持（三语）；帮助站新增各系统安装说明与排障（三语）。
+
+**并行实现**：作为独立的“平台轨道”，由不同 subagent 在独立 worktree 并行实现，合并进 `feat/faas-mode`（与 ACP 轨道同一时间点之前）。
