@@ -58,6 +58,8 @@ To keep your real `~/.uncage` and `~/Uncage` untouched while trying it, prefix b
 
 Environment: `PORT` (3200), `HOST` (127.0.0.1), `PUBLIC_URL` (`http://localhost:$PORT`, the URL users open and give to `uncage setup`), `DEMO_DATA_DIR` (`./.data`: the hub's PGlite store, the assets and the cookie secret), `DEMO_SECRET` (cookie key, at least 32 bytes; shorter values are ignored with a warning; otherwise generated into the data dir).
 
+Public demo mode: `DEMO_PUBLIC=1` replaces the sign-in form with a random guest account, shows a banner, makes published pages readable by their owner only, and deletes assets older than 24 hours (at start and hourly). `DOCS_URL` (for example `https://uncage.example/docs/`) adds a link to the docs in the banner. To host it, see [DEPLOY.md](DEPLOY.md).
+
 ## Run it (multi-node)
 
 Two hub nodes share one Postgres (`postgresHubStore`) and one Redis (`redisCluster`). A tiny round-robin proxy (`scripts/rr-proxy.ts`, HTTP and WebSocket, no sticky sessions) sits in front of them, so a machine's WebSocket and the browser's requests usually land on different nodes.

@@ -15,7 +15,8 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { toNodeHandler } from '@uncage/hub';
 import next from 'next';
-import { publicUrl } from './lib/config.ts';
+import { purgeAssetsOlderThan } from './lib/assets.ts';
+import { isPublicDemo, publicUrl } from './lib/config.ts';
 import { createDemoHub } from './lib/hub.ts';
 import { publishHub } from './lib/hub-registry.ts';
 
@@ -52,6 +53,17 @@ if (dev) {
   server.on('upgrade', (req, socket, head) => {
     if ((req.url ?? '').split('?')[0] !== agentPath) void upgrade(req, socket, head);
   });
+}
+
+if (isPublicDemo()) {
+  // Guests' pages are throwaway: drop anything older than a day, now and hourly.
+  const sweep = (): void => {
+    purgeAssetsOlderThan(24 * 3600_000)
+      .then((n) => console.log(`purged ${n} expired asset(s)`))
+      .catch((err: unknown) => console.error('asset purge failed', err));
+  };
+  sweep();
+  setInterval(sweep, 3600_000).unref();
 }
 
 server.listen(port, host, () => {

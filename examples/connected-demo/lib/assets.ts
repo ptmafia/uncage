@@ -146,3 +146,28 @@ export async function readAssetFile(id: string, path: string): Promise<{ data: B
     return null;
   }
 }
+
+/**
+ * Whether `viewer` may read a published asset's files. Drafts are never readable. In public demo
+ * mode only the owner may, since guests share one origin and must not see each other's pages.
+ */
+export function canReadAsset(asset: Asset, viewer: string | null, publicMode: boolean): boolean {
+  if (asset.status !== 'published') return false;
+  return publicMode ? viewer !== null && viewer === asset.owner : true;
+}
+
+/** Deletes assets created more than `maxAgeMs` ago (public demo housekeeping); returns how many. */
+export async function purgeAssetsOlderThan(maxAgeMs: number, now: number = Date.now()): Promise<number> {
+  const ids = await readdir(root()).catch(() => [] as string[]);
+  let removed = 0;
+  for (const id of ids) {
+    if (!isAssetId(id)) continue;
+    const asset = await getAsset(id);
+    const created = asset ? Date.parse(asset.createdAt) : Number.NaN;
+    // An unreadable or unparsable meta.json is junk: remove it too.
+    if (Number.isFinite(created) && now - created <= maxAgeMs) continue;
+    await rm(join(root(), id), { recursive: true, force: true });
+    removed += 1;
+  }
+  return removed;
+}

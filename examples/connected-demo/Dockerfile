@@ -23,6 +23,5 @@ ENV NODE_ENV=production \
     PORT=3200 \
     DEMO_DATA_DIR=/data \
     TRUST_PROXY=1
-VOLUME /data
 EXPOSE 3200
 CMD ["node", "server.ts"]

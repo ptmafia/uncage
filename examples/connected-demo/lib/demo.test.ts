@@ -1,10 +1,10 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ToolContext } from '@uncage/hub';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assetCsp } from './asset-csp.ts';
-import { createAsset, getAsset, listAssets, publishAsset, readAssetFile } from './assets.ts';
+import { canReadAsset, createAsset, getAsset, listAssets, publishAsset, purgeAssetsOlderThan, readAssetFile } from './assets.ts';
 import { guestUsername, normalizeUsername, readCookie, secret, signUser, verifyUser } from './auth.ts';
 import { isPublicDemo, publicUrl } from './config.ts';
 import { isSameOrigin } from './csrf.ts';
@@ -216,5 +216,30 @@ describe('asset CSP', () => {
     expect(dirs.sandbox).toEqual(['allow-scripts']);
     expect(dirs['frame-ancestors']).toEqual(["'self'"]);
     expect(csp).not.toContain('/asset-files/ ');
+  });
+});
+
+describe('public demo asset access and cleanup', () => {
+  it('canReadAsset: published is open outside public mode, owner-only in public mode, drafts never', async () => {
+    const a = await createAsset({ owner: 'alice', title: 'x', kind: 'landing-page', sessionId: 's' });
+    for (const pub of [false, true]) expect(canReadAsset(a, 'alice', pub)).toBe(false); // draft
+    const p = await publishAsset(a.id, [{ path: 'index.html', data: enc('x') }]);
+    expect(canReadAsset(p, 'bob', false)).toBe(true);
+    expect(canReadAsset(p, null, false)).toBe(true);
+    expect(canReadAsset(p, 'alice', true)).toBe(true);
+    expect(canReadAsset(p, 'bob', true)).toBe(false);
+    expect(canReadAsset(p, null, true)).toBe(false);
+  });
+
+  it('purgeAssetsOlderThan removes only assets past the max age', async () => {
+    const old = await createAsset({ owner: 'alice', title: 'old', kind: 'landing-page', sessionId: 's' });
+    const fresh = await createAsset({ owner: 'alice', title: 'new', kind: 'landing-page', sessionId: 's' });
+    const metaFile = join(dir, 'assets', old.id, 'meta.json');
+    const meta = JSON.parse(await readFile(metaFile, 'utf8')) as { createdAt: string };
+    meta.createdAt = new Date(Date.now() - 25 * 3600_000).toISOString();
+    await writeFile(metaFile, JSON.stringify(meta));
+    expect(await purgeAssetsOlderThan(24 * 3600_000)).toBe(1);
+    expect((await listAssets('alice')).map((x) => x.id)).toEqual([fresh.id]);
+    expect(await purgeAssetsOlderThan(24 * 3600_000)).toBe(0);
   });
 });
