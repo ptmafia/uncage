@@ -66,7 +66,7 @@ localPolicy:
 
 ### `runtimes.acp`
 
-このコンピュータがClaude CodeとCodex以外に提供するエージェントを設定します。Gemini CLI、OpenCode、Claude CodeのACPアダプターなど、Agent Client Protocolに対応したエージェントです。ACPレジストリのエージェントのうちコードをダウンロードするもの（`npx`、`uvx`）は、`uncage runtimes enable <id>`を実行した後にだけ動きます。提供中のものは`uncage runtimes`で一覧できます。詳しくは[あらゆるACP エージェントを使う](/docs/ja/guides/use-any-acp-agent/)を参照してください。
+このコンピュータがClaude CodeとCodex以外に提供するエージェントを設定します。Gemini CLI、OpenCode、Claude CodeのACPアダプターなど、Agent Client Protocolに対応したエージェントです。ACPレジストリのエージェントのうちコードをダウンロードするもの（`npx`、`uvx`）は、`uncage runtimes enable <id>`を実行した後にだけ動きます。提供中のものは`uncage runtimes`で一覧できます。詳しくは[あらゆるACPエージェントを使う](/docs/ja/guides/use-any-acp-agent/)を参照してください。
 
 ### 変更を反映する
 

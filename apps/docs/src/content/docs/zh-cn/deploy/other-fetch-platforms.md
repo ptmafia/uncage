@@ -10,7 +10,7 @@ hub 在这些平台上运行时，用的是和 Vercel、Workers 相同的 `hub.f
 :::
 
 :::caution[Netlify：时间上限较短]
-Netlify 的文档写明**流式函数的执行时间上限是 60 秒**（每个流式响应最大 20 MB）。hub 可以在这个限制内工作，但有几点要注意：把 `UNCAGE_STREAM_MAX_MS` 设为 `50000` 左右（流每约 50 s 轮换一次，所以重连和调用次数都会比 Vercel 多），并让 `toolTimeoutMs` 远低于 60 s（例如 `40_000`），因为每次网站工具调用都必须在一次调用内完成。如果你的工具需要更长时间，请使用 [Vercel](/docs/zh-cn/deploy/vercel/) 或[传统模式](/docs/zh-cn/deploy/node/)。
+Netlify 的文档写明**流式函数的执行时间上限是 60 秒**（每个流式响应最大 20 MB）。hub 可以在这个限制内工作，但有几点要注意：把 hub 的 `stream.maxDurationMs` 设为 `50000` 左右（下面的示例 `hub.ts` 从 `UNCAGE_STREAM_MAX_MS` 读取它；流每约 50 s 轮换一次，所以重连和函数调用次数都会比 Vercel 多），并让 `toolTimeoutMs` 远低于 60 s（例如 `40_000`），因为每次网站工具调用都必须在一次函数调用（invocation）内完成。如果你的工具需要更长时间，请使用 [Vercel](/docs/zh-cn/deploy/vercel/) 或[传统模式](/docs/zh-cn/deploy/node/)。
 :::
 
 ## 前提条件
@@ -22,7 +22,7 @@ Netlify 的文档写明**流式函数的执行时间上限是 60 秒**（每个�
 3. **能访问 Postgres**，通过 `pg` 或与 pg 兼容的 `Pool`（Neon 的 `@neondatabase/serverless` 里的 `Pool` 可以；只走 HTTP 的查询函数不行，因为 hub 需要事务）。
 4. 能告诉你**客户端 IP**（通过请求头或上下文字段），用于按 IP 限流。
 
-**强烈推荐**：提供 `waitUntil(promise)` 钩子。工具调用在它之下运行，这样连接断开也不会把 handler 中途切断，维护任务和清理也能在响应之后进行。有了更好：定时任务功能（用于调用维护端点）。
+**强烈推荐**：提供 `waitUntil(promise)` 钩子。工具调用在它之下运行，这样连接断开也不会把 handler 中途切断，维护任务和清理也能在响应之后进行。此外最好有定时任务功能（用于调用维护端点）。
 
 如果平台禁止在请求之间共享 socket（像 Workers 那样），就用 `fetchOnce` 为每个请求创建 hub，做法见 [Workers 页面](/docs/zh-cn/deploy/cloudflare-workers/#代码)。
 
@@ -52,7 +52,8 @@ async function createAppHub(): Promise<Hub> {
   const pool = new pg.Pool({ connectionString: url, max: 5 });
   pool.on('error', (err) => console.error('postgres pool error:', err.message));
   const ipHeader = process.env.CLIENT_IP_HEADER?.toLowerCase();
-  const publicUrl = process.env.PUBLIC_URL ?? (process.env.VERCEL ? undefined : 'http://localhost:3000');
+  const publicUrl =
+    process.env.PUBLIC_URL ?? (process.env.NODE_ENV === 'production' || process.env.VERCEL ? undefined : 'http://localhost:3000');
   if (!publicUrl) throw new Error('PUBLIC_URL is not set: set it to your site’s https:// origin.');
   return createHub({
     publicUrl, // what users open; localhost only for local development
@@ -150,7 +151,7 @@ export default {
 ## 部署
 
 1. **创建数据库**，并在平台上设置 `DATABASE_URL` 和 `PUBLIC_URL`。
-2. **在平台文档中查到**你所用套餐的**请求时间上限**，把 `UNCAGE_STREAM_MAX_MS` 设在它以下（如果上限是 300 s 或更长，可以跳过）。
+2. **在平台文档中查到**你所用套餐的**请求时间上限**，把 hub 的 `stream.maxDurationMs` 设在它以下（示例中为 `UNCAGE_STREAM_MAX_MS`；如果上限是 300 s 或更长，可以跳过）。
 3. 按平台要求的方式**部署**（Netlify：带上面的函数运行 `netlify deploy --prod`；Bun 或 Deno：在你的主机上运行 `bun server.ts` 或 `deno serve --port 3000 server.ts`）。
 4. **可选：** 安排每天带上 `CRON_SECRET` bearer 令牌调用一次 `/api/uncage/maintenance`。不安排的话，维护任务仍会在处理请求时顺带运行。
 
@@ -178,4 +179,4 @@ export default {
 
 ### 504、连接被切断
 
-有请求超过了平台上限：调低 `UNCAGE_STREAM_MAX_MS`，并让 `toolTimeoutMs`（默认 120 s）也低于上限。被代理或网络切断的连接没有危害：守护进程会带着游标重连，什么都不会丢失，也不会重复送达。
+有请求超过了平台上限：调低 `stream.maxDurationMs`（示例中为 `UNCAGE_STREAM_MAX_MS`），并让 `toolTimeoutMs`（默认 120 s）也低于上限。被代理或网络切断的连接没有危害：守护进程会带着游标重连，什么都不会丢失，也不会重复送达。

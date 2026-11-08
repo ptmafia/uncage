@@ -26,7 +26,7 @@ Uncageは、Claude Code（およびCodex）を、あなた自身のウェブUI�
 | --- | --- | --- |
 | エージェントを動かす人 | 各エンドユーザー。自分のコンピュータで、自分のClaude Codeのログインを使います | あなた。アプリを動かしているマシンで実行します |
 | サイトに追加するもの | Nodeバックエンドに`@uncage/hub`、ページに`<AgentChat>`、`/device`に承認ページ | 同一オリジンのプロキシルートと`<AgentChat>` |
-| ユーザーが行うこと | コマンドを1つ一度だけ実行し、ブラウザでコンピュータを承認します。macOSとLinuxでは`curl -fsSL https://your.site/api/uncage/install.sh \| bash`、Windowsでは`irm https://your.site/api/uncage/install.ps1 \| iex` | なし。あなたのマシンです |
+| ユーザーが行うこと | コマンドを1回実行し、ブラウザでコンピュータを承認します。macOSとLinuxでは`curl -fsSL https://your.site/api/uncage/install.sh \| bash`、Windowsでは`irm https://your.site/api/uncage/install.ps1 \| iex` | なし。あなたのマシンです |
 | 向いている用途 | ユーザーがClaude Codeを持っていて、あなたのプロダクトと連携させたいSaaS | 社内ツール、デスクトップ型アプリ、開発者向けダッシュボード |
 
 ## ユーザーが得られるもの

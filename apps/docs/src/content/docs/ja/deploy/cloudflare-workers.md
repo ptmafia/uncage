@@ -263,11 +263,11 @@ Workersではリクエスト間でソケットを共有できないため、共�
 
 ### Workersでサイトツールはちょうど1回実行されますか？
 
-Workersでは、ハブは各ツール呼び出しを`fetchOnce`に渡した`waitUntil`のもとで実行します。そのため、POSTが切れてもハンドラーは止まらず、結果が保存され、エージェントの再送でその結果を受け取れます（ちょうど1回）。ただしWorkersが`waitUntil`の処理を生かしておくのは、クライアントの切断後約30秒間だけです。それを過ぎても実行中のハンドラーはキャンセルされます。そのリース（`toolTimeoutMs` + 10秒）が切れると、呼び出しは「Site tool "<name>" timed out on the website. Please try again.」というエラーで失敗し、再実行されることはありません（最大1回）。`waitUntil`を渡さない場合は、POSTが切れるたびにこうなります。したがって、必ず`waitUntil: ctx.waitUntil.bind(ctx)`を渡し、ハンドラーは30秒より十分短く保ち、可能な限り冪等にしてください。
+Workersでは、ハブは各ツール呼び出しを`fetchOnce`に渡した`waitUntil`のもとで実行します。そのため、POSTが切れてもハンドラーは止まらず、結果が保存され、エージェントの再送でその結果を受け取れます（ちょうど1回）。ただしWorkersが`waitUntil`の処理を生かしておくのは、クライアントの切断後約30秒間だけです。その時点でまだ実行中のハンドラーはキャンセルされます。そのリース（`toolTimeoutMs` + 10秒）が切れると、呼び出しは「Site tool "<name>" timed out on the website. Please try again.」というエラーで失敗し、再実行されることはありません（最大1回）。`waitUntil`を渡さない場合は、POSTが切れるたびにこうなります。したがって、必ず`waitUntil: ctx.waitUntil.bind(ctx)`を渡し、ハンドラーは30秒より十分短く保ち、可能な限り冪等にしてください。
 
 ### 504が出る、またはストリームが早く切れます
 
-HTTPのWorkersには、クライアントが接続している間は実時間の制限がなく、I/Oの待ち時間もCPU時間に含まれません。そのため、デフォルトの`stream.maxDurationMs`（250秒）で問題ありません。プランや前段のプロキシが長時間のリクエストをそれより早く切る場合は、`stream.maxDurationMs`をその制限より短くしてください。
+HTTPリクエストを処理するWorkerには、クライアントが接続している間は実時間（wall-clock）の制限がなく、I/Oの待ち時間もCPU時間に含まれません。そのため、デフォルトの`stream.maxDurationMs`（250秒）で問題ありません。プランや前段のプロキシが長時間のリクエストをそれより早く切る場合は、`stream.maxDurationMs`をその制限より短くしてください。
 
 ### Hyperdriveを使わずにNeonやSupabaseを使えますか？
 

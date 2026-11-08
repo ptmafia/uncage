@@ -1,5 +1,5 @@
 ---
-title: あらゆるACP エージェントを使う
+title: あらゆるACPエージェントを使う
 description: 'Claude CodeとCodexに加えて、Gemini CLI、OpenCode、Claude CodeのACPアダプターなど、Agent Client Protocolに対応したエージェントを提供する方法：~/.uncage/agent.yamlのruntimes.acp、プリセット、ACPレジストリ、ネイティブランタイムとの違い、トラブルシューティング、チェックリスト。'
 ---
 
@@ -11,7 +11,7 @@ description: 'Claude CodeとCodexに加えて、Gemini CLI、OpenCode、Claude C
 
 ## 設定
 
-ACP エージェントは`~/.uncage/agent.yaml`の`runtimes.acp`で設定します。`runtimes`キーがまったくない場合はデフォルトが使われます。コマンドがPATH上にあるプリセットが登録され、ACPレジストリにあるインストール済みのエージェントが検出されます。すべてのフィールドを含む完全な例は次のとおりです。
+ACPエージェントは`~/.uncage/agent.yaml`の`runtimes.acp`で設定します。`runtimes`キーがまったくない場合はデフォルトが使われます。コマンドがPATH上にあるプリセットが登録され、ACPレジストリにあるインストール済みのエージェントが検出されます。すべてのフィールドを含む完全な例は次のとおりです。
 
 ```yaml
 runtimes:
@@ -79,7 +79,7 @@ uncage runtimes enable gemini    # consent: prints exactly what will run, then r
 uncage runtimes disable gemini   # never register it
 ```
 
-Local モード（`uncage serve`）では、`uncage.config.yaml`も同じ`runtimes.acp`ブロックを受け付けます。ただし`enable`と`consented`は無視されます。プロジェクトのファイルが、ダウンロードしたエージェントの実行に同意することはできないからです。`uncage doctor`と`uncage serve`は、プロジェクトのファイルが追加したACP エージェントごとにそのコマンドを表示します。ダウンロードされるエージェントと違い、プロジェクトのファイルの`agents[].command`は同意なしに実行されます。信頼できるプロジェクトでだけ`uncage serve`を実行し、起動時に表示されるコマンドを確認してください。
+Local モード（`uncage serve`）では、`uncage.config.yaml`も同じ`runtimes.acp`ブロックを受け付けます。ただし`enable`と`consented`は無視されます。プロジェクトのファイルが、ダウンロードしたエージェントの実行に同意することはできないからです。`uncage doctor`と`uncage serve`は、プロジェクトのファイルが追加したACPエージェントごとにそのコマンドを表示します。ダウンロードされるエージェントと違い、プロジェクトのファイルの`agents[].command`は同意なしに実行されます。信頼できるプロジェクトでだけ`uncage serve`を実行し、起動時に表示されるコマンドを確認してください。
 
 ## プリセット
 
@@ -93,7 +93,7 @@ Local モード（`uncage serve`）では、`uncage.config.yaml`も同じ`runtim
 
 ## ネイティブランタイムとの違い
 
-| | ネイティブのClaude Code | ACP エージェント |
+| | ネイティブのClaude Code | ACPエージェント |
 | --- | --- | --- |
 | スキル | Claude Codeのスキルとしてインストール（`.claude/skills/`） | ACPにはスキルがないため、セッションフォルダの`.uncage/skills/<name>/`に書き込み、新しいセッションの最初のプロンプトでそれらをパス付きのテキストとして伝えます（`skills: 'prompt'`） |
 | ファイルとコマンド | Claude Code自身のツール | エージェントがセッションフォルダで自身のツールを使います。UncageはACPの`fs`や`terminal`のクライアント機能を提供しません |
@@ -116,7 +116,7 @@ Local モード（`uncage serve`）では、`uncage.config.yaml`も同じ`runtim
 | 実行が`auth_required`で失敗する | エージェント自身のログインが必要です。ターミナルでエージェント自体を使ってサインインし（たとえば`claude`を起動して`/login`、または`gemini`）、やり直してください。Uncageがエージェントの認証情報を扱うことはありません。 |
 | 「The agent did not answer initialize within 15000 ms」 | コマンドは起動しましたが、ACPに対応していません（フラグの誤り、古いバージョン、入力待ちのプロンプトなど）。コマンドを手で実行してみてください。stdinのJSONを黙って待つのが正常です。 |
 | レジストリのエージェントが`available`のまま登録されない | `npx`/`uvx`で配布されているか、レジストリの更新後にコマンドが変わりました。使いたい場合は`uncage runtimes enable <id>`を実行してください。 |
-| ランタイムが表示されない | `uncage runtimes`（と`uncage runtimes --all`）を確認してください。無効化されている、`enabled: false`、または`presets: off`の可能性があります。`uncage doctor`はACP エージェントごとに`runtime.acp-<id>`の行を表示しますが、これらの行でチェックが失敗することはありません。 |
+| ランタイムが表示されない | `uncage runtimes`（と`uncage runtimes --all`）を確認してください。無効化されている、`enabled: false`、または`presets: off`の可能性があります。`uncage doctor`はACPエージェントごとに`runtime.acp-<id>`の行を表示しますが、これらの行でチェックが失敗することはありません。 |
 | サイトツールが呼ばれない | そのエージェントが`mcp: off`か、エージェントがMCPサーバーに対応していません。`mcp: stdio`でstdioブリッジを試してください。 |
 | モードの変更時に実行が`policy_denied`で失敗する | エージェントがウェブサイトのパーミッションモードに切り替えられず、より緩いモードのままになるためです。 |
 

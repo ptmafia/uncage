@@ -19,7 +19,7 @@ hub（`@uncage/hub`）跟着你的网站走：网站在哪里运行，hub 就在
 | **电脑的连接方式** | WebSocket（同时也提供 HTTP 流式传输作为后备） | HTTP 流式传输（`/agent/stream` + `/agent/events`） |
 | **电脑收到命令前的延迟** | 即时（通过 socket 推送） | 有任务运行时约 300 ms；安静 30 s 之后最长约 2 s |
 | **成本构成** | 一个常驻进程，与电脑数量无关 | 每台在线电脑大约占用**一个持续的函数调用**（它的流，约每 250 s 重开一次），外加数据库轮询（见下文） |
-| **实例** | 默认一个；用 Postgres + Redis 增加节点 | 总是多个（每个函数实例都是一个 hub）；不需要会话粘滞 |
+| **实例** | 默认一个；用 Postgres + Redis 增加节点 | 总是多个（每个函数实例都是一个 hub）；不需要粘性会话 |
 | **需要考虑的平台限制** | 前面的代理必须放行 WebSocket 升级 | 函数时长（Vercel 默认 300 s）、请求体大小（Vercel 约 4.5 MB）、CPU 时间（Workers） |
 | **挂载方式** | `@uncage/hub/node` 中的 `toNodeHandler(hub)` + `attachWebSocket(hub, server)` | `toNextHandlers(…)`（Next.js）、`fetchOnce(…)`（Workers）或 `hub.fetch(req)` |
 | **指南** | [Node（传统模式）](/docs/zh-cn/deploy/node/) | [Vercel 上的 Next.js](/docs/zh-cn/deploy/vercel/)、[Cloudflare Workers](/docs/zh-cn/deploy/cloudflare-workers/)、[其他 Fetch 平台](/docs/zh-cn/deploy/other-fetch-platforms/) |
@@ -58,7 +58,7 @@ FaaS 平台都会以某种形式按函数运行时间计费。Vercel（Fluid com
 - **`postgresCluster` 也会轮询**（每个实例在繁忙时每 300 ms 一次，安静时每 2 s 一次），用来在实例之间传递唤醒信号。
 - **只要有电脑在线，你的数据库就不会休眠。** 能缩容到零的 Postgres（例如 Neon 的免费套餐）只要还有流或实例在轮询，就会一直保持唤醒。
 
-对演示或少量用户来说，这完全没问题：参考演示就是按照在 Vercel Hobby 上、同时有几台电脑在线来设计的。但如果很多电脑一连几个小时在线，成本就会累积起来。
+对演示或少量用户来说，这完全没问题：参考演示的设计目标就是在 Vercel Hobby 上同时支撑几台在线电脑。但如果很多电脑一连几个小时在线，成本就会累积起来。
 
 ### 什么时候改用传统模式或加上 Redis
 
@@ -72,7 +72,7 @@ FaaS 平台都会以某种形式按函数运行时间计费。Vercel（Fluid com
 ## 两种模式相同的部分
 
 - `createHub` 选项、`defineTool`、技能、`selectManifest`、`sessionStorage`、`getUser`、`<AgentChat>` 和 `/device` 审批页。
-- **保证。** 连接断开时，工具调用**恰好执行一次**（调用和结果都会存储，id 是幂等的，守护进程会重发）（在 FaaS 平台上的前提是把平台的 `waitUntil` 交给 hub；见 [Workers → 常见问题](/docs/zh-cn/deploy/cloudflare-workers/#在-workers-上网站工具会恰好执行一次吗)）。如果运行 handler 的实例在调用中途被停止（崩溃、部署、平台时间上限），这次调用**最多执行一次**：它会以“Site tool "<name>" timed out on the website. Please try again.”失败，并且不会自动重试。无论连接断开、流轮换还是重试，事件、确认和文件拉取都不会丢失，也不会重复。详见[定义网站工具 → 连接断开或实例停止时](/docs/zh-cn/guides/define-tools/#连接断开或实例停止时)。
+- **保证。** 连接断开时，工具调用**恰好执行一次**（调用和结果都会存储，id 是幂等的，守护进程会重发；在 FaaS 平台上的前提是把平台的 `waitUntil` 交给 hub，见 [Workers → 常见问题](/docs/zh-cn/deploy/cloudflare-workers/#在-workers-上网站工具会恰好执行一次吗)）。如果运行 handler 的实例在调用中途被停止（崩溃、部署、平台时间上限），这次调用**最多执行一次**：它会以“Site tool "<name>" timed out on the website. Please try again.”失败，并且不会自动重试。无论连接断开、流轮换还是重试，事件、审批和文件拉取都不会丢失，也不会重复。详见[定义网站工具 → 连接断开或实例停止时](/docs/zh-cn/guides/define-tools/#连接断开或实例停止时)。
 - **安全。** 限流计数和验证码失败计数都存在 hub 的 store 里，所以所有节点、所有函数实例共用同一个计数。
 
 ## 以后切换

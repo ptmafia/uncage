@@ -114,8 +114,9 @@ irm https://your.site/api/uncage/install.ps1 | iex
 
 1. **电脑。** x64 或 arm64 的 Windows。
 2. **Node.js 22 或更新版本**，已安装 nvm-windows、fnm 或 volta 时使用它们。都没有时，为当前用户安装 fnm：优先用 winget（`winget install --id Schniz.fnm`，按用户安装的包，不弹出管理员提示），否则从 fnm 的发布 zip 解压到 `%LOCALAPPDATA%\fnm`。它从不通过 winget 安装 Node.js，因为那个包需要管理员权限。之后同样会问是否把 Node.js 22 设为默认。
-3. **Uncage CLI。** `npm install -g @uncage/cli`。脚本以 `uncage.cmd` 的方式运行它。
-4. **coding agent**，然后提议运行 `uncage setup`，与 macOS 相同。
+3. **npm 的全局目录。** 如果无法写入，脚本会提议把它改到 `%USERPROFILE%\.npm-global`。
+4. **Uncage CLI。** `npm install -g @uncage/cli`。脚本以 `uncage.cmd` 的方式运行它。
+5. **coding agent**，然后提议运行 `uncage setup`，与 macOS 相同。
 
 需要加入 PATH 的目录写入你的用户 `Path`（而不是 PowerShell 配置文件）。完成后请打开一个新终端。
 

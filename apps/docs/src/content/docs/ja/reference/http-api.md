@@ -64,7 +64,7 @@ CLIとエージェントが使います。これらは`getUser`を呼びませ�
 
 ## エージェントのトランスポート（HTTPストリーミング）
 
-ハブが`http`しか提供していない場合（FaaS モード）や、WebSocketの失敗が続く場合に、エージェントはこれを使います。すべてのリクエストには`Authorization: Bearer <machine token>`が付きます。トークンがない、または誤っている場合は`401`が返り、同じIPからそれが多すぎると`429`になります（`rateLimits.agentAuthFailuresPerMinute`）。状態はストアにあるため、どのハブのインスタンスでもこれらのどのリクエストを処理できます。型は`@uncage/protocol`にあります（`HttpConnectResponse`、`StreamLine`、`HttpEventsRequest`、`HttpEventsResponse`）。
+ハブが`http`しか提供していない場合（FaaS モード）や、WebSocketの失敗が続く場合に、エージェントはこれを使います。すべてのリクエストには`Authorization: Bearer <machine token>`が付きます。トークンがない、または誤っている場合は`401`が返り、同じIPからそれが多すぎると`429`になります（`rateLimits.agentAuthFailuresPerMinute`）。状態はストアにあるため、これらのリクエストはどのハブのインスタンスでも処理できます。型は`@uncage/protocol`にあります（`HttpConnectResponse`、`StreamLine`、`HttpEventsRequest`、`HttpEventsResponse`）。
 
 ```mermaid
 sequenceDiagram

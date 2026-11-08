@@ -147,7 +147,7 @@ export const ja: Dict = {
       },
       {
         title: 'macOS・Windows・Linux',
-        body: 'コマンド1つで、macOS、Windows、Linuxのどれにも必要なものがすべて入ります。エージェントはユーザーごとのバックグラウンドサービスとして動くため、管理者権限は要りません。',
+        body: 'macOS、Windows、Linuxのどれでも、コマンド1つで必要なものがすべて入ります。エージェントはユーザーごとのバックグラウンドサービスとして動くため、管理者権限は要りません。',
       },
     ],
     soon: [

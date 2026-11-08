@@ -92,7 +92,7 @@ Expressではなく、Fastify、Hono、Next.jsのカスタムサーバーを使�
 
 ## デプロイ
 
-1. **ビルドして起動します**。`node server.ts`で起動します（Node 22.18以降）。コンテナの場合の例：
+1. **ビルドして起動します**。起動コマンドは`node server.ts`です（Node 22.18以降）。コンテナの場合の例：
 
    ```dockerfile title="Dockerfile"
    # Node 22.18 or newer runs server.ts directly (type stripping); node:22 is the latest 22.x.
@@ -171,7 +171,7 @@ Expressではなく、Fastify、Hono、Next.jsのカスタムサーバーを使�
 
 ### デプロイでサーバーが再起動しました。実行中の作業はどうなりますか？
 
-コンピュータは自動的に再接続します（バックオフは1秒から最大30秒）。Runはユーザーのコンピュータ上で続行され、そのイベントは再接続時に補完されます。プロセスの停止時にまだ実行中だったサイトツールのハンドラーは、「Site tool "<name>" timed out on the website. Please try again.」というエラーで失敗します。なお、`hub.close()`は実行中のハンドラーが完了できるよう、先に`toolDrainMs`（5秒）の猶予を与えます。
+コンピュータは自動的に再接続します（バックオフは1秒から最大30秒）。Runはユーザーのコンピュータ上で続行され、そのイベントは再接続時に補完されます。プロセスの停止時にまだ実行中だったサイトツールのハンドラーは、「Site tool "<name>" timed out on the website. Please try again.」というエラーで失敗します。ただし、その前に`hub.close()`が`toolDrainMs`（5秒）の猶予を与えるので、その間に終わるハンドラーは正常に完了します。
 
 ### 古いエージェント（0.2）が接続できません
 

@@ -227,14 +227,14 @@ curl -s http://localhost:3000/api/uncage/health                 # needs a signed
 
 `rateLimits`：`deviceCodesPerMinute`（クライアントIPごとに20）、`userCodeWindowMs`（10分）あたりの`userCodeFailures`（ユーザーごとにコード推測の失敗10回）、`agentAuthFailuresPerMinute`（マシントークンがない、または誤っているリクエストをクライアントIPごとに60回。有効なトークンが制限されることはありません）、`clientIp(req)`と`trustForwardedFor`（[プロキシの背後で](#リバースプロキシやロードバランサーの背後で)を参照）。制限を超えると`429 rate_limited`が返ります。カウントはストアに保存されるため、すべてのノードと関数インスタンスで共有されます。
 
-`maintenance`は、不要になったものを削除し（応答のなかったRunのマニフェストは1時間後、それ以外は7日後。添付ファイルのコピーは`attachmentRetentionDays`の経過後。重複排除の行と保存されたツールの結果は24時間後。期限切れのアウトボックスの項目とデバイスコード）、ハンドラーの途中でインスタンスが停止したサイトツールの呼び出しを失敗として処理します。実行は全インスタンスを通じて`intervalMs`ごとに最大1回です。`attachWebSocket`を使っている場合はタイマーで、それ以外はリクエストがきっかけで実行されます（プラットフォームが`waitUntil`を提供していればレスポンスの後に実行します）。`secret`を指定すると、プラットフォームのcron用に、`Authorization: Bearer <secret>`付きの`GET|POST <basePath>/maintenance`が有効になります（Vercel Cronはこの方法で`CRON_SECRET`を送ります）。`onRun()`は、実行のたびに独自の後始末を実行します。
+`maintenance`は、不要になったものを削除し（応答のなかったRunのマニフェストは1時間後、それ以外は7日後。添付ファイルのコピーは`attachmentRetentionDays`の経過後。重複排除の行と保存されたツールの結果は24時間後。期限切れのアウトボックスの項目とデバイスコード）、ハンドラーの途中でインスタンスが停止したサイトツールの呼び出しを失敗として処理します。実行は全インスタンスを通じて`intervalMs`ごとに最大1回です。`attachWebSocket`を使っている場合はタイマーで、それ以外はリクエストがきっかけで実行されます（プラットフォームが`waitUntil`を提供していればレスポンスの後に実行します）。`secret`を指定すると、プラットフォームのcron用に、`Authorization: Bearer <secret>`付きの`GET|POST <basePath>/maintenance`が有効になります（Vercel Cronはこの方法で`CRON_SECRET`を送ります）。`onRun()`は、メンテナンスを実行するたびに独自の後始末を行います。
 
 戻り値の`Hub`には、`basePath`、`fetch(req, info?)`、`approveDevice`、`denyDevice`、`lookupDevice`、`revokeMachine`、`maintain()`、`close()`があります。`info`は`{ clientIp?, waitUntil? }`です。`close()`はストアを閉じることはなく、クラスターもハブ自身が作成した場合にだけ閉じます。自分で作成したものは、その後で閉じてください。
 
 ## リバースプロキシやロードバランサーの背後で
 
 :::caution[本番公開の前にクライアントIPを設定する]
-`POST <basePath>/device/code`（`uncage setup`のたびに呼ばれます）には、**クライアントIPごとに1分あたり20回**の制限があります。リバースプロキシ、ロードバランサー、CDNの背後では、設定しない限りハブにはユーザーではなくプロキシのアドレスが見えます。すると**全ユーザーが1つのバケットを共有する**ことになり、サイト全体で1分間に21回目のセットアップから、`uncage setup`が`429 rate_limited`で失敗します。
+`POST <basePath>/device/code`（`uncage setup`のたびに呼ばれます）には、**クライアントIPごとに1分あたり20回**の制限があります。リバースプロキシ、ロードバランサー、CDNの背後では、設定しない限りハブにはユーザーではなくプロキシのアドレスが見えます。すると**全ユーザーが1つのレート制限の枠を共有する**ことになり、サイト全体で1分間に21回目のセットアップから、`uncage setup`が`429 rate_limited`で失敗します。
 
 次のいずれかで解決してください。
 
@@ -247,7 +247,7 @@ curl -s http://localhost:3000/api/uncage/health                 # needs a signed
 - `<basePath>/agent`の**WebSocketのアップグレードを転送し**（nginx：`proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";`）、長時間の接続を許可してください（ハブは10秒ごとにpingを送ります）。アップグレードに失敗した場合、エージェントは自動的にHTTPストリーミングにフォールバックしますが、WebSocketのほうが高速です。
 - **元の`Host`を維持します**（nginx：`proxy_set_header Host $host;`）。ハブはリクエストの`Origin`を`publicUrl`および`Host`と比較し、クロスサイトのPOSTを拒否します。
 - **ストリームはバッファリングしません**。対象は`<basePath>/sessions/*/events`のSSEと`<basePath>/agent/stream`のNDJSONです（nginx：`proxy_buffering off;`）。少なくとも`stream.maxDurationMs`（250秒）の長さのリクエストを許可してください。
-- **レート制限のためのクライアントIP**。Expressでは`app.set('trust proxy', 1)`を設定すれば、`toNodeHandler`が`req.ip`を使います。Fetchスタイルのサーバーでは、`hub.fetch(req, { clientIp })`を渡すか、`rateLimits: { clientIp: (req) => req.headers.get('cf-connecting-ip') ?? undefined }`（またはプラットフォームのヘッダー）を渡すか、プロキシがクライアントのアドレスを`X-Forwarded-For`に追記するなら`trustForwardedFor: true`を指定します。どれも設定しないと、すべてのクライアントがプロキシのアドレス（または1つの`shared`バケット）としてカウントされ、制限が全ユーザー合計にかかります。
+- **レート制限のためのクライアントIP**。Expressでは`app.set('trust proxy', 1)`を設定すれば、`toNodeHandler`が`req.ip`を使います。Fetchスタイルのサーバーでは、`hub.fetch(req, { clientIp })`を渡すか、`rateLimits: { clientIp: (req) => req.headers.get('cf-connecting-ip') ?? undefined }`（またはプラットフォームのヘッダー）を渡すか、プロキシがクライアントのアドレスを`X-Forwarded-For`に追記するなら`trustForwardedFor: true`を指定します。どれも設定しないと、すべてのクライアントがプロキシのアドレス（または`shared`という1つの枠）としてカウントされ、制限が全ユーザー合計にかかります。
 - **TLS**。どこで終端してもかまいませんが、`publicUrl`はユーザーが開く`https://`のURLでなければなりません。エージェントは、`localhost`と`127.0.0.1`以外への平文の`http://`接続を拒否します。
 
 ## サーバーレスでのホスティング（Vercel、Netlify、Workers）

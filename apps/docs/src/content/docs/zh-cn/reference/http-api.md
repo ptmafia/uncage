@@ -101,7 +101,7 @@ sequenceDiagram
 | `{"ctl":"closed"}` | link 已关闭，但电脑仍然存在。重新 `connect`。 |
 | `{"ctl":"revoked"}` | 电脑已被吊销。停止。 |
 
-打开流即**确认**了 `cursor`：hub 删除序号不超过它的 outbox 条目，然后流式发送它之后的条目。用同一个游标重新打开，会再次送达尚未处理的条目，所以流被切断也不会丢失任何一条。遇到不认识的控制行请跳过。流空闲时，如果电脑正忙或者最近 `polling.activeWindowMs`（30 秒）内有过送达，hub 每 `polling.activeMs`（300 ms）轮询一次 outbox，否则退避到 `polling.idleMs`（2 秒）；在其他实例上写入的命令会通过 cluster 唤醒这条流。
+打开流即**确认**了 `cursor`：hub 删除序号不超过它的 outbox 条目，然后流式发送它之后的条目。用同一个游标重新打开，会再次送达尚未处理的条目，所以流被切断也不会丢失任何一条。遇到不认识的控制行请跳过。流空闲时，如果电脑正忙或者最近 `polling.activeWindowMs`（30 s）内有过送达，hub 每 `polling.activeMs`（300 ms）轮询一次 outbox，否则退避到 `polling.idleMs`（2 s）；在其他实例上写入的命令会通过 cluster 唤醒这条流。
 
 ### `POST /agent/events`
 

@@ -26,7 +26,7 @@ Uncage 是一组 npm 包，把 Claude Code（以及 Codex）接入你自己的�
 | --- | --- | --- |
 | 谁在跑 agent | 每个终端用户，在自己的电脑上，用自己的 Claude Code 登录 | 你自己，在运行应用的那台机器上 |
 | 网站要加什么 | Node 后端里挂上 `@uncage/hub`，页面里放 `<AgentChat>`，再加一个 `/device` 审批页 | 一个同源代理路由和 `<AgentChat>` |
-| 用户要做什么 | 运行一次一条命令，再在浏览器里批准这台电脑：macOS 和 Linux 上是 `curl -fsSL https://your.site/api/uncage/install.sh \| bash`，Windows 上是 `irm https://your.site/api/uncage/install.ps1 \| iex` | 什么都不用做：就是你自己的机器 |
+| 用户要做什么 | 只需运行一条命令，再在浏览器里批准这台电脑：macOS 和 Linux 上是 `curl -fsSL https://your.site/api/uncage/install.sh \| bash`，Windows 上是 `irm https://your.site/api/uncage/install.ps1 \| iex` | 什么都不用做：就是你自己的机器 |
 | 适合 | 用户装有 Claude Code、希望它和你的产品一起干活的 SaaS | 内部工具、桌面类应用、开发者面板 |
 
 ## 你的用户得到什么

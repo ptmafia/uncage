@@ -8,7 +8,7 @@ Vercelでは、ハブはNext.jsの**ルートハンドラー**の中で動きま
 ## 前提条件
 
 - Vercel上の、App Routerを使う**Next.js 15.1以降**のアプリ（以下のファイルは`next/server`の`after`を使います）。
-- Vercelから接続できる**Postgres**データベース：Neon、Supabase、VercelのPostgresインテグレーション、または自前のもの。その接続文字列が`DATABASE_URL`になります。プール接続のURL（Neonの`-pooler`ホスト、PgBouncer）も使えます。むしろ推奨です。
+- Vercelから接続できる**Postgres**データベース：Neon、Supabase、VercelのPostgresインテグレーション、または自前のもの。その接続文字列が`DATABASE_URL`になります。プール接続のURL（Neonの`-pooler`ホスト、PgBouncer）も使えます。むしろこちらを推奨します。
 - `Request`（ハブ用）と`cookies()`（ページ用）から読み取れるアプリのサインイン情報。
 
 ```sh
@@ -133,7 +133,7 @@ export default function UncagePage() {
 
 ### 承認ページ
 
-`uncage setup`が、コンピュータを承認させるためにユーザーを誘導するページです。サインイン中のユーザーだけが使え、フレーム内には表示されず、Server Action（Next.jsが自サイトのオリジンからしか受け付けないPOST）で判定します。[クイックスタート](/docs/ja/start/quickstart-connected/#7-承認ページ)と同じファイルで、`await getHub()`を使う点だけが異なります。
+`uncage setup`が、コンピュータを承認させるためにユーザーを誘導するページです。サインイン中のユーザーだけが使え、フレーム内には表示されず、承認・拒否はServer Action（Next.jsが自サイトのオリジンからしか受け付けないPOST）で処理します。[クイックスタート](/docs/ja/start/quickstart-connected/#7-承認ページ)と同じファイルで、`await getHub()`を使う点だけが異なります。
 
 ```tsx title="app/device/page.tsx"
 import type { ApproveDeviceProps } from '@uncage/react-ui';
@@ -280,7 +280,7 @@ Vercelプロジェクト（Settings → Environment Variables）でProductionと
 
 ### 504エラー（`FUNCTION_INVOCATION_TIMEOUT`）が出ます
 
-リクエストが`maxDuration`より長く実行されました。**`stream.maxDurationMs`は`maxDuration`より短く**し、約50秒の余裕を持たせてください。`maxDuration = 300`なら`250_000`（デフォルト）です。`maxDuration`を下げる場合（たとえば60）は、`stream.maxDurationMs`も下げてください（少なくとも`10_000`は短くします）。Proプランでは`maxDuration`を800まで上げられ、それに合わせて`stream.maxDurationMs`も上げられますが、得られるものはわずかです。ストリームの開き直しにかかるコストは再接続1回分にすぎないためです。
+リクエストが`maxDuration`より長く実行されました。**`stream.maxDurationMs`は`maxDuration`より短く**し、約50秒の余裕を持たせてください。`maxDuration = 300`なら`250_000`（デフォルト）です。`maxDuration`を下げる場合（たとえば60）は、`stream.maxDurationMs`も下げてください（`maxDuration`より少なくとも10秒＝`10_000`短くします）。Proプランでは`maxDuration`を800まで上げられ、それに合わせて`stream.maxDurationMs`も上げられますが、得られるものはわずかです。ストリームの開き直しにかかるコストは再接続1回分にすぎないためです。
 
 ### `maxDuration`、`stream.maxDurationMs`、`toolTimeoutMs`の違い
 
@@ -306,7 +306,7 @@ Vercelは約4.5MBを超えるリクエストボディを、ハブに届く前に
 
 ### Redisは必要ですか？
 
-いいえ。インスタンスが多い場合に、遅延とデータベースのポーリングを減らしたいときに追加します（`cluster: redisCluster({ url: process.env.REDIS_URL! })`、`ioredis`をインストール）。Upstash Redisも、TCP上でRedisプロトコル（`rediss://`）を話せれば使えます。
+いいえ。インスタンスが多い場合に、遅延とデータベースのポーリングを減らしたいときに追加します（`cluster: redisCluster({ url: process.env.REDIS_URL! })`、`ioredis`をインストール）。Upstash Redisも、TCP上のRedisプロトコル（`rediss://`）に対応していれば使えます。
 
 ### 別のプロキシの背後でのレート制限
 

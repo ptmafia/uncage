@@ -71,7 +71,7 @@ server.listen(3000);
 
 ### エージェントは0.3以降が必要
 
-Connectedのプロトコルはバージョン2になり、`minAgentVersion`のデフォルトは`0.3.0`になりました。
+Connected モードのプロトコルはバージョン2になり、`minAgentVersion`のデフォルトは`0.3.0`になりました。
 
 - **従来モード**：WebSocketで接続した0.2のエージェントには`upgrade_required`が返ります。0.2のエージェントは自動的にアップグレード（`npm i -g @uncage/cli@latest`）して再接続します。
 - **FaaS モード**：0.2のエージェントはWebSocketしか知りませんが、FaaSのハブはWebSocketを提供しません。エージェントには`426 upgrade_required`が返り、ハブはそのコンピュータを「古い」と記録し、ウェブサイトには実行すべきコマンド（`npm i -g @uncage/cli@latest`の後に`uncage setup <url>`）とともに**Agent update needed**（エージェントの更新が必要）と表示されます。`<AgentChat>`はこれを自動的に表示します（`<AgentOutdatedNotice>`、`MachineInfo.agentOutdated`）。
@@ -125,7 +125,7 @@ Fetch → Nodeのアダプターは専用のサブパスに移動しました：
 | `rateLimits.agentAuthFailuresPerMinute` | `60` | マシントークンがない、または誤っている`/agent/*`へのリクエストの上限（クライアントIPごと）。 |
 | `maintenance` | `{ intervalMs: 60000 }` | 保持期間を過ぎたデータの削除と、停止したインスタンスのツール呼び出しを失敗として処理すること。全インスタンスを通じて間隔ごとに最大1回実行します。`secret`を指定すると`GET\|POST <basePath>/maintenance`が有効になります（Vercel Cron用）。`onRun`で独自の後始末を追加できます。 |
 | `bodyTimeoutMs` | `30000` | 時間内に受信しきれなかったリクエストボディは`400`で拒否されます。 |
-| `toolDrainMs` | `5000` | `hub.close()`が実行中のサイトツールのハンドラーに完了を待つ時間。 |
+| `toolDrainMs` | `5000` | `hub.close()`が実行中のサイトツールのハンドラーの完了を待つ時間。 |
 | `installScript` | なし | `install.sh` / `install.ps1`に追加する静的な手順。 |
 | `postgresCluster({ pool \| connectionString })` | | Postgres上の`ClusterAdapter`。複数ノードやFaaSでもRedisが不要になります。 |
 
@@ -136,6 +136,7 @@ Fetch → Nodeのアダプターは専用のサブパスに移動しました：
 - **サイトツールの呼び出しは接続が切れても失われません**。呼び出しとその結果が保存されるため、エージェントが再試行すると、2回目の実行ではなく保存済みの結果を受け取ります（ちょうど1回。FaaSプラットフォームでは、ハブにプラットフォームの`waitUntil`を渡した場合。[Workers → FAQ](/docs/ja/deploy/cloudflare-workers/#workersでサイトツールはちょうど1回実行されますか)を参照）。ハンドラーを実行中のインスタンスが停止した場合、呼び出しは「Site tool "<name>" timed out on the website. Please try again.」というエラーで失敗し、再実行されることはありません（最大1回）。`ctx.signal`は、タイムアウト時、Runの終了時、ハブを閉じたときに中断されますが、コンピュータの接続が切れたときには中断されなくなりました。詳しくは[ツールを定義する](/docs/ja/guides/define-tools/#接続が切れたときインスタンスが停止したとき)を参照してください。
 - **ブラウザのイベントストリームは、`stream.maxDurationMs`ごとに開き直されます**（`event: reconnect`フレーム）。`@uncage/client`は`Last-Event-ID`を使って自動的に再開します。独自のSSEクライアントは、このフレームを受け取ったら再接続してください。
 - **WebSocketが失敗した場合（3回失敗した場合）、コンピュータはHTTPストリーミングで接続できます**。その後、30分ごとにWebSocketを再試行します。
+- **`<ConnectMachine>`はコマンドを1つだけ表示します**。サイトのインストーラーを「macOS / Linux」と「Windows」のタブで表示し、最初は訪問者のOSのタブが開きます（`install.windows`も表示されるようになりました）。`uncage setup <url>`は「Already have the CLI?」（CLIをインストール済みの場合）の下にあります。番号付きの2ステップのリスト（`ol.uc-connect-steps`、`.uc-connect-num`）はなくなりました。これらを対象にしたCSSがあれば更新してください。
 
 ## チェックリスト
 

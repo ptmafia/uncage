@@ -82,7 +82,7 @@ uncage runtimes enable <id>                    # register an ACP registry agent 
 uncage runtimes disable <id>                   # never register an ACP agent
 ```
 
-`uncage agent`がウェブサイトに提供するランタイムを一覧表示します。Claude Code、Codex、そして`~/.uncage/agent.yaml`の`runtimes.acp`によるACP エージェント（プリセット、自分で書いたエントリ、ACPレジストリから検出したエージェント）について、状態と、サイトツールや再開に対応しているかを表示します。続いて、登録されていないACPレジストリのエージェントとその理由を表示します。
+`uncage agent`がウェブサイトに提供するランタイムを一覧表示します。Claude Code、Codex、そして`~/.uncage/agent.yaml`の`runtimes.acp`によるACPエージェント（プリセット、自分で書いたエントリ、ACPレジストリから検出したエージェント）について、状態と、サイトツールや再開に対応しているかを表示します。続いて、登録されていないACPレジストリのエージェントとその理由を表示します。
 
 | フラグ | |
 | --- | --- |
@@ -90,7 +90,7 @@ uncage runtimes disable <id>                   # never register an ACP agent
 | `--all` | このコンピュータにインストールされていないレジストリのエージェントも表示 |
 | `--refresh` | 先に最新のACPレジストリをダウンロード（指定しなければキャッシュか同梱のコピー） |
 
-`enable`は実行される内容をそのまま表示し、同意を`runtimes.acp.enable` / `consented`に記録します。`npx`や`uvx`で配布されるエージェントは、これがなければ決して実行されません。`disable`はIDを`runtimes.acp.disable`に追加します。どちらもバックグラウンドのエージェントを再起動します。詳しくは[あらゆるACP エージェントを使う](/docs/ja/guides/use-any-acp-agent/)を参照してください。
+`enable`は実行される内容をそのまま表示し、同意を`runtimes.acp.enable` / `consented`に記録します。`npx`や`uvx`で配布されるエージェントは、これがなければ決して実行されません。`disable`はIDを`runtimes.acp.disable`に追加します。どちらもバックグラウンドのエージェントを再起動します。詳しくは[あらゆるACPエージェントを使う](/docs/ja/guides/use-any-acp-agent/)を参照してください。
 
 ### `uncage activity`
 
@@ -132,7 +132,7 @@ uncage doctor [--port <n> | --url <url>] [--workspace <dir>] [--data-dir <dir>] 
 uncage doctor --export-events <sessionId> [--out <file>] [--include-content] [--port <n> | --url <url>]
 ```
 
-Node、データディレクトリ、トークン、実行中のデーモン、Connected モードのバックグラウンドのエージェント（インストール済みで実行中か、固定されたNode.jsがまだ存在するか、Linuxのlinger（常駐）、接続中の各ウェブサイトのエージェントのバージョン）、ランタイム（Claude Code、Codex、そしてACP エージェントごとに1行の`runtime.acp-<id>`。`uncage.config.yaml`の`runtimes.acp`で設定したものか、自動検出したもの）をチェックします。各行は ✓ か ✗ で、✗ の行には必ず`fix:`コマンドが表示されます。ACPの行は任意扱いで、✗（たとえば未インストールで、fixはインストールのヒント）でも終了コードは変わりません。`uncage.config.yaml`が独自の`command`で追加したACP エージェントには、実行するコマンドを示す警告行も表示されます。デーモンのワークスペースが`.uncage/`を無視していないgitリポジトリである場合と、ループバック以外のURLにトークンを送る前には、警告（`!`、致命的ではない）を出します。
+Node、データディレクトリ、トークン、実行中のデーモン、Connected モードのバックグラウンドのエージェント（インストール済みで実行中か、固定されたNode.jsがまだ存在するか、Linuxのlinger（常駐）、接続中の各ウェブサイトのエージェントのバージョン）、ランタイム（Claude Code、Codex、そしてACPエージェントごとに1行の`runtime.acp-<id>`。`uncage.config.yaml`の`runtimes.acp`で設定したものか、自動検出したもの）をチェックします。各行は ✓ か ✗ で、✗ の行には必ず`fix:`コマンドが表示されます。ACPの行は任意扱いで、✗（たとえば未インストールで、fixはインストールのヒント）でも終了コードは変わりません。`uncage.config.yaml`が独自の`command`で追加したACPエージェントには、実行するコマンドを示す警告行も表示されます。デーモンのワークスペースが`.uncage/`を無視していないgitリポジトリである場合と、ループバック以外のURLにトークンを送る前には、警告（`!`、致命的ではない）を出します。
 
 `--export-events`は、バグ報告用にセッションのイベントをJSONで書き出します。`--include-content`を付けない限り、内容は秘匿化されます。
 

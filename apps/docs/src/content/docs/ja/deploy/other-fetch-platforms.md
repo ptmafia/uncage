@@ -10,7 +10,7 @@ description: FetchのRequest/Responseに対応する任意のプラットフォ�
 :::
 
 :::caution[Netlify：制限時間が短い]
-Netlifyのドキュメントには、**ストリーミング関数の実行時間の上限は60秒**（ストリーミングレスポンス1つあたり20MBまで）と記載されています。ハブはこの範囲内で動作しますが、注意点があります。`UNCAGE_STREAM_MAX_MS`を約`50000`に設定してください（ストリームが約50秒ごとに開き直されるため、Vercelより再接続と関数呼び出しの回数が増えます）。また、サイトツールの呼び出しはすべて1回の関数呼び出しの中で完了する必要があるため、`toolTimeoutMs`は60秒より十分短く（たとえば`40_000`）してください。ツールにそれ以上の時間が必要な場合は、[Vercel](/docs/ja/deploy/vercel/)か[従来モード](/docs/ja/deploy/node/)を使ってください。
+Netlifyのドキュメントには、**ストリーミング関数の実行時間の上限は60秒**（ストリーミングレスポンス1つあたり20MBまで）と記載されています。ハブはこの範囲内で動作しますが、注意点があります。ハブの`stream.maxDurationMs`を約`50000`に設定してください（後述の例の`hub.ts`は`UNCAGE_STREAM_MAX_MS`から読み取ります。ストリームが約50秒ごとに開き直されるため、Vercelより再接続と関数呼び出しの回数が増えます）。また、サイトツールの呼び出しはすべて1回の関数呼び出しの中で完了する必要があるため、`toolTimeoutMs`は60秒より十分短く（たとえば`40_000`）してください。ツールにそれ以上の時間が必要な場合は、[Vercel](/docs/ja/deploy/vercel/)か[従来モード](/docs/ja/deploy/node/)を使ってください。
 :::
 
 ## 前提条件
@@ -52,7 +52,8 @@ async function createAppHub(): Promise<Hub> {
   const pool = new pg.Pool({ connectionString: url, max: 5 });
   pool.on('error', (err) => console.error('postgres pool error:', err.message));
   const ipHeader = process.env.CLIENT_IP_HEADER?.toLowerCase();
-  const publicUrl = process.env.PUBLIC_URL ?? (process.env.VERCEL ? undefined : 'http://localhost:3000');
+  const publicUrl =
+    process.env.PUBLIC_URL ?? (process.env.NODE_ENV === 'production' || process.env.VERCEL ? undefined : 'http://localhost:3000');
   if (!publicUrl) throw new Error('PUBLIC_URL is not set: set it to your site’s https:// origin.');
   return createHub({
     publicUrl, // what users open; localhost only for local development
@@ -133,7 +134,7 @@ export default {
 };
 ```
 
-`/device`の承認ページも必要です（サインイン中のユーザーだけが使え、フレーム内には表示されず、自サイトのオリジンからのPOSTで判定します）。このページは`hub.lookupDevice`、`hub.approveDevice`、`hub.denyDevice`を呼び出します。[Workersのページ](/docs/ja/deploy/cloudflare-workers/#コード)に、流用できるフレームワーク非依存の実装（`devicePage`）があります。守るべきルールは[認証とデバイスの承認](/docs/ja/guides/auth-and-device-approval/)で説明しています。
+`/device`の承認ページも必要です（サインイン中のユーザーだけが使え、フレーム内には表示されず、自サイトのオリジンからのPOSTで承認・拒否を処理します）。このページは`hub.lookupDevice`、`hub.approveDevice`、`hub.denyDevice`を呼び出します。[Workersのページ](/docs/ja/deploy/cloudflare-workers/#コード)に、流用できるフレームワーク非依存の実装（`devicePage`）があります。守るべきルールは[認証とデバイスの承認](/docs/ja/guides/auth-and-device-approval/)で説明しています。
 
 ## 環境変数
 
@@ -150,7 +151,7 @@ export default {
 ## デプロイ
 
 1. **データベースを作成し**、プラットフォームで`DATABASE_URL`と`PUBLIC_URL`を設定します。
-2. プラットフォームのドキュメントで、ご利用のプランの**リクエストの制限時間を確認し**、`UNCAGE_STREAM_MAX_MS`をそれより短く設定します（300秒以上なら不要です）。
+2. プラットフォームのドキュメントで、ご利用のプランの**リクエストの制限時間を確認し**、ハブの`stream.maxDurationMs`をそれより短く設定します（例では`UNCAGE_STREAM_MAX_MS`。300秒以上なら不要です）。
 3. プラットフォームが想定する方法で**デプロイします**（Netlifyなら上記の関数を用意して`netlify deploy --prod`、BunやDenoならホスト上で`bun server.ts`または`deno serve --port 3000 server.ts`を実行します）。
 4. **任意**：`CRON_SECRET`のBearerトークンを付けて、`/api/uncage/maintenance`を毎日呼び出すようスケジュールします。設定しなくても、メンテナンスはリクエストの際に随時実行されます。
 
@@ -178,4 +179,4 @@ Fetchサーバーが1つの常駐プロセス（VM上のBunやDeno）であれ�
 
 ### 504が出る、接続が切れる
 
-リクエストがプラットフォームの制限より長く続きました。`UNCAGE_STREAM_MAX_MS`を下げ、`toolTimeoutMs`（デフォルトは120秒）も制限より短くしてください。プロキシやネットワークによる接続の切断は問題ありません。エージェントはカーソルを使って再接続し、何も失われず、二重に届くこともありません。
+リクエストがプラットフォームの制限より長く続きました。`stream.maxDurationMs`（例では`UNCAGE_STREAM_MAX_MS`）を下げ、`toolTimeoutMs`（デフォルトは120秒）も制限より短くしてください。プロキシやネットワークによる接続の切断は問題ありません。エージェントはカーソルを使って再接続し、何も失われず、二重に届くこともありません。

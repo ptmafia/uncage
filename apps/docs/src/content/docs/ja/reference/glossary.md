@@ -29,8 +29,8 @@ description: Uncageのすべての用語（エージェント、コンピュー�
 | **承認ページ**（Approval page） | サインイン中のユーザーがコードを承認する、あなたの`/device`ページ。 | `verificationPath`、`<ApproveDevice>` | |
 | **マシントークン**（Machine token） | コンピュータが1つのウェブサイトに接続するときに使う秘密の値。`~/.uncage/agent.yaml`にのみ保存されます。 | | |
 | **取り消し**（Revoke） | コンピュータをウェブサイトから完全に切断すること。そのトークンは使えなくなります。 | `revokeMachine`、`uncage sites remove` | |
-| **ランタイム**（Runtime） | 実際に作業するコーディングエージェント：Claude Code（`claude`）、Codex（`codex`）、またはACP エージェント（`acp-<id>`）。 | `RuntimeInfo`、`RuntimeAdapter` | |
-| **ACP エージェント**（ACP agent） | Agent Client Protocolを話すあらゆるコーディングエージェント（Gemini CLI、OpenCodeなど）。ランタイムとして提供されます。 | `runtimes.acp`、`uncage runtimes` | |
+| **ランタイム**（Runtime） | 実際に作業するコーディングエージェント：Claude Code（`claude`）、Codex（`codex`）、またはACPエージェント（`acp-<id>`）。 | `RuntimeInfo`、`RuntimeAdapter` | |
+| **ACPエージェント**（ACP agent） | Agent Client Protocolを話すあらゆるコーディングエージェント（Gemini CLI、OpenCodeなど）。ランタイムとして提供されます。 | `runtimes.acp`、`uncage runtimes` | |
 | **セッション**（Session） | 1台のコンピュータ上で1つのランタイムと行う1つの会話。 | `Session`、`sessionId` | session / 会话 |
 | **ワークスペース**（Workspace） | セッションが作業するフォルダ。Connected モードでは`~/Uncage/<site host>/<session id>/`です。 | `Session.workspace` | |
 | **実行**（Run） | 1つのプロンプトと、それに答えるためにエージェントが行うすべての処理。 | `Run`、`runId`、`RunState` | |

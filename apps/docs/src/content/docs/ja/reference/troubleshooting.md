@@ -63,7 +63,7 @@ Node.jsのバージョンマネージャーがない場合、インストーラ�
 
 ### 多くのユーザーで同時に`uncage setup`が`429 rate_limited`で失敗する
 
-デバイスコードの制限（1分あたり20）は**クライアントIPごと**です。リバースプロキシ、ロードバランサー、CDNの背後では、クライアントIPを設定しない限りハブにはプロキシのアドレスが見えます。そのため全ユーザーが同じバケットに入り、1分間に21回目のセットアップから全員が失敗します。
+デバイスコードの制限（1分あたり20）は**クライアントIPごと**です。リバースプロキシ、ロードバランサー、CDNの背後では、クライアントIPを設定しない限りハブにはプロキシのアドレスが見えます。そのため全ユーザーが同じ枠に入り、1分間に21回目のセットアップから全員が失敗します。
 
 - **Express**：`app.set('trust proxy', 1)`（前段にあるプロキシの数）を設定し、`req.ip`を渡す`toNodeHandler(hub)`でハブをマウントします。
 - **VercelのNext.js**：`toNextHandlers`がVercelの`x-real-ip`を自動的に読み取ります。Vercelの前段に別のプロキシがある場合は、`clientIp`オプションを渡してください。
@@ -95,7 +95,7 @@ Node.jsのバージョンマネージャーがない場合、インストーラ�
 ハブにはエージェント0.3以降が必要です（`minAgentVersion`）。
 
 - **従来モード（WebSocket）**：ハブがエージェントに`upgrade_required`を伝え、エージェントは`npm i -g @uncage/cli@latest`で自分をアップグレードしてから再接続します。そのコンピュータでnpmに`sudo`が必要な場合、アップグレードは失敗します。npmのグローバルプレフィックスを修正し（`npm config set prefix ~/.npm-global`を実行して、その`bin`を`PATH`に追加）、再インストールしてください。サイトのインストールコマンドを再実行すれば、これを代わりに行ってくれます。
-- **FaaS モード（Vercel、Workersなど）**：0.2のエージェントはWebSocketしか話せませんが、FaaSのハブはWebSocketを提供しません。エージェントには`426 upgrade_required`が返り、ハブはそのコンピュータを「古い」と記録し、ウェブサイトにはそのコンピュータのカードとチャットに**Agent update needed**（エージェントの更新が必要）と表示されます（`<AgentOutdatedNotice>`、`MachineInfo.agentOutdated`）。そのコンピュータで次を実行します。
+- **FaaS モード（Vercel、Workersなど）**：0.2のエージェントはWebSocketにしか対応していませんが、FaaSのハブはWebSocketを提供しません。エージェントには`426 upgrade_required`が返り、ハブはそのコンピュータを「古い」と記録し、ウェブサイトにはそのコンピュータのカードとチャットに**Agent update needed**（エージェントの更新が必要）と表示されます（`<AgentOutdatedNotice>`、`MachineInfo.agentOutdated`）。そのコンピュータで次を実行します。
 
   ```sh
   npm i -g @uncage/cli@latest

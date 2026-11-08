@@ -26,7 +26,7 @@ Rules for translators:
 | activity log | 活动日志 | アクティビティログ | `uncage activity`. |
 | manifest | 清单 | マニフェスト | The tools and skills offered to one run. |
 | permission mode | 权限模式 | パーミッションモード | |
-| ACP agent | ACP agent（保持英文） | ACP エージェント | An agent that speaks the Agent Client Protocol (`runtimes.acp`). ja: no space before ACP after Japanese text (あらゆるACP エージェント). |
+| ACP agent | ACP agent（保持英文） | ACPエージェント | An agent that speaks the Agent Client Protocol (`runtimes.acp`). ja: no spaces around ACP (あらゆるACPエージェント). |
 | preset | 预设 | プリセット | The built-in ACP agent entries (`claude`, `gemini`, `opencode`). |
 | Agent Client Protocol | Agent Client Protocol（保持英文） | Agent Client Protocol（英語のまま） | The protocol name stays in English; the abbreviation ACP too. |
 | bypass (permissions) | 绕过权限（UI 显示为「完全放行」） | バイパス（権限確認の省略） | Mode `bypassPermissions`. |
@@ -45,9 +45,12 @@ Rules for translators:
 | traditional mode | 传统模式 | 従来モード（常駐プロセス） | A long-running Node process: PGlite + WebSocket, zero external dependencies. ja: 「従来モード」 after the first use. |
 | FaaS mode | FaaS 模式 | FaaS モード | Serverless functions / Fetch platforms (Vercel, Cloudflare Workers): Postgres + HTTP streaming. Keep “FaaS” in Latin letters. |
 | transport | 传输方式 | トランスポート | How a computer is linked to the hub: WebSocket (`ws`) or HTTP streaming (`http`). |
-| HTTP streaming | HTTP 流式传输 | HTTP ストリーミング | The `http` transport (`/agent/stream` + `/agent/events`). |
+| HTTP streaming | HTTP 流式传输 | HTTPストリーミング | The `http` transport (`/agent/stream` + `/agent/events`). |
 | function instance | 函数实例 | 関数インスタンス | One running copy of a serverless function. |
 | maintenance | 维护任务 | メンテナンス | `HubOptions.maintenance`, the `/maintenance` endpoint, retention cleanup. |
+| exactly once | 恰好一次 | ちょうど1回 | Site tool calls when a connection drops (stored call and result, idempotent id). ja: not 正確に1回. |
+| at most once | 最多一次 | 最大1回 | Site tool calls when an instance stops: they fail and are never re-run. ja: not 高々1回. |
+| Fetch platform | Fetch 平台 | Fetch対応プラットフォーム | A platform that runs Fetch `Request`/`Response` handlers (`deploy/other-fetch-platforms`). |
 | version manager | 版本管理器 | バージョンマネージャー | nvm, fnm, mise, asdf, volta, n, nvm-windows (`start/install-on-your-computer`). |
 | background service | 后台服务 | バックグラウンドサービス | How the agent runs per user: launchd (macOS), a systemd user service (Linux), a scheduled task (Windows). |
 | scheduled task | 计划任务 | タスク スケジューラのタスク | The Windows Task Scheduler task `UncageAgent`. |

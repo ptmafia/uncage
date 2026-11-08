@@ -60,7 +60,7 @@ Reactでは、`useUncageError()`がこれを`{ error: { code, message, hint, …
 
 | 警告コード | 意味 |
 | --- | --- |
-| `site_tools_unsupported` | セッションのランタイムがサイトツールを呼び出せません（現時点ではCodex、または`mcp: off`のACP エージェント）。実行はスキルだけで始まります。 |
+| `site_tools_unsupported` | セッションのランタイムがサイトツールを呼び出せません（現時点ではCodex、または`mcp: off`のACPエージェント）。実行はスキルだけで始まります。 |
 
 ## モデルに見えるツールのエラー
 

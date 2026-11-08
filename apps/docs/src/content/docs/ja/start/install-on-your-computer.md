@@ -21,7 +21,7 @@ curl -fsSL https://your.site/api/uncage/install.sh | bash
 2. **Node.js 22以降**：`node`が古いか見つからない場合、最初に見つかったバージョンマネージャーでNode.js 22をインストールします（下の表を参照）。バージョンマネージャーがなければHomebrew（`brew install node@22`。keg-onlyなので、今の`node`を置き換えません）を使い、Homebrewもなければfnmを`~/.local/share/fnm`にインストールします。その後、別の質問「Node.js 22を既定のNode.jsにしますか？」が表示されます。**n**と答えると既定はそのままで、スクリプトはNode.js 22をフルパスで使います。
 3. **npmのグローバルフォルダ**：`sudo`なしで書き込めない場合は、`~/.npm-global`への変更を提案します（nvmのNodeはこれを許さないため、その場合は提案しません）。
 4. **Uncage CLI**：ウェブサイトが指定するバージョン範囲で`npm install -g @uncage/cli`を実行します。
-5. **コーディングエージェント**：インストール済みのClaude Code、Codex、ACP エージェント。1つもなければClaude Codeのインストール方法を表示して終了します。インストールしてから、もう一度コマンドを実行してください。
+5. **コーディングエージェント**：インストール済みのClaude Code、Codex、ACPエージェント。1つもなければClaude Codeのインストール方法を表示して終了します。インストールしてから、もう一度コマンドを実行してください。
 6. **接続**：`uncage setup https://your.site`の実行を提案します。
 
 PATHの変更は、シェルの設定ファイル内の印付きブロック（`# >>> uncage >>>` … `# <<< uncage <<<`）1つにまとめて書き込みます。zshは`~/.zshrc`、bashは`~/.bash_profile`、それ以外は`~/.profile`です。fishの場合は追加すべき行を表示するだけです。終わったら新しいターミナルを開いてください。
@@ -114,8 +114,9 @@ PowerShell（Windows PowerShell 5.1またはPowerShell 7）で、通常のユー
 
 1. **コンピュータ**：x64またはarm64のWindows。
 2. **Node.js 22以降**：nvm-windows、fnm、voltaのいずれかがあればそれを使います。どれもなければ、現在のユーザー向けにfnmをインストールします。winget（`winget install --id Schniz.fnm`。ユーザー単位のパッケージで、管理者の確認は出ません）を使い、wingetがなければfnmのリリースzipを`%LOCALAPPDATA%\fnm`に展開します。wingetのNode.jsパッケージは管理者権限を求めるため、wingetでNode.jsをインストールすることはありません。その後、同じく既定にするかどうかを尋ねます。
-3. **Uncage CLI**：`npm install -g @uncage/cli`。スクリプトはCLIを`uncage.cmd`として実行します。
-4. **コーディングエージェント**の確認と`uncage setup`の提案は、macOSと同じです。
+3. **npmのグローバルフォルダ**：書き込めない場合は、`%USERPROFILE%\.npm-global`への変更を提案します。
+4. **Uncage CLI**：`npm install -g @uncage/cli`。スクリプトはCLIを`uncage.cmd`として実行します。
+5. **コーディングエージェント**の確認と`uncage setup`の提案は、macOSと同じです。
 
 PATHに追加するフォルダは、ユーザーの`Path`に書き込みます（PowerShellのプロファイルではありません）。終わったら新しいターミナルを開いてください。
 

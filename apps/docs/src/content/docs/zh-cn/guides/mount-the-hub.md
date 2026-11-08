@@ -3,7 +3,7 @@ title: 挂载 hub
 description: 在 Express、Fastify、Hono、Next.js 自定义服务器或纯 node:http 中挂载 @uncage/hub 的完整 Node 服务器示例（传统模式），作为 Fetch handler 运行在 Serverless 平台上的 hub，createHub 的全部选项，以及代理配置。
 ---
 
-hub 是一个 Fetch handler：`hub.fetch(request)` 处理它基础路径（默认 `/api/uncage`）下的所有请求：浏览器 API、设备登录、`install.sh` / `install.ps1`，以及电脑的 HTTP 流式传输。怎么挂载取决于你的网站运行在哪里（[选择部署模式](/docs/zh-cn/start/choose-deployment-mode/)）：
+hub 是一个 Fetch handler：`hub.fetch(request)` 处理它基础路径（默认 `/api/uncage`）下的所有请求，包括浏览器 API、设备登录、`install.sh` / `install.ps1`，以及电脑的 HTTP 流式传输。怎么挂载取决于你的网站运行在哪里（[选择部署模式](/docs/zh-cn/start/choose-deployment-mode/)）：
 
 - **长期运行的 Node 进程（传统模式）**：就是本页。`@uncage/hub/node` 中的 `toNodeHandler(hub)` 把 `hub.fetch` 挂成 Node 中间件，`attachWebSocket(hub, server)` 在你的 HTTP 服务器上接受电脑的 WebSocket。store 用 `pgliteHubStore`，一个放在目录里的嵌入式 Postgres：不需要再运行任何其他东西。
 - **Serverless 或 Fetch 平台（FaaS 模式）**：[Vercel 上的 Next.js](/docs/zh-cn/deploy/vercel/)（`toNextHandlers`）、[Cloudflare Workers](/docs/zh-cn/deploy/cloudflare-workers/)（`fetchOnce`）、[其他 Fetch 平台](/docs/zh-cn/deploy/other-fetch-platforms/)（`hub.fetch`）。这些都需要 Postgres。

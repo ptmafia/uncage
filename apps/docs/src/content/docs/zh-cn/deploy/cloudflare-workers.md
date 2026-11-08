@@ -267,7 +267,7 @@ Workers 禁止在请求之间共享 socket，所以共享连接池行不通。�
 
 ### 出现 504，或者流过早被切断？
 
-只要客户端保持连接，HTTP Worker 就没有墙钟时间限制，等待 I/O 也不计入 CPU 时间，所以默认的 `stream.maxDurationMs`（250 s）就可以。如果你的套餐或前面的代理会更早切断长请求，就把 `stream.maxDurationMs` 调到那个上限以下。
+只要客户端保持连接，HTTP Worker 就没有总时长（wall-clock）限制，等待 I/O 也不计入 CPU 时间，所以默认的 `stream.maxDurationMs`（250 s）就可以。如果你的套餐或前面的代理会更早切断长请求，就把 `stream.maxDurationMs` 调到那个上限以下。
 
 ### 不用 Hyperdrive，直接用 Neon 或 Supabase？
 
