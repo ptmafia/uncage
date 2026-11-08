@@ -1,6 +1,5 @@
 export { createHub, DEFAULT_HEARTBEAT, HUB_VERSION } from './hub.js';
 export type { Hub, HubOptions, HubUser } from './types.js';
-export { toNodeHandler, type UncageNodeHandler } from './node.js';
 export {
   defineTool,
   normalizeToolResult,
@@ -28,7 +27,6 @@ export type {
   ToolCallRecord,
   ToolCallStatus,
 } from './store/store.js';
-export { pgliteHubStore } from './store/pglite.js';
 export { postgresHubStore, type PgClientLike, type PgPoolLike } from './store/postgres.js';
 export { HUB_MIGRATIONS, migrateHubStore, sqlHubStore, type SqlClient, type SqlQueryable } from './store/sql.js';
 export { HUB_ATTACHMENT_MAX_BYTES, SINGLE_FRAME_ATTACHMENT_BYTES } from './browser-api.js';

@@ -1,6 +1,7 @@
-import { UncageError } from '@uncage/core';
+import { UncageError } from '@uncage/core/errors';
 import type { UncageEvent } from '@uncage/protocol';
 import { formatErrorFrame, formatEvent, SSE_HEADERS, SSE_HEARTBEAT } from '@uncage/server/wire';
+import { unrefTimer } from './web.js';
 
 export interface EventSource {
   /** Events with `sequence > after`, ascending; an empty page means "caught up". */
@@ -71,7 +72,7 @@ export function eventStreamResponse(
     };
     ac.signal.addEventListener('abort', notify, { once: true });
     const heartbeat = setInterval(() => write(SSE_HEARTBEAT), o.heartbeatMs);
-    heartbeat.unref();
+    unrefTimer(heartbeat);
     let unsubscribe: (() => void) | undefined;
 
     const emit = (e: UncageEvent) => {

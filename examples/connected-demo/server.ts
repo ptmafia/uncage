@@ -1,7 +1,7 @@
 /**
  * The demo website's server: one Node `http` server carrying
  *   - the Uncage hub's browser API and device endpoints under /api/uncage (`toNodeHandler(hub)`),
- *   - the machines' WebSockets at /api/uncage/agent (`hub.attach(server)`),
+ *   - the machines' WebSockets at /api/uncage/agent (`attachWebSocket(hub, server)`),
  *   - everything else: the Next.js app (pages, server actions, /asset-files).
  *
  *   pnpm dev                    # next dev mode
@@ -13,7 +13,7 @@
 import { createServer } from 'node:http';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { toNodeHandler } from '@uncage/hub';
+import { attachWebSocket, toNodeHandler } from '@uncage/hub/node';
 import next from 'next';
 import { purgeAssetsOlderThan } from './lib/assets.ts';
 import { isPublicDemo, publicUrl } from './lib/config.ts';
@@ -45,7 +45,7 @@ server.on('request', (req, res) => {
   });
 });
 
-hub.attach(server); // machine WebSockets at <basePath>/agent
+attachWebSocket(hub, server); // machine WebSockets at <basePath>/agent
 if (dev) {
   // Next's own upgrades (HMR); the hub ignores paths that are not its own.
   const upgrade = app.getUpgradeHandler();

@@ -1,8 +1,8 @@
 import type { IncomingMessage } from 'node:http';
-import { toNodeHandler as fetchToNode, type UncageNodeHandler } from '@uncage/server/wire';
-import type { Hub } from './types.js';
+import { toNodeHandler as fetchToNode, type UncageNodeHandler } from '@uncage/server/node-handler';
+import type { Hub } from '../types.js';
 
-export type { UncageNodeHandler } from '@uncage/server/wire';
+export type { UncageNodeHandler } from '@uncage/server/node-handler';
 
 const CLIENT_IP_HEADER = 'x-uncage-hub-client-ip';
 
@@ -18,7 +18,7 @@ function requestPath(req: IncomingMessage & { originalUrl?: string }): string {
  * (`reply.hijack()` then `handler(request.raw, reply.raw)`) and `node:http`:
  *
  *   app.use(toNodeHandler(hub));                 // or app.use('/api/uncage', toNodeHandler(hub))
- *   hub.attach(server);                          // machine WebSockets on the same HTTP server
+ *   attachWebSocket(hub, server);                // machine WebSockets on the same HTTP server
  *
  * Only requests under `hub.basePath` are handled; anything else goes to `next()` untouched (with no
  * `next`, e.g. plain `node:http`, it gets a 404). Paths are read from `req.originalUrl` (Express) or
@@ -29,7 +29,7 @@ function requestPath(req: IncomingMessage & { originalUrl?: string }): string {
 export function toNodeHandler(h: Hub): UncageNodeHandler {
   const handle = (req: Request) => {
     const clientIp = req.headers.get(CLIENT_IP_HEADER);
-    return h.handler(req, clientIp ? { clientIp } : {});
+    return h.fetch(req, clientIp ? { clientIp } : {});
   };
   const inner = fetchToNode({ GET: handle, POST: handle, PATCH: handle, DELETE: handle });
   return (req, res, next) => {
@@ -40,7 +40,7 @@ export function toNodeHandler(h: Hub): UncageNodeHandler {
       res.end();
       return;
     }
-    // Hand the socket address to `handler` through a header the client cannot pre-set.
+    // Hand the socket address to `fetch` through a header the client cannot pre-set.
     delete req.headers[CLIENT_IP_HEADER];
     // Express's `req.ip` honours `trust proxy`; otherwise the socket address.
     const expressIp = (req as { ip?: unknown }).ip;

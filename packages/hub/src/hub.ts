@@ -1,22 +1,21 @@
-import { randomBytes } from 'node:crypto';
-import { posix } from 'node:path';
-import { UncageError } from '@uncage/core';
+import { UncageError } from '@uncage/core/errors';
 import { MAX_FRAME_BYTES, SkillSpecSchema, type HubFrame, type SkillSpec, type ToolCallResult, type ToolSpec, type UncageEvent } from '@uncage/protocol';
 import { errorResponse } from '@uncage/server/wire';
 import pkg from '../package.json' with { type: 'json' };
 import { browserApi } from './browser-api.js';
 import type { ClusterAdapter } from './cluster/cluster.js';
 import { memoryCluster } from './cluster/memory.js';
-import { deviceFlow, randomSecret, sha256 } from './device.js';
+import { deviceFlow, randomSecret } from './device.js';
 import { DEFAULT_PULL_MAX_BYTES, DEFAULT_READ_MAX_BYTES, filePull } from './files.js';
 import { assertVersionRange, defaultCliRange, installScript } from './install-script.js';
+import { newNodeId } from './ids.js';
 import { compareVersions, MachineHub, sessionChannel, type HubLogger } from './machines.js';
 import { applyEvent, emptySnapshot, indexPatch } from './replica.js';
 import { SlidingWindow } from './rate-limit.js';
-import { pgliteHubStore } from './store/pglite.js';
 import type { HubStore, MachineRecord, SessionRecord, ToolCallStatus } from './store/store.js';
 import { siteToolExecutor, toToolSpec, type ToolContext, type ToolExecutor } from './tools.js';
-import type { Hub, HubOptions } from './types.js';
+import { HUB_INTERNALS, type Hub, type HubOptions } from './types.js';
+import { randomHex, sha256Hex, unrefTimer, utf8Length } from './web.js';
 
 export const HUB_VERSION: string = pkg.version;
 
@@ -32,7 +31,7 @@ const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
 const DEFAULT_RUN_INDEX_WAIT_MS = 10_000;
 /** Hub copies of attachments are deleted after this many days (`attachmentRetentionDays`). */
 const DEFAULT_ATTACHMENT_RETENTION_DAYS = 30;
-/** Run-manifest retention sweep: every hour (on every node; deletes are idempotent). */
+/** Run-manifest retention sweep: every hour (run by `attachWebSocket` on every node; deletes are idempotent). */
 const MANIFEST_SWEEP_MS = 3_600_000;
 /** An unbound manifest (startRun never answered) is dropped after an hour. */
 const UNBOUND_MANIFEST_TTL_MS = 3_600_000;
@@ -49,12 +48,21 @@ const MAX_AUDIT_ARGS_BYTES = 16 * 1024;
  * `./a//b/` → `a/b`: the machine's file paths are workspace-relative with single forward slashes.
  * Paths that leave the workspace are refused here (the machine refuses them too).
  */
-function normalizeWorkspacePath(p: string): string {
-  const n = posix.normalize(p.replace(/\\/g, '/')).replace(/^(\.\/)+/, '').replace(/\/+$/, '');
-  if (n === '' || n === '.' || n === '..' || n.startsWith('../') || n.startsWith('/')) {
-    throw new UncageError('invalid_request', { message: `"${p}" is not a path inside the session workspace.` });
+export function normalizeWorkspacePath(p: string): string {
+  const refuse = () => new UncageError('invalid_request', { message: `"${p}" is not a path inside the session workspace.` });
+  const s = p.replace(/\\/g, '/');
+  if (s.startsWith('/')) throw refuse();
+  // Resolve `.` and `..` segment by segment (like `posix.normalize`); climbing above the root is refused.
+  const out: string[] = [];
+  for (const seg of s.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') {
+      if (out.length === 0) throw refuse();
+      out.pop();
+    } else out.push(seg);
   }
-  return n;
+  if (out.length === 0) throw refuse();
+  return out.join('/');
 }
 
 const RUN_END = new Set(['run.completed', 'run.failed', 'run.cancelled', 'run.interrupted']);
@@ -118,33 +126,39 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     skills.set(r.data.name, r.data);
   }
 
-  const ownsStore = !o.store;
+  if (!o.store) {
+    throw new Error(
+      'createHub: store is required (pgliteHubStore({ dataDir }) from @uncage/hub/node for one Node process, postgresHubStore for several nodes or serverless)',
+    );
+  }
+  const store: HubStore = o.store;
   const ownsCluster = !o.cluster;
-  const store: HubStore = o.store ?? (await pgliteHubStore({ dataDir: './.uncage-hub' }));
   const cluster: ClusterAdapter = o.cluster ?? memoryCluster();
-  const nodeId = `node_${randomBytes(8).toString('hex')}`;
+  const nodeId = newNodeId();
   const shutdown = new AbortController();
+  /** Set by `attachWebSocket`: this process serves machine WebSockets at this path. */
+  let wsPath: string | undefined;
 
   const device = deviceFlow({
     store,
     verificationUri: `${origin}/${trimSlashes(o.verificationPath ?? '/device')}`,
     site,
-    transports: [{ kind: 'ws', url: `${hubUrl.replace(/^http/, 'ws')}/agent` }],
+    transports: () => [{ kind: 'ws', url: `${origin.replace(/^http/, 'ws')}${wsPath ?? `${basePath}/agent`}` }],
     async createMachine({ userId, name, os, machineKeyHash }) {
       const machineToken = randomSecret();
       const now = new Date().toISOString();
       // Same machine re-paired by the same user: keep its id (and sessions), rotate its token.
       const known = machineKeyHash ? await store.findMachineByKey(userId, machineKeyHash) : null;
-      if (known && (await store.rotateMachineToken(known.id, sha256(machineToken)))) {
+      if (known && (await store.rotateMachineToken(known.id, await sha256Hex(machineToken)))) {
         // A connection still using the old token must not outlive it.
         await machines.kick(known.id, 'replaced');
         return { machineId: known.id, machineToken };
       }
-      const machineId = `mch_${randomBytes(16).toString('hex')}`;
+      const machineId = `mch_${randomHex(16)}`;
       await store.insertMachine({
         id: machineId,
         userId,
-        tokenHash: sha256(machineToken),
+        tokenHash: await sha256Hex(machineToken),
         name: name ?? 'My computer',
         os: os ?? 'unknown',
         agentVersion: '0.0.0',
@@ -299,9 +313,9 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     if (connSignal.aborted) abort('cancelled');
     activeCalls.add(entry);
     const timer = setTimeout(() => abort('timeout'), toolTimeoutMs);
-    timer.unref();
+    unrefTimer(timer);
 
-    const auditId = `tcl_${randomBytes(12).toString('hex')}`;
+    const auditId = `tcl_${randomHex(12)}`;
     const startedAt = Date.now();
     const argsJson = JSON.stringify(call.args ?? null);
     await store
@@ -313,7 +327,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
         userId: rec.userId,
         machineId: machine.id,
         tool: call.tool,
-        args: Buffer.byteLength(argsJson) <= MAX_AUDIT_ARGS_BYTES ? (call.args ?? null) : null,
+        args: utf8Length(argsJson) <= MAX_AUDIT_ARGS_BYTES ? (call.args ?? null) : null,
         status: 'running',
         startedAt: new Date(startedAt).toISOString(),
       })
@@ -363,7 +377,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
         abandoned,
       ]);
       const frame: HubFrame = { t: 'tool_result', id: call.id, ok: true, result };
-      const bytes = Buffer.byteLength(JSON.stringify(frame));
+      const bytes = utf8Length(JSON.stringify(frame));
       if (bytes > TOOL_RESULT_BUDGET) {
         const e = new UncageError('tool_failed', { message: `The result of site tool "${call.tool}" is too large (${bytes} bytes, max ${TOOL_RESULT_BUDGET}).` });
         await finish('error', e);
@@ -391,26 +405,25 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
       ac.abort();
     }
   }
-  await machines.start();
-
   const sweep = {
     intervalMs: o.manifestSweep?.intervalMs ?? MANIFEST_SWEEP_MS,
     unboundTtlMs: o.manifestSweep?.unboundTtlMs ?? UNBOUND_MANIFEST_TTL_MS,
     boundTtlMs: o.manifestSweep?.boundTtlMs ?? BOUND_MANIFEST_TTL_MS,
   };
-  const sweepManifests = () => {
+  /** Retention sweep; no timer here (FaaS instances must not keep background work): `attachWebSocket` runs it. */
+  const sweepManifests = async (): Promise<void> => {
     const now = Date.now();
-    void store
-      .pruneRunManifests({ unboundBefore: new Date(now - sweep.unboundTtlMs).toISOString(), boundBefore: new Date(now - sweep.boundTtlMs).toISOString() })
-      .catch((err: unknown) => logger.error({ err }, 'run-manifest sweep failed'));
-    if (Number.isFinite(attachmentRetentionDays)) {
-      void store
-        .pruneAttachments(new Date(now - attachmentRetentionDays * 86_400_000).toISOString())
-        .catch((err: unknown) => logger.error({ err }, 'attachment sweep failed'));
-    }
+    await Promise.all([
+      store
+        .pruneRunManifests({ unboundBefore: new Date(now - sweep.unboundTtlMs).toISOString(), boundBefore: new Date(now - sweep.boundTtlMs).toISOString() })
+        .catch((err: unknown) => logger.error({ err }, 'run-manifest sweep failed')),
+      Number.isFinite(attachmentRetentionDays)
+        ? store
+            .pruneAttachments(new Date(now - attachmentRetentionDays * 86_400_000).toISOString())
+            .catch((err: unknown) => logger.error({ err }, 'attachment sweep failed'))
+        : undefined,
+    ]);
   };
-  const sweepTimer = setInterval(sweepManifests, sweep.intervalMs);
-  sweepTimer.unref();
 
   const setupUrl = basePath === DEFAULT_BASE_PATH ? origin : hubUrl;
   const api = browserApi({
@@ -435,8 +448,8 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   let closing: Promise<void> | undefined;
   return {
     basePath,
-    async handler(req, info) {
-      const requestId = `req_${randomBytes(12).toString('hex')}`;
+    async fetch(req, info) {
+      const requestId = `req_${randomHex(12)}`;
       try {
         const url = new URL(req.url);
         if (url.pathname !== basePath && !url.pathname.startsWith(`${basePath}/`)) {
@@ -454,9 +467,6 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
         });
       }
     },
-    attach(server, opts = {}) {
-      machines.attach(server, opts.path ?? `${basePath}/agent`);
-    },
     approveDevice: (code, user) => device.approve(code, user),
     denyDevice: (code, user) => device.deny(code, user),
     lookupDevice: (code, user) => device.lookup(code, user),
@@ -464,10 +474,19 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     close: () =>
       (closing ??= (async () => {
         shutdown.abort();
-        clearInterval(sweepTimer);
         await machines.close();
         if (ownsCluster) await cluster.close();
-        if (ownsStore) await store.close();
       })()),
+    [HUB_INTERNALS]: {
+      machines,
+      basePath,
+      logger,
+      enableWebSocket(opts = {}) {
+        wsPath = opts.path ?? `${basePath}/agent`;
+        machines.enableWebSocket();
+      },
+      heartbeat: machines.heartbeat,
+      maintenance: { intervalMs: sweep.intervalMs, run: sweepManifests },
+    },
   };
 }

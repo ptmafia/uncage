@@ -25,6 +25,10 @@
     "./wire": {
       "types": "./dist/wire.d.ts",
       "import": "./dist/wire.js"
+    },
+    "./node-handler": {
+      "types": "./dist/node-handler.d.ts",
+      "import": "./dist/node-handler.js"
     }
   },
   "scripts": {

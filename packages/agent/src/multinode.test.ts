@@ -5,7 +5,8 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { defineTool, pgliteHubStore, redisCluster, type RedisLike } from '@uncage/hub';
+import { defineTool, redisCluster, type RedisLike } from '@uncage/hub';
+import { pgliteHubStore } from '@uncage/hub/node';
 import type { Attachment, Session, UncageEvent } from '@uncage/protocol';
 import { createFakeAdapter } from '@uncage/testkit';
 import RedisMock from 'ioredis-mock';

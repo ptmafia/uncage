@@ -1,7 +1,4 @@
-import { randomBytes } from 'node:crypto';
-import type { IncomingMessage, Server } from 'node:http';
-import type { Duplex } from 'node:stream';
-import { UncageError } from '@uncage/core';
+import { UncageError } from '@uncage/core/errors';
 import {
   CONNECTED_PROTOCOL,
   ErrorBodySchema,
@@ -10,7 +7,6 @@ import {
   HubCommandResultSchemas,
   HubFrameSchema,
   MAX_FRAME_BYTES,
-  parseAgentFrame,
   type AgentFrame,
   type Attachment,
   type ErrorBody,
@@ -18,43 +14,37 @@ import {
   type HubCommandOp,
   type HubCommandResults,
   type HubFrame,
+  type TransportKind,
   type UncageEvent,
 } from '@uncage/protocol';
-import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { z } from 'zod';
 import type { ClusterAdapter } from './cluster/cluster.js';
-import { sha256 } from './device.js';
 import { PullAssembler, type PullOutcome } from './files.js';
+import { routedId, routeOf } from './ids.js';
 import type { HubStore, MachineRecord } from './store/store.js';
+import { sha256Hex, toBase64, unrefTimer, utf8Length } from './web.js';
 
 export interface HubLogger {
   warn(obj: unknown, msg?: string): void;
   error(obj: unknown, msg?: string): void;
 }
 
-/** Close codes the hub uses on machine sockets. */
-export const CLOSE = {
-  /** Protocol violation (malformed frame, no hello first). */
-  policy: 1008,
+/**
+ * Codes a link is retired with by the hub itself. The WebSocket link uses them verbatim as close
+ * codes (see `CLOSE` in `node/ws.ts`, which adds the socket-only ones).
+ */
+export const LINK_CLOSE = {
   shutdown: 1001,
-  helloTimeout: 4408,
-  /** Another connection for the same machine took over. */
-  replaced: 4409,
+  /** The hub failed while handling the link. */
+  error: 1011,
   /** The machine was revoked. */
   revoked: 4401,
-  /** Agent too old (`upgrade_required` was sent first). */
-  upgrade: 4426,
-  /** Agent speaks a newer protocol than this hub. */
-  hubTooOld: 4505,
-  /** Missed heartbeats. */
-  offline: 4000,
+  /** Another connection for the same machine took over. */
+  replaced: 4409,
 } as const;
 
-const HELLO_TIMEOUT_MS = 10_000;
 /** A pull with no frame from the machine for this long fails. */
 const PULL_IDLE_MS = 30_000;
-/** After sending a close frame to a retired socket, how long before the TCP connection is cut. */
-export const CLOSE_GRACE_MS = 500;
 
 /** Compares `x.y.z[-pre]` versions; unparseable versions sort lowest. */
 export function compareVersions(a: string, b: string): number {
@@ -72,7 +62,6 @@ export function compareVersions(a: string, b: string): number {
   return x.pre < y.pre ? -1 : 1;
 }
 
-const byteLength = (s: string): number => Buffer.byteLength(s, 'utf8');
 
 const toError = (body: ErrorBody): UncageError =>
   new UncageError(body.code, {
@@ -84,55 +73,70 @@ const toError = (body: ErrorBody): UncageError =>
 const errorBody = (e: unknown): ErrorBody =>
   (e instanceof UncageError ? e : new UncageError('internal_error')).toBody();
 
-/** Messages on a node's cluster channel. */
+/**
+ * Messages on a node's cluster channel. Replies (`res`) go to the node encoded in the command or
+ * upload id (`routeOf`).
+ */
 type NodeMsg =
-  | { k: 'cmd'; id: string; from: string; machineId: string; op: HubCommandOp; args: unknown }
+  | { k: 'cmd'; id: string; machineId: string; op: HubCommandOp; args: unknown }
   | { k: 'res'; id: string; ok: true; data: unknown }
   | { k: 'res'; id: string; ok: false; error: ErrorBody }
   | { k: 'kick'; machineId: string; reason: 'revoked' | 'replaced'; except?: string }
-  /** One frame of a chunked upload, forwarded as-is to the machine (`begin` registers the reply route). */
-  | { k: 'up'; id: string; from: string; machineId: string; frame: HubFrame };
+  /** One frame of a chunked upload, forwarded as-is to the machine (`begin` registers the upload on the link). */
+  | { k: 'up'; id: string; machineId: string; frame: HubFrame };
 
 /** Shape check for cluster messages: anything else on a node channel is dropped. */
 const NodeMsgSchema = z.discriminatedUnion('k', [
-  z.object({ k: z.literal('cmd'), id: z.string(), from: z.string(), machineId: z.string(), op: HubCommandOpSchema, args: z.unknown() }),
+  z.object({ k: z.literal('cmd'), id: z.string(), machineId: z.string(), op: HubCommandOpSchema, args: z.unknown() }),
   z.object({ k: z.literal('res'), id: z.string(), ok: z.boolean(), data: z.unknown().optional(), error: z.unknown().optional() }),
   z.object({ k: z.literal('kick'), machineId: z.string(), reason: z.enum(['revoked', 'replaced']), except: z.string().optional() }),
-  z.object({ k: z.literal('up'), id: z.string(), from: z.string(), machineId: z.string(), frame: HubFrameSchema }),
+  z.object({ k: z.literal('up'), id: z.string(), machineId: z.string(), frame: HubFrameSchema }),
 ]);
 const UPLOAD_FRAMES = new Set(['attachment_begin', 'attachment_chunk', 'attachment_end', 'attachment_abort']);
 
 export const nodeChannel = (nodeId: string): string => `uncage:node:${nodeId}`;
 export const sessionChannel = (sessionId: string): string => `uncage:session:${sessionId}`;
 
-interface Conn {
-  /** Unique per socket (a machine may reconnect while the old socket is still closing). */
-  connId: string;
-  ws: WebSocket;
+/** One connection of a machine to the hub, whatever carries it. */
+export interface MachineLink {
+  readonly kind: TransportKind;
+  /** Unique per connection (a machine may reconnect while the old connection is still closing). */
+  readonly linkId: string;
   machine: MachineRecord;
-  /** Commands forwarded to this machine, by command id → node waiting for the result. */
-  inflight: Map<string, string>;
-  awaitingPong: boolean;
-  missed: number;
-  timer?: NodeJS.Timeout;
+  /** Aborts when the connection goes away (cancels its tool calls and pulls). */
+  readonly signal: AbortSignal;
+  /** ws: write now; http: `durable` → outbox, otherwise collected into the response's `replies`. */
+  send(f: HubFrame, o?: { durable?: boolean }): Promise<void>;
+}
+
+/** A link whose connection is held by this node (a WebSocket): commands for its machine are routed here. */
+export type LocalLink = MachineLink & { close(code: number, reason: string): void };
+
+/** What the hub keeps per local link. */
+interface LinkState {
+  link: LocalLink;
+  /** Commands and uploads forwarded to this link and not answered yet (failed at once when it goes). */
+  inflight: Set<string>;
   queue: Promise<void>;
-  /** Revoked, replaced, offline or closed: its frames are ignored from now on. */
+  /** Retired (revoked, replaced, offline or closed): its frames are ignored from now on. */
   dead: boolean;
   /** `welcome` sent; frames before that are ignored. */
   ready: boolean;
-  /** Aborted when the connection is retired (cancels its tool calls and pulls). */
+  /** Aborted when the link is retired or its connection goes. */
   abort: AbortController;
-  /** Site tool calls from this connection still executing. */
+  /** Site tool calls from this link still executing. */
   toolCalls: number;
 }
 
+type Timer = ReturnType<typeof setTimeout>;
+
 interface PullState {
-  conn: Conn;
+  state: LinkState;
   asm: PullAssembler;
   path: string;
   resolve(r: PullOutcome): void;
   reject(e: unknown): void;
-  timer: NodeJS.Timeout;
+  timer: Timer;
   cleanup(): void;
 }
 
@@ -140,7 +144,7 @@ interface Pending {
   op: HubCommandOp;
   resolve(v: unknown): void;
   reject(e: unknown): void;
-  timer: NodeJS.Timeout;
+  timer: Timer;
 }
 
 export interface MachineHubDeps {
@@ -166,152 +170,143 @@ export interface MachineHubDeps {
 }
 
 /**
- * Machine WebSockets on this node plus cluster routing of commands to whichever node holds a
- * machine's socket.
+ * Machine links plus cluster routing of commands to whichever node holds a machine's connection.
+ * Transport-neutral: the WebSocket server (`@uncage/hub/node`) builds a `MachineLink` per socket
+ * and feeds it `hello` / `handleMessage`.
  */
 export class MachineHub {
-  private readonly conns = new Map<string, Conn>();
+  /** Local links by link id (registered before `hello`). */
+  private readonly links = new Map<string, LinkState>();
+  /** The welcomed local link of each machine. */
+  private readonly active = new Map<string, LinkState>();
   private readonly pending = new Map<string, Pending>();
   private readonly pulls = new Map<string, PullState>();
-  private readonly servers: Array<{ server: Server; listener: (req: IncomingMessage, socket: Duplex, head: Buffer) => void }> = [];
-  private readonly wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
-  private unsubscribe?: () => void;
+  private readonly closeHooks: Array<() => void> = [];
+  /** Node-channel subscription: refcounted while replies are awaited, permanent once WebSockets are served. */
+  private subRefs = 0;
+  private subscription?: Promise<() => void>;
+  private wsReady?: Promise<void>;
   private closed = false;
 
   constructor(private readonly d: MachineHubDeps) {}
 
-  async start(): Promise<void> {
-    this.unsubscribe = await this.d.cluster.subscribe(nodeChannel(this.d.nodeId), (raw) => {
-      let msg: NodeMsg;
-      try {
-        const parsed = NodeMsgSchema.safeParse(JSON.parse(raw));
-        if (!parsed.success) {
-          this.d.logger.warn({ issue: parsed.error.issues[0]?.message }, 'malformed cluster message dropped');
-          return;
-        }
-        msg = parsed.data as NodeMsg;
-      } catch {
-        return;
-      }
-      this.onNodeMessage(msg).catch((err) => this.d.logger.error({ err }, 'cluster message failed'));
-    });
+  get nodeId(): string {
+    return this.d.nodeId;
+  }
+
+  get heartbeat(): { pingIntervalMs: number; missedPings: number } {
+    return { pingIntervalMs: this.d.pingIntervalMs, missedPings: this.d.missedPings };
+  }
+
+  get isClosed(): boolean {
+    return this.closed;
   }
 
   private get presenceTtlSec(): number {
     return Math.ceil((this.d.pingIntervalMs * (this.d.missedPings + 1)) / 1000) + 5;
   }
 
-  attach(server: Server, path: string): void {
-    const listener = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-      let pathname: string;
-      try {
-        pathname = new URL(req.url ?? '/', 'http://hub').pathname;
-      } catch {
-        return;
-      }
-      if (pathname !== path) return; // someone else's upgrade (e.g. a dev server's HMR)
-      this.authenticate(req)
-        .then((machine) => {
-          if (!machine || this.closed) {
-            socket.end(
-              `HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n` +
-                JSON.stringify({ error: new UncageError('unauthorized', { message: 'Missing or invalid machine token.', hint: 'Run `uncage setup <site>` again to pair this machine.' }).toBody() }),
-            );
-            return;
-          }
-          this.wss.handleUpgrade(req, socket, head, (ws) => this.onSocket(ws, machine));
-        })
-        .catch((err) => {
-          this.d.logger.error({ err }, 'machine upgrade failed');
-          socket.destroy();
-        });
-    };
-    server.on('upgrade', listener);
-    this.servers.push({ server, listener });
-  }
-
-  private async authenticate(req: IncomingMessage): Promise<MachineRecord | null> {
-    const m = /^Bearer ([A-Za-z0-9_-]{16,256})$/.exec(req.headers.authorization ?? '');
-    if (!m?.[1]) return null;
-    return this.d.store.findMachineByTokenHash(sha256(m[1]));
-  }
-
-  private onSocket(ws: WebSocket, machine: MachineRecord): void {
-    const helloTimer = setTimeout(() => closeSoon(ws, CLOSE.helloTimeout, 'hello timeout'), HELLO_TIMEOUT_MS);
-    let conn: Conn | undefined;
-    ws.on('error', () => undefined);
-    ws.on('message', (data: RawData, isBinary: boolean) => {
-      if (conn?.dead || ws.readyState !== WebSocket.OPEN) return;
-      let frame: AgentFrame;
-      try {
-        if (isBinary) throw new Error('binary frame');
-        frame = parseAgentFrame(rawToString(data));
-      } catch (err) {
-        this.d.logger.warn({ machineId: machine.id, err: (err as Error).message }, 'malformed agent frame');
-        if (conn) void this.retire(conn, { close: [CLOSE.policy, 'malformed frame'] });
-        else closeSoon(ws, CLOSE.policy, 'malformed frame');
-        return;
-      }
-      if (!conn) {
-        if (frame.t !== 'hello') {
-          closeSoon(ws, CLOSE.policy, 'expected hello');
-          return;
-        }
-        clearTimeout(helloTimer);
-        conn = this.newConn(ws, machine);
-        const c = conn;
-        c.queue = c.queue
-          .then(() => this.onHello(c, frame as Extract<AgentFrame, { t: 'hello' }>))
-          .catch((err) => {
-            this.d.logger.error({ err, machineId: machine.id }, 'machine hello failed');
-            void this.retire(c, { close: [1011, 'hub error'] });
-          });
-        return;
-      }
-      this.onFrame(conn, frame);
+  /**
+   * This node holds machine connections (WebSockets): it listens on its node channel for good, so
+   * commands for its machines reach it. Idempotent.
+   */
+  enableWebSocket(): void {
+    if (this.wsReady || this.closed) return;
+    this.wsReady = this.acquire().catch((err: unknown) => {
+      this.wsReady = undefined;
+      this.d.logger.error({ err }, 'cluster subscribe failed');
+      throw err;
     });
-    ws.on('close', () => {
-      clearTimeout(helloTimer);
-      if (conn) void this.retire(conn);
-    });
+    this.wsReady.catch(() => undefined);
   }
 
-  private newConn(ws: WebSocket, machine: MachineRecord): Conn {
-    return {
-      connId: randomBytes(8).toString('hex'),
-      ws,
-      machine,
-      inflight: new Map(),
-      awaitingPong: false,
-      missed: 0,
-      queue: Promise.resolve(),
-      dead: false,
-      ready: false,
-      abort: new AbortController(),
-      toolCalls: 0,
-    };
+  /** Runs `fn` when the hub closes (e.g. detaching a WebSocket server). */
+  onClose(fn: () => void): void {
+    this.closeHooks.push(fn);
   }
 
-  private send(c: Conn, f: HubFrame): void {
-    if (c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify(f));
+  private acquire(): Promise<void> {
+    if (this.closed) return Promise.reject(new UncageError('machine_offline'));
+    this.subRefs++;
+    if (!this.subscription) {
+      const p = this.d.cluster.subscribe(nodeChannel(this.d.nodeId), (raw) => this.onRaw(raw));
+      p.catch(() => {
+        if (this.subscription === p) this.subscription = undefined;
+      });
+      this.subscription = p;
+    }
+    return this.subscription.then(
+      () => undefined,
+      (err: unknown) => {
+        this.release();
+        throw err;
+      },
+    );
   }
 
-  private async onHello(c: Conn, hello: Extract<AgentFrame, { t: 'hello' }>): Promise<void> {
-    if (hello.protocol > CONNECTED_PROTOCOL) {
-      await this.retire(c, { close: [CLOSE.hubTooOld, 'protocol not supported by this hub'] });
+  private release(): void {
+    if (this.subRefs === 0) return;
+    if (--this.subRefs > 0) return;
+    const p = this.subscription;
+    this.subscription = undefined;
+    void p?.then(
+      (unsubscribe) => unsubscribe(),
+      () => undefined,
+    );
+  }
+
+  private onRaw(raw: string): void {
+    let msg: NodeMsg;
+    try {
+      const parsed = NodeMsgSchema.safeParse(JSON.parse(raw));
+      if (!parsed.success) {
+        this.d.logger.warn({ issue: parsed.error.issues[0]?.message }, 'malformed cluster message dropped');
+        return;
+      }
+      msg = parsed.data as NodeMsg;
+    } catch {
       return;
     }
+    this.onNodeMessage(msg).catch((err) => this.d.logger.error({ err }, 'cluster message failed'));
+  }
+
+  /** The machine for a bearer machine token, or `null` (unknown, revoked, malformed, hub closed). */
+  async authenticate(token: string): Promise<MachineRecord | null> {
+    if (this.closed || !/^[A-Za-z0-9_-]{16,256}$/.test(token)) return null;
+    return this.d.store.findMachineByTokenHash(await sha256Hex(token));
+  }
+
+  /** Registers a connection held by this node (before its `hello`). */
+  addLocalLink(link: LocalLink): void {
+    const abort = new AbortController();
+    if (link.signal.aborted) abort.abort();
+    else link.signal.addEventListener('abort', () => abort.abort(), { once: true });
+    this.links.set(link.linkId, { link, inflight: new Set(), queue: Promise.resolve(), dead: false, ready: false, abort, toolCalls: 0 });
+  }
+
+  /** The connection went away: retires the link (in-flight commands fail with `machine_offline`). */
+  removeLocalLink(link: MachineLink): void {
+    const s = this.links.get(link.linkId);
+    if (!s) return;
+    this.links.delete(link.linkId);
+    void this.retire(s);
+  }
+
+  /**
+   * Handles the link's `hello`: version checks (`upgrade_required` is sent before `'upgrade'`),
+   * revocation, the machine's record, then — for a local link — takes over from any older
+   * connection of the machine and sends `welcome`. The caller closes the link on anything but
+   * `'ok'`.
+   */
+  async hello(link: MachineLink, hello: Extract<AgentFrame, { t: 'hello' }>): Promise<'ok' | 'upgrade' | 'hub_too_old' | 'revoked'> {
+    if (hello.protocol > CONNECTED_PROTOCOL) return 'hub_too_old';
     if (hello.protocol < CONNECTED_PROTOCOL || compareVersions(hello.agentVersion, this.d.minAgentVersion) < 0) {
-      this.send(c, { t: 'upgrade_required', minAgentVersion: this.d.minAgentVersion });
-      await this.retire(c, { close: [CLOSE.upgrade, 'upgrade required'] });
-      return;
+      await link.send({ t: 'upgrade_required', minAgentVersion: this.d.minAgentVersion });
+      return 'upgrade';
     }
-    // Revoked between upgrade and hello?
-    const current = await this.d.store.getMachine(c.machine.id);
-    if (!current || current.tokenHash !== c.machine.tokenHash) {
-      await this.retire(c, { close: [CLOSE.revoked, 'revoked'] });
-      return;
-    }
+    // Revoked between authentication and hello?
+    const current = await this.d.store.getMachine(link.machine.id);
+    if (!current || current.tokenHash !== link.machine.tokenHash) return 'revoked';
     const lastSeenAt = new Date().toISOString();
     const patch = {
       name: hello.machine.name.slice(0, 100) || current.name,
@@ -320,60 +315,57 @@ export class MachineHub {
       runtimes: hello.machine.runtimes,
       lastSeenAt,
     };
-    await this.d.store.updateMachine(c.machine.id, patch);
-    c.machine = { ...current, ...patch };
+    await this.d.store.updateMachine(link.machine.id, patch);
+    link.machine = { ...current, ...patch };
 
-    if (c.dead || c.ws.readyState !== WebSocket.OPEN) return; // went away during the awaits
-    const previous = this.conns.get(c.machine.id);
-    this.conns.set(c.machine.id, c);
-    if (previous && previous !== c) {
-      void this.retire(previous, { close: [CLOSE.replaced, 'replaced by a newer connection'], keepPresence: true });
+    const s = this.links.get(link.linkId);
+    if (s) {
+      const gone = () => s.dead || link.signal.aborted;
+      if (gone()) return 'ok'; // went away during the awaits
+      // Commands for this machine are routed to our node channel: be listening before taking presence.
+      if (this.wsReady) await this.wsReady;
+      if (gone()) return 'ok';
+      const machineId = link.machine.id;
+      const previous = this.active.get(machineId);
+      this.active.set(machineId, s);
+      if (previous && previous !== s) {
+        void this.retire(previous, { close: [LINK_CLOSE.replaced, 'replaced by a newer connection'], keepPresence: true });
+      }
+      const elsewhere = await this.d.cluster.getPresence(machineId);
+      if (elsewhere && elsewhere !== this.d.nodeId) {
+        await this.publishQuiet(elsewhere, { k: 'kick', machineId, reason: 'replaced' });
+      }
+      await this.d.cluster.setPresence(machineId, this.d.nodeId, this.presenceTtlSec);
+      if (gone()) {
+        // Closed while we were registering: its retire() may have cleared presence before the
+        // setPresence above re-added it. Clear it again unless a newer live link holds it.
+        s.dead = true;
+        if (this.active.get(machineId) === s) this.active.delete(machineId);
+        if (!this.active.has(machineId)) await this.d.cluster.clearPresence(machineId, this.d.nodeId);
+        return 'ok';
+      }
+      s.ready = true;
     }
-    const elsewhere = await this.d.cluster.getPresence(c.machine.id);
-    if (elsewhere && elsewhere !== this.d.nodeId) {
-      await this.publish(elsewhere, { k: 'kick', machineId: c.machine.id, reason: 'replaced' });
-    }
-    await this.d.cluster.setPresence(c.machine.id, this.d.nodeId, this.presenceTtlSec);
-    if (c.dead || c.ws.readyState !== WebSocket.OPEN) {
-      // Closed while we were registering: its retire() may have cleared presence before the
-      // setPresence above re-added it. Clear it again unless a newer live connection holds it.
-      c.dead = true;
-      if (this.conns.get(c.machine.id) === c) this.conns.delete(c.machine.id);
-      if (!this.conns.has(c.machine.id)) await this.d.cluster.clearPresence(c.machine.id, this.d.nodeId);
-      return;
-    }
-
-    c.ready = true;
-    this.send(c, { t: 'welcome', machineId: c.machine.id, protocol: CONNECTED_PROTOCOL, minAgentVersion: this.d.minAgentVersion });
-    c.timer = setInterval(() => this.heartbeat(c), this.d.pingIntervalMs);
-    c.timer.unref();
-    await this.d.onConnected(c.machine, (f) => this.send(c, f));
+    await link.send({ t: 'welcome', machineId: link.machine.id, protocol: CONNECTED_PROTOCOL, minAgentVersion: this.d.minAgentVersion });
+    await this.d.onConnected(link.machine, (f) => void link.send(f));
+    return 'ok';
   }
 
-  /** Each tick: an unanswered previous ping counts as missed; `missedPings` in a row → offline. */
-  private heartbeat(c: Conn): void {
-    if (c.awaitingPong) c.missed++;
-    if (c.missed >= this.d.missedPings) {
-      this.d.logger.warn({ machineId: c.machine.id }, 'machine missed heartbeats; marking offline');
-      void this.retire(c, { terminate: true });
-      return;
-    }
-    c.awaitingPong = true;
-    this.send(c, { t: 'ping', at: Date.now() });
-  }
-
-  private onFrame(c: Conn, frame: AgentFrame): void {
-    if (c.dead || !c.ready) return;
-    // Any frame proves the machine is alive.
-    c.awaitingPong = false;
-    c.missed = 0;
+  /**
+   * One frame from a welcomed link. Resolves when the frame is handled (an `events` frame once its
+   * place in the link's queue ran, a `tool_call` once its result was sent).
+   */
+  async handleMessage(link: MachineLink, frame: AgentFrame): Promise<void> {
+    const s = this.links.get(link.linkId);
+    if (!s || s.dead || !s.ready) return;
+    const send = (f: HubFrame) => void link.send(f);
     switch (frame.t) {
       case 'pong': {
         const lastSeenAt = new Date().toISOString();
-        c.machine.lastSeenAt = lastSeenAt;
-        void Promise.all([
-          this.d.cluster.setPresence(c.machine.id, this.d.nodeId, this.presenceTtlSec),
-          this.d.store.updateMachine(c.machine.id, { lastSeenAt }),
+        link.machine.lastSeenAt = lastSeenAt;
+        await Promise.all([
+          this.d.cluster.setPresence(link.machine.id, this.d.nodeId, this.presenceTtlSec),
+          this.d.store.updateMachine(link.machine.id, { lastSeenAt }),
         ]).catch((err) => this.d.logger.error({ err }, 'heartbeat bookkeeping failed'));
         return;
       }
@@ -381,7 +373,7 @@ export class MachineHub {
         return; // duplicate hello: ignore
       case 'result': {
         const pull = this.pulls.get(frame.id);
-        if (pull && pull.conn === c) {
+        if (pull && pull.state === s) {
           // A pull that failed on the machine (possibly mid-stream): drop what arrived so far.
           const err = frame.ok
             ? new UncageError('internal_error', { message: 'The machine answered a file pull with a result.' })
@@ -392,53 +384,57 @@ export class MachineHub {
           this.endPull(frame.id, err);
           return;
         }
-        const to = c.inflight.get(frame.id);
+        // Only answers to commands this link was sent; the reply goes to the node in the id.
+        if (!s.inflight.delete(frame.id)) return;
+        const to = routeOf(frame.id);
         if (!to) return;
-        c.inflight.delete(frame.id);
         const msg: NodeMsg = frame.ok
           ? { k: 'res', id: frame.id, ok: true, data: frame.data }
           : { k: 'res', id: frame.id, ok: false, error: frame.error };
-        void this.publish(to, msg);
+        await this.publishQuiet(to, msg);
         return;
       }
       case 'events': {
         if (frame.events.some((e) => e.sessionId !== frame.sessionId)) {
-          this.d.logger.warn({ machineId: c.machine.id }, 'events frame with mismatched sessionId dropped');
+          this.d.logger.warn({ machineId: link.machine.id }, 'events frame with mismatched sessionId dropped');
           return;
         }
-        // Serialized per connection so replication applies events in order.
-        c.queue = c.queue
-          .then(() => this.d.onEvents(c.machine, frame.sessionId, frame.events, (f) => this.send(c, f)))
-          .catch((err) => this.d.logger.error({ err, machineId: c.machine.id }, 'events handling failed'));
-        return;
+        // Serialized per link so replication applies events in order.
+        const done = s.queue
+          .then(() => this.d.onEvents(link.machine, frame.sessionId, frame.events, send))
+          .catch((err) => this.d.logger.error({ err, machineId: link.machine.id }, 'events handling failed'));
+        s.queue = done;
+        return done;
       }
-      case 'tool_call':
-        if (c.toolCalls >= this.d.maxConcurrentToolCalls) {
+      case 'tool_call': {
+        if (s.toolCalls >= this.d.maxConcurrentToolCalls) {
           const err = new UncageError('tool_failed', {
             message: `Too many site tool calls at once (at most ${this.d.maxConcurrentToolCalls}).`,
             details: { reason: 'too_many_concurrent' },
           });
-          this.send(c, { t: 'tool_result', id: frame.id, ok: false, error: err.toBody() });
+          send({ t: 'tool_result', id: frame.id, ok: false, error: err.toBody() });
           return;
         }
-        c.toolCalls++;
+        s.toolCalls++;
         // Not serialized: a slow tool must not hold up events.
-        void this.d
-          .onToolCall(c.machine, frame, c.abort.signal)
-          .then((f) => {
-            if (f) this.send(c, f);
-          })
-          .catch((err) => this.send(c, { t: 'tool_result', id: frame.id, ok: false, error: errorBody(err) }))
-          .finally(() => c.toolCalls--);
+        try {
+          const f = await this.d.onToolCall(link.machine, frame, s.abort.signal);
+          if (f) send(f);
+        } catch (err) {
+          send({ t: 'tool_result', id: frame.id, ok: false, error: errorBody(err) });
+        } finally {
+          s.toolCalls--;
+        }
         return;
+      }
       case 'file_chunk':
       case 'file_done': {
         const pull = this.pulls.get(frame.id);
-        if (!pull || pull.conn !== c) return; // unknown, finished or abandoned pull
+        if (!pull || pull.state !== s) return; // unknown, finished or abandoned pull
         try {
           if (frame.t === 'file_chunk') {
             pull.asm.chunk(frame);
-            pull.timer.refresh();
+            pull.timer = this.rearm(pull.timer, () => this.pullIdle(frame.id, pull.path), PULL_IDLE_MS);
           } else this.endPull(frame.id, null, pull.asm.done(frame));
         } catch (err) {
           this.endPull(frame.id, err);
@@ -448,41 +444,59 @@ export class MachineHub {
     }
   }
 
+  private rearm(t: Timer, fn: () => void, ms: number): Timer {
+    clearTimeout(t);
+    const next = setTimeout(fn, ms);
+    unrefTimer(next);
+    return next;
+  }
+
+  private pullIdle(id: string, path: string): void {
+    this.endPull(id, new UncageError('tool_failed', { message: `The machine stopped sending "${path}" (no data for ${PULL_IDLE_MS / 1000} s).` }));
+  }
+
   /**
-   * Takes a connection out of service at once: later frames are ignored, its in-flight commands
-   * fail with `machine_offline`, and (unless replaced) presence is cleared. With `close`, a close
-   * frame is sent and the socket is cut after `CLOSE_GRACE_MS` whether or not the client answers;
-   * `terminate` cuts it immediately.
+   * Takes a link out of service at once: later frames are ignored, its in-flight commands fail
+   * with `machine_offline`, and (unless replaced) presence is cleared. With `close`, the link's
+   * connection is closed with that code.
    */
-  private async retire(c: Conn, o: { close?: [number, string]; terminate?: boolean; keepPresence?: boolean } = {}): Promise<void> {
-    if (o.terminate) c.ws.terminate();
-    else if (o.close && c.ws.readyState === WebSocket.OPEN) {
-      c.ws.close(o.close[0], o.close[1]);
-      setTimeout(() => c.ws.terminate(), CLOSE_GRACE_MS).unref();
-    }
-    if (c.dead) return;
-    c.dead = true;
-    c.abort.abort();
-    if (c.timer) clearInterval(c.timer);
-    c.timer = undefined;
-    for (const [id, p] of this.pulls) if (p.conn === c) this.endPull(id, new UncageError('machine_offline', { message: 'The machine disconnected during the file pull.' }));
+  private async retire(s: LinkState, o: { close?: [number, string]; keepPresence?: boolean } = {}): Promise<void> {
+    if (o.close) s.link.close(o.close[0], o.close[1]);
+    if (s.dead) return;
+    s.dead = true;
+    s.abort.abort();
+    for (const [id, p] of this.pulls) if (p.state === s) this.endPull(id, new UncageError('machine_offline', { message: 'The machine disconnected during the file pull.' }));
     const offline = new UncageError('machine_offline').toBody();
-    for (const [id, to] of c.inflight) void this.publish(to, { k: 'res', id, ok: false, error: offline });
-    c.inflight.clear();
-    if (this.conns.get(c.machine.id) !== c) return;
-    this.conns.delete(c.machine.id);
+    for (const id of s.inflight) {
+      const to = routeOf(id);
+      if (to) void this.publishQuiet(to, { k: 'res', id, ok: false, error: offline });
+    }
+    s.inflight.clear();
+    const machineId = s.link.machine.id;
+    if (this.active.get(machineId) !== s) return;
+    this.active.delete(machineId);
     await Promise.all([
-      o.keepPresence ? undefined : this.d.cluster.clearPresence(c.machine.id, this.d.nodeId),
-      this.d.store.updateMachine(c.machine.id, { lastSeenAt: new Date().toISOString() }),
+      o.keepPresence ? undefined : this.d.cluster.clearPresence(machineId, this.d.nodeId),
+      this.d.store.updateMachine(machineId, { lastSeenAt: new Date().toISOString() }),
     ]).catch((err) => this.d.logger.error({ err }, 'machine close bookkeeping failed'));
   }
 
-  private async publish(nodeId: string, msg: NodeMsg): Promise<void> {
+  private publish(nodeId: string, msg: NodeMsg): Promise<void> {
+    return this.d.cluster.publish(nodeChannel(nodeId), JSON.stringify(msg));
+  }
+
+  private async publishQuiet(nodeId: string, msg: NodeMsg): Promise<void> {
     try {
-      await this.d.cluster.publish(nodeChannel(nodeId), JSON.stringify(msg));
+      await this.publish(nodeId, msg);
     } catch (err) {
       this.d.logger.error({ err }, 'cluster publish failed');
     }
+  }
+
+  /** The machine's welcomed local link, if it is live. */
+  private live(machineId: string): LinkState | undefined {
+    const s = this.active.get(machineId);
+    return s && s.ready && !s.dead && !s.link.signal.aborted ? s : undefined;
   }
 
   private async onNodeMessage(msg: NodeMsg): Promise<void> {
@@ -492,17 +506,17 @@ export class MachineHub {
         this.d.logger.warn({ t: msg.frame.t }, 'cluster upload message with a foreign frame dropped');
         return;
       }
-      // Synchronous on purpose: upload frames must reach the socket in publish order.
-      const c = this.conns.get(msg.machineId);
-      const live = c && c.ready && !c.dead && c.ws.readyState === WebSocket.OPEN;
+      // Synchronous on purpose: upload frames must reach the link in publish order.
+      const s = this.live(msg.machineId);
       if (msg.frame.t === 'attachment_begin') {
-        if (!live) {
-          await this.publish(msg.from, { k: 'res', id: msg.id, ok: false, error: new UncageError('machine_offline').toBody() });
+        if (!s) {
+          const to = routeOf(msg.id);
+          if (to) await this.publishQuiet(to, { k: 'res', id: msg.id, ok: false, error: new UncageError('machine_offline').toBody() });
           return;
         }
-        c.inflight.set(msg.id, msg.from);
-      } else if (!live || !c.inflight.has(msg.id)) return;
-      c.ws.send(JSON.stringify(msg.frame));
+        s.inflight.add(msg.id);
+      } else if (!s || !s.inflight.has(msg.id)) return;
+      void s.link.send(msg.frame);
       return;
     }
     if (msg.k === 'res') {
@@ -524,21 +538,21 @@ export class MachineHub {
       return;
     }
     if (msg.k === 'kick') {
-      const c = this.conns.get(msg.machineId);
-      if (c && c.connId !== msg.except) {
-        await this.retire(c, { close: msg.reason === 'revoked' ? [CLOSE.revoked, 'revoked'] : [CLOSE.replaced, 'replaced'] });
+      const s = this.active.get(msg.machineId);
+      if (s && s.link.linkId !== msg.except) {
+        await this.retire(s, { close: msg.reason === 'revoked' ? [LINK_CLOSE.revoked, 'revoked'] : [LINK_CLOSE.replaced, 'replaced'] });
       }
       return;
     }
-    // k === 'cmd': forward to the machine if its socket is here.
-    const c = this.conns.get(msg.machineId);
-    const frame = JSON.stringify({ t: 'command', id: msg.id, op: msg.op, args: msg.args } satisfies HubFrame);
-    if (!c || c.ws.readyState !== WebSocket.OPEN) {
-      await this.publish(msg.from, { k: 'res', id: msg.id, ok: false, error: new UncageError('machine_offline').toBody() });
+    // k === 'cmd': forward to the machine if its link is here.
+    const s = this.active.get(msg.machineId);
+    if (!s || s.dead || s.link.signal.aborted) {
+      const to = routeOf(msg.id);
+      if (to) await this.publishQuiet(to, { k: 'res', id: msg.id, ok: false, error: new UncageError('machine_offline').toBody() });
       return;
     }
-    c.inflight.set(msg.id, msg.from);
-    c.ws.send(frame);
+    s.inflight.add(msg.id);
+    void s.link.send({ t: 'command', id: msg.id, op: msg.op, args: msg.args });
   }
 
   /** Whether the machine currently has a connection on any node. */
@@ -546,33 +560,41 @@ export class MachineHub {
     return (await this.d.cluster.getPresence(machineId)) !== null;
   }
 
+  /** Settles a pending command or upload once. */
+  private settle(id: string, err: unknown): void {
+    const p = this.pending.get(id);
+    if (!p) return;
+    this.pending.delete(id);
+    clearTimeout(p.timer);
+    p.reject(err);
+  }
+
   /** Sends a command to the machine (wherever it is connected) and resolves its validated result. */
   async command<K extends HubCommandOp>(machineId: string, op: K, args: HubCommandArgs[K]): Promise<HubCommandResults[K]> {
     if (this.closed) throw new UncageError('machine_offline');
     const node = await this.d.cluster.getPresence(machineId);
     if (!node) throw new UncageError('machine_offline');
-    const id = `cmd_${randomBytes(12).toString('hex')}`;
-    const frameBytes = byteLength(JSON.stringify({ t: 'command', id, op, args }));
+    const id = routedId('cmd', this.d.nodeId);
+    const frameBytes = utf8Length(JSON.stringify({ t: 'command', id, op, args }));
     if (frameBytes > MAX_FRAME_BYTES) {
       throw new UncageError('invalid_request', {
         message: `The ${op} command is too large to send to the machine (${frameBytes} bytes, max ${MAX_FRAME_BYTES}).`,
       });
     }
-    return new Promise<HubCommandResults[K]>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new UncageError('machine_offline', { message: 'The machine did not respond in time.' }));
-      }, this.d.commandTimeoutMs);
-      timer.unref();
-      this.pending.set(id, { op, resolve: resolve as (v: unknown) => void, reject, timer });
-      void this.d.cluster
-        .publish(nodeChannel(node), JSON.stringify({ k: 'cmd', id, from: this.d.nodeId, machineId, op, args } satisfies NodeMsg))
-        .catch((err) => {
-          this.pending.delete(id);
-          clearTimeout(timer);
-          reject(err);
-        });
-    });
+    // The reply comes back on our node channel.
+    await this.acquire();
+    try {
+      if (this.closed) throw new UncageError('machine_offline');
+      const result = new Promise<HubCommandResults[K]>((resolve, reject) => {
+        const timer = setTimeout(() => this.settle(id, new UncageError('machine_offline', { message: 'The machine did not respond in time.' })), this.d.commandTimeoutMs);
+        unrefTimer(timer);
+        this.pending.set(id, { op, resolve: resolve as (v: unknown) => void, reject, timer });
+      });
+      this.publish(node, { k: 'cmd', id, machineId, op, args }).catch((err: unknown) => this.settle(id, err));
+      return await result;
+    } finally {
+      this.release();
+    }
   }
 
   /**
@@ -584,54 +606,47 @@ export class MachineHub {
     if (this.closed) throw new UncageError('machine_offline');
     const node = await this.d.cluster.getPresence(machineId);
     if (!node) throw new UncageError('machine_offline');
-    const id = `upl_${randomBytes(12).toString('hex')}`;
-    const send = (frame: HubFrame) =>
-      this.d.cluster.publish(nodeChannel(node), JSON.stringify({ k: 'up', id, from: this.d.nodeId, machineId, frame } satisfies NodeMsg));
-    let timer!: NodeJS.Timeout;
-    const arm = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        const p = this.pending.get(id);
-        if (!p) return;
-        this.pending.delete(id);
-        void send({ t: 'attachment_abort', id }).catch(() => undefined);
-        p.reject(new UncageError('machine_offline', { message: 'The machine did not respond in time.' }));
-      }, this.d.commandTimeoutMs);
-      timer.unref();
-    };
-    const result = new Promise<Attachment>((resolve, reject) => {
-      arm();
-      this.pending.set(id, { op: 'addAttachment', resolve: resolve as (v: unknown) => void, reject, timer });
-    });
+    const id = routedId('upl', this.d.nodeId);
+    const send = (frame: HubFrame) => this.publish(node, { k: 'up', id, machineId, frame });
+    await this.acquire();
     try {
-      await send({ t: 'attachment_begin', id, sessionId: args.sessionId, name: args.name, mime: args.mime, size: data.byteLength });
-      const buf = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
-      for (let at = 0, seq = 0; at < buf.length; at += FILE_CHUNK_BYTES, seq++) {
-        if (!this.pending.has(id)) break; // already answered (e.g. refused at begin)
-        await send({ t: 'attachment_chunk', id, seq, data: buf.subarray(at, at + FILE_CHUNK_BYTES).toString('base64') });
-        // The timeout is about the machine going silent, not the size of the upload.
+      const timedOut = () => {
+        if (!this.pending.has(id)) return;
+        void send({ t: 'attachment_abort', id }).catch(() => undefined);
+        this.settle(id, new UncageError('machine_offline', { message: 'The machine did not respond in time.' }));
+      };
+      /** The timeout is about the machine going silent, not the size of the upload: re-armed after each frame. */
+      const arm = () => {
         const p = this.pending.get(id);
-        if (p) {
+        if (p) p.timer = this.rearm(p.timer, timedOut, this.d.commandTimeoutMs);
+      };
+      const result = new Promise<Attachment>((resolve, reject) => {
+        const timer = setTimeout(timedOut, this.d.commandTimeoutMs);
+        unrefTimer(timer);
+        this.pending.set(id, { op: 'addAttachment', resolve: resolve as (v: unknown) => void, reject, timer });
+      });
+      result.catch(() => undefined);
+      try {
+        await send({ t: 'attachment_begin', id, sessionId: args.sessionId, name: args.name, mime: args.mime, size: data.byteLength });
+        for (let at = 0, seq = 0; at < data.byteLength; at += FILE_CHUNK_BYTES, seq++) {
+          if (!this.pending.has(id)) break; // already answered (e.g. refused at begin)
+          await send({ t: 'attachment_chunk', id, seq, data: toBase64(data.subarray(at, at + FILE_CHUNK_BYTES)) });
           arm();
-          p.timer = timer;
+        }
+        if (this.pending.has(id)) {
+          await send({ t: 'attachment_end', id });
+          arm();
+        }
+      } catch (err) {
+        if (this.pending.has(id)) {
+          void send({ t: 'attachment_abort', id }).catch(() => undefined);
+          this.settle(id, err);
         }
       }
-      if (this.pending.has(id)) {
-        await send({ t: 'attachment_end', id });
-        arm();
-        const p = this.pending.get(id);
-        if (p) p.timer = timer;
-      }
-    } catch (err) {
-      const p = this.pending.get(id);
-      if (p) {
-        this.pending.delete(id);
-        clearTimeout(timer);
-        void send({ t: 'attachment_abort', id }).catch(() => undefined);
-        p.reject(err);
-      }
+      return await result;
+    } finally {
+      this.release();
     }
-    return result;
   }
 
   /**
@@ -639,20 +654,17 @@ export class MachineHub {
    * on the node holding the machine's connection). All-or-nothing; see `PullAssembler`.
    */
   pull(machineId: string, sessionId: string, path: string, maxBytes: number, signal?: AbortSignal): Promise<PullOutcome> {
-    const c = this.conns.get(machineId);
-    if (!c || !c.ready || c.dead || c.ws.readyState !== WebSocket.OPEN) return Promise.reject(new UncageError('machine_offline'));
+    const s = this.live(machineId);
+    if (!s) return Promise.reject(new UncageError('machine_offline'));
     if (signal?.aborted) return Promise.reject(new UncageError('tool_failed', { message: 'The tool call was abandoned.' }));
-    const id = `pull_${randomBytes(12).toString('hex')}`;
+    const id = routedId('pull', this.d.nodeId);
     return new Promise<PullOutcome>((resolve, reject) => {
       const onAbort = () => this.endPull(id, new UncageError('tool_failed', { message: 'The tool call was abandoned.' }));
-      const timer = setTimeout(
-        () => this.endPull(id, new UncageError('tool_failed', { message: `The machine stopped sending "${path}" (no data for ${PULL_IDLE_MS / 1000} s).` })),
-        PULL_IDLE_MS,
-      );
-      timer.unref();
+      const timer = setTimeout(() => this.pullIdle(id, path), PULL_IDLE_MS);
+      unrefTimer(timer);
       signal?.addEventListener('abort', onAbort, { once: true });
       this.pulls.set(id, {
-        conn: c,
+        state: s,
         asm: new PullAssembler(path, maxBytes),
         path,
         resolve,
@@ -660,7 +672,7 @@ export class MachineHub {
         timer,
         cleanup: () => signal?.removeEventListener('abort', onAbort),
       });
-      this.send(c, { t: 'file_pull', id, sessionId, path, maxBytes });
+      void s.link.send({ t: 'file_pull', id, sessionId, path, maxBytes });
     });
   }
 
@@ -678,36 +690,27 @@ export class MachineHub {
   /** Disconnects a machine (revoked, or its token rotated) wherever it is connected. */
   async kick(machineId: string, reason: 'revoked' | 'replaced' = 'revoked'): Promise<void> {
     const node = await this.d.cluster.getPresence(machineId);
-    const local = this.conns.get(machineId);
-    if (local) await this.retire(local, { close: reason === 'revoked' ? [CLOSE.revoked, 'revoked'] : [CLOSE.replaced, 'replaced'] });
-    if (node && node !== this.d.nodeId) await this.publish(node, { k: 'kick', machineId, reason });
+    const local = this.active.get(machineId);
+    if (local) await this.retire(local, { close: reason === 'revoked' ? [LINK_CLOSE.revoked, 'revoked'] : [LINK_CLOSE.replaced, 'replaced'] });
+    if (node && node !== this.d.nodeId) await this.publishQuiet(node, { k: 'kick', machineId, reason });
     if (node) await this.d.cluster.clearPresence(machineId, node);
   }
 
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    this.unsubscribe?.();
-    for (const { server, listener } of this.servers) server.off('upgrade', listener);
-    for (const p of this.pending.values()) {
-      clearTimeout(p.timer);
-      p.reject(new UncageError('machine_offline'));
+    for (const fn of this.closeHooks.splice(0)) {
+      try {
+        fn();
+      } catch (err) {
+        this.d.logger.error({ err }, 'close hook failed');
+      }
     }
-    this.pending.clear();
-    const conns = [...this.conns.values()];
-    await Promise.all(conns.map((c) => this.retire(c, { close: [CLOSE.shutdown, 'hub shutting down'] })));
-    this.wss.close();
+    for (const id of [...this.pending.keys()]) this.settle(id, new UncageError('machine_offline'));
+    const links = [...this.links.values()];
+    this.links.clear();
+    await Promise.all(links.map((s) => this.retire(s, { close: [LINK_CLOSE.shutdown, 'hub shutting down'] })));
+    this.subRefs = 1;
+    this.release();
   }
-}
-
-/** Close a socket that has no registered connection yet, cutting it if the client does not answer. */
-function closeSoon(ws: WebSocket, code: number, reason: string): void {
-  if (ws.readyState === WebSocket.OPEN) ws.close(code, reason);
-  setTimeout(() => ws.terminate(), CLOSE_GRACE_MS).unref();
-}
-
-function rawToString(data: RawData): string {
-  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
-  if (data instanceof ArrayBuffer) return Buffer.from(data).toString('utf8');
-  return data.toString('utf8');
 }

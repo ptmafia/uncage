@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { describe, expect, it } from 'vitest';
 import { hubStoreContract } from './contract.js';
-import { pgliteHubStore } from './pglite.js';
+import { pgliteHubStore } from '../node/index.js';
 import { postgresHubStore, type PgPoolLike } from './postgres.js';
 import { HUB_MIGRATIONS, migrateHubStore, sqlHubStore, type SqlClient } from './sql.js';
 

@@ -1,4 +1,4 @@
-import { UncageError } from '@uncage/core';
+import { UncageError } from '@uncage/core/errors';
 
 const MAX_KEYS = 50_000;
 

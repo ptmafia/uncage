@@ -1,8 +1,8 @@
-import { createHash, randomBytes, randomInt } from 'node:crypto';
 import type { DeviceCodeRequest, DeviceCodeResponse, DeviceTokenResponse, TransportOffer } from '@uncage/protocol';
 import type { SlidingWindow } from './rate-limit.js';
 import type { HubStore } from './store/store.js';
 import type { HubUser } from './types.js';
+import { randomInt, randomToken, sha256Hex } from './web.js';
 
 export const DEVICE_INTERVAL_SEC = 2;
 export const DEVICE_EXPIRES_IN_SEC = 600;
@@ -10,10 +10,8 @@ export const DEVICE_EXPIRES_IN_SEC = 600;
 /** No 0/O, 1/I/L, or vowel-ish lookalikes beyond what users can tell apart (31 symbols). */
 export const USER_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
-export const sha256 = (s: string): string => createHash('sha256').update(s).digest('hex');
-
 /** 32 random bytes, base64url (machine tokens, device codes). */
-export const randomSecret = (): string => randomBytes(32).toString('base64url');
+export const randomSecret = (): string => randomToken(32);
 
 export function generateUserCode(): string {
   let s = '';
@@ -32,8 +30,8 @@ export interface DeviceFlowDeps {
   store: HubStore;
   verificationUri: string;
   site: { id: string; name: string; url: string };
-  /** Transports handed to the agent with its token (at least one). */
-  transports: [TransportOffer, ...TransportOffer[]];
+  /** Transports handed to the agent with its token (at least one), read at each issue. */
+  transports(): [TransportOffer, ...TransportOffer[]];
   /**
    * Creates (or, for a known `machineKeyHash`, re-pairs) the machine for an approved code;
    * resolves its id and (one-time) token.
@@ -94,7 +92,7 @@ export function deviceFlow(d: DeviceFlowDeps) {
       async (): Promise<DeviceDecision> => {
         const code = normalizeUserCode(userCode);
         if (!code) return 'not_found';
-        const rec = await d.store.findDeviceCodeByUserCode(sha256(code));
+        const rec = await d.store.findDeviceCodeByUserCode(await sha256Hex(code));
         if (!rec) return 'not_found';
         if (expired(rec)) return 'expired';
         if (rec.status !== 'pending') return 'not_found';
@@ -128,12 +126,12 @@ export function deviceFlow(d: DeviceFlowDeps) {
         const os = clipLabel(body.os);
         try {
           await d.store.insertDeviceCode({
-            deviceCodeHash: sha256(deviceCode),
-            userCodeHash: sha256(userCode),
+            deviceCodeHash: await sha256Hex(deviceCode),
+            userCodeHash: await sha256Hex(userCode),
             status: 'pending',
             ...(name ? { name } : {}),
             ...(os ? { os } : {}),
-            ...(body.machineKey ? { machineKeyHash: sha256(body.machineKey) } : {}),
+            ...(body.machineKey ? { machineKeyHash: await sha256Hex(body.machineKey) } : {}),
             createdAt,
             expiresAt: new Date(now() + DEVICE_EXPIRES_IN_SEC * 1000).toISOString(),
           });
@@ -155,7 +153,7 @@ export function deviceFlow(d: DeviceFlowDeps) {
 
     /** One poll. `null` = unknown device code. The machine token is issued exactly once. */
     async poll(deviceCode: string): Promise<DeviceTokenResponse | null> {
-      const hash = sha256(deviceCode);
+      const hash = await sha256Hex(deviceCode);
       const rec = await d.store.getDeviceCode(hash);
       if (!rec) return null;
       if (rec.status === 'consumed') return { status: 'expired' };
@@ -172,7 +170,7 @@ export function deviceFlow(d: DeviceFlowDeps) {
         ...(won.os ? { os: won.os } : {}),
         ...(won.machineKeyHash ? { machineKeyHash: won.machineKeyHash } : {}),
       });
-      return { status: 'ok', machineId: m.machineId, machineToken: m.machineToken, site: d.site, transports: d.transports };
+      return { status: 'ok', machineId: m.machineId, machineToken: m.machineToken, site: d.site, transports: d.transports() };
     },
 
     approve: (userCode: string, user: HubUser) => decide(userCode, user, 'approved'),
@@ -185,7 +183,7 @@ export function deviceFlow(d: DeviceFlowDeps) {
         async () => {
           const code = normalizeUserCode(userCode);
           if (!code) return null;
-          const rec = await d.store.findDeviceCodeByUserCode(sha256(code));
+          const rec = await d.store.findDeviceCodeByUserCode(await sha256Hex(code));
           if (!rec || rec.status !== 'pending' || expired(rec)) return null;
           const known = rec.machineKeyHash ? await d.store.findMachineByKey(user.id, rec.machineKeyHash) : null;
           return {

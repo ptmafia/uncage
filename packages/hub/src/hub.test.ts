@@ -2,9 +2,9 @@ import { DeviceTokenResponseSchema, MachineInfoSchema, type MachineInfo, type Se
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { createHub } from './hub.js';
-import { CLOSE } from './machines.js';
-import { sha256 } from './device.js';
-import { pgliteHubStore } from './store/pglite.js';
+import { CLOSE } from './node/ws.js';
+import { pgliteHubStore } from './node/index.js';
+import { sha256Hex } from './web.js';
 import {
   connectFakeAgent,
   fakeMachine,
@@ -62,7 +62,7 @@ describe('device login over HTTP', () => {
     expect(ok.transports).toEqual([{ kind: 'ws', url: t.wsUrl }]);
     const m = await t.store.getMachine(ok.machineId);
     expect(m?.userId).toBe('alice');
-    expect(m?.tokenHash).toBe(sha256(ok.machineToken));
+    expect(m?.tokenHash).toBe(await sha256Hex(ok.machineToken));
     expect(JSON.stringify(m)).not.toContain(ok.machineToken);
     await sleep(1600);
     expect(await poll()).toEqual({ status: 'expired' });
@@ -525,7 +525,9 @@ describe('browser API → machine', () => {
   });
 
   it('attachmentRetentionDays must be positive', async () => {
-    await expect(createHub({ publicUrl: 'https://x.test', getUser: async () => null, attachmentRetentionDays: 0 })).rejects.toThrow(/attachmentRetentionDays/);
+    const store = await pgliteHubStore({ dataDir: 'memory://' });
+    await expect(createHub({ publicUrl: 'https://x.test', getUser: async () => null, store, attachmentRetentionDays: 0 })).rejects.toThrow(/attachmentRetentionDays/);
+    await store.close();
   });
 
   it('install info and install.sh', async () => {
@@ -552,7 +554,7 @@ describe('browser API → machine', () => {
     const a = await (await fetch(`${t.api}/install.sh`)).text();
     const store = await pgliteHubStore({ dataDir: 'memory://' });
     const other = await createHub({ publicUrl: 'https://other.example', getUser: async () => null, store, cliVersionRange: '~0.2.1' });
-    const b = await (await other.handler(new Request('https://other.example/api/uncage/install.sh'))).text();
+    const b = await (await other.fetch(new Request('https://other.example/api/uncage/install.sh'))).text();
     expect(a).toBe(b);
     await other.close();
     await store.close();

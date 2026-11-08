@@ -1,6 +1,6 @@
-import type { Server } from 'node:http';
 import type { SkillSpec } from '@uncage/protocol';
 import type { ClusterAdapter } from './cluster/cluster.js';
+import type { HubLogger, MachineHub } from './machines.js';
 import type { HubStore } from './store/store.js';
 import type { SiteTool } from './tools.js';
 
@@ -12,15 +12,16 @@ export interface HubUser {
 export interface HubOptions {
   /** The website's public origin, e.g. `https://app.example.com`. */
   publicUrl: string;
-  /** Where `handler` is mounted. Defaults to `/api/uncage`. */
+  /** Where `fetch` is mounted. Defaults to `/api/uncage`. */
   basePath?: string;
   /** Website auth: the signed-in user for a browser request, or `null`. */
   getUser(req: Request): Promise<HubUser | null>;
   /**
-   * Defaults to `pgliteHubStore({ dataDir: './.uncage-hub' })` (single node). Several nodes share
-   * one `postgresHubStore`.
+   * Required. `pgliteHubStore({ dataDir })` from `@uncage/hub/node` for a single Node process;
+   * `postgresHubStore` (or `sqlHubStore` on any SQL client) for several nodes or serverless
+   * platforms. The hub never closes it: close it yourself after `hub.close()`.
    */
-  store?: HubStore;
+  store: HubStore;
   /** Defaults to `memoryCluster()` (single node). Several nodes share one `redisCluster`. */
   cluster?: ClusterAdapter;
   /**
@@ -48,8 +49,8 @@ export interface HubOptions {
    */
   sessionStorage?: 'machine' | 'site';
   /**
-   * Days the hub keeps attachment bytes sent through the website (an hourly sweep deletes older
-   * ones; the machine keeps its own copy). Default 30. `Infinity` keeps them until the machine is
+   * Days the hub keeps attachment bytes sent through the website (a periodic sweep deletes older
+   * ones — `attachWebSocket` runs it hourly in a long-running process; the machine keeps its own copy). Default 30. `Infinity` keeps them until the machine is
    * revoked.
    */
   attachmentRetentionDays?: number;
@@ -90,7 +91,7 @@ export interface HubOptions {
     userCodeWindowMs?: number;
     /**
      * Client IP for per-IP limits. When set it wins over everything else. Otherwise: `info.clientIp`
-     * passed to `handler` (`toNodeHandler` passes Express's `req.ip`, which honours `trust proxy`,
+     * passed to `fetch` (`toNodeHandler` passes Express's `req.ip`, which honours `trust proxy`,
      * else the socket address); else, only with `trustForwardedFor`, the rightmost
      * `X-Forwarded-For` entry; else one bucket shared by all callers.
      *
@@ -105,16 +106,31 @@ export interface HubOptions {
   };
 }
 
+/** Key of the hub's internals, read by `@uncage/hub/node` only. */
+export const HUB_INTERNALS: unique symbol = Symbol.for('uncage.hub.internals') as never;
+
+/** @internal What `@uncage/hub/node` needs from a hub. */
+export interface HubInternalsHandle {
+  machines: MachineHub;
+  basePath: string;
+  logger: HubLogger;
+  /** This process serves machine WebSockets (at `path`, default `<basePath>/agent`): offer them and listen for commands. */
+  enableWebSocket(o?: { path?: string }): void;
+  /** Machine heartbeat for WebSocket links. */
+  heartbeat: { pingIntervalMs: number; missedPings: number };
+  /** Retention sweep (run manifests, attachment copies) a long-running process runs every `intervalMs`. */
+  maintenance: { intervalMs: number; run(): Promise<void> };
+}
+
 export interface Hub {
   /** Normalized mount path, e.g. `/api/uncage`. */
   readonly basePath: string;
   /**
-   * Browser API, device endpoints and `install.sh`, all under `basePath`. Pass `info.clientIp`
-   * (the socket address) when known; `toNodeHandler` does.
+   * Browser API, device endpoints and `install.sh`, all under `basePath`, as a Fetch handler.
+   * Pass `info.clientIp` (the client address) when known; `toNodeHandler` does. `info.waitUntil`
+   * is the platform's hook for work that may outlive the response (e.g. Workers' `ctx.waitUntil`).
    */
-  handler(req: Request, info?: { clientIp?: string }): Promise<Response>;
-  /** Accepts machine WebSockets on `server` at `path` (default `<basePath>/agent`). */
-  attach(server: Server, opts?: { path?: string }): void;
+  fetch(req: Request, info?: { clientIp?: string; waitUntil?(p: Promise<unknown>): void }): Promise<Response>;
   /**
    * Approve / deny / look up a user code on the website's approve page. Unknown codes count as
    * failed guesses: after `rateLimits.userCodeFailures` in the window these throw an `UncageError`
@@ -133,5 +149,11 @@ export interface Hub {
   ): Promise<{ name?: string; os?: string; expiresAt: string; repairsMachine: { id: string; name: string } | null } | null>;
   /** Deletes the machine (its token stops working) and disconnects it. Throws `machine_not_found`. */
   revokeMachine(machineId: string, user: HubUser): Promise<void>;
+  /**
+   * Disconnects machines and stops serving. Never closes `store` (it is yours); closes the cluster
+   * only when the hub created it (no `cluster` option).
+   */
   close(): Promise<void>;
+  /** @internal */
+  readonly [HUB_INTERNALS]: HubInternalsHandle;
 }

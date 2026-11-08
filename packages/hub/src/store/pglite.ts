@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
-import { UncageError } from '@uncage/core';
+import { UncageError } from '@uncage/core/errors';
 import { migrateHubStore, sqlHubStore, type SqlClient } from './sql.js';
 import type { HubStore } from './store.js';
 

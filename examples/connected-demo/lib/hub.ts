@@ -4,7 +4,8 @@
  * nodes can run behind a load balancer (see scripts/multinode.ts).
  */
 import { join } from 'node:path';
-import { createHub, pgliteHubStore, postgresHubStore, redisCluster, type Hub } from '@uncage/hub';
+import { createHub, postgresHubStore, redisCluster, type Hub } from '@uncage/hub';
+import { pgliteHubStore } from '@uncage/hub/node';
 import { userFromRequest } from './auth.ts';
 import { dataDir, publicUrl } from './config.ts';
 import { demoSkills } from './skills.ts';
@@ -30,7 +31,7 @@ export async function createDemoHub(env: NodeJS.ProcessEnv = process.env): Promi
   });
   return {
     hub,
-    // The hub only closes a store / cluster it created itself.
+    // The hub never closes the store, and closes only a cluster it created itself.
     close: async () => {
       await hub.close();
       await cluster?.close();

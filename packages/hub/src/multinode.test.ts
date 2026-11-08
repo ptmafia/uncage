@@ -3,7 +3,7 @@ import { afterEach, describe, it } from 'vitest';
 import { memoryCluster } from './cluster/memory.js';
 import { redisCluster, type RedisLike } from './cluster/redis.js';
 import { runMultiNodeScenario } from './multinode-scenario.js';
-import { pgliteHubStore } from './store/pglite.js';
+import { pgliteHubStore } from './node/index.js';
 import { clusterContract } from './cluster/contract.js';
 
 const closers: Array<() => Promise<unknown>> = [];

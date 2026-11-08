@@ -2,8 +2,9 @@
  * File channel (machine → hub): reassembles the `file_chunk` / `file_done` stream of one
  * `file_pull` and hands site tools the files through `ctx.files`.
  */
-import { UncageError } from '@uncage/core';
+import { UncageError } from '@uncage/core/errors';
 import { MAX_ATTACHMENT_TRANSFER_BYTES, type AgentFrame } from '@uncage/protocol';
+import { concatBytes, fromBase64 } from './web.js';
 
 /** Default (and largest) total of `ctx.files.pull` — the agent's own cap. */
 export const DEFAULT_PULL_MAX_BYTES = 50 * 1024 * 1024;
@@ -65,7 +66,7 @@ const broken = (path: string, why: string) =>
 export class PullAssembler {
   private readonly files: PulledFile[] = [];
   private readonly seen = new Set<string>();
-  private cur: { path: string; seq: number; parts: Buffer[]; size: number } | undefined;
+  private cur: { path: string; seq: number; parts: Uint8Array[]; size: number } | undefined;
   private total = 0;
 
   constructor(
@@ -84,7 +85,7 @@ export class PullAssembler {
     const cur = this.cur;
     if (f.seq !== cur.seq + 1) throw broken(this.path, `chunk out of order for "${f.path}" (got ${f.seq}, expected ${cur.seq + 1})`);
     cur.seq = f.seq;
-    const bytes = Buffer.from(f.data, 'base64');
+    const bytes = fromBase64(f.data);
     cur.size += bytes.byteLength;
     this.total += bytes.byteLength;
     if (cur.size > MAX_FILE_BYTES) throw new UncageError('invalid_request', { message: `"${f.path}" is larger than ${MAX_FILE_BYTES} bytes.` });
@@ -96,8 +97,7 @@ export class PullAssembler {
     }
     cur.parts.push(bytes);
     if (f.last) {
-      const data = Buffer.concat(cur.parts, cur.size);
-      this.files.push({ path: cur.path, data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength) });
+      this.files.push({ path: cur.path, data: concatBytes(cur.parts, cur.size) });
       this.cur = undefined;
     }
   }

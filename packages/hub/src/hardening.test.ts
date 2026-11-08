@@ -3,10 +3,9 @@ import type { AddressInfo } from 'node:net';
 import type { DeviceCodeResponse, Session } from '@uncage/protocol';
 import express from 'express';
 import { afterEach, describe, expect, it } from 'vitest';
-import { CLOSE_GRACE_MS, CLOSE } from './machines.js';
+import { CLOSE_GRACE_MS, CLOSE } from './node/ws.js';
 import { createHub, DEFAULT_HEARTBEAT } from './hub.js';
-import { toNodeHandler } from './node.js';
-import { pgliteHubStore } from './store/pglite.js';
+import { attachWebSocket, pgliteHubStore, toNodeHandler } from './node/index.js';
 import { memoryCluster } from './cluster/memory.js';
 import type { ClusterAdapter } from './cluster/cluster.js';
 import { connectFakeAgent, fakeMachine, makeEvent, fakeSession, NO_REPLY, sleep, startTestHub, until, USER_HEADER, type FakeAgent, type TestHub } from './test-utils.js';
@@ -54,7 +53,7 @@ describe('toNodeHandler alongside website routes (Express)', () => {
     app.put('/api/uncagexyz', (_req, res) => {
       res.send('not the hub');
     });
-    hub.attach(server);
+    attachWebSocket(hub, server);
     cleanups.push(async () => {
       await hub.close();
       server.closeAllConnections();
@@ -169,20 +168,20 @@ describe('rate limits', () => {
 
   it('handler() without a client IP ignores X-Forwarded-For by default (one shared bucket)', async () => {
     const hub = await directHub({ deviceCodesPerMinute: 1 });
-    expect((await hub.handler(codeReq({ 'x-forwarded-for': '1.1.1.1' }))).status).toBe(200);
+    expect((await hub.fetch(codeReq({ 'x-forwarded-for': '1.1.1.1' }))).status).toBe(200);
     // A spoofed X-Forwarded-For does not buy a fresh bucket.
-    expect((await hub.handler(codeReq({ 'x-forwarded-for': '2.2.2.2' }))).status).toBe(429);
-    expect((await hub.handler(codeReq())).status).toBe(429);
+    expect((await hub.fetch(codeReq({ 'x-forwarded-for': '2.2.2.2' }))).status).toBe(429);
+    expect((await hub.fetch(codeReq())).status).toBe(429);
     // An explicit client IP does.
-    expect((await hub.handler(codeReq(), { clientIp: '9.9.9.9' })).status).toBe(200);
+    expect((await hub.fetch(codeReq(), { clientIp: '9.9.9.9' })).status).toBe(200);
   });
 
   it('trustForwardedFor uses the rightmost entry, so a spoofed leading entry cannot bypass the limit', async () => {
     const hub = await directHub({ deviceCodesPerMinute: 1, trustForwardedFor: true });
     // The proxy appends the real client (5.5.5.5); the client forged the leading entries.
-    expect((await hub.handler(codeReq({ 'x-forwarded-for': '1.1.1.1, 5.5.5.5' }))).status).toBe(200);
-    expect((await hub.handler(codeReq({ 'x-forwarded-for': '2.2.2.2, 5.5.5.5' }))).status).toBe(429);
-    expect((await hub.handler(codeReq({ 'x-forwarded-for': '6.6.6.6' }))).status).toBe(200);
+    expect((await hub.fetch(codeReq({ 'x-forwarded-for': '1.1.1.1, 5.5.5.5' }))).status).toBe(200);
+    expect((await hub.fetch(codeReq({ 'x-forwarded-for': '2.2.2.2, 5.5.5.5' }))).status).toBe(429);
+    expect((await hub.fetch(codeReq({ 'x-forwarded-for': '6.6.6.6' }))).status).toBe(200);
   });
 
   it('a custom clientIp wins over the socket address passed by toNodeHandler', async () => {

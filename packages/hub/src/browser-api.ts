@@ -1,5 +1,4 @@
-import { randomBytes } from 'node:crypto';
-import { UncageError } from '@uncage/core';
+import { UncageError } from '@uncage/core/errors';
 import {
   ApprovalDecisionSchema,
   CreateSessionBodySchema,
@@ -26,12 +25,13 @@ import {
 import { downloadHeaders } from '@uncage/server/wire';
 import { z } from 'zod';
 import type { ClusterAdapter } from './cluster/cluster.js';
-import { sha256, type DeviceFlow } from './device.js';
+import type { DeviceFlow } from './device.js';
 import { compareVersions, sessionChannel, type MachineHub } from './machines.js';
 import { toSessionSnapshot } from './replica.js';
 import { eventStreamResponse, readHistory, type EventSource } from './sse.js';
 import type { HubStore, MachineRecord, ResourceKind, SessionRecord } from './store/store.js';
 import type { HubOptions, HubUser } from './types.js';
+import { randomHex, sha256Hex, toBase64 } from './web.js';
 
 /**
  * Largest attachment the hub relays to a machine (the attachment limit, 10 MiB; runtimes may
@@ -151,8 +151,6 @@ function nonNegativeInt(value: string | null, name: string): number | undefined 
   if (/^\d{1,15}$/.test(value)) return Number(value);
   throw new UncageError('invalid_request', { message: `${name} must be a non-negative integer.` });
 }
-
-const toBase64 = (b: Uint8Array): string => Buffer.from(b.buffer, b.byteOffset, b.byteLength).toString('base64');
 
 export function browserApi(ctx: ApiContext) {
   const { store, machines } = ctx;
@@ -331,7 +329,7 @@ export function browserApi(ctx: ApiContext) {
   // `uncage sites remove`: the machine revokes itself with its own token.
   add('POST', '/machine/revoke', async ({ req }) => {
     const m = /^Bearer (\S+)$/i.exec(req.headers.get('authorization') ?? '');
-    const machine = m ? await store.findMachineByTokenHash(sha256(m[1]!)) : null;
+    const machine = m ? await store.findMachineByTokenHash(await sha256Hex(m[1]!)) : null;
     if (!machine) throw new UncageError('unauthorized', { message: 'Unknown or revoked machine token.' });
     await store.deleteMachine(machine.id);
     await machines.kick(machine.id);
@@ -433,7 +431,7 @@ export function browserApi(ctx: ApiContext) {
     // Record the offered tools before the machine can start the run: tool calls are accepted only
     // for tools in their run's manifest (bound to the run id once it is known).
     const manifestKey = `${rec.id}:${key}`;
-    const nonce = randomBytes(12).toString('hex');
+    const nonce = randomHex(12);
     await store.putRunManifest({ key: manifestKey, sessionId: rec.id, tools: manifest.tools.map((t) => t.name), createdAt: new Date().toISOString(), nonce });
     let run;
     try {

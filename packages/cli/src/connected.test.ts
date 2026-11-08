@@ -4,7 +4,8 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ActivityLog, agentConfigPath, loadAgentConfig, updateAgentSites, type ExecFn } from '@uncage/agent';
-import { createHub, pgliteHubStore, toNodeHandler, type Hub } from '@uncage/hub';
+import { createHub, type Hub } from '@uncage/hub';
+import { attachWebSocket, pgliteHubStore, toNodeHandler } from '@uncage/hub/node';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { showActivity } from './activity-cmd.js';
 import { installLaunchAgent, launchctlInstallCommands, launchdPlist, plistPath, uninstallLaunchAgent } from './launchd.js';
@@ -30,7 +31,7 @@ async function startHub(): Promise<{ hub: Hub; origin: string; machines(user: st
   const hub = await createHub({ publicUrl: origin, store, getUser: async (req) => (req.headers.get('x-user') ? { id: req.headers.get('x-user')! } : null) });
   const node = toNodeHandler(hub);
   server.on('request', (req, res) => node(req, res));
-  hub.attach(server);
+  attachWebSocket(hub, server);
   cleanups.push(async () => {
     await hub.close();
     server.closeAllConnections();

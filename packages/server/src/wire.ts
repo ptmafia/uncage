@@ -1,10 +1,9 @@
 /**
  * Framework-free wire helpers shared by the daemon and `@uncage/hub` (which serves the same
- * browser API Fetch-style). Imports nothing from fastify or @uncage/core.
+ * browser API Fetch-style). Web-standard only: imports nothing from fastify, @uncage/core or Node
+ * (the Node `(req, res)` adapter lives in `@uncage/server/node-handler`).
  */
 import { ERROR_CATALOG, type Attachment, type ErrorBody, type ErrorCode, type UncageEvent } from '@uncage/protocol';
-
-export { toNodeHandler, type FetchHandlers, type UncageNodeHandler } from './node-handler.js';
 
 export const SSE_HEADERS = {
   'content-type': 'text/event-stream',

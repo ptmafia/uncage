@@ -12,7 +12,7 @@ import { SITE_ORIGIN, sections } from './src/nav.mjs';
  * src entry point with its own tsconfig.
  */
 const apiPackages = [
-  { name: 'hub', label: '@uncage/hub', entry: 'hub/src/index.ts' },
+  { name: 'hub', label: '@uncage/hub', entry: ['hub/src/index.ts', 'hub/src/node/index.ts'] },
   { name: 'react-ui', label: '@uncage/react-ui', entry: 'react-ui/src/index.ts' },
   { name: 'react', label: '@uncage/react', entry: 'react/src/index.ts' },
   { name: 'client', label: '@uncage/client', entry: 'client/src/index.ts' },

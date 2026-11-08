@@ -23,8 +23,7 @@ import {
 } from '@uncage/protocol';
 import { WebSocket } from 'ws';
 import { createHub, type HubInternals } from './hub.js';
-import { toNodeHandler } from './node.js';
-import { pgliteHubStore } from './store/pglite.js';
+import { attachWebSocket, pgliteHubStore, toNodeHandler } from './node/index.js';
 import type { HubStore } from './store/store.js';
 import type { Hub, HubOptions, HubUser } from './types.js';
 
@@ -63,7 +62,7 @@ export async function startTestHub(o: Partial<HubOptions> & HubInternals = {}): 
   });
   const node = toNodeHandler(hub);
   server.on('request', (req, res) => node(req, res));
-  hub.attach(server);
+  attachWebSocket(hub, server);
   const api = `${origin}/api/uncage`;
 
   const as = (user: string, path: string, init: RequestInit = {}) =>

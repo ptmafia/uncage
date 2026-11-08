@@ -1,4 +1,4 @@
-import { UncageError } from '@uncage/core';
+import { UncageError } from '@uncage/core/errors';
 import { ToolCallResultSchema, ToolSpecSchema, type ToolCallResult, type ToolSpec } from '@uncage/protocol';
 import { z } from 'zod';
 import type { FilePull } from './files.js';

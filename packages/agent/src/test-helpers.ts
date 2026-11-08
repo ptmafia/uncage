@@ -5,7 +5,8 @@ import { createServer as createTcpServer, connect, type Socket } from 'node:net'
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createHub, pgliteHubStore, toNodeHandler, type Hub, type HubOptions, type HubStore } from '@uncage/hub';
+import { createHub, type Hub, type HubOptions, type HubStore } from '@uncage/hub';
+import { attachWebSocket, pgliteHubStore, toNodeHandler } from '@uncage/hub/node';
 import type { DeviceCodeResponse, DeviceTokenResponse } from '@uncage/protocol';
 import type { AgentSite } from './config.js';
 import type { AgentLogger } from './site.js';
@@ -41,7 +42,7 @@ export async function startTestHub(o: Partial<HubOptions> & Record<string, unkno
   } as HubOptions);
   const node = toNodeHandler(hub);
   server.on('request', (req, res) => node(req, res));
-  hub.attach(server);
+  attachWebSocket(hub, server);
   const api = `${origin}/api/uncage`;
   const as = (user: string, path: string, init: RequestInit = {}) =>
     fetch(`${api}${path}`, { ...init, headers: { [USER_HEADER]: user, 'content-type': 'application/json', ...(init.headers as Record<string, string>) } });
