@@ -44,10 +44,14 @@ export function maintenance(d: {
   runNow(): Promise<MaintenanceReport>;
   /** Resolves when no run is in flight on this instance. */
   idle(): Promise<void>;
+  /** No further runs (the hub closed): `runNow` reports `ran: false`, `maybeRun` does nothing. */
+  stop(): void;
 } {
   const now = d.now ?? Date.now;
   let lastAttemptAt = -Infinity;
   let running: Promise<MaintenanceReport> | undefined;
+  let stopped = false;
+  const skipped = (): MaintenanceReport => ({ ran: false, pruned: {}, interruptedToolCalls: 0 });
 
   async function run(): Promise<MaintenanceReport> {
     const t = now();
@@ -57,7 +61,7 @@ export function maintenance(d: {
       until: new Date(t + d.intervalMs).toISOString(),
       now: new Date(t).toISOString(),
     });
-    if (!leased) return { ran: false, pruned: {}, interruptedToolCalls: 0 };
+    if (!leased) return skipped();
     const pruned: Record<string, number> = {};
     const results = await Promise.allSettled(d.tasks.map((task) => task()));
     for (const r of results) {
@@ -72,6 +76,7 @@ export function maintenance(d: {
 
   /** One run at a time on this instance (a timer tick and a request must not overlap). */
   function start(): Promise<MaintenanceReport> {
+    if (stopped && !running) return Promise.resolve(skipped());
     running ??= run().finally(() => {
       running = undefined;
     });
@@ -80,17 +85,28 @@ export function maintenance(d: {
 
   return {
     async maybeRun(waitUntil) {
-      if (running || now() - lastAttemptAt < d.intervalMs) return;
+      if (stopped || running || now() - lastAttemptAt < d.intervalMs) return;
       lastAttemptAt = now();
       const p = start().catch((err: unknown) => {
         d.logger.error({ err }, 'maintenance failed');
       });
-      if (waitUntil) waitUntil(p);
-      else await p;
+      if (waitUntil) {
+        try {
+          waitUntil(p);
+          return;
+        } catch (err) {
+          // e.g. Workers' `ctx.waitUntil` passed unbound ("Illegal invocation"): never fail the request.
+          d.logger.warn({ err }, 'waitUntil threw; running maintenance inline');
+        }
+      }
+      await p;
     },
     runNow: () => start(),
     async idle() {
       await running?.catch(() => undefined);
+    },
+    stop() {
+      stopped = true;
     },
   };
 }

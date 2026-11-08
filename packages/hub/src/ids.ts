@@ -7,7 +7,11 @@ import { randomHex } from './web.js';
 const NODE_ID = /^node_[0-9a-f]{16}$/;
 const ROUTED = /^(?:cmd|pull|upl)_(node_[0-9a-f]{16})_[0-9a-f]{24}$/;
 
-/** A hub node id: `node_` + 16 hex. */
+/**
+ * A hub node id: `node_` + 16 random hex (64 bits from `crypto.getRandomValues`), new for every
+ * hub instance — never derived from hostname or pid, so FaaS instances on one host never collide
+ * (the maintenance lease and routed ids rely on that).
+ */
 export function newNodeId(): string {
   return `node_${randomHex(8)}`;
 }

@@ -127,6 +127,32 @@ describe('hub.maintain()', () => {
     expect(await store.getAttachment('att_new')).not.toBeNull();
   });
 
+  it('a throwing waitUntil (e.g. an unbound ctx.waitUntil) never fails the request: maintenance runs inline', async () => {
+    const warns: unknown[] = [];
+    const h = await createHub({
+      publicUrl: 'https://app.example',
+      store,
+      getUser: async () => ({ id: 'alice' }),
+      logger: { warn: (o) => warns.push(o), error: () => undefined },
+    });
+    closers.push(() => h.close());
+    const prune = vi.spyOn(store, 'pruneTransport');
+    const res = await h.fetch(new Request('https://app.example/api/uncage/health'), {
+      waitUntil: () => {
+        throw new TypeError('Illegal invocation');
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(prune).toHaveBeenCalledTimes(1);
+    expect(warns).toHaveLength(1);
+  });
+
+  it('maintain() after close() reports ran: false', async () => {
+    const h = await createHub({ publicUrl: 'https://app.example', store, getUser: async () => null });
+    await h.close();
+    expect(await h.maintain()).toEqual({ ran: false, pruned: {}, interruptedToolCalls: 0 });
+  });
+
   it('close() waits for a maintenance run still in flight', async () => {
     const h = await createHub({ publicUrl: 'https://app.example', store, getUser: async () => null });
     const prune = vi.spyOn(store, 'pruneTransport');

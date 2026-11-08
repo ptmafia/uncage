@@ -176,6 +176,25 @@ describe('rate limits', () => {
     expect((await hub.fetch(codeReq(), { clientIp: '9.9.9.9' })).status).toBe(200);
   });
 
+  it('falling back to the shared bucket logs one warning', async () => {
+    const store = await pgliteHubStore({ dataDir: 'memory://' });
+    const warns: string[] = [];
+    const hub = await createHub({
+      publicUrl: 'https://app.example',
+      store,
+      getUser: async () => null,
+      logger: { warn: (_o, msg) => warns.push(msg ?? ''), error: () => undefined },
+    });
+    cleanups.push(async () => {
+      await hub.close();
+      await store.close();
+    });
+    await hub.fetch(codeReq(), { clientIp: '1.1.1.1' });
+    expect(warns).toEqual([]);
+    for (let i = 0; i < 3; i++) await hub.fetch(codeReq());
+    expect(warns.filter((m) => m.includes('no client IP'))).toHaveLength(1);
+  });
+
   it('trustForwardedFor uses the rightmost entry, so a spoofed leading entry cannot bypass the limit', async () => {
     const hub = await directHub({ deviceCodesPerMinute: 1, trustForwardedFor: true });
     // The proxy appends the real client (5.5.5.5); the client forged the leading entries.

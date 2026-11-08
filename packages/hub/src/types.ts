@@ -82,6 +82,11 @@ export interface HubOptions {
   /**
    * Abuse limits, counted in the store (fixed windows), so every hub instance — several nodes or
    * FaaS function instances — shares one count. Exceeding one → 429 `rate_limited`.
+   *
+   * Per-IP limits need the client IP. FaaS deployments must supply it (pass `info.clientIp` to
+   * `fetch`, set `clientIp`, or `trustForwardedFor: true` where the platform appends the client to
+   * X-Forwarded-For, as Vercel does); without one every caller shares a single bucket, so one client
+   * can use up `deviceCodesPerMinute` for everyone (the hub logs a warning once).
    */
   rateLimits?: {
     /** `POST /device/code` per client IP per minute. Default 20. */
@@ -111,6 +116,11 @@ export interface HubOptions {
    * every instance (a store lease): `attachWebSocket` runs it on a timer in a long-running process;
    * otherwise requests trigger it (in the background through `info.waitUntil` when the platform
    * provides it). A platform cron can also call `GET|POST <basePath>/maintenance`.
+   *
+   * Retention: unbound run manifests (startRun never answered) 1 h, bound ones 7 days; hub copies
+   * of attachments `attachmentRetentionDays` (30); finished upstream-dedupe (inbox) rows 24 h
+   * (beyond any agent resend window); outbox items when they expire; rate-limit windows once older
+   * than the longest window (`userCodeWindowMs`, at least 60 s); device codes an hour after expiry.
    */
   maintenance?: {
     /** Default 60 000 ms. */
@@ -167,8 +177,8 @@ export interface Hub {
     user: HubUser,
   ): Promise<{ name?: string; os?: string; expiresAt: string; repairsMachine: { id: string; name: string } | null } | null>;
   /**
-   * Runs maintenance now unless another instance holds the maintenance lease (`ran: false`). You
-   * rarely need it: see `HubOptions.maintenance`.
+   * Runs maintenance now unless another instance holds the maintenance lease or the hub is closed
+   * (`ran: false`). You rarely need it: see `HubOptions.maintenance`.
    */
   maintain(): Promise<MaintenanceReport>;
   /** Deletes the machine (its token stops working) and disconnects it. Throws `machine_not_found`. */

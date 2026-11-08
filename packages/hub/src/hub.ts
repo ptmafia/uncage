@@ -43,6 +43,8 @@ const DEFAULT_MAINTENANCE_INTERVAL_MS = 60_000;
 const INBOX_RETENTION_MS = 24 * 3_600_000;
 const DEFAULT_USER_CODE_WINDOW_MS = 600_000;
 const DEVICE_CODE_WINDOW_MS = 60_000;
+/** Rate-limit key when no client IP is known: one bucket for every caller. */
+const SHARED_CLIENT_KEY = 'shared';
 /** An unbound manifest (startRun never answered) is dropped after an hour. */
 const UNBOUND_MANIFEST_TTL_MS = 3_600_000;
 /**
@@ -190,7 +192,8 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     o.rateLimits?.clientIp?.(req) ||
     info?.clientIp ||
     (o.rateLimits?.trustForwardedFor ? req.headers.get('x-forwarded-for')?.split(',').at(-1)?.trim() : undefined) ||
-    'shared';
+    SHARED_CLIENT_KEY;
+  let warnedSharedKey = false;
 
   /** Index (and in site mode replicate) events from `machine`; returns the events to fan out. */
   async function ingest(machine: MachineRecord, sessionId: string, events: UncageEvent[], send: (f: HubFrame) => void): Promise<UncageEvent[]> {
@@ -492,7 +495,15 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
         const path = url.pathname.slice(basePath.length) || '/';
         // Opportunistic maintenance (the cron endpoint runs it itself). Never throws.
         if (path !== '/maintenance' && !shutdown.signal.aborted) await upkeep.maybeRun(info?.waitUntil?.bind(info));
-        return await api.handle(req, url, path, requestId, clientKey(req, info));
+        const key = clientKey(req, info);
+        if (key === SHARED_CLIENT_KEY && path === '/device/code' && !warnedSharedKey) {
+          warnedSharedKey = true;
+          logger.warn(
+            { path },
+            'no client IP for per-IP rate limits: every caller shares one bucket, so one client can use up deviceCodesPerMinute for everyone. Pass info.clientIp to hub.fetch, set rateLimits.clientIp, or rateLimits.trustForwardedFor behind a proxy that appends X-Forwarded-For (e.g. Vercel).',
+          );
+        }
+        return await api.handle(req, url, path, requestId, key);
       } catch (err) {
         const uerr = err instanceof UncageError ? err : new UncageError('internal_error');
         if (!(err instanceof UncageError)) logger.error({ err, requestId }, 'hub request failed');
@@ -512,6 +523,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     close: () =>
       (closing ??= (async () => {
         shutdown.abort();
+        upkeep.stop();
         await upkeep.idle();
         await machines.close();
         if (ownsCluster) await cluster.close();
