@@ -27,6 +27,49 @@ describe('postgresHubStore on Postgres 16', () => {
   });
 });
 
+describe('postgresHubStore outbox on Postgres 16 (Review Focus #1)', () => {
+  it('enqueueOutbox under 50 concurrent writers: a reader advancing its cursor sees every item exactly once', async () => {
+    const db = await freshDatabase();
+    const pool = new pg.Pool({ connectionString: db.url, max: 20 });
+    pool.on('error', () => undefined); // caller-owned pool: the forced DROP DATABASE below kills idle connections
+    const store = await postgresHubStore({ pool });
+    try {
+      const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+      const at = new Date().toISOString();
+      await store.openLink('m', { linkId: 'lnk', transport: 'http', at });
+      const seen: string[] = [];
+      let cursor = 0;
+      let writing = true;
+      const reader = (async () => {
+        const deadline = Date.now() + 30_000;
+        while (Date.now() < deadline) {
+          const done = !writing;
+          const { items } = await store.pollLink('m', 'lnk', { after: cursor, limit: 7, now: new Date().toISOString() });
+          for (const i of items) seen.push(i.msgId);
+          if (items.length > 0) cursor = Math.max(...items.map((i) => i.seq));
+          else if (done) return;
+        }
+      })();
+      // Each writer is its own transaction on its own pool connection; a jitter spreads commits.
+      const seqs = await Promise.all(
+        Array.from({ length: 50 }, async (_, i) => {
+          await new Promise((r) => setTimeout(r, Math.random() * 20));
+          return store.enqueueOutbox('m', [{ msgId: `msg_${i}`, msg: { t: 'ping', at: i }, expiresAt }]);
+        }),
+      );
+      writing = false;
+      await reader;
+      expect(seqs.flat().sort((a, b) => a - b)).toEqual(Array.from({ length: 50 }, (_, i) => i + 1));
+      expect(new Set(seen).size).toBe(50);
+      expect(seen).toHaveLength(50);
+    } finally {
+      await store.close();
+      await pool.end();
+      await db.drop();
+    }
+  });
+});
+
 describe('postgresHubStore survives a database connection drop', () => {
   it('idle pool connections terminated by the server: logged (no uncaught error), store keeps working', async () => {
     const db = await freshDatabase();

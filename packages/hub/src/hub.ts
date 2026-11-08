@@ -12,7 +12,7 @@ import { newNodeId } from './ids.js';
 import { compareVersions, MachineHub, sessionChannel, type HubLogger } from './machines.js';
 import { applyEvent, emptySnapshot, indexPatch } from './replica.js';
 import { SlidingWindow } from './rate-limit.js';
-import type { HubStore, MachineRecord, SessionRecord, ToolCallStatus } from './store/store.js';
+import type { HubStore, MachineRecord, SessionRecord, ToolCallStatus, ToolResultFrame } from './store/store.js';
 import { siteToolExecutor, toToolSpec, type ToolContext, type ToolExecutor } from './tools.js';
 import { HUB_INTERNALS, type Hub, type HubOptions } from './types.js';
 import { randomHex, sha256Hex, unrefTimer, utf8Length } from './web.js';
@@ -281,7 +281,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     call: { id: string; sessionId: string; runId: string; tool: string; args: unknown },
     connSignal: AbortSignal,
   ): Promise<HubFrame | null> {
-    const fail = (e: UncageError): HubFrame => ({ t: 'tool_result', id: call.id, ok: false, error: e.toBody() });
+    const fail = (e: UncageError): ToolResultFrame => ({ t: 'tool_result', id: call.id, ok: false, error: e.toBody() });
     const rec = await store.getSession(call.sessionId);
     // The session must be this machine's, and its owner the machine's user (ctx.user).
     if (!rec || rec.machineId !== machine.id || rec.userId !== machine.userId) {
@@ -332,7 +332,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
         startedAt: new Date(startedAt).toISOString(),
       })
       .catch((err: unknown) => logger.error({ err, tool: call.tool }, 'tool-call audit insert failed'));
-    const finish = (status: ToolCallStatus, err?: { code?: string; message?: string }) =>
+    const finish = (status: ToolCallStatus, result: ToolResultFrame, err?: { code?: string; message?: string }) =>
       store
         .finishToolCall(auditId, {
           status,
@@ -340,6 +340,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
           ...(err?.message ? { errorMessage: err.message.slice(0, 2000) } : {}),
           finishedAt: new Date().toISOString(),
           durationMs: Date.now() - startedAt,
+          result,
         })
         .catch((e: unknown) => logger.error({ err: e, tool: call.tool }, 'tool-call audit update failed'));
 
@@ -376,27 +377,27 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
         executor.execute({ user: { id: rec.userId }, machineId: machine.id, sessionId: rec.id, runId: call.runId, tool: call.tool, args: call.args, callId: call.id }, { signal: ac.signal, files }),
         abandoned,
       ]);
-      const frame: HubFrame = { t: 'tool_result', id: call.id, ok: true, result };
+      const frame: ToolResultFrame = { t: 'tool_result', id: call.id, ok: true, result };
       const bytes = utf8Length(JSON.stringify(frame));
       if (bytes > TOOL_RESULT_BUDGET) {
         const e = new UncageError('tool_failed', { message: `The result of site tool "${call.tool}" is too large (${bytes} bytes, max ${TOOL_RESULT_BUDGET}).` });
-        await finish('error', e);
+        await finish('error', fail(e), e);
         return fail(e);
       }
-      await finish(result.isError ? 'error' : 'ok');
+      await finish(result.isError ? 'error' : 'ok', frame);
       return frame;
     } catch (err) {
       if (why === 'cancelled') {
-        await finish('cancelled');
+        await finish('cancelled', fail(new UncageError('tool_failed', { message: `Site tool "${call.tool}" was cancelled.` })));
         return null;
       }
       if (why === 'timeout') {
         const e = new UncageError('tool_failed', { message: `Site tool "${call.tool}" did not finish within ${Math.round(toolTimeoutMs / 1000)} s.` });
-        await finish('timeout', e);
+        await finish('timeout', fail(e), e);
         return fail(e);
       }
       const e = err instanceof UncageError ? err : new UncageError('tool_failed', { message: err instanceof Error ? err.message : String(err) });
-      await finish(e.code === 'invalid_request' ? 'invalid' : 'error', e);
+      await finish(e.code === 'invalid_request' ? 'invalid' : 'error', fail(e), e);
       return fail(e);
     } finally {
       clearTimeout(timer);

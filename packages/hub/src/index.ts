@@ -18,14 +18,18 @@ export type {
   DeviceCodeRecord,
   DeviceCodeStatus,
   HubStore,
+  LinkState,
   MachineRecord,
+  OutboxItem,
   ReplicaSnapshot,
   ResourceKind,
   SessionPatch,
   SessionRecord,
+  ToolCallClaim,
   ToolCallFinish,
   ToolCallRecord,
   ToolCallStatus,
+  ToolResultFrame,
 } from './store/store.js';
 export { postgresHubStore, type PgClientLike, type PgPoolLike } from './store/postgres.js';
 export { HUB_MIGRATIONS, migrateHubStore, sqlHubStore, type SqlClient, type SqlQueryable } from './store/sql.js';

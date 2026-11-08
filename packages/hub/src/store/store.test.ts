@@ -67,6 +67,61 @@ describe('postgresHubStore (pg Pool adapter, PGlite-backed)', () => {
   });
 });
 
+describe('postgresHubStore migration fast path', () => {
+  /** Records every statement sent through the pool or a checked-out client. */
+  function recording(pool: PgPoolLike): { pool: PgPoolLike; sql: string[] } {
+    const sql: string[] = [];
+    return {
+      sql,
+      pool: {
+        query: (q, p) => (sql.push(q), pool.query(q, p)),
+        connect: async () => {
+          const c = await pool.connect();
+          return { query: (q, p) => (sql.push(q), c.query(q, p)), release: (e) => c.release(e) };
+        },
+        end: () => pool.end(),
+      },
+    };
+  }
+
+  it('skips the advisory lock once this pool is known to be migrated, or a max(id) check confirms it', async () => {
+    const pg = new PGlite('memory://');
+    const base = pglitePool(pg);
+    const first = recording(base);
+    await (await postgresHubStore({ pool: first.pool })).close();
+    expect(first.sql.some((q) => q.includes('pg_advisory_lock'))).toBe(true);
+
+    const again = recording(base); // a new wrapper object: no memo, but the database is current
+    await (await postgresHubStore({ pool: again.pool })).close();
+    expect(again.sql.some((q) => q.includes('pg_advisory_lock'))).toBe(false);
+    expect(again.sql.filter((q) => q.includes('max(id)'))).toHaveLength(1);
+
+    const third = recording(base);
+    await (await postgresHubStore({ pool: third.pool })).close();
+    await (await postgresHubStore({ pool: third.pool })).close(); // memoized: no query at all
+    expect(third.sql.filter((q) => q.includes('max(id)'))).toHaveLength(1);
+    expect(third.sql.some((q) => q.includes('pg_advisory_lock'))).toBe(false);
+    await pg.close();
+  });
+
+  it('migrates a database left at an older version under the lock', async () => {
+    const pg = new PGlite('memory://');
+    await pg.query('CREATE TABLE uncage_hub_migrations (id integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())');
+    for (const m of HUB_MIGRATIONS.slice(0, -1)) {
+      for (const stmt of m.sql.split(';').map((x) => x.trim()).filter(Boolean)) await pg.query(stmt);
+      await pg.query('INSERT INTO uncage_hub_migrations (id) VALUES ($1)', [m.id]);
+    }
+    const rec = recording(pglitePool(pg));
+    const store = await postgresHubStore({ pool: rec.pool });
+    expect(rec.sql.some((q) => q.includes('pg_advisory_lock'))).toBe(true);
+    const { rows } = await pg.query<{ id: number }>('SELECT id FROM uncage_hub_migrations ORDER BY id');
+    expect(rows.map((r) => r.id)).toEqual(HUB_MIGRATIONS.map((m) => m.id));
+    expect(await store.tryLease('x', { holder: 'a', until: '2', now: '1' })).toBe(true);
+    await store.close();
+    await pg.close();
+  });
+});
+
 describe('bindRunManifest error handling', () => {
   const failing = (err: unknown) =>
     sqlHubStore(

@@ -1,4 +1,4 @@
-import { migrateHubStore, sqlHubStore, type SqlClient, type SqlQueryable } from './sql.js';
+import { HUB_MIGRATIONS, migrateHubStore, sqlHubStore, type SqlClient, type SqlQueryable } from './sql.js';
 import type { HubStore } from './store.js';
 
 /** The slice of a node-postgres `PoolClient` the store uses. */
@@ -32,6 +32,27 @@ export function watchPoolErrors(pool: Pick<PgPoolLike, 'on'>, onError: (err: Err
 
 /** Arbitrary constant key for the migration advisory lock ("uncage" in ASCII, as an int). */
 const MIGRATION_LOCK_KEY = 0x756e6361;
+
+const LATEST_MIGRATION = HUB_MIGRATIONS.at(-1)!.id;
+
+/**
+ * Pools / connection strings already known to be at the latest migration in this isolate, so a
+ * serverless cold path does not take the advisory lock (an extra connection and round trips) on
+ * every `postgresHubStore` call.
+ */
+const migratedPools = new WeakSet<PgPoolLike>();
+const migratedUrls = new Set<string>();
+
+/** One cheap query: is the schema already current? Any error (e.g. no table yet) means "migrate". */
+async function isCurrent(pool: PgPoolLike): Promise<boolean> {
+  try {
+    const { rows } = await pool.query('SELECT max(id) AS id FROM uncage_hub_migrations');
+    const id = (rows[0] as { id: number | string | null } | undefined)?.id;
+    return id !== null && id !== undefined && Number(id) >= LATEST_MIGRATION;
+  } catch {
+    return false;
+  }
+}
 
 const asQueryable = (q: { query(sql: string, params?: unknown[]): Promise<{ rows: unknown[] }> }): SqlQueryable => ({
   query: async <T>(sql: string, params?: unknown[]) => (await q.query(sql, params)) as { rows: T[] },
@@ -80,7 +101,9 @@ function poolClient(pool: PgPoolLike): SqlClient {
  *
  * Errors of a pool the store created go to `onError` (default: `console.error`).
  *
- * Migrations run on start under a Postgres advisory lock, so several nodes can start at once.
+ * Migrations run on start under a Postgres advisory lock, so several nodes can start at once. A
+ * database already at the latest migration is detected with one `SELECT max(id)` (and remembered
+ * per pool / connection string for the life of the process or isolate), skipping the lock.
  *
  * @example
  * const store = await postgresHubStore({ connectionString: process.env.DATABASE_URL! });
@@ -105,18 +128,24 @@ export async function postgresHubStore(
     watchPoolErrors(pool, o.onError ?? ((err) => console.error('[uncage] postgres pool error:', err.message)));
   }
 
+  const url = 'connectionString' in o ? o.connectionString : undefined;
   try {
-    const client = await pool.connect();
-    try {
-      await client.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_KEY]);
+    const known = url !== undefined ? migratedUrls.has(url) : migratedPools.has(pool);
+    if (!known && !(await isCurrent(pool))) {
+      const client = await pool.connect();
       try {
-        await migrateHubStore({ ...asQueryable(client), transaction: (fn) => inTransaction(client, fn) });
+        await client.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_KEY]);
+        try {
+          await migrateHubStore({ ...asQueryable(client), transaction: (fn) => inTransaction(client, fn) });
+        } finally {
+          await client.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY]);
+        }
       } finally {
-        await client.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY]);
+        client.release();
       }
-    } finally {
-      client.release();
     }
+    if (url !== undefined) migratedUrls.add(url);
+    else migratedPools.add(pool);
   } catch (e) {
     if (owned) await pool.end().catch(() => undefined);
     throw e;
