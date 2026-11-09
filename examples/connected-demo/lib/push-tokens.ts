@@ -7,9 +7,15 @@
  *   whenever `DATABASE_URL` is set.
  *
  * A token belongs to one user at a time (the device's latest sign-in), and a user keeps at most
- * `MAX_PUSH_TOKENS_PER_USER` (the oldest go).
+ * `MAX_PUSH_TOKENS_PER_USER` (the oldest go). Tokens not re-registered for `PUSH_TOKEN_MAX_AGE_MS`
+ * are purged by the demo's housekeeping (lib/hub.ts).
+ *
+ * Trade-off: whoever knows a device's Expo push token can register it to their own account, which
+ * stops the previous user's pushes to that device (and sends the new account's to it). Keeping it
+ * with the old user instead would leak one user's notifications to whoever uses the device now.
+ * Expo tokens are semi-secret (only the app on the device learns it); treat them like that.
  */
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { PgPoolLike } from '@uncage/hub';
@@ -17,6 +23,8 @@ import { dataDir } from './config.ts';
 import { sharedPool } from './db.ts';
 
 export const MAX_PUSH_TOKENS_PER_USER = 10;
+/** The app re-registers its token on every launch; one unseen this long is dropped (housekeeping). */
+export const PUSH_TOKEN_MAX_AGE_MS = 30 * 24 * 3600_000;
 
 const EXPO_TOKEN = /^Expo(?:nent)?PushToken\[[A-Za-z0-9_-]{1,200}\]$/;
 
@@ -32,54 +40,90 @@ export interface PushTokenStore {
   list(user: string): Promise<string[]>;
   /** Forgets `token` (only if it is `user`'s, when given). */
   remove(token: string, user?: string): Promise<void>;
+  /** Deletes tokens last registered more than `maxAgeMs` ago; returns how many. */
+  purgeOlderThan(maxAgeMs: number, now?: number): Promise<number>;
 }
 
+/** "Users" whose file can exist (the demo's usernames). */
 const USER_FILE = /^[a-z0-9][a-z0-9_-]{0,31}\.json$/;
+const USER = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 
-/** Push tokens as `<dir>/<user>.json` (`[{ token, at }]`, newest last). */
+/**
+ * Push tokens as files: `<dir>/users/<user>.json` (`[{ token, at }]`, newest last) and a reverse
+ * index `<dir>/by-token/<sha256(token)>` holding the owner's name, so registering or removing a token
+ * reads one or two files however many users there are. Only the hourly purge walks every user.
+ */
 export function filePushTokenStore(dir: string): PushTokenStore {
   type Entry = { token: string; at: number };
-  const file = (user: string) => join(dir, `${user}.json`);
+  const usersDir = join(dir, 'users');
+  const indexDir = join(dir, 'by-token');
+  const userFile = (user: string) => join(usersDir, `${user}.json`);
+  const indexFile = (token: string) => join(indexDir, createHash('sha256').update(token).digest('hex'));
+  const atomicWrite = async (file: string, data: string, parent: string): Promise<void> => {
+    await mkdir(parent, { recursive: true });
+    const tmp = `${file}.${randomBytes(4).toString('hex')}.tmp`;
+    await writeFile(tmp, data);
+    await rename(tmp, file);
+  };
   const read = async (user: string): Promise<Entry[]> => {
     try {
-      const v = JSON.parse(await readFile(file(user), 'utf8')) as unknown;
-      return Array.isArray(v) ? (v as Entry[]).filter((e) => isExpoPushToken(e?.token)) : [];
+      const v = JSON.parse(await readFile(userFile(user), 'utf8')) as unknown;
+      return Array.isArray(v) ? (v as Entry[]).filter((e) => isExpoPushToken(e?.token) && Number.isFinite(e.at)) : [];
     } catch {
       return [];
     }
   };
   const write = async (user: string, entries: Entry[]): Promise<void> => {
-    if (entries.length === 0) {
-      await rm(file(user), { force: true });
-      return;
-    }
-    await mkdir(dir, { recursive: true });
-    const tmp = `${file(user)}.${randomBytes(4).toString('hex')}.tmp`;
-    await writeFile(tmp, JSON.stringify(entries));
-    await rename(tmp, file(user));
+    if (entries.length === 0) await rm(userFile(user), { force: true });
+    else await atomicWrite(userFile(user), JSON.stringify(entries), usersDir);
   };
-  const users = async (): Promise<string[]> => (await readdir(dir).catch(() => [] as string[])).filter((f) => USER_FILE.test(f)).map((f) => f.slice(0, -5));
-  const store: PushTokenStore = {
+  const owner = async (token: string): Promise<string | null> => {
+    const name = (await readFile(indexFile(token), 'utf8').catch(() => '')).trim();
+    return USER.test(name) ? name : null;
+  };
+  const unindex = (tokens: string[]) => Promise.all(tokens.map((t) => rm(indexFile(t), { force: true })));
+  /** Drops `token` from `user`'s file (the index is the caller's business). */
+  const dropFrom = async (user: string, token: string): Promise<void> => {
+    const entries = await read(user);
+    const kept = entries.filter((e) => e.token !== token);
+    if (kept.length !== entries.length) await write(user, kept);
+  };
+  return {
     async add(user, token) {
-      for (const other of await users()) {
-        if (other !== user) await store.remove(token, other);
-      }
+      const prev = await owner(token);
+      if (prev && prev !== user) await dropFrom(prev, token);
       const entries = (await read(user)).filter((e) => e.token !== token);
       entries.push({ token, at: Date.now() });
-      await write(user, entries.slice(-MAX_PUSH_TOKENS_PER_USER));
+      const kept = entries.slice(-MAX_PUSH_TOKENS_PER_USER);
+      await write(user, kept);
+      await atomicWrite(indexFile(token), user, indexDir);
+      await unindex(entries.slice(0, entries.length - kept.length).map((e) => e.token));
     },
     async list(user) {
       return (await read(user)).map((e) => e.token);
     },
     async remove(token, user) {
-      for (const u of user ? [user] : await users()) {
-        const entries = await read(u);
-        const kept = entries.filter((e) => e.token !== token);
-        if (kept.length !== entries.length) await write(u, kept);
+      const current = await owner(token);
+      if (!current || (user && user !== current)) return;
+      await dropFrom(current, token);
+      await unindex([token]);
+    },
+    async purgeOlderThan(maxAgeMs, now = Date.now()) {
+      const files = (await readdir(usersDir).catch(() => [] as string[])).filter((f) => USER_FILE.test(f));
+      let removed = 0;
+      for (const f of files) {
+        const user = f.slice(0, -5);
+        const entries = await read(user);
+        const stale = entries.filter((e) => now - e.at > maxAgeMs);
+        if (stale.length === 0) continue;
+        await write(user, entries.filter((e) => now - e.at <= maxAgeMs));
+        // Only index entries still pointing at this user (the token may have moved since).
+        for (const e of stale) if ((await owner(e.token)) === user) await unindex([e.token]);
+        removed += stale.length;
       }
+      return removed;
     },
   };
-  return store;
 }
 
 /** "push" in ASCII: serializes the CREATE TABLE of instances starting at once, and per-user adds. */
@@ -156,6 +200,11 @@ export function postgresPushTokenStore(pool: PgPoolLike): PushTokenStore {
       await ensure();
       if (user) await pool.query('DELETE FROM demo_push_tokens WHERE token = $1 AND user_id = $2', [token, user]);
       else await pool.query('DELETE FROM demo_push_tokens WHERE token = $1', [token]);
+    },
+    async purgeOlderThan(maxAgeMs, now = Date.now()) {
+      await ensure();
+      const cutoff = new Date(now - maxAgeMs).toISOString();
+      return (await pool.query('DELETE FROM demo_push_tokens WHERE created_at < $1::timestamptz RETURNING token', [cutoff])).rows.length;
     },
   };
 }

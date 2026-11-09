@@ -7,6 +7,7 @@
 import { appTokenExpiry, signAppToken } from './app-token.ts';
 import { bearerToken, guestUsername, normalizeUsername, secret, userFromRequest } from './auth.ts';
 import { isPublicDemo } from './config.ts';
+import { clientIpResolver } from './hub.ts';
 import { isExpoPushToken, pushTokenStore } from './push-tokens.ts';
 import { appleAppSiteAssociation, assetLinks } from './well-known.ts';
 
@@ -29,6 +30,52 @@ function foreignOrigin(req: Request): boolean {
   }
 }
 
+/** Public demo: new guests one client IP may mint through `/api/app/token` per minute. */
+export const GUEST_MINTS_PER_MINUTE = 10;
+const WINDOW_MS = 60_000;
+/** Buckets kept at most (oldest first out), so a flood of addresses cannot grow memory. */
+const MAX_BUCKETS = 10_000;
+
+/**
+ * A fixed one-minute window per client IP, in this process's memory: a demo-sized brake on scripted
+ * guest creation (each guest can register push tokens). With several instances each counts its own.
+ */
+export const guestMintLimiter = (() => {
+  const buckets = new Map<string, { start: number; n: number }>();
+  return {
+    /** Counts one mint for `key`; false once the window's allowance is used up. */
+    take(key: string, now: number = Date.now()): boolean {
+      let b = buckets.get(key);
+      if (!b || now - b.start >= WINDOW_MS) {
+        buckets.delete(key);
+        if (buckets.size >= MAX_BUCKETS) buckets.delete(buckets.keys().next().value!);
+        b = { start: now, n: 0 };
+        buckets.set(key, b);
+      }
+      b.n += 1;
+      return b.n <= GUEST_MINTS_PER_MINUTE;
+    },
+    /** Seconds until `key`'s window ends. */
+    retryAfter(key: string, now: number = Date.now()): number {
+      const b = buckets.get(key);
+      return b ? Math.max(1, Math.ceil((b.start + WINDOW_MS - now) / 1000)) : 1;
+    },
+    reset(): void {
+      buckets.clear();
+    },
+  };
+})();
+
+/**
+ * The client's address, the way the hub's rate limits find it (lib/hub.ts `clientIpResolver`:
+ * `CLIENT_IP_HEADER` / `TRUST_PROXY`), else on Vercel the address its edge sets. Without either the
+ * route handler cannot see the socket, so every such visitor shares one bucket.
+ */
+function clientKey(req: Request, env: Env): string {
+  const ip = clientIpResolver(env)?.(req) ?? (env.VERCEL ? req.headers.get('x-real-ip')?.trim() : undefined);
+  return ip || 'unknown';
+}
+
 async function jsonBody(req: Request): Promise<Record<string, unknown>> {
   try {
     const v = (await req.json()) as unknown;
@@ -42,7 +89,8 @@ async function jsonBody(req: Request): Promise<Record<string, unknown>> {
  * `POST /api/app/token` → `{ token, user, expiresAt }`: an app token (lib/app-token.ts) for
  * - the bearer of a valid app token (renewal; an invalid one is a 401),
  * - else the signed-in cookie user (a web page handing over to the app),
- * - else, on the public demo, a fresh random guest (like the login form),
+ * - else, on the public demo, a fresh random guest (like the login form; at most
+ *   `GUEST_MINTS_PER_MINUTE` per client IP, then 429),
  * - else `{ username }` from the JSON body (DEMO-ONLY: no password, like the login form).
  */
 export async function handleAppToken(req: Request, env: Env = process.env): Promise<Response> {
@@ -54,7 +102,15 @@ export async function handleAppToken(req: Request, env: Env = process.env): Prom
     if (!name) return error(401, 'unauthorized', 'The app token is invalid or expired. Sign in again.');
   } else {
     name = userFromRequest(req, key)?.id ?? null;
-    if (!name && isPublicDemo(env)) name = guestUsername();
+    if (!name && isPublicDemo(env)) {
+      const ip = clientKey(req, env);
+      if (!guestMintLimiter.take(ip)) {
+        const res = error(429, 'rate_limited', 'Too many new guests from this address. Try again in a minute.');
+        res.headers.set('retry-after', String(guestMintLimiter.retryAfter(ip)));
+        return res;
+      }
+      name = guestUsername();
+    }
     if (!name) name = normalizeUsername((await jsonBody(req)).username);
     if (!name) return error(400, 'invalid_request', 'Send { "username": "…" } (lower-case letters, digits, - and _, up to 32).');
   }

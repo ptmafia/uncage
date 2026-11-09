@@ -2,19 +2,19 @@
  * The mobile app / extension side of the demo: app tokens (bearer sign-in), Expo push tokens,
  * the hub's `onAttention` wiring and the app-link well-known files.
  */
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import type { AttentionEvent, PgPoolLike } from '@uncage/hub';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { APP_TOKEN_TTL_MS, appTokenKey, signAppToken, verifyAppToken } from './app-token.ts';
-import { handleAppToken, handlePushToken, wellKnownResponse } from './app-routes.ts';
+import { GUEST_MINTS_PER_MINUTE, guestMintLimiter, handleAppToken, handlePushToken, wellKnownResponse } from './app-routes.ts';
 import { SESSION_COOKIE, signUser, userFromRequest } from './auth.ts';
-import { attentionHandler, createDemoHub } from './hub.ts';
+import { attentionHandler, createDemoHub, housekeeping } from './hub.ts';
 import { PUBLISHED_HUB_KEY } from './mode.ts';
 import { appleAppSiteAssociation, assetLinks } from './well-known.ts';
-import { filePushTokenStore, isExpoPushToken, MAX_PUSH_TOKENS_PER_USER, postgresPushTokenStore, pushTokenStore, type PushTokenStore } from './push-tokens.ts';
+import { filePushTokenStore, isExpoPushToken, MAX_PUSH_TOKENS_PER_USER, PUSH_TOKEN_MAX_AGE_MS, postgresPushTokenStore, pushTokenStore, type PushTokenStore } from './push-tokens.ts';
 
 const SECRET = 's'.repeat(40);
 let dir: string;
@@ -25,6 +25,7 @@ beforeEach(async () => {
   process.env.DEMO_DATA_DIR = dir;
   process.env.DEMO_SECRET = SECRET;
   delete process.env.DEMO_PUBLIC;
+  guestMintLimiter.reset();
   // Traditional mode (as under server.ts): the cookie key is DEMO_SECRET, no database needed.
   (globalThis as Record<symbol, unknown>)[PUBLISHED_HUB_KEY] = { basePath: '/api/uncage' };
 });
@@ -71,6 +72,13 @@ describe('app tokens', () => {
     expect(viaBearer).toEqual(viaCookie);
     // A bearer header that fails never falls back to a cookie sent alongside.
     expect(userFromRequest(new Request('http://x/', { headers: { cookie: cookieFor('alice'), authorization: 'Bearer nope' } }))).toBeNull();
+    expect(userFromRequest(new Request('http://x/', { headers: { cookie: cookieFor('alice'), authorization: 'Bearer' } }))).toBeNull();
+  });
+
+  it('a non-Bearer Authorization header (e.g. basic auth in front of staging) leaves the cookie in charge', () => {
+    const basic = `Basic ${Buffer.from('staff:pw').toString('base64')}`;
+    expect(userFromRequest(new Request('http://x/', { headers: { cookie: cookieFor('alice'), authorization: basic } }))).toEqual({ id: 'alice', name: 'alice' });
+    expect(userFromRequest(new Request('http://x/', { headers: { authorization: basic } }))).toBeNull();
   });
 
   it('invalid/expired app token → 401 JSON from the hub; a valid one gets through with no Origin', async () => {
@@ -127,6 +135,28 @@ describe('POST /api/app/token', () => {
     expect(((await missing.json()) as { error: { code: string } }).error.code).toBe('invalid_request');
     expect((await handleAppToken(post({}, { username: 'a/b' }))).status).toBe(400);
     expect((await handleAppToken(post({ cookie: cookieFor('alice'), origin: 'https://evil.example' }))).status).toBe(403);
+  });
+
+  it(`public demo: at most ${GUEST_MINTS_PER_MINUTE} new guests per client IP per minute (429), per IP, and not for signed-in users`, async () => {
+    process.env.DEMO_PUBLIC = '1';
+    const saved = process.env.CLIENT_IP_HEADER;
+    process.env.CLIENT_IP_HEADER = 'x-real-ip';
+    try {
+      const ip = (a: string, extra: Record<string, string> = {}) => post({ 'x-real-ip': a, ...extra });
+      for (let i = 0; i < GUEST_MINTS_PER_MINUTE; i++) expect((await handleAppToken(ip('203.0.113.1'))).status).toBe(200);
+      const limited = await handleAppToken(ip('203.0.113.1'));
+      expect(limited.status).toBe(429);
+      expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(0);
+      expect(((await limited.json()) as { error: { code: string } }).error.code).toBe('rate_limited');
+      expect((await handleAppToken(ip('203.0.113.2'))).status).toBe(200); // another visitor
+      expect((await handleAppToken(ip('203.0.113.1', { cookie: cookieFor('alice') }))).status).toBe(200); // not a new guest
+      // A minute later the window has moved on.
+      const later = Date.now() + 61_000;
+      expect(guestMintLimiter.take('203.0.113.1', later)).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env.CLIENT_IP_HEADER;
+      else process.env.CLIENT_IP_HEADER = saved;
+    }
   });
 
   it('an app token can renew itself', async () => {
@@ -199,6 +229,19 @@ describe.each([
     expect(await store.list('bob')).toEqual([]);
   });
 
+  it('purges tokens not re-registered within the max age (30 days); a re-registration keeps a token', async () => {
+    expect(PUSH_TOKEN_MAX_AGE_MS).toBe(30 * 24 * 3600_000);
+    await store.add('alice', tok(1));
+    await store.add('bob', tok(2));
+    expect(await store.purgeOlderThan(PUSH_TOKEN_MAX_AGE_MS)).toBe(0);
+    expect(await store.purgeOlderThan(PUSH_TOKEN_MAX_AGE_MS, Date.now() + PUSH_TOKEN_MAX_AGE_MS + 60_000)).toBe(2);
+    expect(await store.list('alice')).toEqual([]);
+    expect(await store.list('bob')).toEqual([]);
+    // Gone from the index as well: the token can be registered again by anyone.
+    await store.add('carol', tok(1));
+    expect(await store.list('carol')).toEqual([tok(1)]);
+  });
+
   it(`keeps at most ${MAX_PUSH_TOKENS_PER_USER} per user, dropping the oldest; re-registering refreshes a token`, async () => {
     for (let i = 0; i < MAX_PUSH_TOKENS_PER_USER; i++) await store.add('alice', tok(i));
     await store.add('alice', tok(0)); // refreshed: now the newest
@@ -208,6 +251,39 @@ describe.each([
     expect(list).toContain(tok(0));
     expect(list).toContain(tok(100));
     expect(list).not.toContain(tok(1));
+  });
+});
+
+describe('file push token store layout', () => {
+  it('finds a token\'s owner through a reverse index instead of reading every user', async () => {
+    const root = join(dir, 'idx');
+    const store = filePushTokenStore(root);
+    for (let i = 0; i < 30; i++) await store.add(`user${i}`, tok(i));
+    expect((await readdir(join(root, 'by-token'))).length).toBe(30);
+    // Make every other user's file unreadable garbage: moving and removing tok(5) must not need them.
+    const { writeFile } = await import('node:fs/promises');
+    for (let i = 0; i < 30; i++) if (i !== 5 && i !== 7) await writeFile(join(root, 'users', `user${i}.json`), 'not json');
+    await store.add('user7', tok(5));
+    expect(await store.list('user5')).toEqual([]);
+    expect((await store.list('user7')).sort()).toEqual([tok(5), tok(7)]);
+    await store.remove(tok(5));
+    expect(await store.list('user7')).toEqual([tok(7)]);
+    expect((await readdir(join(root, 'by-token'))).length).toBe(29);
+    // Dropped by the per-user cap: its index entry goes too.
+    for (let i = 100; i < 100 + MAX_PUSH_TOKENS_PER_USER; i++) await store.add('user7', tok(i));
+    expect(await store.list('user7')).not.toContain(tok(7));
+    await store.add('user8', tok(7));
+    expect(await store.list('user8')).toEqual([tok(7)]);
+  });
+});
+
+describe('housekeeping (server.ts hourly, the hub maintenance in FaaS mode)', () => {
+  it('purges stale push tokens in every mode; assets only in public mode', async () => {
+    await pushTokenStore().add('alice', tok(1));
+    const later = Date.now() + PUSH_TOKEN_MAX_AGE_MS + 60_000;
+    expect(await housekeeping({ ...process.env }, Date.now())).toEqual({ pushTokens: 0, assets: 0 });
+    expect(await housekeeping({ ...process.env }, later)).toEqual({ pushTokens: 1, assets: 0 });
+    expect(await pushTokenStore().list('alice')).toEqual([]);
   });
 });
 

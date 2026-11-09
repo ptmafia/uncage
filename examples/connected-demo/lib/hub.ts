@@ -18,7 +18,7 @@ import { endSharedPool, sharedPool } from './db.ts';
 import { userFromRequest } from './auth.ts';
 import { dataDir, isPublicDemo, publicUrl } from './config.ts';
 import { requireFaasEnv, type DemoMode } from './mode.ts';
-import { pushTokenStore } from './push-tokens.ts';
+import { PUSH_TOKEN_MAX_AGE_MS, pushTokenStore } from './push-tokens.ts';
 import { demoSkills } from './skills.ts';
 import { demoTools } from './tools.ts';
 
@@ -65,9 +65,9 @@ export async function createDemoHub(o: { mode: DemoMode; env?: Record<string, st
     options.maintenance = {
       ...(env.CRON_SECRET ? { secret: env.CRON_SECRET } : {}),
       onRun: async () => {
-        if (!isPublicDemo(env)) return;
-        const n = await assetStore(env).purgeOlderThan(PUBLIC_ASSET_MAX_AGE_MS);
-        if (n > 0) console.log(`purged ${n} expired asset(s)`);
+        const n = await housekeeping(env);
+        if (n.assets > 0) console.log(`purged ${n.assets} expired asset(s)`);
+        if (n.pushTokens > 0) console.log(`purged ${n.pushTokens} stale push token(s)`);
       },
     };
   }
@@ -82,6 +82,17 @@ export async function createDemoHub(o: { mode: DemoMode; env?: Record<string, st
       if (url) await endSharedPool(url); // …which ends here, once
     },
   };
+}
+
+/**
+ * The demo's periodic cleanup, run hourly by server.ts (traditional) and by the hub's maintenance
+ * (FaaS): push tokens the app has not re-registered for 30 days, always; in public mode also the
+ * guests' assets last touched more than a day ago.
+ */
+export async function housekeeping(env: Record<string, string | undefined> = process.env, now: number = Date.now()): Promise<{ pushTokens: number; assets: number }> {
+  const pushTokens = await pushTokenStore(env).purgeOlderThan(PUSH_TOKEN_MAX_AGE_MS, now);
+  const assets = isPublicDemo(env) ? await assetStore(env).purgeOlderThan(PUBLIC_ASSET_MAX_AGE_MS, now) : 0;
+  return { pushTokens, assets };
 }
 
 function trustedOrigins(env: Record<string, string | undefined>) {

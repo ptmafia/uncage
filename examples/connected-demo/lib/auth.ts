@@ -94,11 +94,14 @@ export function readCookie(header: string | null | undefined, name: string = SES
   return undefined;
 }
 
-/** The token of an `Authorization: Bearer <token>` header; undefined without one. */
+/**
+ * The token of an `Authorization: Bearer <token>` header: undefined without one or with another
+ * scheme (e.g. HTTP basic auth in front of a staging deploy), `''` for a malformed Bearer header.
+ */
 export function bearerToken(req: Request): string | undefined {
-  const header = req.headers.get('authorization');
-  if (!header) return undefined;
-  const m = /^Bearer\s+(\S+)\s*$/i.exec(header);
+  const header = req.headers.get('authorization')?.trim();
+  if (!header || !/^Bearer(?:\s|$)/i.test(header)) return undefined;
+  const m = /^Bearer\s+(\S+)$/i.exec(header);
   return m ? m[1] : '';
 }
 
