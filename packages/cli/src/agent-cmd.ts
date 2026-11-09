@@ -15,7 +15,8 @@ Usage:
                                      Linux, a scheduled task on Windows) and the uncage:// link handler
                                      ("uncage connect"). Run it again after changing Node.
   uncage agent uninstall             Stop and remove the background agent and the uncage:// link handler.
-                                     Config and data stay.
+                                     Config and data stay. Run it before "npm uninstall -g @uncage/cli",
+                                     or uncage:// links keep pointing at the removed CLI.
   uncage agent status [--json]       Is it installed and running, and which Node does it use.
 
 "uncage setup <url>" installs the background agent; run "uncage agent" by hand for debugging

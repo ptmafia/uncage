@@ -61,6 +61,16 @@ describe('siteIdentity', () => {
     expect(siteIdentity('https://unrelated.com', ['example.com']).lookalikeOf).toBeUndefined();
   });
 
+  it('short registrable labels (< 4 characters) are only look-alikes with the same skeleton', () => {
+    expect(siteIdentity('https://x.com', ['t.co']).warnings).toEqual(['first_time']);
+    expect(siteIdentity('https://abc.com', ['xyz.com']).lookalikeOf).toBeUndefined();
+    expect(siteIdentity('https://ab.com', ['abc.com']).lookalikeOf).toBeUndefined();
+    expect(siteIdentity('https://abcd.com', ['abc.com']).lookalikeOf).toBeUndefined(); // one side short
+    expect(siteIdentity('https://g00.com', ['goo.com']).lookalikeOf).toBe('goo.com'); // same skeleton
+    expect(siteIdentity('https://x.io', ['x.com']).lookalikeOf).toBe('x.com'); // same label
+    expect(siteIdentity('https://gogle.com', ['google.com']).lookalikeOf).toBe('google.com'); // long: distance still counts
+  });
+
   it('flags IDN homographs of a known domain (Cyrillic а) as idn + lookalike', () => {
     const i = siteIdentity('https://exаmple.com', ['example.com']); // Cyrillic а (U+0430)
     expect(i.displayHost).toMatch(/^xn--/);

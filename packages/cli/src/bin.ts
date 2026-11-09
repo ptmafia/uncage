@@ -22,11 +22,12 @@ import { RUNTIMES_HELP, runRuntimes, toggleRuntime } from './runtimes-cmd.js';
 import { agentService, type AgentService } from './service/index.js';
 import { connectedHome, daemonHomeConflict } from './home.js';
 import { installAgentService, runSetup, SETUP_HELP } from './setup.js';
-import { CONNECT_HELP, runConnect } from './connect.js';
+import { CONNECT_HELP, relaunchHidden, runConnect } from './connect.js';
 import { DASHBOARD_HELP, startDashboard } from './dashboard/server.js';
 import { unregisterUrlHandler } from './service/url-handler.js';
 import { listSites, removeSite, SITES_HELP } from './sites.js';
 import { rotateLog, superviseAgent, watchSupervisor } from './supervise.js';
+import { plainText } from './text.js';
 import { versionOutput } from './version.js';
 
 const HELP = `uncage - run AI coding agents behind a local, approval-gated API
@@ -38,7 +39,8 @@ Local Mode:
 
 Connected Mode (a website drives this computer):
   uncage setup <url> [--no-daemon] [--no-browser] [--no-qr]   Connect this computer to a website.
-  uncage connect <url | uncage://connect?url=…>      Connect another website in one click (asks first).
+  uncage connect <url | uncage://connect?url=…>      Connect another website in one click (asks first;
+                                                    restarts the agent, interrupting running sessions).
   uncage agent [--log-file <path>]                  Run the agent in the foreground.
   uncage agent install | uninstall | status [--json]  Manage the background agent (this user).
   uncage sites                                      List connected websites.
@@ -199,12 +201,18 @@ async function main(argv: string[]): Promise<number> {
       options: {
         'no-browser': { type: 'boolean', default: false },
         'no-qr': { type: 'boolean', default: false },
+        'from-link': { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
       },
     });
     if (values.help || positionals.length !== 1) {
       console.log(CONNECT_HELP);
       return values.help ? 0 : 2;
+    }
+    // Windows: continue in a hidden, detached copy so no console window stays open.
+    if (values['from-link']) {
+      const { spawn } = await import('node:child_process');
+      if (relaunchHidden({ platform: process.platform, argv: process.argv, env: process.env, spawn })) return 0;
     }
     const isTTY = process.stdin.isTTY === true && process.stdout.isTTY === true;
     return runConnect({
@@ -225,6 +233,7 @@ async function main(argv: string[]): Promise<number> {
       },
       noBrowser: values['no-browser'],
       noQr: values['no-qr'],
+      fromLink: values['from-link'],
       // The background agent never runs with UNCAGE_HOME (setup refuses), so leave it alone then.
       service: process.env.UNCAGE_HOME ? null : await realService(),
     });
@@ -261,10 +270,14 @@ async function main(argv: string[]): Promise<number> {
         return 0;
       }
       if (sub === 'uninstall') {
-        const { removed } = await service.uninstall();
-        console.log(removed ? '✓ Background agent stopped and removed. (~/.uncage/agent.yaml is kept.)' : 'The background agent was not installed.');
-        const handler = await unregisterUrlHandler({ platform: process.platform, home: homedir(), exec: defaultExec });
-        if (handler.removed) console.log('✓ uncage:// link handler removed.');
+        try {
+          const { removed } = await service.uninstall();
+          console.log(removed ? '✓ Background agent stopped and removed. (~/.uncage/agent.yaml is kept.)' : 'The background agent was not installed.');
+        } finally {
+          // Even when the service could not be removed: never leave links pointing at this CLI.
+          const handler = await unregisterUrlHandler({ platform: process.platform, home: homedir(), exec: defaultExec }).catch(() => ({ removed: false }));
+          if (handler.removed) console.log('✓ uncage:// link handler removed.');
+        }
         return 0;
       }
       const st = await service.status();
@@ -466,7 +479,7 @@ main(process.argv.slice(2)).then(
     if (code >= 0) process.exit(code);
   },
   (e: unknown) => {
-    console.error(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    console.error(`Error: ${plainText(e instanceof Error ? e.message : String(e))}`);
     process.exit(1);
   },
 );

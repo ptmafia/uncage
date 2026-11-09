@@ -12,6 +12,7 @@ import {
 } from '@uncage/agent';
 import type { TransportKind } from '@uncage/protocol';
 import { renderQr } from './qr.js';
+import { plainText } from './text.js';
 import { agentService, serviceSpec, type AgentService, type ServiceSpec } from './service/index.js';
 import { registerUrlHandler, type RegisterResult } from './service/url-handler.js';
 
@@ -91,25 +92,36 @@ export async function pairSite(d: PairDeps): Promise<AgentSite> {
   if (d.expectUrl !== undefined && new URL(code.verificationUri).origin !== new URL(d.expectUrl).origin) {
     throw new Error(`The website's approval page is not on ${new URL(d.expectUrl).origin} (the site you confirmed). Not connected.`);
   }
-  d.out(`To connect this computer, open:\n\n  ${code.verificationUri}\n\nand confirm the code:  ${code.userCode}\n`);
+  // Hub-supplied strings are printed only in a safe form: the parsed URL (control characters
+  // percent-encoded) and the code without control characters (no terminal escapes).
+  const approvalUrl = new URL(code.verificationUri).href;
+  const userCode = plainText(code.userCode);
+  d.out(`To connect this computer, open:\n\n  ${approvalUrl}\n\nand confirm the code:  ${userCode}\n`);
   if ((d.isTTY ?? process.stdout.isTTY === true) && !d.noQr) {
-    d.out(`Or scan this with your phone:\n\n${renderQr(code.verificationUri)}\n`);
+    d.out(`Or scan this with your phone:\n\n${renderQr(approvalUrl)}\n`);
   }
   const platform = d.platform ?? process.platform;
   if (!d.noBrowser) {
-    await d.exec(...openUrlCommand(code.verificationUri, platform)).catch(() => d.out('(Could not open a browser; open the link above yourself.)'));
+    await d.exec(...openUrlCommand(approvalUrl, platform)).catch(() => d.out('(Could not open a browser; open the link above yourself.)'));
   }
   d.out('Waiting for approval…');
   const grant = await pollDeviceToken({ fetch: d.fetch, hubUrl, code, ...(d.sleep ? { sleep: d.sleep } : {}) });
   // Re-check the URL the hub hands back (a hub can only point us at https, or loopback in dev).
   const siteUrl = normalizeHubUrl(grant.site.url);
   if (d.expectUrl !== undefined && siteUrl !== d.expectUrl) {
-    throw new Error(`The website answered as ${siteUrl}, not ${d.expectUrl} (the site you confirmed). Not connected.`);
+    // The machine was approved on the hub we asked: revoke the token it just issued (best effort),
+    // so no approved machine is left behind for a site that is never saved.
+    const revoked = await d
+      .fetch(`${hubUrl}/machine/revoke`, { method: 'POST', headers: { authorization: `Bearer ${grant.machineToken}` } })
+      .then((r) => r.ok, () => false);
+    throw new Error(
+      `The website answered as ${siteUrl}, not ${d.expectUrl} (the site you confirmed). Not connected${revoked ? '; the machine it had just approved was revoked again' : '; remove this computer from its machine list if it shows there'}.`,
+    );
   }
 
   const site: AgentSite = {
     id: grant.site.id,
-    name: grant.site.name,
+    name: plainText(grant.site.name),
     url: siteUrl,
     machineId: grant.machineId,
     token: grant.machineToken,

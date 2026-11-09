@@ -6,7 +6,8 @@ import type { ServiceSpec } from './types.js';
 
 /**
  * The OS handler for `uncage://connect?url=…` links: it runs the pinned Node + CLI
- * `connect <link>`, which asks the user (native dialog) before any pairing.
+ * `connect --from-link <link>`, which asks the user (native dialog) before any pairing and reports
+ * the outcome in a system notification (there is no terminal to read).
  */
 
 export const URL_SCHEME = 'uncage';
@@ -60,13 +61,13 @@ const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 const asq = (s: string): string => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
 /**
- * The applet: `on open location` runs `<node> <cli> connect <url>` (URL shell-quoted by AppleScript's
+ * The applet: `on open location` runs `<node> <cli> connect --from-link <url>` (URL shell-quoted by AppleScript's
  * `quoted form of`) in the background with the service PATH, logging to `connect.log` (its folder
  * created first).
  */
 export function appleScriptSource(spec: ServiceSpec): string {
   assertNoLineBreaks(spec);
-  const cmd = `/bin/mkdir -p ${shq(spec.logsDir)}; PATH=${shq(spec.env.PATH)} ${shq(spec.nodePath)} ${shq(spec.cliEntry)} connect `;
+  const cmd = `/bin/mkdir -p ${shq(spec.logsDir)}; PATH=${shq(spec.env.PATH)} ${shq(spec.nodePath)} ${shq(spec.cliEntry)} connect --from-link `;
   const tail = ` >> ${shq(posix.join(spec.logsDir, 'connect.log'))} 2>&1 &`;
   return [
     'on open location theURL',
@@ -169,7 +170,7 @@ function execArg(a: string): string {
   return quoted.replace(/\\/g, '\\\\');
 }
 
-/** `uncage-connect.desktop`: `Exec=<node> <cli> connect %u`, hidden from menus. */
+/** `uncage-connect.desktop`: `Exec=<node> <cli> connect --from-link %u`, hidden from menus. */
 export function desktopEntry(spec: ServiceSpec, scheme: string = URL_SCHEME): string {
   assertNoLineBreaks(spec);
   return [
@@ -177,7 +178,7 @@ export function desktopEntry(spec: ServiceSpec, scheme: string = URL_SCHEME): st
     'Type=Application',
     'Name=Uncage Connect',
     'Comment=Connect this computer to a website that uses Uncage',
-    `Exec=${execArg(spec.nodePath)} ${execArg(spec.cliEntry)} connect %u`,
+    `Exec=${execArg(spec.nodePath)} ${execArg(spec.cliEntry)} connect --from-link %u`,
     `MimeType=x-scheme-handler/${scheme};`,
     'NoDisplay=true',
     'Terminal=false',
@@ -221,13 +222,13 @@ async function unregisterLinux(d: UrlHandlerDeps, scheme: string, env: NodeJS.Pr
 
 const winKey = (scheme: string): string => `HKCU\\Software\\Classes\\${scheme}`;
 
-/** `"<node>" "<cli>" connect "%1"` (paths cannot hold `"` on Windows; refused anyway). */
+/** `"<node>" "<cli>" connect --from-link "%1"` (paths cannot hold `"` on Windows; refused anyway). */
 export function windowsCommand(spec: ServiceSpec): string {
   assertNoLineBreaks(spec);
   for (const p of [spec.nodePath, spec.cliEntry]) {
     if (p.includes('"')) throw new Error(`Cannot register the uncage:// link handler: ${p} contains a quote.`);
   }
-  return `"${spec.nodePath}" "${spec.cliEntry}" connect "%1"`;
+  return `"${spec.nodePath}" "${spec.cliEntry}" connect --from-link "%1"`;
 }
 
 async function registerWindows(d: UrlHandlerDeps, spec: ServiceSpec, scheme: string, env: NodeJS.ProcessEnv): Promise<RegisterResult> {
@@ -253,7 +254,7 @@ async function unregisterWindows(d: UrlHandlerDeps, scheme: string, env: NodeJS.
 // ---------- entry points ----------
 
 /**
- * Makes `uncage://` links run `<node> <cli> connect <link>` for this user (no admin rights):
+ * Makes `uncage://` links run `<node> <cli> connect --from-link <link>` for this user (no admin rights):
  * macOS `~/Library/Application Support/Uncage/UncageConnect.app` (registered with lsregister),
  * Linux `uncage-connect.desktop` + `xdg-mime default`, Windows `HKCU\Software\Classes\uncage`.
  * Never throws for an OS refusal: `registered: false` with notes.

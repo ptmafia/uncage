@@ -112,6 +112,9 @@ export function skeleton(label: string): string {
   return s.replace(/-/g, '');
 }
 
+/** Labels shorter than this are look-alikes only with an identical skeleton (no edit distance). */
+const MIN_FUZZY_LABEL = 4;
+
 /** Levenshtein distance (insert, delete, substitute; each 1). */
 export function editDistance(a: string, b: string): number {
   const x = [...a];
@@ -132,7 +135,7 @@ export function editDistance(a: string, b: string): number {
  * host, a raw IP, a path other than the root or the default `/api/uncage` (on a shared origin a
  * path can belong to someone else than the domain's owner), a registrable domain this computer never connected to (`known` = the registrable
  * domains of the sites in agent.yaml), and one that looks like a known one (same confusable
- * skeleton, or edit distance ≤ 2, on the registrable label).
+ * skeleton, or edit distance ≤ 2 when both registrable labels have 4 characters or more).
  */
 export function siteIdentity(url: string, known: string[]): SiteIdentity {
   const u = new URL(url);
@@ -154,7 +157,11 @@ export function siteIdentity(url: string, known: string[]): SiteIdentity {
       lookalikeOf = [...knownSet].find((k) => {
         if (isIP(bareHost(k))) return false;
         const other = registrableLabel(k);
-        return skeleton(other) === sk || editDistance(label, other) <= 2 || editDistance(sk, skeleton(other)) <= 2;
+        if (skeleton(other) === sk) return true;
+        // Short labels are all within a few edits of each other (x vs t, abc vs xyz): only an
+        // identical skeleton counts there, or the warning would fire for unrelated sites.
+        if ([...label].length < MIN_FUZZY_LABEL || [...other].length < MIN_FUZZY_LABEL) return false;
+        return editDistance(label, other) <= 2 || editDistance(sk, skeleton(other)) <= 2;
       });
       if (lookalikeOf) warnings.push('lookalike');
     }

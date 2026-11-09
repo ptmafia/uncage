@@ -8,7 +8,8 @@ import { createHub, type Hub } from '@uncage/hub';
 import { pgliteHubStore, toNodeHandler } from '@uncage/hub/node';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DIALOG_TIMEOUT_S } from './confirm-dialog.js';
-import { LOCK_MAX_AGE_MS, parseConnectLink, runConnect, takeLock } from './connect.js';
+import { CANCEL_COOLDOWN_MS, CONNECT_HELP, LOCK_MAX_AGE_MS, parseConnectLink, relaunchHidden, runConnect, takeLock } from './connect.js';
+import type { Notice } from './notice.js';
 import type { AgentService } from './service/index.js';
 import type { SiteIdentity } from './site-identity.js';
 
@@ -102,13 +103,14 @@ const fakeService = (restarted: boolean) => {
 const fastSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.min(ms, 50)));
 
 /** A scripted hub: `/device/code` and `/device/token` answers (anything else 404). */
-function fakeHub(o: { verificationUri: string; siteUrl: string }) {
+function fakeHub(o: { verificationUri: string; siteUrl: string; siteName?: string; userCode?: string }) {
   return vi.fn<typeof fetch>(async (input) => {
     const url = String(input);
     const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
-    if (url.endsWith('/device/code')) return json({ deviceCode: 'd', userCode: 'ABCD-EFGH', verificationUri: o.verificationUri, intervalSec: 0, expiresInSec: 60 });
+    if (url.endsWith('/device/code')) return json({ deviceCode: 'd', userCode: o.userCode ?? 'ABCD-EFGH', verificationUri: o.verificationUri, intervalSec: 0, expiresInSec: 60 });
+    if (url.endsWith('/machine/revoke')) return new Response(null, { status: 204 });
     if (url.endsWith('/device/token')) {
-      return json({ status: 'ok', machineId: 'm1', machineToken: 'tok', site: { id: 's1', name: 'Site', url: o.siteUrl }, transports: [{ kind: 'http', url: `${o.siteUrl}/agent` }] });
+      return json({ status: 'ok', machineId: 'm1', machineToken: 'tok', site: { id: 's1', name: o.siteName ?? 'Site', url: o.siteUrl }, transports: [{ kind: 'http', url: `${o.siteUrl}/agent` }] });
     }
     return new Response('{}', { status: 404 });
   });
@@ -132,13 +134,34 @@ describe('uncage connect: the confirmed hub URL is the one paired with', () => {
     expect((await loadAgentConfig(home)).sites.map((s) => s.url)).toEqual([hubUrl]);
   });
 
-  it('refuses (nothing saved) when the hub answers with another hub URL on the same origin', async () => {
+  it('refuses (nothing saved) when the hub answers with another hub URL on the same origin, and revokes the just-issued machine token', async () => {
     const home = await tmpHome();
     const fetchSpy = fakeHub({ verificationUri: 'https://script.google.com/device?code=ABCD-EFGH', siteUrl: 'https://script.google.com/macros/s/OTHER/exec' });
-    await expect(
-      runConnect({ link: link(hubUrl), home, fetch: fetchSpy, exec: vi.fn<ExecFn>(), out: () => undefined, confirm: async () => true, service: null, noBrowser: true, sleep: fastSleep }),
-    ).rejects.toThrow(/not .*you confirmed/i);
+    const lines: string[] = [];
+    const code = await runConnect({ link: link(hubUrl), home, fetch: fetchSpy, exec: vi.fn<ExecFn>(), out: (l) => lines.push(l), confirm: async () => true, service: null, noBrowser: true, sleep: fastSleep });
+    expect(code).toBe(1);
+    expect(lines.join('\n')).toMatch(/not .*you confirmed/i);
     expect((await loadAgentConfig(home)).sites).toEqual([]);
+    const revoke = fetchSpy.mock.calls.find((c) => String(c[0]).endsWith('/machine/revoke'));
+    expect(revoke?.[0]).toBe(`${hubUrl}/machine/revoke`);
+    expect(revoke?.[1]).toMatchObject({ method: 'POST', headers: { authorization: 'Bearer tok' } });
+  });
+
+  it('hub-supplied strings are printed without control characters (terminal escapes)', async () => {
+    const home = await tmpHome();
+    const fetchSpy = fakeHub({
+      verificationUri: 'https://example.com/device/\u001b]0;pwned\u0007?code=ABCD-EFGH',
+      siteUrl: 'https://example.com/api/uncage',
+      siteName: 'Shop\u001b[2J\u009b31m',
+    });
+    const lines: string[] = [];
+    const exec = vi.fn<ExecFn>(async () => ({ stdout: '', stderr: '' }));
+    const code = await runConnect({ link: link('https://example.com'), home, fetch: fetchSpy, exec, out: (l) => lines.push(l), confirm: async () => true, service: null, sleep: fastSleep, platform: 'darwin', isTTY: false });
+    expect(code).toBe(0);
+    expect(lines.join(' ').replace(/\n/g, ' ')).not.toMatch(/\p{Cc}/u);
+    expect(lines.join('\n')).toContain('Shop');
+    expect(exec.mock.calls[0]![1][0]).not.toMatch(/\p{Cc}/u); // the opened URL is the parsed (escaped) form
+    expect((await loadAgentConfig(home)).sites[0]!.name).toBe('Shop[2J31m');
   });
 
   it('refuses before opening anything when the approval page is on another origin', async () => {
@@ -146,9 +169,8 @@ describe('uncage connect: the confirmed hub URL is the one paired with', () => {
     const exec = vi.fn<ExecFn>(async () => ({ stdout: '', stderr: '' }));
     const fetchSpy = fakeHub({ verificationUri: 'https://evil.example/device?code=ABCD-EFGH', siteUrl: 'https://example.com/api/uncage' });
     const lines: string[] = [];
-    await expect(
-      runConnect({ link: link('https://example.com'), home, fetch: fetchSpy, exec, out: (l) => lines.push(l), confirm: async () => true, service: null, sleep: fastSleep }),
-    ).rejects.toThrow(/approval page/i);
+    expect(await runConnect({ link: link('https://example.com'), home, fetch: fetchSpy, exec, out: (l) => lines.push(l), confirm: async () => true, service: null, sleep: fastSleep })).toBe(1);
+    expect(lines.join('\n')).toMatch(/approval page/i);
     expect(exec).not.toHaveBeenCalled(); // no browser opened on evil.example
     expect(lines.join('\n')).not.toContain('evil.example');
     expect(fetchSpy.mock.calls.map((c) => String(c[0]))).toEqual(['https://example.com/api/uncage/device/code']); // never polled
@@ -367,5 +389,95 @@ describe('uncage connect', () => {
     expect(code).toBe(0);
     expect(restart).toHaveBeenCalledTimes(1);
     expect(lines.join('\n')).toContain('uncage agent');
+  });
+});
+
+describe('uncage connect --from-link', () => {
+  const base = async () => ({ home: await tmpHome(), fetch: vi.fn<typeof fetch>(), exec: vi.fn<ExecFn>(), out: () => undefined, fromLink: true as const, env: { LANG: 'en_US.UTF-8' } });
+
+  it('shows the outcome in a native notice: connected', async () => {
+    const notices: Notice[] = [];
+    const fetchSpy = fakeHub({ verificationUri: 'https://example.com/device?code=ABCD-EFGH', siteUrl: 'https://example.com/api/uncage' });
+    const code = await runConnect({ ...(await base()), link: link('https://example.com'), fetch: fetchSpy, exec: vi.fn<ExecFn>(async () => ({ stdout: '', stderr: '' })), confirm: async () => true, service: null, sleep: fastSleep, notify: async (n) => void notices.push(n) });
+    expect(code).toBe(0);
+    expect(notices).toEqual([expect.objectContaining({ ok: true, title: 'Connected to example.com' })]);
+  });
+
+  it('shows the outcome in a native notice: failed, with the reason (not a hub, bad link)', async () => {
+    const notices: Notice[] = [];
+    const notFound = vi.fn<typeof fetch>(async () => new Response('<html>nope</html>', { status: 404 }));
+    expect(await runConnect({ ...(await base()), link: link('https://example.com'), fetch: notFound, confirm: async () => true, service: null, notify: async (n) => void notices.push(n) })).toBe(1);
+    expect(notices).toEqual([expect.objectContaining({ ok: false, title: 'Not connected to example.com', body: expect.any(String) })]);
+    expect(notices[0]!.body.length).toBeGreaterThan(0);
+    notices.length = 0;
+    expect(await runConnect({ ...(await base()), link: link('http://evil.com'), notify: async (n) => void notices.push(n) })).toBe(2);
+    expect(notices).toEqual([expect.objectContaining({ ok: false, title: 'Uncage: not connected', body: expect.stringMatching(/http/) })]);
+  });
+
+  it('no notice after Cancel (the person just answered), or without --from-link', async () => {
+    const notify = vi.fn(async () => undefined);
+    expect(await runConnect({ ...(await base()), link: link('https://example.com'), confirm: async () => false, notify })).toBe(1);
+    expect(await runConnect({ ...(await base()), fromLink: false, link: link('http://evil.com'), notify })).toBe(2);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('after a Cancel, another link for the same registrable domain within 30 s exits 1 without a dialog', async () => {
+    expect(CANCEL_COOLDOWN_MS).toBe(30_000);
+    const b = await base();
+    let now = 1_000_000;
+    const clock = () => now;
+    const confirm = vi.fn(async () => false);
+    const lines: string[] = [];
+    const run = (u: string) => runConnect({ ...b, link: link(u), confirm, now: clock, out: (l) => lines.push(l), notify: async () => undefined });
+    expect(await run('https://example.com')).toBe(1);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    now += 10_000;
+    expect(await run('https://app.example.com')).toBe(1); // same registrable domain
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(lines.join('\n')).toMatch(/cancelled .*example\.com.* less than 30 s ago/i);
+    expect(await run('https://other.com')).toBe(1); // another domain still asks
+    expect(confirm).toHaveBeenCalledTimes(2);
+    now += 21_000;
+    expect(await run('https://example.com')).toBe(1); // cool-down over: asks again
+    expect(confirm).toHaveBeenCalledTimes(3);
+    // A typed "uncage connect" (no --from-link) is never held back.
+    now += 1_000;
+    expect(await runConnect({ ...b, fromLink: false, link: link('https://example.com'), confirm, now: clock, out: () => undefined })).toBe(1);
+    expect(confirm).toHaveBeenCalledTimes(4);
+  });
+
+  it('caps connect.log at 1 MB with one rotation', async () => {
+    const b = await base();
+    const logs = join(b.home, '.uncage', 'logs');
+    await mkdir(logs, { recursive: true });
+    await writeFile(join(logs, 'connect.log'), 'x'.repeat(1024 * 1024 + 10));
+    await runConnect({ ...b, link: link('https://example.com'), confirm: async () => false, notify: async () => undefined });
+    expect((await stat(join(logs, 'connect.log'))).size).toBe(0);
+    expect((await stat(join(logs, 'connect.log.1'))).size).toBe(1024 * 1024 + 10);
+  });
+});
+
+describe('relaunchHidden (Windows, --from-link)', () => {
+  it('on win32 respawns the same command detached and hidden, once', () => {
+    const unref = vi.fn();
+    const spawn = vi.fn(() => ({ unref }));
+    const argv = ['C:\\node\\node.exe', 'C:\\cli\\bin.js', 'connect', '--from-link', 'uncage://connect?url=x'];
+    expect(relaunchHidden({ platform: 'win32', argv, env: { PATH: 'p' }, spawn })).toBe(true);
+    expect(spawn).toHaveBeenCalledWith('C:\\node\\node.exe', ['C:\\cli\\bin.js', 'connect', '--from-link', 'uncage://connect?url=x'], {
+      detached: true,
+      windowsHide: true,
+      stdio: 'ignore',
+      env: { PATH: 'p', UNCAGE_CONNECT_RELAUNCHED: '1' },
+    });
+    expect(unref).toHaveBeenCalled();
+    // The relaunched copy runs the flow itself; other platforms never relaunch.
+    expect(relaunchHidden({ platform: 'win32', argv, env: { UNCAGE_CONNECT_RELAUNCHED: '1' }, spawn })).toBe(false);
+    expect(relaunchHidden({ platform: 'darwin', argv, env: {}, spawn })).toBe(false);
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('the help explains --from-link and that connecting restarts the agent (interrupting running sessions)', () => {
+    expect(CONNECT_HELP).toContain('--from-link');
+    expect(CONNECT_HELP).toMatch(/interrupt/i);
   });
 });

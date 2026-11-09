@@ -18,11 +18,17 @@ export function detectLocale(env: NodeJS.ProcessEnv, intlLocale: string = Intl.D
 
 interface Copy {
   title: string;
-  body(i: SiteIdentity): string;
-  warning(w: IdentityWarning, i: SiteIdentity): string;
+  /** The first line: the question, with the registrable domain. */
+  head(i: SiteIdentity): string;
+  /** The last line: what whoever runs the site can do once connected. */
+  consequence(i: SiteIdentity): string;
+  /** `url` is the (possibly shortened) URL shown in this text. */
+  warning(w: IdentityWarning, i: SiteIdentity, url: string): string;
   connect: string;
   cancel: string;
-  /** Windows MessageBox buttons are OK / Cancel (in the system language). */
+  /** kdialog's default (Enter) button: a no. */
+  dontConnect: string;
+  /** Windows Popup buttons are OK / Cancel (in the system language). */
   pressOk: string;
   question: string;
 }
@@ -30,61 +36,94 @@ interface Copy {
 const COPY: Record<DialogLocale, Copy> = {
   en: {
     title: 'Connect this computer?',
-    body: (i) =>
-      `Connect this computer to ${i.registrableDomain}?\n${i.url}\nIt will be able to start coding-agent sessions on this computer when you use that site.`,
-    warning: (w, i) =>
+    head: (i) => `Connect this computer to ${i.registrableDomain}?`,
+    consequence: (i) =>
+      `Whoever runs ${i.registrableDomain} can then start coding-agent sessions on this computer at any time and answer their approval prompts, within your local policy. Only connect sites you trust.`,
+    warning: (w, i, url) =>
       ({
         idn: `Warning: the address uses international characters (${i.displayHost}). Make sure it is the site you expect.`,
         ip: `Warning: this site is a bare IP address (${i.displayHost}), not a domain name.`,
-        path: `This link points to a specific page on ${i.registrableDomain}: ${i.url}. Only continue if you started this from that site.`,
+        path: `This link points to a specific page on ${i.registrableDomain}: ${url}. Only continue if you started this from that site.`,
         first_time: `This computer has never connected to ${i.registrableDomain} before.`,
         lookalike: `Warning: ${i.registrableDomain} looks like ${i.lookalikeOf ?? 'a site'} you already connected. It may be an imitation.`,
       })[w],
     connect: 'Connect',
     cancel: 'Cancel',
+    dontConnect: "Don't connect",
     pressOk: 'Press OK to connect.',
     question: 'Connect? [y/N] ',
   },
   zh: {
     title: '连接这台电脑？',
-    body: (i) => `要将这台电脑连接到 ${i.registrableDomain} 吗？\n${i.url}\n连接后，你在该网站上使用时，它可以在这台电脑上启动 coding agent 会话。`,
-    warning: (w, i) =>
+    head: (i) => `要将这台电脑连接到 ${i.registrableDomain} 吗？`,
+    consequence: (i) => `连接后，${i.registrableDomain} 的运营者可以随时在这台电脑上启动 coding agent 会话，并在你的本地策略范围内回答它们的审批请求。只连接你信任的网站。`,
+    warning: (w, i, url) =>
       ({
         idn: `警告：该地址包含国际化字符（${i.displayHost}），请确认这是你要连接的网站。`,
         ip: `警告：该网站是一个 IP 地址（${i.displayHost}），而不是域名。`,
-        path: `该链接指向 ${i.registrableDomain} 上的一个特定页面：${i.url}。只有当你是从该网站发起的连接时才继续。`,
+        path: `该链接指向 ${i.registrableDomain} 上的一个特定页面：${url}。只有当你是从该网站发起的连接时才继续。`,
         first_time: `这台电脑以前从未连接过 ${i.registrableDomain}。`,
         lookalike: `警告：${i.registrableDomain} 与你已连接的 ${i.lookalikeOf ?? '网站'} 很像，可能是仿冒网站。`,
       })[w],
     connect: '连接',
     cancel: '取消',
+    dontConnect: '不连接',
     pressOk: '点击“确定”以连接。',
     question: '连接？[y/N] ',
   },
   ja: {
     title: 'このコンピュータを接続しますか？',
-    body: (i) =>
-      `このコンピュータを ${i.registrableDomain} に接続しますか？\n${i.url}\n接続すると、そのサイトを使うときに、このコンピュータでコーディングエージェントのセッションを開始できるようになります。`,
-    warning: (w, i) =>
+    head: (i) => `このコンピュータを ${i.registrableDomain} に接続しますか？`,
+    consequence: (i) =>
+      `接続すると、${i.registrableDomain} の運営者は、このコンピュータでいつでもコーディングエージェントのセッションを開始し、ローカルポリシーの範囲内でその承認の確認に応答できます。信頼できるサイトだけを接続してください。`,
+    warning: (w, i, url) =>
       ({
         idn: `警告：このアドレスには国際化文字が含まれています（${i.displayHost}）。目的のサイトか確認してください。`,
         ip: `警告：このサイトはドメイン名ではなく IP アドレス（${i.displayHost}）です。`,
-        path: `このリンクは ${i.registrableDomain} 上の特定のページを指しています：${i.url}。そのサイトから操作を始めた場合のみ続行してください。`,
+        path: `このリンクは ${i.registrableDomain} 上の特定のページを指しています：${url}。そのサイトから操作を始めた場合のみ続行してください。`,
         first_time: `このコンピュータは ${i.registrableDomain} に接続したことがありません。`,
         lookalike: `警告：${i.registrableDomain} は接続済みの ${i.lookalikeOf ?? 'サイト'} に似ています。なりすましの可能性があります。`,
       })[w],
     connect: '接続',
     cancel: 'キャンセル',
+    dontConnect: '接続しない',
     pressOk: '接続するには［OK］を押してください。',
     question: '接続しますか？ [y/N] ',
   },
 };
 
-/** The dialog's title, body (domain, origin, consequence, one line per warning) and button labels. */
-export function confirmText(i: SiteIdentity, locale: DialogLocale): { title: string; body: string; connect: string; cancel: string; pressOk: string; question: string } {
+/** The longest URL a dialog shows; longer ones are cut in the middle (the full URL is still the one checked). */
+export const DIALOG_URL_MAX = 120;
+
+/** `url` cut in the middle to `max` characters (origin and end kept), with an ellipsis. */
+export function shortUrl(url: string, max: number = DIALOG_URL_MAX): string {
+  const chars = [...url];
+  if (chars.length <= max) return url;
+  const head = Math.ceil((max - 1) / 2);
+  const tail = max - 1 - head;
+  return `${chars.slice(0, head).join('')}…${chars.slice(chars.length - tail).join('')}`;
+}
+
+export interface ConfirmText {
+  title: string;
+  body: string;
+  connect: string;
+  cancel: string;
+  dontConnect: string;
+  pressOk: string;
+  question: string;
+}
+
+/**
+ * The dialog's title, body and button labels. Body: the question with the domain, one line per
+ * warning (first, so a long URL cannot push them out of view), the URL (middle-truncated unless
+ * `fullUrl`, as in the terminal), then what the site's operator can do once connected.
+ */
+export function confirmText(i: SiteIdentity, locale: DialogLocale, o: { fullUrl?: boolean } = {}): ConfirmText {
   const c = COPY[locale];
-  const body = [c.body(i), ...i.warnings.map((w) => c.warning(w, i))].join('\n');
-  return { title: c.title, body, connect: c.connect, cancel: c.cancel, pressOk: c.pressOk, question: c.question };
+  const url = o.fullUrl ? i.url : shortUrl(i.url);
+  const body = [c.head(i), ...i.warnings.map((w) => c.warning(w, i, url)), url, c.consequence(i)].join('\n');
+  return { title: c.title, body, connect: c.connect, cancel: c.cancel, dontConnect: c.dontConnect, pressOk: c.pressOk, question: c.question };
 }
 
 export interface ConfirmDeps {
@@ -130,14 +169,14 @@ const OSASCRIPT = [
 
 const b64 = (s: string): string => Buffer.from(s, 'utf8').toString('base64');
 
-/** The PowerShell script (texts base64-encoded, so no quoting can break out). */
-function powershellScript(title: string, body: string): string {
+/** The PowerShell script (texts base64-encoded, so no quoting can break out). Prints `connect` or `cancel`. */
+export function powershellScript(title: string, body: string, timeoutS: number = DIALOG_TIMEOUT_S): string {
   return [
     `$body = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64(body)}'))`,
     `$title = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64(title)}'))`,
-    // WScript.Shell Popup: OK/Cancel 0x1, warning 0x30, Cancel default 0x100, topmost 0x1000; gives
+    // WScript.Shell Popup: OK/Cancel 0x1, warning 0x30, Cancel default 0x100, system modal 0x1000; gives
     // up after DIALOG_TIMEOUT_S (-1). Only OK (1) connects.
-    `$r = (New-Object -ComObject WScript.Shell).Popup($body, ${DIALOG_TIMEOUT_S}, $title, 0x1131)`,
+    `$r = (New-Object -ComObject WScript.Shell).Popup($body, ${timeoutS}, $title, 0x1131)`,
     "if ($r -eq 1) { 'connect' } else { 'cancel' }",
   ].join('\n');
 }
@@ -151,7 +190,7 @@ const exitCode = (e: unknown): number | undefined => {
 const stderrOf = (e: unknown): string => String((e as { stderr?: unknown }).stderr ?? '').trim();
 
 /** The native dialog's answer; `null` when this platform has no dialog tool here. */
-async function nativeDialog(t: ReturnType<typeof confirmText>, d: ConfirmDeps, env: NodeJS.ProcessEnv): Promise<{ answer: Answer; detail?: string } | null> {
+async function nativeDialog(t: ConfirmText, d: ConfirmDeps, env: NodeJS.ProcessEnv): Promise<{ answer: Answer; detail?: string } | null> {
   if (d.platform === 'darwin') {
     return d.exec('/usr/bin/osascript', [...OSASCRIPT.flatMap((l) => ['-e', l]), '--', t.body, t.title, t.cancel, t.connect]).then(
       ({ stdout }) => ({ answer: stdout.split(/[,\n]/).some((part) => part.trim() === `button returned:${t.connect}`) ? 'yes' : 'no' }),
@@ -177,30 +216,35 @@ async function nativeDialog(t: ReturnType<typeof confirmText>, d: ConfirmDeps, e
   }
   if (d.platform === 'linux' && (env.DISPLAY || env.WAYLAND_DISPLAY)) {
     const find = d.findCommand ?? ((c: string) => defaultFindCommand(c, { platform: d.platform, env }));
-    // zenity: 0 OK, 1 Cancel, 5 timeout. kdialog: 0 Continue, 1 / 2 No / Cancel. Anything else: not shown.
-    const run = (file: string, args: string[], noCodes: number[]) =>
+    // zenity: 0 OK, 1 Cancel, 5 timeout. Anything else: not shown.
+    const run = (file: string, args: string[], answers: Partial<Record<number, Answer>>) =>
       d.exec(file, args).then(
-        (): { answer: Answer } => ({ answer: 'yes' }),
+        (): { answer: Answer; detail?: string } => ({ answer: answers[0] ?? 'error' }),
         (e: unknown): { answer: Answer; detail?: string } => {
           const c = exitCode(e);
-          return c !== undefined && noCodes.includes(c) ? { answer: 'no' } : { answer: 'error', detail: stderrOf(e) || String(e) };
+          const a = c === undefined ? undefined : answers[c];
+          return a ? { answer: a } : { answer: 'error', detail: stderrOf(e) || String(e) };
         },
       );
+    // zenity first: it has a real default-Cancel option.
     const zenity = await find('zenity');
     if (zenity) {
       return run(
         zenity,
         ['--question', `--title=${t.title}`, `--text=${t.body}`, `--ok-label=${t.connect}`, `--cancel-label=${t.cancel}`, '--default-cancel', '--no-markup', '--width=440', `--timeout=${DIALOG_TIMEOUT_S}`],
-        [1, 5],
+        { 0: 'yes', 1: 'no', 5: 'no' },
       );
     }
     const kdialog = await find('kdialog');
-    // warningcontinuecancel: Cancel is the default button. kdialog has no timeout: coreutils
-    // timeout(1) ends it (exit 124 = gave up = no); without timeout(1) the cut-off below applies.
+    // kdialog cannot make Cancel the default of a continue/cancel box, and Esc in a yes/no box is
+    // "No". So: yes/no/cancel, where the default Yes button is "Don't connect" (exit 0 = no), No is
+    // Connect (exit 1, the only yes) and Cancel / Esc is exit 2 (no). kdialog has no timeout:
+    // coreutils timeout(1) ends it (exit 124 = gave up = no); without it the cut-off below applies.
     if (kdialog) {
-      const args = ['--title', t.title, '--warningcontinuecancel', t.body, '--continue-label', t.connect, '--cancel-label', t.cancel];
+      const args = ['--title', t.title, '--warningyesnocancel', t.body, '--yes-label', t.dontConnect, '--no-label', t.connect, '--cancel-label', t.cancel];
+      const answers = { 0: 'no', 1: 'yes', 2: 'no', 124: 'no' } as const;
       const timeout = await find('timeout');
-      return timeout ? run(timeout, [String(DIALOG_TIMEOUT_S), kdialog, ...args], [1, 2, 124]) : run(kdialog, args, [1, 2]);
+      return timeout ? run(timeout, [String(DIALOG_TIMEOUT_S), kdialog, ...args], answers) : run(kdialog, args, answers);
     }
   }
   return null;
@@ -208,14 +252,15 @@ async function nativeDialog(t: ReturnType<typeof confirmText>, d: ConfirmDeps, e
 
 /**
  * Asks the person at this computer whether to connect to the site, with its registrable domain,
- * full hub URL and warnings. Native dialog first (macOS osascript, Windows MessageBox, Linux zenity /
- * kdialog with a display); Cancel is the default everywhere and stays a no. When no dialog tool
+ * hub URL and warnings. Native dialog first (macOS osascript, Windows WScript.Shell Popup, Linux
+ * zenity, else kdialog, with a display); Cancel is the default everywhere and stays a no. When no dialog tool
  * exists, or the dialog could not be shown (no GUI session, stale DISPLAY), the terminal asks if
  * there is one; otherwise false with an explanation.
  */
 export async function confirmConnect(i: SiteIdentity, d: ConfirmDeps): Promise<boolean> {
   const env = d.env ?? process.env;
-  const t = confirmText(i, d.locale ?? detectLocale(env));
+  const locale = d.locale ?? detectLocale(env);
+  const t = confirmText(i, locale);
   const out = d.out ?? (() => undefined);
   const timeoutMs = d.timeoutMs ?? DIALOG_TIMEOUT_S * 1000;
   // A dialog that never returns (its own timeout failed, a stuck process) counts as a cancel.
@@ -224,7 +269,8 @@ export async function confirmConnect(i: SiteIdentity, d: ConfirmDeps): Promise<b
   if (native?.answer === 'no') return false;
   if (native?.answer === 'error') out(`The confirmation dialog could not be shown (${native.detail?.split('\n')[0] ?? 'unknown error'}).`);
   if (d.isTTY && d.prompt) {
-    out(`${t.title}\n\n${t.body}\n`);
+    // The terminal has room: the full URL.
+    out(`${t.title}\n\n${confirmText(i, locale, { fullUrl: true }).body}\n`);
     const ac = new AbortController();
     const answer = await bounded(d.prompt(t.question, ac.signal).catch(() => ''), timeoutMs, () => {
       ac.abort();

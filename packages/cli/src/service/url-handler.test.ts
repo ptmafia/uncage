@@ -81,7 +81,7 @@ describe('macOS handler', () => {
     const src = appleScriptSource(spec('/Users/me'));
     expect(src).toMatch(/^on open location theURL$/m);
     expect(src).toContain('quoted form of theURL');
-    expect(src).toContain(`'/opt/node 22/bin/node' '/usr/local/lib/node_modules/@uncage/cli/dist/bin.js' connect `);
+    expect(src).toContain(`'/opt/node 22/bin/node' '/usr/local/lib/node_modules/@uncage/cli/dist/bin.js' connect --from-link `);
     // The logs folder is created first (M7), then the command runs in the background.
     expect(src).toContain(`/bin/mkdir -p '/Users/me/.uncage/logs'; `);
     expect(src).toContain(`>> '/Users/me/.uncage/logs/connect.log' 2>&1 &`);
@@ -163,9 +163,9 @@ describe('macOS handler', () => {
 });
 
 describe('Linux handler', () => {
-  it('desktopEntry: Exec=<node> <cli> connect %u (quoted per the Desktop Entry spec), MimeType, NoDisplay', () => {
+  it('desktopEntry: Exec=<node> <cli> connect --from-link %u (quoted per the Desktop Entry spec), MimeType, NoDisplay', () => {
     const e = desktopEntry(spec('/home/me', { nodePath: '/usr/bin/node' }), 'uncage');
-    expect(e).toContain('\nExec=/usr/bin/node /usr/local/lib/node_modules/@uncage/cli/dist/bin.js connect %u\n');
+    expect(e).toContain('\nExec=/usr/bin/node /usr/local/lib/node_modules/@uncage/cli/dist/bin.js connect --from-link %u\n');
     expect(e).toContain('\nMimeType=x-scheme-handler/uncage;\n');
     expect(e).toContain('\nNoDisplay=true\n');
     expect(e).toContain('\nTerminal=false\n');
@@ -230,9 +230,9 @@ it('Linux unregister: mimeapps.list with CRLF line endings loses only our line',
 describe('Windows handler', () => {
   const winSpec = (home: string) => spec(home, { nodePath: 'C:\\Program Files\\nodejs\\node.exe', cliEntry: 'C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@uncage\\cli\\dist\\bin.js' });
 
-  it('windowsCommand quotes node, cli and %1', () => {
+  it('windowsCommand quotes node, cli and %1 (connect --from-link)', () => {
     expect(windowsCommand(winSpec('C:\\Users\\me'))).toBe(
-      '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@uncage\\cli\\dist\\bin.js" connect "%1"',
+      '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@uncage\\cli\\dist\\bin.js" connect --from-link "%1"',
     );
     expect(() => windowsCommand(spec('C:\\x', { nodePath: 'C:\\a"b\\node.exe' }))).toThrow();
   });
@@ -412,7 +412,7 @@ describe.runIf(real)('real registration (CI runner only)', () => {
       () => false,
     );
     const got = opened ? await waitForFile(argsFile, 30_000) : null;
-    if (got && JSON.stringify(JSON.parse(got)) === JSON.stringify(['connect', url])) annotate('notice', title, `applet received: ${got}`);
+    if (got && JSON.stringify(JSON.parse(got)) === JSON.stringify(['connect', '--from-link', url])) annotate('notice', title, `applet received: ${got}`);
     else annotate('warning', title, `URL not delivered to the applet within 30 s (open ${opened ? 'ok' : 'failed'}; got ${got ?? 'nothing'}). Registration itself is verified.\n\ncalls:\n${formatCalls(log)}\n\n${await extra()}`);
   }, 180_000);
 

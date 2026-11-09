@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { ExecFn } from '@uncage/agent';
 import { describe, expect, it, vi } from 'vitest';
-import { confirmConnect, confirmText, detectLocale, DIALOG_TIMEOUT_S } from './confirm-dialog.js';
+import { confirmConnect, confirmText, detectLocale, DIALOG_TIMEOUT_S, powershellScript } from './confirm-dialog.js';
 import type { SiteIdentity } from './site-identity.js';
 
 const plain: SiteIdentity = { origin: 'https://app.example.com', url: 'https://app.example.com/api/uncage', registrableDomain: 'example.com', displayHost: 'app.example.com', warnings: [] };
@@ -27,34 +29,52 @@ const broken = () =>
 const noFind = async () => null;
 
 describe('confirmText', () => {
-  it('English copy, verbatim', () => {
+  it('English copy, verbatim: what the operator can do, and to connect only trusted sites', () => {
     const t = confirmText(plain, 'en');
     expect(t.title).toBe('Connect this computer?');
     expect(t.body).toBe(
-      'Connect this computer to example.com?\nhttps://app.example.com/api/uncage\nIt will be able to start coding-agent sessions on this computer when you use that site.',
+      [
+        'Connect this computer to example.com?',
+        'https://app.example.com/api/uncage',
+        'Whoever runs example.com can then start coding-agent sessions on this computer at any time and answer their approval prompts, within your local policy. Only connect sites you trust.',
+      ].join('\n'),
     );
     expect(t.connect).toBe('Connect');
     expect(t.cancel).toBe('Cancel');
   });
 
-  it('one line per warning, naming the punycode host and the lookalike', () => {
+  it('warnings come right under the domain line (before the URL), one line each, naming the punycode host and the lookalike', () => {
     const t = confirmText(risky, 'en');
-    const lines = t.body.split('\n').slice(3);
-    expect(lines).toHaveLength(3);
-    expect(lines[0]).toContain('xn--exmple-4nf.com');
-    expect(lines[1]).toMatch(/never connected/i);
-    expect(lines[2]).toContain('example.com');
+    const lines = t.body.split('\n');
+    expect(lines).toHaveLength(6);
+    expect(lines[1]).toContain('xn--exmple-4nf.com');
+    expect(lines[2]).toMatch(/never connected/i);
+    expect(lines[3]).toContain('example.com');
+    expect(lines[4]).toBe('https://xn--exmple-4nf.com/api/uncage');
     expect(confirmText({ ...plain, warnings: ['ip'] }, 'en').body.split('\n')).toHaveLength(4);
   });
 
-  it('a path warning names the domain and the full URL, in every locale', () => {
+  it('a path warning names the domain and the URL, in every locale', () => {
     const i: SiteIdentity = { ...plain, url: 'https://script.google.com/macros/s/X/exec', registrableDomain: 'google.com', warnings: ['path'] };
     const lines = confirmText(i, 'en').body.split('\n');
-    expect(lines[1]).toBe('https://script.google.com/macros/s/X/exec');
-    expect(lines[3]).toBe(
+    expect(lines[1]).toBe(
       'This link points to a specific page on google.com: https://script.google.com/macros/s/X/exec. Only continue if you started this from that site.',
     );
-    for (const loc of ['zh', 'ja'] as const) expect(confirmText(i, loc).body.split('\n')[3]).toContain('https://script.google.com/macros/s/X/exec');
+    expect(lines[2]).toBe('https://script.google.com/macros/s/X/exec');
+    for (const loc of ['zh', 'ja'] as const) expect(confirmText(i, loc).body.split('\n')[1]).toContain('https://script.google.com/macros/s/X/exec');
+  });
+
+  it('a long URL is middle-truncated in the dialog (warnings stay visible); the terminal gets the full URL', () => {
+    const url = `https://app.example.com/${'a'.repeat(1500)}/end`;
+    const i: SiteIdentity = { ...plain, url, warnings: ['path', 'first_time'] };
+    const t = confirmText(i, 'en');
+    const lines = t.body.split('\n');
+    expect(lines[2]).toMatch(/never connected/i);
+    expect(lines[3]!.length).toBeLessThanOrEqual(120);
+    expect(lines[3]).toMatch(/^https:\/\/app\.example\.com\/a+…a*\/end$/);
+    expect(t.body).not.toContain(url);
+    expect(t.body.length).toBeLessThan(800);
+    expect(confirmText(i, 'en', { fullUrl: true }).body).toContain(url);
   });
 
   it('zh-CN and ja variants keep the domain and origin', () => {
@@ -67,6 +87,10 @@ describe('confirmText', () => {
       expect(t.body.split('\n')).toHaveLength(6);
     }
     expect(confirmText(plain, 'zh').title).toBe('连接这台电脑？');
+    expect(confirmText(plain, 'zh').body).toContain('随时');
+    expect(confirmText(plain, 'zh').body).toContain('本地策略');
+    expect(confirmText(plain, 'ja').body).toContain('いつでも');
+    expect(confirmText(plain, 'ja').body).toContain('ローカルポリシー');
     expect(confirmText(plain, 'ja').title).toBe('このコンピュータを接続しますか？');
   });
 
@@ -112,7 +136,7 @@ describe('confirmConnect', () => {
     expect(args.slice(0, 4)).toEqual(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass']);
     expect(args[4]).toBe('-EncodedCommand');
     const script = Buffer.from(args[5]!, 'base64').toString('utf16le');
-    // WScript.Shell Popup: OK/Cancel (1) + warning (0x30) + Cancel default (0x100) + topmost (0x1000), 600 s timeout.
+    // WScript.Shell Popup: OK/Cancel (1) + warning (0x30) + Cancel default (0x100) + system modal (0x1000), 600 s timeout.
     expect(script).toContain('.Popup($body, 600, $title, 0x1131)');
     expect(script).toContain("if ($r -eq 1) { 'connect' } else { 'cancel' }");
     expect(script).not.toContain('example.com'); // text travels base64-encoded inside the script
@@ -143,20 +167,40 @@ describe('confirmConnect', () => {
     expect(await confirmConnect(plain, { platform: 'linux', exec: cancelled(), isTTY: false, env: { DISPLAY: ':0' }, findCommand: find })).toBe(false);
   });
 
-  it('Linux: kdialog --warningcontinuecancel (Cancel default) when zenity is missing (Wayland display)', async () => {
+  it('Linux: zenity is preferred over kdialog when both exist', async () => {
     const exec = ok();
+    const find = vi.fn(async (c: string) => `/usr/bin/${c}`);
+    await confirmConnect(plain, { platform: 'linux', exec, isTTY: false, env: { DISPLAY: ':0' }, findCommand: find });
+    expect(exec.mock.calls[0]![0]).toBe('/usr/bin/zenity');
+  });
+
+  it('Linux: kdialog (no zenity) asks with "Don\'t connect" as the default button: Enter / Esc / timeout never connect', async () => {
     const find = vi.fn(async (c: string) => (c === 'kdialog' ? '/usr/bin/kdialog' : null));
-    expect(await confirmConnect(plain, { platform: 'linux', exec, isTTY: false, env: { WAYLAND_DISPLAY: 'wayland-0', LANG: 'en_US.UTF-8' }, findCommand: find })).toBe(true);
-    expect(exec).toHaveBeenCalledWith('/usr/bin/kdialog', [
+    const env = { WAYLAND_DISPLAY: 'wayland-0', LANG: 'en_US.UTF-8' };
+    const exitWith = (code: number) =>
+      vi.fn<ExecFn>(async () => {
+        throw Object.assign(new Error(`exit ${code}`), { code, stderr: '' });
+      });
+    // Exit 0 is the default button (Yes, labelled "Don't connect"): Enter means no.
+    const enter = ok();
+    expect(await confirmConnect(plain, { platform: 'linux', exec: enter, isTTY: false, env, findCommand: find })).toBe(false);
+    expect(enter).toHaveBeenCalledWith('/usr/bin/kdialog', [
       '--title',
       'Connect this computer?',
-      '--warningcontinuecancel',
+      '--warningyesnocancel',
       confirmText(plain, 'en').body,
-      '--continue-label',
+      '--yes-label',
+      "Don't connect",
+      '--no-label',
       'Connect',
       '--cancel-label',
       'Cancel',
     ]);
+    // Exit 1 (No, labelled Connect) is the only yes; 2 (Cancel / Esc) is no.
+    expect(await confirmConnect(plain, { platform: 'linux', exec: exitWith(1), isTTY: false, env, findCommand: find })).toBe(true);
+    const prompt = vi.fn(async () => 'y');
+    expect(await confirmConnect(plain, { platform: 'linux', exec: exitWith(2), isTTY: true, prompt, env, findCommand: find })).toBe(false);
+    expect(prompt).not.toHaveBeenCalled();
   });
 
   it('a dialog that could not be shown (not Cancel) falls back to the terminal, else explains and refuses', async () => {
@@ -192,7 +236,9 @@ describe('confirmConnect', () => {
     expect(DIALOG_TIMEOUT_S).toBe(600);
     // kdialog has no timeout of its own: coreutils timeout(1) wraps it; 124 (timed out) is a no.
     const find = vi.fn(async (c: string) => (c === 'kdialog' ? '/usr/bin/kdialog' : c === 'timeout' ? '/usr/bin/timeout' : null));
-    const exec = ok();
+    const exec = vi.fn<ExecFn>(async () => {
+      throw Object.assign(new Error('exit 1'), { code: 1, stderr: '' });
+    });
     expect(await confirmConnect(plain, { platform: 'linux', exec, isTTY: false, env: { DISPLAY: ':0', LANG: 'en_US.UTF-8' }, findCommand: find })).toBe(true);
     expect(exec.mock.calls[0]![0]).toBe('/usr/bin/timeout');
     expect(exec.mock.calls[0]![1].slice(0, 3)).toEqual(['600', '/usr/bin/kdialog', '--title']);
@@ -228,6 +274,13 @@ describe('confirmConnect', () => {
     expect(out.mock.calls.flat().join('\n')).toMatch(/no answer/i);
   });
 
+  it('the terminal fallback prints the full URL (no truncation there)', async () => {
+    const url = `https://app.example.com/${'b'.repeat(400)}`;
+    const out = vi.fn();
+    await confirmConnect({ ...plain, url, warnings: ['path'] }, { platform: 'freebsd', exec: ok(), isTTY: true, prompt: async () => 'n', env: {}, out });
+    expect(out.mock.calls.flat().join('\n')).toContain(url);
+  });
+
   it('terminal prompt: only y / yes connects (default No)', async () => {
     for (const [answer, want] of [
       ['y', true],
@@ -249,4 +302,24 @@ describe('confirmConnect', () => {
     expect(exec).not.toHaveBeenCalled();
     expect(out.mock.calls.flat().join('\n')).toMatch(/could not ask/i);
   });
+});
+
+/**
+ * The REAL Windows Popup, on a CI runner only (CI + UNCAGE_URL_HANDLER_TESTS=1, like the real
+ * handler tests; never on a developer machine): the same script with a 1-second timeout must give
+ * up (-1) and print `cancel`, proving the COM call and the timeout mapping.
+ */
+const realWindows = process.platform === 'win32' && !!process.env.CI && process.env.UNCAGE_URL_HANDLER_TESTS === '1';
+describe.runIf(realWindows)('real Windows Popup (CI runner only)', () => {
+  it('a Popup nobody answers gives up after 1 s and maps to cancel', async () => {
+    const script = powershellScript('Uncage CI', 'Nobody answers this (CI smoke test).', 1);
+    const t0 = Date.now();
+    const { stdout } = await promisify(execFile)(
+      `${process.env.SystemRoot ?? 'C:\\Windows'}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+      { encoding: 'utf8', windowsHide: true, timeout: 60_000 },
+    );
+    console.log(`::notice title=confirm-dialog Windows::Popup returned ${JSON.stringify(stdout.trim())} after ${Date.now() - t0} ms`);
+    expect(stdout.trim()).toBe('cancel');
+  }, 90_000);
 });
