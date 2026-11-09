@@ -29,12 +29,14 @@
     "@uncage/runtime-codex": "workspace:^",
     "@uncage/server": "workspace:^",
     "pino": "^10.4.0",
+    "uqr": "0.1.3",
     "yaml": "^2.8.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@uncage/hub": "workspace:*",
-    "@uncage/testkit": "workspace:*"
+    "@uncage/testkit": "workspace:*",
+    "jsqr": "1.4.0"
   },
   "license": "MIT",
   "repository": {

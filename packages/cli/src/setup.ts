@@ -11,12 +11,13 @@ import {
   type ExecFn,
 } from '@uncage/agent';
 import type { TransportKind } from '@uncage/protocol';
+import { renderQr } from './qr.js';
 import { agentService, serviceSpec, type AgentService, type ServiceSpec } from './service/index.js';
 
 export const SETUP_HELP = `uncage setup - connect this computer to a website (Connected Mode)
 
 Usage:
-  uncage setup <url> [--no-daemon] [--no-browser]
+  uncage setup <url> [--no-daemon] [--no-browser] [--no-qr]
 
 Opens the website so you can approve this computer, saves the machine token in
 ~/.uncage/agent.yaml (readable only by you), then installs and starts the background agent
@@ -26,6 +27,7 @@ task on Windows).
 Options:
   --no-daemon    Do not install/start the background agent (run "uncage agent" yourself).
   --no-browser   Do not open a browser; just print the code and link.
+  --no-qr        Do not print the link as a QR code (it is only shown in a terminal).
   -h, --help     Show this help.`;
 
 export interface SetupDeps {
@@ -36,6 +38,10 @@ export interface SetupDeps {
   out: (line: string) => void;
   noDaemon?: boolean;
   noBrowser?: boolean;
+  /** Never print the QR code. */
+  noQr?: boolean;
+  /** Is stdout a terminal? The QR is printed only then (default `process.stdout.isTTY`). */
+  isTTY?: boolean;
   platform?: NodeJS.Platform;
   uid?: number;
   /** The background service (default: the one for this platform, `agentService`). */
@@ -65,6 +71,9 @@ export async function runSetup(d: SetupDeps): Promise<AgentSite> {
 
   const code = await requestDeviceCode(d.fetch, hubUrl, { name, os, machineKey });
   d.out(`To connect this computer, open:\n\n  ${code.verificationUri}\n\nand confirm the code:  ${code.userCode}\n`);
+  if ((d.isTTY ?? process.stdout.isTTY === true) && !d.noQr) {
+    d.out(`Or scan this with your phone:\n\n${renderQr(code.verificationUri)}\n`);
+  }
   const platform = d.platform ?? process.platform;
   if (!d.noBrowser) {
     await d.exec(...openUrlCommand(code.verificationUri, platform)).catch(() => d.out('(Could not open a browser; open the link above yourself.)'));

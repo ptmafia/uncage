@@ -34,7 +34,7 @@ Local Mode:
                 [--export-events <sessionId> [--out <file>] [--include-content]]
 
 Connected Mode (a website drives this computer):
-  uncage setup <url> [--no-daemon] [--no-browser]   Connect this computer to a website.
+  uncage setup <url> [--no-daemon] [--no-browser] [--no-qr]   Connect this computer to a website.
   uncage agent [--log-file <path>]                  Run the agent in the foreground.
   uncage agent install | uninstall | status [--json]  Manage the background agent (this user).
   uncage sites                                      List connected websites.
@@ -160,6 +160,7 @@ async function main(argv: string[]): Promise<number> {
       options: {
         'no-daemon': { type: 'boolean', default: false },
         'no-browser': { type: 'boolean', default: false },
+        'no-qr': { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
       },
     });
@@ -180,6 +181,8 @@ async function main(argv: string[]): Promise<number> {
       out: (l) => console.log(l),
       noDaemon: values['no-daemon'],
       noBrowser: values['no-browser'],
+      noQr: values['no-qr'],
+      isTTY: process.stdout.isTTY === true,
     });
     return 0;
   }
