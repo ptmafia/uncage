@@ -2,11 +2,10 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { DeviceCodeResponse, Session } from '@uncage/protocol';
 import express from 'express';
-import { afterEach, describe, expect, it } from 'vitest';
-import { CLOSE_GRACE_MS, CLOSE } from './machines.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CLOSE_GRACE_MS, CLOSE } from './node/ws.js';
 import { createHub, DEFAULT_HEARTBEAT } from './hub.js';
-import { toNodeHandler } from './node.js';
-import { pgliteHubStore } from './store/pglite.js';
+import { attachWebSocket, pgliteHubStore, toNodeHandler } from './node/index.js';
 import { memoryCluster } from './cluster/memory.js';
 import type { ClusterAdapter } from './cluster/cluster.js';
 import { connectFakeAgent, fakeMachine, makeEvent, fakeSession, NO_REPLY, sleep, startTestHub, until, USER_HEADER, type FakeAgent, type TestHub } from './test-utils.js';
@@ -54,7 +53,7 @@ describe('toNodeHandler alongside website routes (Express)', () => {
     app.put('/api/uncagexyz', (_req, res) => {
       res.send('not the hub');
     });
-    hub.attach(server);
+    attachWebSocket(hub, server);
     cleanups.push(async () => {
       await hub.close();
       server.closeAllConnections();
@@ -169,20 +168,70 @@ describe('rate limits', () => {
 
   it('handler() without a client IP ignores X-Forwarded-For by default (one shared bucket)', async () => {
     const hub = await directHub({ deviceCodesPerMinute: 1 });
-    expect((await hub.handler(codeReq({ 'x-forwarded-for': '1.1.1.1' }))).status).toBe(200);
+    expect((await hub.fetch(codeReq({ 'x-forwarded-for': '1.1.1.1' }))).status).toBe(200);
     // A spoofed X-Forwarded-For does not buy a fresh bucket.
-    expect((await hub.handler(codeReq({ 'x-forwarded-for': '2.2.2.2' }))).status).toBe(429);
-    expect((await hub.handler(codeReq())).status).toBe(429);
+    expect((await hub.fetch(codeReq({ 'x-forwarded-for': '2.2.2.2' }))).status).toBe(429);
+    expect((await hub.fetch(codeReq())).status).toBe(429);
     // An explicit client IP does.
-    expect((await hub.handler(codeReq(), { clientIp: '9.9.9.9' })).status).toBe(200);
+    expect((await hub.fetch(codeReq(), { clientIp: '9.9.9.9' })).status).toBe(200);
+  });
+
+  it('falling back to the shared bucket logs one warning', async () => {
+    const store = await pgliteHubStore({ dataDir: 'memory://' });
+    const warns: string[] = [];
+    const hub = await createHub({
+      publicUrl: 'https://app.example',
+      store,
+      getUser: async () => null,
+      logger: { warn: (_o, msg) => warns.push(msg ?? ''), error: () => undefined },
+    });
+    cleanups.push(async () => {
+      await hub.close();
+      await store.close();
+    });
+    await hub.fetch(codeReq(), { clientIp: '1.1.1.1' });
+    expect(warns).toEqual([]);
+    for (let i = 0; i < 3; i++) await hub.fetch(codeReq());
+    expect(warns.filter((m) => m.includes('no client IP'))).toHaveLength(1);
+  });
+
+  it('without a logger option the warning reaches the console (once)', async () => {
+    const store = await pgliteHubStore({ dataDir: 'memory://' });
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const hub = await createHub({ publicUrl: 'https://app.example', store, getUser: async () => null });
+    cleanups.push(async () => {
+      spy.mockRestore();
+      await hub.close();
+      await store.close();
+    });
+    for (let i = 0; i < 3; i++) await hub.fetch(codeReq());
+    const lines = spy.mock.calls.filter((c) => String(c[0]).includes('no client IP'));
+    expect(lines).toHaveLength(1);
+    expect(String(lines[0]![0])).toMatch(/^\[uncage\] /);
+  });
+
+  it('fetchOnce warns once when the hub has no cluster (presence per instance)', async () => {
+    const { fetchOnce } = await import('./fetch-adapters.js');
+    const warns: string[] = [];
+    const logger = { warn: (_o: unknown, msg?: string) => void warns.push(msg ?? ''), error: () => undefined };
+    for (let i = 0; i < 2; i++) {
+      const store = await pgliteHubStore({ dataDir: 'memory://' });
+      cleanups.push(() => store.close());
+      const res = await fetchOnce(
+        async () => createHub({ publicUrl: 'https://app.example', store, getUser: async () => null, logger }),
+        new Request('https://app.example/api/uncage/agent/info'),
+      );
+      await res.text();
+    }
+    expect(warns.filter((m) => m.includes('no cluster'))).toHaveLength(1);
   });
 
   it('trustForwardedFor uses the rightmost entry, so a spoofed leading entry cannot bypass the limit', async () => {
     const hub = await directHub({ deviceCodesPerMinute: 1, trustForwardedFor: true });
     // The proxy appends the real client (5.5.5.5); the client forged the leading entries.
-    expect((await hub.handler(codeReq({ 'x-forwarded-for': '1.1.1.1, 5.5.5.5' }))).status).toBe(200);
-    expect((await hub.handler(codeReq({ 'x-forwarded-for': '2.2.2.2, 5.5.5.5' }))).status).toBe(429);
-    expect((await hub.handler(codeReq({ 'x-forwarded-for': '6.6.6.6' }))).status).toBe(200);
+    expect((await hub.fetch(codeReq({ 'x-forwarded-for': '1.1.1.1, 5.5.5.5' }))).status).toBe(200);
+    expect((await hub.fetch(codeReq({ 'x-forwarded-for': '2.2.2.2, 5.5.5.5' }))).status).toBe(429);
+    expect((await hub.fetch(codeReq({ 'x-forwarded-for': '6.6.6.6' }))).status).toBe(200);
   });
 
   it('a custom clientIp wins over the socket address passed by toNodeHandler', async () => {
@@ -237,6 +286,89 @@ describe('rate limits', () => {
     const poll = async () => (await fetch(`${t.api}/device/token`, post({ deviceCode: code.deviceCode }))).json();
     expect(await poll()).toEqual({ status: 'pending' });
     expect(await poll()).toEqual({ status: 'slow_down' });
+  });
+});
+
+describe('limits shared through the store (several hub instances)', () => {
+  async function twoHubs(o: Partial<Parameters<typeof createHub>[0]> = {}): Promise<[Hub, Hub]> {
+    const store = await pgliteHubStore({ dataDir: 'memory://' });
+    const mk = () => createHub({ publicUrl: 'https://app.example', getUser: async () => null, ...o, store });
+    const hubs: [Hub, Hub] = [await mk(), await mk()];
+    cleanups.push(async () => {
+      for (const h of hubs) await h.close();
+      await store.close();
+    });
+    return hubs;
+  }
+  const code = (h: Hub) =>
+    h.fetch(new Request('https://app.example/api/uncage/device/code', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }), { clientIp: '7.7.7.7' });
+  const poll = async (h: Hub, deviceCode: string) =>
+    j(h.fetch(new Request('https://app.example/api/uncage/device/token', post({ deviceCode })), { clientIp: '7.7.7.7' }));
+
+  /**
+   * The limits are fixed windows aligned to multiples of the window length (by design: up to 2 × max
+   * hits can land around a boundary). Start the clock at a window start (Date only, advancing in real
+   * time) so a test's hits never straddle a boundary, whatever the wall clock says.
+   */
+  function startAtWindowStart(): void {
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.UTC(2026, 0, 1), shouldAdvanceTime: true });
+    cleanups.push(async () => void vi.useRealTimers());
+  }
+
+  it('device-code limits are shared by two hub instances on one store', async () => {
+    startAtWindowStart();
+    const [a, b] = await twoHubs({ rateLimits: { deviceCodesPerMinute: 2 } });
+    expect((await code(a)).status).toBe(200);
+    expect((await code(b)).status).toBe(200);
+    const third = await code(a);
+    expect(third.status).toBe(429);
+    expect((await j(third)).error.details.retryAfterSec).toBeGreaterThan(0);
+    expect((await code(b)).status).toBe(429);
+  });
+
+  it('user-code guessing is shared across instances (userCodeFailures 3 over A,B,A then 429 on B)', async () => {
+    startAtWindowStart();
+    const [a, b] = await twoHubs({ rateLimits: { userCodeFailures: 3 } });
+    const mallory = { id: 'mallory' };
+    expect(await a.approveDevice('ZZZZ-ZZZZ', mallory)).toBe('not_found');
+    expect(await b.denyDevice('ZZZZ-ZZZZ', mallory)).toBe('not_found');
+    expect(await a.lookupDevice('ZZZZ-ZZZZ', mallory)).toBeNull();
+    await expect(b.approveDevice('ZZZZ-ZZZZ', mallory)).rejects.toMatchObject({ code: 'rate_limited', status: 429 });
+    // A successful attempt gives its reservation back (does not count as a failure).
+    const c = (await j(code(a))) as DeviceCodeResponse;
+    expect(await a.approveDevice(c.userCode, { id: 'alice' })).toBe('ok');
+    for (let i = 0; i < 3; i++) expect(await b.lookupDevice('ZZZZ-ZZZZ', { id: 'alice' })).toBeNull();
+  });
+
+  it('slow_down applies across instances (poll on A then immediately on B → slow_down)', async () => {
+    const [a, b] = await twoHubs();
+    const c = (await j(code(a))) as DeviceCodeResponse;
+    expect(await poll(a, c.deviceCode)).toEqual({ status: 'pending' });
+    expect(await poll(b, c.deviceCode)).toEqual({ status: 'slow_down' });
+  });
+
+  it('maintenance runs at most once per interval across instances (lease) and calls onRun', async () => {
+    let runs = 0;
+    const [a, b] = await twoHubs({ maintenance: { intervalMs: 1000, onRun: async () => void runs++ } });
+    const health = (h: Hub) => h.fetch(new Request('https://app.example/api/uncage/health'));
+    await Promise.all(Array.from({ length: 20 }, (_, i) => health(i % 2 ? a : b)));
+    expect(runs).toBe(1);
+  });
+
+  it('GET /maintenance needs the secret: 404 without maintenance.secret, 401 with a wrong token, 200 + report with the right one', async () => {
+    const req = (token?: string, method = 'GET') =>
+      new Request('https://app.example/api/uncage/maintenance', { method, headers: token ? { authorization: `Bearer ${token}` } : {} });
+    const [plain] = await twoHubs();
+    expect((await plain.fetch(req('anything'))).status).toBe(404);
+    const [a, b] = await twoHubs({ maintenance: { secret: 's3cret-value' } });
+    expect((await a.fetch(req())).status).toBe(401);
+    expect((await a.fetch(req('wrong'))).status).toBe(401);
+    expect((await a.fetch(req('s3cret-value-and-more'))).status).toBe(401);
+    const ok = await a.fetch(req('s3cret-value'));
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({ ran: true, interruptedToolCalls: 0, pruned: { runManifests: 0, attachments: 0, outbox: 0, inbox: 0, rateLimits: 0, deviceCodes: 0 } });
+    // Vercel Cron sends GET; POST works too. Another instance inside the lease reports ran: false.
+    expect(await j(b.fetch(req('s3cret-value', 'POST')))).toMatchObject({ ran: false });
   });
 });
 

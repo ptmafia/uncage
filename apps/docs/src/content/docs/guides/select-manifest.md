@@ -9,16 +9,17 @@ By default every run is offered every tool and skill you registered. `selectMani
 selectManifest?(ctx: { user: HubUser; prompt: string; sessionId: string; runtime: string }): Promise<{ tools: string[]; skills: string[] }>;
 ```
 
-The hub calls it each time a run starts (`POST <basePath>/sessions/:id/runs`), before anything is sent to the computer. `runtime` is the session's runtime id (`claude-code`, `codex`, …). Return the **names** of the tools and skills to offer.
+The hub calls it each time a run starts (`POST <basePath>/sessions/:id/runs`), before anything is sent to the computer. `runtime` is the session's runtime id (`claude`, `codex`, …). Return the **names** of the tools and skills to offer.
 
 ## Example: by plan and by task
 
 ```ts title="hub.ts"
-import { createHub, defineTool, type HubUser } from '@uncage/hub';
+import { createHub, defineTool, type HubStore, type HubUser } from '@uncage/hub';
 import type { SkillSpec } from '@uncage/protocol';
 import { z } from 'zod';
 
 declare function getUser(req: Request): Promise<HubUser | null>;
+declare const store: HubStore; // pgliteHubStore or postgresHubStore, see Mount the hub
 declare function planOf(userId: string): Promise<'free' | 'pro'>;
 
 const searchDocs = defineTool({
@@ -40,6 +41,7 @@ const invoices: SkillSpec = { name: 'invoices', description: 'House rules for in
 export const hub = await createHub({
   publicUrl: 'https://app.example.com',
   getUser,
+  store,
   tools: [searchDocs, publishPage],
   skills: [landingPage, invoices],
   async selectManifest({ user, prompt }) {

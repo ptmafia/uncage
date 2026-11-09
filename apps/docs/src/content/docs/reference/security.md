@@ -7,9 +7,14 @@ The [trust model](/docs/concepts/trust-model/) explains what a website may do on
 
 ## Transport
 
-- The agent connects **out** to the hub over **WSS**. Plain `ws://` / `http://` is refused unless the hub is on `localhost`, `127.0.0.1` or `[::1]` (development). Users need no open ports.
-- Frames are JSON, validated against the protocol schemas on both sides, at most 1 MiB each. Protocol version `1`; the hub refuses agents older than `minAgentVersion` with `upgrade_required`.
-- The hub pings every 10 s; a computer that misses two pings is shown offline.
+Protocol version `2`. The agent always connects **out**, so users need no open ports. The hub offers one or both transports (`transports` option); the agent uses WebSocket and falls back to HTTPS streaming after three failed attempts.
+
+- **WSS** (traditional mode): one WebSocket per computer. The hub pings every 10 s; a computer that misses two pings is shown offline.
+- **HTTPS streaming** (FaaS mode, and the fallback): `POST <basePath>/agent/connect` opens a link, `GET <basePath>/agent/stream` returns NDJSON lines (one JSON object per line: hub frames with a sequence number, and `{"ctl":"ping"}` every 10 s), and the agent sends its messages with `POST <basePath>/agent/events`. Every request carries the machine token as a `Bearer` header. The stream ends after `stream.maxDurationMs` and the agent reconnects at once. Reopening with a `cursor` acknowledges everything up to it, so a cut stream never loses a frame and never repeats an acknowledged one; upstream messages have idempotent ids, so a retry is not applied twice.
+- Plain `ws://` / `http://` is refused unless the hub is on `localhost`, `127.0.0.1` or `[::1]` (development).
+- Frames and request bodies are JSON, validated against the protocol schemas on both sides, at most 1 MiB each. The hub refuses agents older than `minAgentVersion` (WebSocket: `upgrade_required`; HTTP: `426 upgrade_required`).
+- HTTP requests to `/agent/*`, WebSocket upgrades and `/machine/revoke` with a missing or wrong machine token are rate limited per client IP (`rateLimits.agentAuthFailuresPerMinute`, 60), counted in the store.
+- Presence: a computer that stays silent for longer than two missed pings (about 30 s) is shown offline, on either transport.
 
 ## Machine tokens
 
@@ -23,7 +28,7 @@ The [trust model](/docs/concepts/trust-model/) explains what a website may do on
 
 - User codes: 8 characters from a 31-character alphabet without look-alikes (`ABCDEFGHJKMNPQRSTUVWXYZ23456789`), valid 10 minutes, single use.
 - Codes can only be approved by a signed-in user, through your `/device` page, which you must protect against framing and CSRF ([guide](/docs/guides/auth-and-device-approval/#the-approval-page-device)).
-- Rate limits: 20 device codes per minute per client IP; 10 failed code lookups or decisions per user per 10 minutes. Counted per hub node.
+- Rate limits: 20 device codes per minute per client IP; 10 failed code lookups or decisions per user per 10 minutes. Counted in the hub store, shared by every node and function instance.
 - The device code (the CLI’s polling secret) and the user code are stored hashed.
 
 ## Isolation between users
@@ -55,6 +60,19 @@ The [trust model](/docs/concepts/trust-model/) explains what a website may do on
 - `bypassPermissions` needs `localPolicy.allowBypass: true` on the computer; `localPolicy.allowedPermissionModes` caps the modes.
 - Everything a website does is in `~/.uncage/sites/<site id>/activity.log` (redacted).
 - `install.sh` has fixed content; it installs `@uncage/cli` from npm and nothing else.
+
+## ACP agents
+
+[Other ACP agents](/docs/guides/use-any-acp-agent/) run as local processes on the user’s computer, with their own login. What protects the user:
+
+- **Consent is bound to the full spec.** An agent distributed through `npx` or `uvx` downloads code, so it runs only after `uncage runtimes enable <id>`. The consent records the runner, the package (any version), the arguments and the environment; if the registry later runs anything else, the agent waits for a new `enable`.
+- **Registry trust.** An agent from the ACP registry is enabled only if it is installed on this computer and answers the ACP handshake. A registry refresh that changes the command withdraws it until you enable it again. `autoDetect: false` turns detection off; `disable` blocks an agent whatever else says so.
+- **A project file cannot grant consent.** In Local Mode, `enable` and `consented` in `uncage.config.yaml` are ignored.
+- **`agents[].command` in a project file runs without consent.** A project’s `uncage.config.yaml` can list any command, and `uncage serve` starts it. `uncage doctor` and `uncage serve` print every such command at start: only run them in projects you trust.
+- **No “always”.** Uncage answers an ACP permission request with the agent’s `allow_once` or `reject_once` option and never selects `allow_always` or `reject_always`, which the agent could keep outside the session.
+- **Site tools through a loopback MCP server.** Each run gets an MCP server on `127.0.0.1` with a one-time bearer token, passed to the agent in `mcpServers`; tools with `requiresConfirmation` ask in Uncage before every call. Handlers still run on your server.
+- **Skills** are materialized only under `.uncage/skills/<name>/` of the session folder, and listed in the first prompt.
+- The registry download (`cdn.agentclientprotocol.com`, at most daily; `UNCAGE_ACP_REGISTRY_REFRESH=0` turns it off) only supplies names, commands and icons: it runs nothing by itself.
 
 ## Local Mode
 

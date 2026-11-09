@@ -9,9 +9,11 @@
   },
   "scripts": {
     "dev": "node server.ts",
+    "dev:faas": "next dev",
     "build": "next build",
-    "start": "NODE_ENV=production node server.ts",
-    "multinode": "NODE_ENV=production node scripts/multinode.ts",
+    "start": "node scripts/production.ts server.ts",
+    "start:faas": "next start",
+    "multinode": "node scripts/production.ts scripts/multinode.ts",
     "test": "vitest run",
     "typecheck": "next typegen && tsc --noEmit",
     "lint": "eslint ."
@@ -29,6 +31,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.15",
     "@types/node": "^26.6.6",
     "@types/pg": "^8.23.1",
     "@types/react": "^19.3.0",

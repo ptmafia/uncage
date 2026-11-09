@@ -33,7 +33,7 @@ and pass it to the hub: `createHub({ …, tools: [lookupOrder] })`.
 ## What happens on a call
 
 1. The user’s computer only ever receives the tool’s **name**, **description** and the **JSON Schema** of `input` (generated with `z.toJSONSchema`). Claude Code sees the tool as `mcp__site__lookup_order`.
-2. When Claude Code calls it, the agent sends the call over its WebSocket. The hub node holding that connection checks that:
+2. When Claude Code calls it, the agent sends the call to the hub (over its WebSocket, or as an HTTP POST in FaaS mode). The hub instance that receives it checks that:
    - the session belongs to this computer and to its user;
    - the run was started through the hub, and the tool was in **this run’s manifest** (see [selectManifest](/docs/guides/select-manifest/));
    - the arguments match `input`. They are parsed with it, so zod defaults and transforms apply. A mismatch fails with `invalid_request` and the handler is not called.
@@ -58,7 +58,7 @@ and pass it to the hub: `createHub({ …, tools: [lookupOrder] })`.
 | --- | --- |
 | `ctx.user` | `{ id, name? }`: the session’s owner, as your `getUser` returned it. Use it for every lookup and write. |
 | `ctx.sessionId`, `ctx.runId` | The session and run that made the call. |
-| `ctx.signal` | An `AbortSignal`, aborted when the call is abandoned: it timed out (`toolTimeoutMs`, 120 s by default), the run ended, or the computer disconnected. Pass it to your own I/O (`fetch(url, { signal: ctx.signal })`). |
+| `ctx.signal` | An `AbortSignal`, aborted when the call is abandoned: it timed out (`toolTimeoutMs`, 120 s by default), the run ended (Stop), or the hub is closing and `toolDrainMs` ran out. A dropped connection does **not** abort it: the result is stored and delivered when the computer reconnects. Pass it to your own I/O (`fetch(url, { signal: ctx.signal })`). |
 | `ctx.files` | The [file channel](#reading-files-from-the-users-computer). |
 
 ## Returning results
@@ -68,7 +68,7 @@ and pass it to the hub: `createHub({ …, tools: [lookupOrder] })`.
 - For full control, return a `ToolCallResult`: `{ content: [{ type: 'text', text }, { type: 'json', json }], isError?: boolean }`. `isError: true` tells the model the call did not work, without throwing.
 - `undefined` / `null` becomes an empty result.
 
-The result must fit in one WebSocket frame: a little under 1 MiB of JSON. Larger results fail with `tool_failed`. Return an id or a URL instead of a large payload.
+The result must fit in one message: a little under 1 MiB of JSON. Larger results fail with `tool_failed`. Return an id or a URL instead of a large payload.
 
 ## Errors
 
@@ -216,6 +216,21 @@ describe('lookup_order', () => {
 
 `examples/connected-demo/lib/demo.test.ts` tests both demo tools this way, including a fake `ctx.files.pull`.
 
+## When connections drop or instances stop
+
+Connections between computers and your hub drop all the time (laptops sleep, networks change, serverless platforms cut long requests, deploys restart nodes). Uncage makes that safe for tool calls:
+
+- **Connection drop: exactly once.** Every call has an id, and the hub stores the call and, once the handler returns, its result. When the computer reconnects it sends the call again with the same id; the hub answers with the stored result instead of running your handler a second time. A call still running elsewhere is waited for, not started again. Stored results are kept for 24 h.
+- **Instance stopped mid-handler: at most once.** If the hub process or function instance running your handler dies (a crash, a deploy, a platform time limit), nothing can know how far it got. The call is then failed, once its lease (`toolTimeoutMs` + 10 s) runs out, with exactly this message: “Site tool "<name>" timed out on the website. Please try again.” (`tool_failed`, `details.reason: 'interrupted'`). It is never re-run by itself; the model sees the error and usually tries again, which is a new call.
+- **`hub.close()`** (a graceful shutdown) lets running handlers finish for `toolDrainMs` (5 s), then aborts them with the same error.
+- **Cloudflare Workers** may cancel a request's work when its client disconnects. Pass `waitUntil` (`ctx.waitUntil.bind(ctx)`) and the hub keeps the handler running, so a dropped connection stays exactly once. Without it, it becomes the at-most-once case. See [Workers → FAQ](/docs/deploy/cloudflare-workers/#do-site-tools-run-exactly-once-on-workers).
+
+What this means for your handlers:
+
+- Keep them **shorter than the platform’s time limit** (Vercel: `maxDuration`, 300 s by default; keep `toolTimeoutMs` inside it). Long work belongs in a background job: return its id, and give the model a second tool to check on it.
+- Make them **idempotent where you can** (for example `upsert` by a key derived from the arguments), so a retry by the model after an interrupted call does no harm.
+- Use `ctx.signal` for your own I/O, so an abandoned call stops its work.
+
 ## Limits at a glance
 
 | Limit | Value |
@@ -224,7 +239,7 @@ describe('lookup_order', () => {
 | Description | 1000 characters |
 | JSON Schema of `input` | 64 KB |
 | Tools per run | 64 |
-| Handler time | `toolTimeoutMs`, default 120 s |
+| Handler time | `toolTimeoutMs`, default 120 s (in FaaS mode, also within the platform’s request limit) |
 | Concurrent calls per computer | `maxConcurrentToolCalls`, default 8 |
 | Result size | just under 1 MiB of JSON |
 | `ctx.files.pull` | 50 MiB total, 10 MiB per file |

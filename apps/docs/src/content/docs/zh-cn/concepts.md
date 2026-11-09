@@ -7,11 +7,11 @@ description: Uncage 背后的概念，一节一个：网站与 hub、电脑与�
 
 ## 网站与 hub
 
-**网站**就是你的 Web 应用。**hub**（`@uncage/hub`）是你用 `createHub()` 挂进网站 Node 后端的那部分 Uncage。它在同一个基础路径（默认 `/api/uncage`）下提供：
+**网站**就是你的 Web 应用。**hub**（`@uncage/hub`）是你用 `createHub()` 挂进网站后端的那部分 Uncage：可以挂在长期运行的 Node 进程里（**传统模式**），也可以挂在 Serverless 函数里（**FaaS 模式**，见[选择部署模式](/docs/zh-cn/start/choose-deployment-mode/)）。它是一个 Fetch handler（`hub.fetch`），在同一个基础路径（默认 `/api/uncage`）下提供：
 
 - 你的界面使用的**浏览器 API**（请求和响应的形状与 Local 模式 Uncage 服务的 `/v1` API 相同，所以 `@uncage/client`、`@uncage/react` 和 `@uncage/react-ui` 无需修改即可使用）；
-- CLI 连接电脑时用的**设备端点**和 `install.sh`；
-- 已连接电脑主动接入的 **WebSocket**（`<basePath>/agent`，通过 `hub.attach(server)` 注册）。
+- 连接电脑时用的**设备端点**和安装脚本（`install.sh`、`install.ps1`）；
+- 已连接电脑在 `<basePath>/agent` 主动接入的**传输方式**：**WebSocket**（传统模式，通过 `@uncage/hub/node` 中的 `attachWebSocket(hub, server)` 注册）和 **HTTP 流式传输**（任何平台）。hub 负责提供，守护进程从中选一种。
 
 每个网站运行自己的 hub，中间没有任何 Uncage 云服务。
 
@@ -21,9 +21,9 @@ description: Uncage 背后的概念，一节一个：网站与 hub、电脑与�
 
 **电脑**（API 里叫 **machine**）是某个用户连接到你网站的一台电脑。一个用户可以连接多台；每台都有 id（`mch_…`）、名称、操作系统、agent 版本、可用的运行时（Claude Code、Codex），以及是否**在线**。
 
-**守护进程**（API 和英文界面里叫 **agent**）是那台电脑上的后台进程：`uncage agent`，由 `uncage setup` 在 macOS 上安装为 launchd 服务。一个守护进程可以同时连接多个网站，每个网站各有一枚机器令牌、一条 WebSocket 和一个工作区根目录。
+**守护进程**（API 和英文界面里叫 **agent**）是那台电脑上的后台进程：`uncage agent`，由 `uncage setup` 安装为按用户运行的后台服务（macOS 上是 launchd，Linux 上是 systemd，Windows 上是计划任务）。一个守护进程可以同时连接多个网站，每个网站各有一枚机器令牌、一条连接和一个工作区根目录。
 
-当电脑的 WebSocket 已连接并响应心跳时，它就是**在线**的。hub 每 10 秒 ping 一次，连续两次没有回应就标记为离线，所以界面会在约 30 秒内显示“离线”。
+当电脑的连接是活的（WebSocket 在响应心跳，或者有一条打开的 HTTP 流）时，它就是**在线**的。hub 每 10 秒 ping 一次，连续两次没有回应就标记为离线，所以界面会在约 30 秒内显示“离线”。
 
 **配对**使用设备登录，和在电视应用上登录很像：`uncage setup <url>` 拿到一个简短的**验证码**（user code），用户在你网站的 `/device` 页面批准，CLI 随后获得**机器令牌**。令牌只保存在电脑上（`~/.uncage/agent.yaml`，权限 0600）；hub 只保存它的 SHA-256 哈希。吊销一台电脑（在你的网站上，或在电脑上运行 `uncage sites remove`）会让令牌立即失效。
 
@@ -102,7 +102,7 @@ description: Uncage 背后的概念，一节一个：网站与 hub、电脑与�
 有两处存储：
 
 - **电脑上：** 会话数据（以此为准），PGlite，位于 `~/.uncage/sites/<site id>/`。
-- **hub 上（`HubStore`）：** 电脑、设备码、会话索引（哪个用户拥有哪个会话、在哪台电脑上）、运行清单、经 hub 上传的附件，以及工具调用审计。默认是 `pgliteHubStore`（内嵌，单进程）；多节点用 `postgresHubStore`。
+- **hub 上（`HubStore`）：** 电脑、设备码、会话索引（哪个用户拥有哪个会话、在哪台电脑上）、运行清单、经 hub 上传的附件，以及工具调用审计。在 FaaS 模式下，它还保存每台电脑的 **outbox**（还没处理的、带编号的命令）和工具调用结果。`pgliteHubStore`（内嵌，单进程，来自 `@uncage/hub/node`）用于传统模式；`postgresHubStore` 用于多节点和 FaaS 模式。`store` 必须显式传入其中一个。
 
 **会话存储**（`sessionStorage` 选项）决定 hub 是否也保存对话：
 
@@ -113,7 +113,7 @@ description: Uncage 背后的概念，一节一个：网站与 hub、电脑与�
 
 ## 集群（cluster）
 
-hub 可以在负载均衡后面运行多个**节点**。一台电脑的 WebSocket 落在某一个节点上，而浏览器请求可能落在另一个节点上。**集群适配器**（`ClusterAdapter`）共享“哪个节点持有哪台电脑”的信息，并在节点之间传递命令和事件。`memoryCluster()`（默认）用于单进程；`redisCluster()` 用于多节点。所有节点还必须共享同一个 `HubStore`（Postgres）。
+hub 可以在负载均衡后面运行多个**节点**；在 FaaS 模式下，每个函数实例都是一个节点。一台电脑的 WebSocket 落在某一个节点上，而浏览器请求可能落在另一个节点上。**集群适配器**（`ClusterAdapter`）共享“哪个节点持有哪台电脑”的信息，并在节点之间传递命令、唤醒信号和事件。`memoryCluster()`（默认）用于单进程；`redisCluster()` 或 `postgresCluster()` 用于多节点。所有节点还必须共享同一个 `HubStore`（Postgres）。
 
 指南：[多节点](/docs/zh-cn/guides/multi-node/)。
 

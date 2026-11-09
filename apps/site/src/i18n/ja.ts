@@ -26,6 +26,7 @@ export const ja: Dict = {
     copy: 'コピー',
     copied: 'コピーしました',
     external: '新しいタブで開きます',
+    installOs: 'OSの選択',
   },
   nav: {
     product: '製品',
@@ -41,15 +42,15 @@ export const ja: Dict = {
     dismiss: '閉じる',
   },
   hero: {
-    eyebrow: 'v0.2 · Connectedモード提供開始',
+    eyebrow: 'v0.3 · サーバーレスに対応',
     title: 'あなたの|コーディング|エージェントを、|*どこでも。*',
     lede: 'ユーザーの手元には、すでに強力な環境があります。本人のClaude Code、ログイン済みのアカウント、使い慣れたツール。Uncageは、そのローカルハーネスを、あなたのプロダクトから呼び出せるサービスに変えます。処理はユーザーのコンピュータで実行され、成果はあなたのサイトに届きます。',
     primary: 'ライブデモを試す',
     secondary: '数分で導入',
-    installLabel: 'ユーザーが実行するのは一度だけ',
+    installLabel: 'コマンド1つ、承認1回',
   },
   flow: {
-    label: 'リクエストの流れ：あなたのサイトのチャット、ユーザーのコンピュータから接続するWebSocket、そしてそのコンピュータで動くClaude Code。',
+    label: 'リクエストの流れ：あなたのサイトのチャット、ユーザーのコンピュータから接続するWebSocketまたはHTTPSストリーミング、そしてそのコンピュータで動くClaude Code。',
     browserTitle: 'your.site',
     online: 'コンピュータはオンライン',
     userMessage: 'ローンチ用のランディングページを作って、公開して',
@@ -57,7 +58,7 @@ export const ja: Dict = {
     assistant: 'ページができました。サイトに公開しますか？',
     allow: 'Allow once',
     deny: 'Deny',
-    wire: 'WebSocket（ユーザーのコンピュータから接続）',
+    wire: 'WebSocketまたはHTTPSストリーミング（ユーザーのコンピュータから接続）',
     termSkill: 'スキルを読み込み',
     termWrite: '書き込み',
     termWaiting: '承認待ち…',
@@ -89,12 +90,12 @@ export const ja: Dict = {
   how: {
     kicker: '仕組み',
     title: '構成要素は3つ。プロトコルは1つ。',
-    sub: 'ブラウザが話す相手はあなたのサイト。あなたのサイトは、ユーザーのコンピュータが自ら開いたソケットで、そのコンピュータと話します。経路はそれだけです。',
+    sub: 'ブラウザが話す相手はあなたのサイト。あなたのサイトは、ユーザーのコンピュータが自ら開いたWebSocketまたはHTTPSストリームで、そのコンピュータと話します。経路はそれだけです。',
     steps: [
       {
         tag: '接続',
         title: 'ユーザーがコンピュータをつなぐ',
-        body: 'コマンドを2つ実行し、ブラウザで1回承認するだけ。バックグラウンドのエージェントがあなたのサイトへ自ら接続するため、ポートを開ける必要はありません。',
+        body: 'コマンドを1つ実行し、ブラウザで1回承認するだけ。バックグラウンドのエージェントがあなたのサイトへ自ら接続するため、ポートを開ける必要はありません。',
       },
       {
         tag: '指示',
@@ -137,8 +138,16 @@ export const ja: Dict = {
         body: 'Claude Code風のコンポーザー。モデル、推論の強さ、パーミッションモード、ファイル添付、音声入力に対応。',
       },
       {
-        title: 'スケールアウト',
-        body: 'PostgresとRedisのアダプターで、ハブを任意のロードバランサー配下の複数ノードで動かせます。',
+        title: 'どこでも動く',
+        body: '常時稼働のNodeサーバー、Vercel、Cloudflare Workers、あらゆるFetchプラットフォームで動作。FaaSモードに必要なのはPostgresだけ。Redisを足せばスケールアウトできます。',
+      },
+      {
+        title: 'あらゆるACPエージェント',
+        body: 'ACPアダプター経由のClaude Code（実機で検証済み）と、Gemini CLIやOpenCodeなどAgent Client Protocolに対応したエージェントが、ランタイムの選択肢に表示されます。',
+      },
+      {
+        title: 'macOS・Windows・Linux',
+        body: 'macOS、Windows、Linuxのどれでも、コマンド1つで必要なものがすべて入ります。エージェントはユーザーごとのバックグラウンドサービスとして動きます。macOSとLinuxではsudoは不要、Windowsはユーザー単位のインストールです。macOSは実機で検証済みで、WindowsとLinuxはCIで検証済み、実機での確認待ちです。',
       },
     ],
     soon: [
@@ -147,23 +156,15 @@ export const ja: Dict = {
         body: 'Codexアダプターは提供中で、シミュレーションサーバーでテスト済み。次は実際のバイナリでの検証です。',
       },
       {
-        title: 'Windows・Linux版エージェント',
-        body: 'バックグラウンドのエージェントは、現在はmacOSで動作します。',
-      },
-      {
         title: 'その他の入口',
         body: 'モバイルアプリ、チャットアプリ、ブラウザ拡張から、同じローカルハーネスを動かす。',
-      },
-      {
-        title: 'サーバーレス対応のトランスポート',
-        body: 'ハブをVercelやNetlifyでホスト。現在はWebSocketのために、常時稼働のNodeプロセスが必要です。',
       },
     ],
   },
   code: {
     kicker: '開発者向け',
     title: 'ハブをマウントして、チャットを置く。',
-    sub: '認証も、データベースも、Nodeサーバーも、今あるものをそのまま。Uncageは既存の構成に組み込めます。',
+    sub: '認証も、データベースも、サーバーや関数プラットフォームも、今あるものをそのまま。Uncageは既存の構成に組み込めます。',
     moreTitle: 'ゼロから、コンピュータの接続まで',
     moreBody: 'クイックスタートでは、ハブ、デバイスの承認ページ、最初のサイトツールを備えたNext.jsアプリを順を追って作ります。Express、Fastify、Honoでも動きます。',
     more: 'Connectedモードのクイックスタートへ',
@@ -194,7 +195,7 @@ export const ja: Dict = {
   },
   final: {
     title: 'ユーザーのエージェントを、あなたのプロダクトで活かそう。',
-    sub: 'MITライセンス · npmで11パッケージを公開 · 開発者とコーディングエージェントのために',
+    sub: 'MITライセンス · npmで12パッケージを公開 · 開発者とコーディングエージェントのために',
     primary: 'ライブデモを試す',
     secondary: 'ドキュメントを読む',
   },

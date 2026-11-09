@@ -7,16 +7,18 @@ interface Props {
   cmd: string | string[];
   locale: Locale;
   class?: string;
+  /** The prompt shown before each line (not copied). */
+  prompt?: string;
 }
 
-const { cmd, locale, class: className } = Astro.props;
+const { cmd, locale, class: className, prompt = '$' } = Astro.props;
 const t = getDict(locale);
 const lines = Array.isArray(cmd) ? cmd : [cmd];
 const copy = lines.join(' && ');
 ---
 
 <div class:list={['cmd', className, { multi: lines.length > 1 }]}>
-  <code>{lines.map((line) => <span class="line"><span class="ps" aria-hidden="true">$</span> {line}</span>)}</code>
+  <code>{lines.map((line) => <span class="line"><span class="ps" aria-hidden="true">{prompt}</span> {line}</span>)}</code>
   <button type="button" class="copy" data-copy={copy} data-copied-label={t.a11y.copied} aria-label={`${t.a11y.copy}: ${copy}`} title={t.a11y.copy}>
     <Icon name="copy" size={16} class="idle" />
     <Icon name="check" size={16} class="done" />

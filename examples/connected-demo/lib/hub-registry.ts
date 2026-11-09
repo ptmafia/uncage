@@ -1,19 +1,38 @@
 /**
- * Hands the hub `server.ts` created to Next.js server code (the /device page and its Server
- * Action), which Next bundles separately. Type-only import: pages never bundle the hub itself.
+ * The one hub of this process, for every caller: the route handler (`app/api/uncage/[[...path]]`),
+ * the /device page and its Server Action.
+ *
+ * - Traditional mode: `server.ts` created the hub at start-up and published it here.
+ * - FaaS mode (`next start`, Vercel): the first caller builds it (`createDemoHub({ mode: 'faas' })`)
+ *   and every later caller in this instance reuses it. Kept on `globalThis`, since Next.js bundles
+ *   each route separately and a module-level variable would exist once per bundle.
  */
 import type { Hub } from '@uncage/hub';
+import { PUBLISHED_HUB_KEY } from './mode.ts';
 
-const KEY = Symbol.for('uncage.connected-demo.hub');
+const FAAS_KEY = Symbol.for('uncage.connected-demo.faas-hub');
+type Slots = Record<symbol, unknown>;
 
-/** `server.ts` publishes its hub here so Next.js server code (the /device page) can use it. */
+/** `server.ts` publishes its hub here (this also puts the process in traditional mode, see lib/mode.ts). */
 export function publishHub(hub: Hub): void {
-  (globalThis as Record<symbol, unknown>)[KEY] = hub;
+  (globalThis as Slots)[PUBLISHED_HUB_KEY] = hub;
 }
 
-/** The hub `server.ts` created. Throws when the app was started without it (`next dev`). */
-export function getHub(): Hub {
-  const hub = (globalThis as Record<symbol, unknown>)[KEY] as Hub | undefined;
-  if (!hub) throw new Error('The Uncage hub is not running: start the demo with `pnpm dev` (node server.ts), not `next dev`.');
-  return hub;
+/** The published hub (traditional mode), else this instance's FaaS hub, built on first use. */
+export function getHub(): Promise<Hub> {
+  const g = globalThis as Slots;
+  const published = g[PUBLISHED_HUB_KEY] as Hub | undefined;
+  if (published) return Promise.resolve(published);
+  let p = g[FAAS_KEY] as Promise<Hub> | undefined;
+  if (!p) {
+    // Imported lazily: traditional mode never loads the FaaS wiring into the Next.js bundles' runtime.
+    p = import('./hub.ts').then(async ({ createDemoHub }) => (await createDemoHub({ mode: 'faas' })).hub);
+    g[FAAS_KEY] = p;
+    // A failure (database briefly down, missing env) is not kept: the next request tries again.
+    const mine = p;
+    p.catch(() => {
+      if (g[FAAS_KEY] === mine) delete g[FAAS_KEY];
+    });
+  }
+  return p;
 }

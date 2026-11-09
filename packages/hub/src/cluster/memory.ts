@@ -22,6 +22,12 @@ export function memoryCluster(): ClusterAdapter {
     async setPresence(machineId, nodeId, ttlSec) {
       presence.set(machineId, { nodeId, expiresAt: Date.now() + ttlSec * 1000 });
     },
+    async refreshPresence(machineId, nodeId, ttlSec) {
+      const p = presence.get(machineId);
+      if (p && p.expiresAt > Date.now() && p.nodeId !== nodeId) return false;
+      presence.set(machineId, { nodeId, expiresAt: Date.now() + ttlSec * 1000 });
+      return true;
+    },
     async getPresence(machineId) {
       const p = presence.get(machineId);
       if (!p) return null;

@@ -16,11 +16,18 @@ export interface PopoverItem {
   id: string;
   label: string;
   description?: string;
+  /**
+   * Read to screen readers after `description` (part of the item's description), not shown: e.g.
+   * the names of the runtime icons in `extra`.
+   */
+  srDescription?: string;
   /** Current choice (menuitemradio): shows a check and `aria-checked`. */
   checked?: boolean;
   tone?: 'err';
   /** An action among choices (e.g. "Connect another computer…"): a plain `menuitem`. */
   action?: boolean;
+  /** Decoration after the text (e.g. a computer's runtime icons); not part of the item's name. */
+  extra?: ReactNode;
 }
 
 export interface PopoverProps {
@@ -225,19 +232,21 @@ export function Popover({
                   data-tone={item.tone}
                   aria-checked={role === 'menuitemradio' ? item.checked === true : undefined}
                   aria-labelledby={`${id}-${i}-label`}
-                  aria-describedby={item.description ? `${id}-${i}-desc` : undefined}
+                  aria-describedby={item.description || item.srDescription ? `${id}-${i}-desc` : undefined}
                   onClick={() => choose(item.id)}
                 >
                   <span className="uc-menu-text">
                     <span id={`${id}-${i}-label`} className="uc-menu-label">
                       {item.label}
                     </span>
-                    {item.description && (
+                    {(item.description || item.srDescription) && (
                       <span id={`${id}-${i}-desc`} className="uc-menu-desc">
                         {item.description}
+                        {item.srDescription && <span className="uc-sr-only">{`${item.description ? ' · ' : ''}${item.srDescription}`}</span>}
                       </span>
                     )}
                   </span>
+                  {item.extra}
                   {role === 'menuitemradio' && (
                     <span className="uc-menu-check" aria-hidden>
                       {item.checked && <Check />}

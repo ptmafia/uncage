@@ -18,7 +18,7 @@
  *   GET http://127.0.0.1:<LIVE_CONTROL_PORT>/info   { workspace, tokenFile, daemonUrl, bypass: { workspace, tokenFile, daemonUrl } }
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,6 +39,10 @@ function stackDirs(name: string) {
   cpSync(join(repo, 'e2e/live/fixture-repo'), workspace, { recursive: true });
   return { workspace, dataDir: join(dir, 'data'), tokenFile: join(dir, 'token') };
 }
+// Both serves run in `root` and read its uncage.config.yaml: Claude Code (and Codex) only. Without
+// it, the `claude` ACP preset finds the pinned claude-agent-acp on PATH (pnpm puts e2e's
+// node_modules/.bin there) and registry detection runs; the ACP path has its own live project.
+writeFileSync(join(root, 'uncage.config.yaml'), 'runtimes:\n  acp:\n    presets: off\n    autoDetect: false\n');
 const main = stackDirs('main');
 const bypass = stackDirs('bypass');
 

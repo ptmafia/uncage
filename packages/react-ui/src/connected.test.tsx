@@ -3,7 +3,9 @@ import type { MachineInfo } from '@uncage/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AgentChat,
+  AgentOutdatedNotice,
   ApproveDevice,
+  Composer,
   ConnectMachine,
   UncageProvider,
   UncageUIProvider,
@@ -69,12 +71,12 @@ describe('connected mode: no computer yet', () => {
     const f = fakeClient({ machines: [] });
     renderChat(f);
     const region = await screen.findByRole('region', { name: 'Connect your computer' });
-    expect(within(region).getByText(/Run these two commands on the computer/)).toBeTruthy();
+    expect(within(region).getByText(/Run one command on the computer/)).toBeTruthy();
     await within(region).findByText(INSTALL.install);
+    expect(within(region).getByText('Run this command on your computer')).toBeTruthy();
+    expect(within(region).getByText(/asks before installing anything/)).toBeTruthy();
+    expect(within(region).getByText('Already have the CLI?')).toBeTruthy();
     expect(within(region).getByText(INSTALL.setup)).toBeTruthy();
-    expect(within(region).getByText('Install the Uncage CLI')).toBeTruthy();
-    expect(within(region).getByText('Start the agent')).toBeTruthy();
-    expect(within(region).getByText(/Opens a browser to sign in/)).toBeTruthy();
     expect(within(region).getByText('Waiting for your computer…')).toBeTruthy();
     // Inline: no Cancel.
     expect(within(region).queryByRole('button', { name: 'Cancel' })).toBeNull();
@@ -99,7 +101,7 @@ describe('connected mode: no computer yet', () => {
     expect(screen.getByRole('button', { name: 'Computer: Studio Mac (online)' })).toBeTruthy();
   });
 
-  it('Windows tab says coming soon; tabs are keyboard operable', async () => {
+  it('Windows tab shows the PowerShell command; tabs are keyboard operable', async () => {
     const f = fakeClient({ machines: [] });
     renderChat(f);
     const region = await screen.findByRole('region', { name: 'Connect your computer' });
@@ -110,8 +112,40 @@ describe('connected mode: no computer yet', () => {
     const win = within(region).getByRole('tab', { name: 'Windows' });
     expect(win.getAttribute('aria-selected')).toBe('true');
     expect(document.activeElement).toBe(win);
-    expect(within(region).getByText('Coming soon')).toBeTruthy();
+    expect(within(region).getByText(INSTALL.windows!)).toBeTruthy();
+    expect(within(region).queryByText('Coming soon')).toBeNull();
     expect(within(region).queryByText(INSTALL.install)).toBeNull();
+  });
+
+  it('ConnectMachine shows one command, picks the Windows tab on Windows, and offers uncage setup for an installed CLI', async () => {
+    const platform = vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Win32');
+    try {
+      const f = fakeClient({ machines: [] });
+      renderChat(f);
+      const region = await screen.findByRole('region', { name: 'Connect your computer' });
+      await within(region).findByText(INSTALL.windows!);
+      expect(within(region).getByRole('tab', { name: 'Windows' }).getAttribute('aria-selected')).toBe('true');
+      expect(within(region).queryByText(INSTALL.install)).toBeNull();
+      // One step only: no second "Start the agent" heading; the setup command is the secondary line.
+      expect(within(region).getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['Run this command on your computer']);
+      expect(within(region).getByText('Already have the CLI?')).toBeTruthy();
+      expect(within(region).getByRole('button', { name: `Copy command: ${INSTALL.setup}` })).toBeTruthy();
+      fireEvent.click(within(region).getByRole('tab', { name: 'macOS / Linux' }));
+      expect(within(region).getByText(INSTALL.install)).toBeTruthy();
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
+  it('Windows tab says the site offers no Windows command when the hub has none', async () => {
+    const f = fakeClient({ machines: [] });
+    f.client.installInfo.mockResolvedValue({ ...INSTALL, windows: null });
+    renderChat(f);
+    const region = await screen.findByRole('region', { name: 'Connect your computer' });
+    await within(region).findByText(INSTALL.install);
+    fireEvent.click(within(region).getByRole('tab', { name: 'Windows' }));
+    expect(within(region).getByText("This site doesn't offer a Windows command.")).toBeTruthy();
+    expect(within(region).queryByText('Coming soon')).toBeNull();
   });
 
   it('a failed copy says so and asks to select the text', async () => {
@@ -161,14 +195,14 @@ describe('connected mode: no computer yet', () => {
     const f = fakeClient({ machines: [] });
     renderChat(f, { locale: 'zh-CN' });
     const region = await screen.findByRole('region', { name: '连接你的电脑' });
-    expect(within(region).getByText('在要连接的电脑上运行这两条命令。守护进程一上线，这里就会自动识别。')).toBeTruthy();
-    expect(within(region).getByText('安装 Uncage CLI')).toBeTruthy();
-    expect(within(region).getByText('启动守护进程')).toBeTruthy();
-    expect(within(region).getByText('会打开浏览器登录，然后在后台保持守护进程运行。')).toBeTruthy();
+    expect(within(region).getByText('在要连接的电脑上运行一条命令。守护进程一上线，这里就会自动识别。')).toBeTruthy();
+    expect(within(region).getByText('在你的电脑上运行这条命令')).toBeTruthy();
+    expect(within(region).getByText(/之前都会先征求你的同意；然后打开浏览器登录，并在后台保持守护进程运行。$/)).toBeTruthy();
     expect(within(region).getByText('等待你的电脑上线…')).toBeTruthy();
     expect(within(region).getByText('那台电脑打不开浏览器？')).toBeTruthy();
+    expect(within(region).getByText('已经装好 CLI？')).toBeTruthy();
     fireEvent.click(within(region).getByRole('tab', { name: 'Windows' }));
-    expect(within(region).getByText('即将支持')).toBeTruthy();
+    expect(within(region).getByText(INSTALL.windows!)).toBeTruthy();
   });
 });
 
@@ -226,6 +260,84 @@ describe('connected mode: machine status and picker', () => {
     renderChat(f, { locale: 'zh-CN' });
     await screen.findByText(/你的电脑离线了，等待重新连接…/);
     expect(screen.getByText('uncage agent')).toBeTruthy();
+  });
+
+  it('AgentOutdatedNotice shows the upgrade command with the site setup command for an outdated computer', async () => {
+    // A 0.2 agent refused by the hub: offline and outdated. One notice replaces the offline banner.
+    const f = fakeClient({ machines: [machine({ agentOutdated: true, online: false, agentVersion: '0.2.0' })] });
+    renderChat(f);
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toContain("This computer's Uncage agent is too old for this website.");
+    expect(status.textContent).toContain('npm i -g @uncage/cli@latest');
+    await waitFor(() => expect(status.textContent).toContain(INSTALL.setup));
+    expect(within(status).getByText('npm i -g @uncage/cli@latest').tagName).toBe('CODE');
+    expect(within(status).getByText(INSTALL.setup).tagName).toBe('CODE');
+    expect(screen.queryByText(/Your computer is offline/)).toBeNull();
+    expect(screen.getAllByText('npm i -g @uncage/cli@latest')).toHaveLength(1);
+    expect(textbox().disabled).toBe(true);
+  });
+
+  it('AgentOutdatedNotice zh-CN copy; nothing for an up-to-date computer', async () => {
+    const f = fakeClient({ machines: [machine({ agentOutdated: true, online: false })] });
+    renderChat(f, { locale: 'zh-CN' });
+    const status = await screen.findByRole('status');
+    await waitFor(() =>
+      expect(status.textContent).toContain(
+        `这台电脑上的 Uncage 守护进程版本过旧。请在那台电脑上运行 npm i -g @uncage/cli@latest，然后运行 ${INSTALL.setup} 重新连接。`,
+      ),
+    );
+    cleanup();
+    const g = fakeClient({ machines: [machine()] });
+    renderChat(g);
+    await screen.findByRole('button', { name: 'Computer: MacBook Pro (online)' });
+    expect(screen.queryByText(/too old/)).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('a standalone <Composer> (custom layout) shows the same single explanation in its offline banner slot', async () => {
+    const f = fakeClient({ machines: [machine({ agentOutdated: true, online: false })] });
+    render(
+      <UncageProvider client={f.client}>
+        <UncageUIProvider>
+          <Composer />
+        </UncageUIProvider>
+      </UncageProvider>,
+    );
+    await waitFor(() => expect(screen.getAllByRole('status')).toHaveLength(1));
+    const status = screen.getByRole('status');
+    expect(status.textContent).toContain('npm i -g @uncage/cli@latest');
+    await waitFor(() => expect(status.textContent).toContain(INSTALL.setup));
+    expect(screen.queryByText(/Your computer is offline/)).toBeNull();
+    expect(screen.getAllByText('npm i -g @uncage/cli@latest')).toHaveLength(1);
+  });
+
+  it('AgentOutdatedNotice renders nothing for an up-to-date machine (standalone)', () => {
+    const { container } = render(
+      <UncageProvider client={fakeClient().client}>
+        <UncageUIProvider>
+          <AgentOutdatedNotice machine={machine()} />
+        </UncageUIProvider>
+      </UncageProvider>,
+    );
+    expect(container.innerHTML).toBe('');
+  });
+
+  it('MachineStatus lists an outdated computer as "Agent update needed"', async () => {
+    const f = fakeClient({ machines: [machine(), machine({ id: 'mac_2', name: 'Old Box', os: 'linux', online: false, agentOutdated: true })] });
+    renderChat(f);
+    fireEvent.click(await screen.findByRole('button', { name: 'Computer: MacBook Pro (online)' }));
+    const menu = screen.getByRole('menu', { name: 'Choose a computer' });
+    expect(within(menu).getByText('Linux · Agent update needed')).toBeTruthy();
+    expect(within(menu).getByText('macOS · Online')).toBeTruthy();
+    // Screen readers hear the runtime names (the icons are decorative).
+    const item = within(menu).getByRole('menuitemradio', { name: 'MacBook Pro' });
+    const desc = document.getElementById(item.getAttribute('aria-describedby') ?? '');
+    expect(desc?.textContent).toBe(`macOS · Online · ${machine().runtimes[0]!.displayName}`);
+    cleanup();
+    const g = fakeClient({ machines: [machine({ online: false, agentOutdated: true })] });
+    renderChat(g, { locale: 'zh-CN' });
+    fireEvent.click(await screen.findByRole('button', { name: /^电脑：MacBook Pro/ }));
+    expect(within(screen.getByRole('menu')).getByText('macOS · 需要更新守护进程')).toBeTruthy();
   });
 
   it('"Connect another computer…" opens the dialog; it polls every 3 s while open and Cancel / Esc close it', async () => {

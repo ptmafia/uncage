@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
@@ -11,15 +12,16 @@ import { readActivity } from './activity.js';
 import { createAgent, type Agent } from './agent.js';
 import type { AgentSite } from './config.js';
 import { MAX_PULL_FILE_BYTES, PULL_CHUNK_BYTES } from './files.js';
-import { FAST, memoryLogger, sleep, tmpHome, until } from './test-helpers.js';
+import { FAST, memoryLogger, noExec, sleep, tmpHome, until } from './test-helpers.js';
 
 /** A scriptable stand-in for the hub: accepts agent sockets and records their frames. */
 async function fakeHub() {
-  const server: Server = createServer();
+  // Plain requests (`GET /agent/info`) get 404: this stand-in only speaks WebSocket.
+  const server: Server = createServer((_req, res) => res.writeHead(404).end());
   const wss = new WebSocketServer({ server, path: '/api/uncage/agent' });
   const conns: Array<{ ws: WebSocket; frames: AgentFrame[]; auth?: string }> = [];
   let onHello: (ws: WebSocket) => void = (ws) =>
-    ws.send(JSON.stringify({ t: 'welcome', machineId: 'mch_1', protocol: 1, minAgentVersion: '0.0.0' } satisfies HubFrame));
+    ws.send(JSON.stringify({ t: 'welcome', machineId: 'mch_1', protocol: 2, minAgentVersion: '0.0.0' } satisfies HubFrame));
   wss.on('connection', (ws, req) => {
     const c = { ws, frames: [] as AgentFrame[], ...(req.headers.authorization ? { auth: req.headers.authorization } : {}) };
     conns.push(c);
@@ -78,6 +80,7 @@ async function setup(script: FakeStep[] = [{ text: 'ok' }], timing: Record<strin
     home,
     logger,
     timing: { ...FAST, ...timing },
+    exec: noExec,
   });
   cleanups.push(() => agent.close());
   await until(() => hub.framesOf('hello').length > 0);
@@ -88,7 +91,7 @@ describe('agent ↔ fake hub (protocol edges)', () => {
   it('authenticates with the bearer token, says hello, and answers pings', async () => {
     const { hub } = await setup();
     expect(hub.last().auth).toBe('Bearer tok_secret');
-    expect(hub.framesOf('hello')[0]).toMatchObject({ protocol: 1, machine: { runtimes: [{ id: 'fake' }] } });
+    expect(hub.framesOf('hello')[0]).toMatchObject({ protocol: 2, transport: 'ws', machine: { runtimes: [{ id: 'fake' }] } });
     hub.send({ t: 'ping', at: 42 });
     await until(() => hub.framesOf('pong').find((f) => f.at === 42));
   });
@@ -105,6 +108,7 @@ describe('agent ↔ fake hub (protocol edges)', () => {
       home,
       logger: memoryLogger(),
       timing: FAST,
+      exec: noExec,
     });
     cleanups.push(() => agent.close());
     await until(() => hub.framesOf('hello').length > 0);
@@ -170,7 +174,7 @@ describe('agent ↔ fake hub (protocol edges)', () => {
     const hub = await fakeHub();
     cleanups.push(hub.close);
     hub.setOnHello((ws) => {
-      ws.send(JSON.stringify({ t: 'welcome', machineId: 'm', protocol: 1, minAgentVersion: '0.0.0' } satisfies HubFrame));
+      ws.send(JSON.stringify({ t: 'welcome', machineId: 'm', protocol: 2, minAgentVersion: '0.0.0' } satisfies HubFrame));
       setTimeout(() => ws.close(1011, 'flaky'), 5);
     });
     const { home, cleanup } = await tmpHome();
@@ -182,6 +186,7 @@ describe('agent ↔ fake hub (protocol edges)', () => {
       home,
       logger,
       timing: { backoffMinMs: 20, backoffMaxMs: 400, idleTimeoutMs: 3000, stableMs: 30_000 },
+      exec: noExec,
     });
     cleanups.push(() => agent.close());
     const delays = () => logger.lines.filter((l) => l.msg === 'reconnecting').map((l) => (l.obj as { delayMs: number }).delayMs);
@@ -235,7 +240,10 @@ describe('agent ↔ fake hub (protocol edges)', () => {
 
     it('refuses a symlink that points outside the workspace', async () => {
       const { hub, ws, sessionId } = await pullSetup();
-      await symlink('/etc', join(ws, 'escape'));
+      // A folder outside the workspace holding a `hosts` file (a junction on Windows: no admin needed).
+      const outside = await mkdtemp(join(tmpdir(), 'uncage-outside-'));
+      await writeFile(join(outside, 'hosts'), '127.0.0.1 localhost\n');
+      await symlink(outside, join(ws, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
       hub.send({ t: 'file_pull', id: 'p2', sessionId, path: 'escape/hosts', maxBytes: 1000 });
       expect(await resultFor(hub, 'p2')).toMatchObject({ t: 'result', ok: false, error: { code: 'invalid_request', message: expect.stringContaining('outside') } });
       expect(hub.framesOf('file_chunk').filter((c) => c.id === 'p2')).toEqual([]);

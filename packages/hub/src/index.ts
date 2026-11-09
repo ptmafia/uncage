@@ -1,6 +1,16 @@
+/**
+ * `@uncage/hub`: the hub as a Web-standard Fetch handler (`createHub`, `hub.fetch`), usable on any
+ * platform — Node, Vercel, Cloudflare Workers, other Fetch hosts — plus site tools, stores,
+ * clusters and the Fetch-platform adapters (`toNextHandlers`, `fetchOnce`). Node-only parts are in
+ * `@uncage/hub/node`.
+ *
+ * @module hub
+ */
 export { createHub, DEFAULT_HEARTBEAT, HUB_VERSION } from './hub.js';
 export type { Hub, HubOptions, HubUser } from './types.js';
-export { toNodeHandler, type UncageNodeHandler } from './node.js';
+export type { HubLogger } from './machines.js';
+export { fetchOnce, toNextHandlers, type CreatedHub, type RouteHandler } from './fetch-adapters.js';
+export type { MaintenanceReport } from './maintenance.js';
 export {
   defineTool,
   normalizeToolResult,
@@ -13,24 +23,38 @@ export { DEFAULT_PULL_MAX_BYTES, DEFAULT_READ_MAX_BYTES, type FilePull, type Pul
 export type { ClusterAdapter } from './cluster/cluster.js';
 export { memoryCluster } from './cluster/memory.js';
 export { redisCluster, type RedisLike } from './cluster/redis.js';
+export { CLUSTER_MIGRATIONS, postgresCluster, sqlCluster, type PostgresClusterOptions } from './cluster/postgres.js';
 export type {
   ActiveRunRecord,
   AttachmentRecord,
   DeviceCodeRecord,
   DeviceCodeStatus,
   HubStore,
+  LinkState,
   MachineRecord,
+  OutboxItem,
   ReplicaSnapshot,
   ResourceKind,
   SessionPatch,
   SessionRecord,
+  ToolCallClaim,
   ToolCallFinish,
   ToolCallRecord,
   ToolCallStatus,
+  ToolResultFrame,
 } from './store/store.js';
-export { pgliteHubStore } from './store/pglite.js';
 export { postgresHubStore, type PgClientLike, type PgPoolLike } from './store/postgres.js';
 export { HUB_MIGRATIONS, migrateHubStore, sqlHubStore, type SqlClient, type SqlQueryable } from './store/sql.js';
 export { HUB_ATTACHMENT_MAX_BYTES, SINGLE_FRAME_ATTACHMENT_BYTES } from './browser-api.js';
-export { installScript } from './install-script.js';
+export {
+  assertScriptUrl,
+  installScript,
+  installScriptPs1,
+  INSTALL_MESSAGES,
+  INSTALL_MESSAGES_PS1,
+  type InstallLocale,
+  type InstallMessageKey,
+  type InstallScriptExtension,
+  type InstallScriptOptions,
+} from './install/index.js';
 export { USER_CODE_ALPHABET } from './device.js';

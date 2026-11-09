@@ -1,7 +1,55 @@
 ---
 title: Troubleshooting
-description: Fixes for common problems in Connected Mode (computer not connecting, offline, setup errors, tools not called, WebSocket behind proxies) and Local Mode (daemon not reachable, forbidden_origin, ports, sign-in).
+description: Fixes for common problems installing on the computer (command not found, a removed Node.js, Linux lingering and no systemd, Windows execution policy, unzip), in Connected Mode (computer not connecting, offline, agent update needed, setup errors, tools not called, 504s and timeouts on serverless, cut connections, poolers, WebSocket behind proxies) and Local Mode (daemon not reachable, forbidden_origin, ports, sign-in).
 ---
+
+## Installing on the computer
+
+The one-command installers and the background agent on macOS, Linux and Windows. What they do: [Install on your computer](/docs/start/install-on-your-computer/).
+
+### `uncage: command not found` after installing
+
+Open a new terminal: the installer adds folders to `PATH` for new terminals only (macOS and Linux: the `# >>> uncage >>>` block in your shell profile; Windows: your user `Path`). If you answered **n** to “Use Node.js 22 as your default Node.js?”, the installer printed the full path of `uncage` and the `PATH` line to use; run that, or run the installer again and answer **Y**. With fish, add the line the installer printed to your config yourself.
+
+### The background agent’s Node.js was removed
+
+The service runs the exact Node.js it was installed with. A Homebrew upgrade (`brew upgrade node` or `node@22`) deletes the old version’s folder, and so does removing an nvm, fnm or other version-manager version. `uncage doctor` shows `✗ Background agent Node … no longer exists`. Pin the service to the Node.js you use now:
+
+```sh
+uncage agent install
+```
+
+### Linux: the agent stops when I log out
+
+A systemd user service stops at logout unless lingering is on (`uncage doctor` warns). Turn it on for your user:
+
+```sh
+loginctl enable-linger $USER
+```
+
+Most distributions let you do this without `sudo`; if yours refuses, ask an administrator.
+
+### Linux without systemd
+
+In some containers and WSL setups there is no user systemd. `uncage setup` and `uncage agent install` then say so and install no service. Run the agent in the foreground, for example in `tmux` or `screen`:
+
+```sh
+uncage agent
+```
+
+### Windows: “running scripts is disabled on this system”
+
+PowerShell’s default execution policy refuses `uncage.ps1`, the shim npm creates next to `uncage.cmd`. Run `uncage.cmd` instead (for example `uncage.cmd setup https://your.site`), or allow local scripts for your user:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+The installer itself is not affected: `irm … | iex` runs without a script file.
+
+### Linux: “installing fnm needs unzip”
+
+With no Node.js version manager, the installer installs fnm, whose installer needs `unzip`. The installer never runs your package manager, so install `unzip` yourself (`sudo apt install unzip`, `sudo dnf install unzip`, …) and run the command again. Or install Node.js 22 any way you like and then run the command again.
 
 ## Connected Mode
 
@@ -18,24 +66,69 @@ description: Fixes for common problems in Connected Mode (computer not connectin
 The device-code limit (20 per minute) is **per client IP**. Behind a reverse proxy, load balancer or CDN, the hub sees the proxy's address unless you configure the client IP, so every user lands in the same bucket and the 21st setup in a minute fails for everyone.
 
 - **Express:** `app.set('trust proxy', 1)` (number of proxies in front), and mount the hub with `toNodeHandler(hub)`, which passes `req.ip`.
-- **Fetch-style servers (Hono, Next route handlers, …):** `createHub({ rateLimits: { clientIp: (req) => req.headers.get('cf-connecting-ip') ?? undefined } })` with your platform's client-IP header, or pass `hub.handler(req, { clientIp })`.
+- **Next.js on Vercel:** `toNextHandlers` reads Vercel’s `x-real-ip` by itself; with another proxy in front of Vercel, pass its `clientIp` option.
+- **Cloudflare Workers:** pass `clientIp: req.headers.get('cf-connecting-ip') ?? undefined` to `fetchOnce`.
+- **Other Fetch-style servers (Hono, …):** `createHub({ rateLimits: { clientIp: (req) => req.headers.get('cf-connecting-ip') ?? undefined } })` with your platform's client-IP header, or pass `hub.fetch(req, { clientIp })`.
 - **`rateLimits.trustForwardedFor: true`** only if your proxy appends the client address to `X-Forwarded-For`.
 
-With several nodes the limit is counted on each node. Details: [behind a proxy](/docs/guides/mount-the-hub/#behind-a-reverse-proxy-or-load-balancer).
+The count is kept in the store and shared by every node and function instance. Details: [behind a proxy](/docs/guides/mount-the-hub/#behind-a-reverse-proxy-or-load-balancer).
 
 ### The page keeps saying “Waiting for your computer…”
 
 1. On the computer: `uncage sites` should list your site as `active`.
-2. Is the agent running? `launchctl print gui/$(id -u)/dev.uncage.agent | head` (background service), or run `uncage agent` in a terminal to see its output. Logs: `~/.uncage/logs/agent.err.log`.
-3. Can it reach the WebSocket? Your server must call `hub.attach(server)` on the same HTTP server that serves `publicUrl`, and every proxy in front must forward WebSocket upgrades on `<basePath>/agent`. A proxy that answers the upgrade with a plain 404 or 502 is the most common cause.
-4. `publicUrl` must be the URL users open. The install and setup commands, and the WebSocket URL the agent derives from them, come from it.
+2. Is the agent running? `uncage agent status` shows the background service and the Node.js it runs with; or stop the service (`uncage agent uninstall`) and run `uncage agent` in a terminal to see its output. Logs: `~/.uncage/logs/agent.log` and `agent.err.log`.
+3. What does the hub offer? `curl -s https://your.site/api/uncage/agent/info` must answer JSON with `"transports"`. An HTML page or a 404 means the hub is not mounted at that path.
+4. Traditional mode: your server must call `attachWebSocket(hub, server)` on the same HTTP server that serves `publicUrl`, and every proxy in front should forward WebSocket upgrades on `<basePath>/agent`. (If upgrades fail, the agent switches to HTTP streaming after three attempts, so a blocked WebSocket alone no longer keeps a computer offline.)
+5. FaaS mode: the agent must be 0.3 or newer (see [Agent update needed](#agent-update-needed--426-upgrade_required)), and the platform must stream responses (see [cut connections](#the-computer-keeps-reconnecting-or-streams-are-cut)).
+6. `publicUrl` must be the URL users open. The install and setup commands, and the transport URLs the agent uses, come from it.
 
 ### The computer shows offline although the agent runs
 
 - Laptop asleep or network changed: the agent reconnects with backoff (1 s up to 30 s). Runs continue locally and events backfill on reconnect.
 - Idle timeouts on your load balancer below ~30 s drop the WebSocket. Raise them; the hub pings every 10 s.
+- `uncage agent status` says the Node.js the service was installed with is missing (a Homebrew upgrade or a removed nvm/fnm version): run `uncage agent install` again.
 - The computer was revoked from your site: `uncage sites` shows `revoked`. Run `uncage setup <url>` again.
-- The agent is too old (`upgrade_required` in its log): it upgrades itself with `npm i -g @uncage/cli@latest`. If npm needs `sudo` on that computer, the upgrade fails; fix npm’s global prefix (`npm config set prefix ~/.npm-global` and add its `bin` to `PATH`) and reinstall.
+- The agent is too old: see the next section.
+
+### Agent update needed / 426 `upgrade_required`
+
+The hub requires agent 0.3 or newer (`minAgentVersion`).
+
+- **Traditional mode (WebSocket):** the hub tells the agent `upgrade_required`, and the agent upgrades itself with `npm i -g @uncage/cli@latest`, then reconnects. If npm needs `sudo` on that computer, the upgrade fails; fix npm’s global prefix (`npm config set prefix ~/.npm-global` and add its `bin` to `PATH`) and reinstall. Re-running your site’s install command does this for you.
+- **FaaS mode (Vercel, Workers, …):** a 0.2 agent only speaks WebSocket, which a FaaS hub does not serve. It gets `426 upgrade_required`, the hub marks the computer as outdated, and the website shows **Agent update needed** on that computer’s card and in the chat (`<AgentOutdatedNotice>`, `MachineInfo.agentOutdated`). On that computer run:
+
+  ```sh
+  npm i -g @uncage/cli@latest
+  uncage setup https://your.site
+  ```
+
+  `uncage --version` prints the CLI version on the first line and the Node.js it runs on on the second.
+
+### 504 errors or “FUNCTION_INVOCATION_TIMEOUT” on serverless
+
+A request outlived the platform’s time limit.
+
+- **Agent streams and browser event streams:** set `stream.maxDurationMs` below the limit, with a margin (Vercel `maxDuration = 300` → `250_000`, the default). The hub then ends them itself and clients reconnect at once.
+- **Site tool calls:** each runs inside one request, so `toolTimeoutMs` (120 s) must fit inside the limit too. A handler stopped by the platform fails with “Site tool "<name>" timed out on the website. Please try again.” and is not re-run.
+- **Uploads:** a request body is refused with `400` when no bytes arrive for `bodyTimeoutMs` (30 s), or when it takes more than 4 times that in total. Slow but steady uploads get through; only a stalled connection fails.
+- **Attachments over about 4.5 MB on Vercel** get Vercel’s own `413` before the hub runs. See [Vercel → FAQ](/docs/deploy/vercel/#attachments-over-about-4-mb-fail).
+
+### The computer keeps reconnecting, or streams are cut
+
+Cut connections are expected and harmless: the agent reconnects with its cursor, and nothing is lost or delivered twice. Look closer only if it never settles:
+
+- **`http stream rotated` every few minutes** in the agent log is normal (the hub ends streams at `stream.maxDurationMs`).
+- **Errors every few seconds**: something closes long requests early (a proxy or CDN timeout). Raise that timeout above `stream.maxDurationMs`, or lower `stream.maxDurationMs` below it.
+- **Responses arrive all at once** (a prompt’s answer appears only at the end): a proxy buffers streams. Turn buffering off for `<basePath>/sessions/*/events` and `<basePath>/agent/stream` (nginx: `proxy_buffering off;`); the hub sends `X-Accel-Buffering: no` on agent streams, but not every proxy honours it.
+- **`429` on `/agent/*`**: an agent with a wrong token (for example a revoked computer still running) hit `agentAuthFailuresPerMinute`. The answer carries a `Retry-After` header and the agent waits that long. On that computer, `uncage sites` shows the site; run `uncage setup <url>` again.
+- **A computer keeps retrying instead of showing `revoked`, with “HTTP 401 that is not the hub refusing the token; retrying” in the agent log**: something in front of the site answers the agent with its own 401, such as Vercel Deployment Protection on a preview deployment or Cloudflare Access. Only a 401 with the hub's own `{ "error": { "code": "unauthorized" } }` body revokes a computer. Let the agent through (a bypass for `/api/uncage/agent`, or use the production URL) and it reconnects by itself.
+
+### Postgres: poolers and serverless drivers
+
+- **Transaction-mode poolers** (PgBouncer, Neon’s `-pooler` host) work with `postgresHubStore` and `postgresCluster`: migrations use transaction-scoped locks.
+- **Neon’s `neon()` HTTP function fails**: the hub needs transactions on one connection. Use `pg` or Neon’s `Pool` from `@neondatabase/serverless`.
+- **Too many connections**: every function instance opens its own pool. Use a pooled URL, and keep each pool small (`max: 5`), shared by the store and the cluster.
+- **`Connection terminated` crashes a Node process**: attach `pool.on('error', …)` to any pool you create yourself.
 
 ### History disappears when the computer is off
 

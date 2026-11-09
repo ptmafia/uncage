@@ -289,4 +289,15 @@ describe('probe', () => {
     expect(await make({ execFile }).probe()).toEqual({ status: 'available', version: '0.130.0' });
     expect(calls).toEqual([['node', ['--version']]]);
   });
+
+  it('a resolved executable (an npm codex.cmd → node + codex.js) is spawned and probed with its args', async () => {
+    const calls: Array<[string, string[]]> = [];
+    const execFile = (cmd: string, args: string[]) => {
+      calls.push([cmd, args]);
+      return versionOk();
+    };
+    const a = make({ executable: { file: process.execPath, args: [fakeCodexPath] }, execFile });
+    expect(await a.probe()).toEqual({ status: 'available', version: '0.130.0' });
+    expect(calls).toEqual([[process.execPath, [fakeCodexPath, '--version']]]);
+  });
 });

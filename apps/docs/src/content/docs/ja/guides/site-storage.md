@@ -13,7 +13,8 @@ description: sessionStorage 'site'を使ってすべての会話のレプリカ�
 エージェントの作業内容の確認、結果の共有、サポートなど、処理の過程をウェブサイト上で見られるようにしておきたい場合は`'site'`を選びます。リファレンスデモもこちらを使っています。閲覧中を除き、会話をユーザーのコンピュータの外に出してはならない場合は`'machine'`を選びます。
 
 ```ts title="hub.ts"
-import { createHub, pgliteHubStore, type HubUser } from '@uncage/hub';
+import { createHub, type HubUser } from '@uncage/hub';
+import { pgliteHubStore } from '@uncage/hub/node';
 
 declare function getUser(req: Request): Promise<HubUser | null>;
 

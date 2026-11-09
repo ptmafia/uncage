@@ -1,6 +1,6 @@
 {
   "name": "@uncage/cli",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "The `uncage` command: serve the local daemon, run doctor, export events, and connect this computer to websites (Connected Mode)",
   "type": "module",
   "engines": {
@@ -24,6 +24,7 @@
     "@uncage/agent": "workspace:^",
     "@uncage/core": "workspace:^",
     "@uncage/protocol": "workspace:^",
+    "@uncage/runtime-acp": "workspace:^",
     "@uncage/runtime-claude": "workspace:^",
     "@uncage/runtime-codex": "workspace:^",
     "@uncage/server": "workspace:^",
@@ -32,7 +33,8 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@uncage/hub": "workspace:*"
+    "@uncage/hub": "workspace:*",
+    "@uncage/testkit": "workspace:*"
   },
   "license": "MIT",
   "repository": {

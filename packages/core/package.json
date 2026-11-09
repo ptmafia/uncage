@@ -1,6 +1,6 @@
 {
   "name": "@uncage/core",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Uncage core: persistence and orchestration",
   "type": "module",
   "engines": {
@@ -17,6 +17,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "import": "./dist/errors.js"
     }
   },
   "scripts": {

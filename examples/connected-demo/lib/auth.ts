@@ -7,6 +7,9 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { dataDir } from './config.ts';
+import { demoMode, MIN_SECRET_BYTES, requireFaasEnv, type DemoMode } from './mode.ts';
+
+export { MIN_SECRET_BYTES };
 
 export const SESSION_COOKIE = 'demo_user';
 const USERNAME = /^[a-z0-9][a-z0-9_-]{0,31}$/;
@@ -25,15 +28,18 @@ export function normalizeUsername(raw: unknown): string | null {
 }
 
 const cached = new Map<string, Buffer>();
-/** HMAC-SHA256 keys shorter than this are guessable. */
-export const MIN_SECRET_BYTES = 32;
 let warned = false;
 
 /**
- * `DEMO_SECRET` (at least 32 bytes), else a random secret kept in `<data dir>/secret` so every node
- * and restart agrees.
+ * The cookie key. FaaS mode: `DEMO_SECRET` (at least 32 bytes), required — the disk is never
+ * touched (function instances share no files). Traditional mode: `DEMO_SECRET` if it has 32 bytes,
+ * else a random secret kept in `<data dir>/secret` so every node and restart agrees.
  */
-export function secret(env: NodeJS.ProcessEnv = process.env): Buffer {
+export function secret(env: Record<string, string | undefined> = process.env, mode: DemoMode = demoMode()): Buffer {
+  if (mode === 'faas') {
+    requireFaasEnv(env);
+    return Buffer.from(env.DEMO_SECRET!);
+  }
   if (env.DEMO_SECRET) {
     const key = Buffer.from(env.DEMO_SECRET);
     if (key.length >= MIN_SECRET_BYTES) return key;

@@ -1,5 +1,4 @@
-import { randomBytes } from 'node:crypto';
-import { UncageError } from '@uncage/core';
+import { UncageError } from '@uncage/core/errors';
 import {
   ApprovalDecisionSchema,
   CreateSessionBodySchema,
@@ -26,12 +25,14 @@ import {
 import { downloadHeaders } from '@uncage/server/wire';
 import { z } from 'zod';
 import type { ClusterAdapter } from './cluster/cluster.js';
-import { sha256, type DeviceFlow } from './device.js';
-import { sessionChannel, type MachineHub } from './machines.js';
+import type { DeviceFlow } from './device.js';
+import type { RateLimiter } from './rate-limit.js';
+import { compareVersions, HTTP_PRESENCE, sessionChannel, type MachineHub } from './machines.js';
 import { toSessionSnapshot } from './replica.js';
 import { eventStreamResponse, readHistory, type EventSource } from './sse.js';
 import type { HubStore, MachineRecord, ResourceKind, SessionRecord } from './store/store.js';
 import type { HubOptions, HubUser } from './types.js';
+import { randomHex, readBody, sha256Hex, toBase64 } from './web.js';
 
 /**
  * Largest attachment the hub relays to a machine (the attachment limit, 10 MiB; runtimes may
@@ -58,11 +59,22 @@ export interface ApiContext {
   skills: Map<string, SkillSpec>;
   sessionStorage: 'machine' | 'site';
   publicOrigin: string;
-  install: { install: string; setup: string; windows: null };
-  installScript: string;
+  /** Agents older than this are reported as `agentOutdated` in `MachineInfo`. */
+  minAgentVersion: string;
+  install: { install: string; setup: string; windows: string };
+  /** Rendered installers (`install.sh` for macOS / Linux, `install.ps1` for Windows). */
+  installScripts: { sh: string; ps1: string };
+  /** `secret` set: `GET|POST /maintenance` with `Authorization: Bearer <secret>` runs maintenance. */
+  maintenance: { secret: string | undefined; run(): Promise<unknown> };
   version: string;
   sseHeartbeatMs: number;
+  /** Browser event streams end with `event: reconnect` after this long (`stream.maxDurationMs`). */
+  streamMaxDurationMs: number;
+  /** A request body not received within this long is refused. */
+  bodyTimeoutMs: number;
   shutdown: AbortSignal;
+  /** Failed machine-token checks per client IP, shared with the agent routes (`agentAuthFailuresPerMinute`). */
+  agentAuthFailures: RateLimiter;
 }
 
 type Params = Record<string, string>;
@@ -96,33 +108,8 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   return r.data;
 }
 
-/** Reads at most `limit` bytes of the body; `null` when it is longer. */
-async function readBody(req: Request, limit: number): Promise<Uint8Array | null> {
-  if (!req.body) return new Uint8Array();
-  const reader = req.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > limit) {
-      await reader.cancel().catch(() => undefined);
-      return null;
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(size);
-  let at = 0;
-  for (const c of chunks) {
-    out.set(c, at);
-    at += c.byteLength;
-  }
-  return out;
-}
-
-async function readJson(req: Request): Promise<unknown> {
-  const bytes = await readBody(req, MAX_JSON_BODY);
+async function readJson(req: Request, timeoutMs: number): Promise<unknown> {
+  const bytes = await readBody(req, MAX_JSON_BODY, timeoutMs);
   if (bytes === null) throw new UncageError('invalid_request', { message: 'The request body is too large.' });
   const text = new TextDecoder().decode(bytes);
   if (text.trim() === '') return undefined;
@@ -149,8 +136,6 @@ function nonNegativeInt(value: string | null, name: string): number | undefined 
   if (/^\d{1,15}$/.test(value)) return Number(value);
   throw new UncageError('invalid_request', { message: `${name} must be a non-negative integer.` });
 }
-
-const toBase64 = (b: Uint8Array): string => Buffer.from(b.buffer, b.byteOffset, b.byteLength).toString('base64');
 
 export function browserApi(ctx: ApiContext) {
   const { store, machines } = ctx;
@@ -207,15 +192,26 @@ export function browserApi(ctx: ApiContext) {
     throw new UncageError('machine_offline');
   }
 
-  const toMachineInfo = async (m: MachineRecord): Promise<MachineInfo> => ({
-    id: m.id,
-    name: m.name,
-    os: m.os,
-    agentVersion: m.agentVersion,
-    runtimes: m.runtimes,
-    online: await machines.isOnline(m.id),
-    lastSeenAt: m.lastSeenAt,
-  });
+  const toMachineInfo = async (m: MachineRecord): Promise<MachineInfo> => {
+    const presence = await machines.presenceOf(m.id);
+    const online = presence !== null;
+    return {
+      id: m.id,
+      name: m.name,
+      os: m.os,
+      agentVersion: m.agentVersion,
+      runtimes: m.runtimes,
+      online,
+      lastSeenAt: m.lastSeenAt,
+      // Refused as too old since it last connected, or (placeholder '0.0.0' aside: paired, never
+      // said hello) a version below the minimum.
+      agentOutdated:
+        (m.outdatedAt !== undefined && m.outdatedAt > m.lastSeenAt) ||
+        (m.agentVersion !== '0.0.0' && compareVersions(m.agentVersion, ctx.minAgentVersion) < 0),
+      // Presence holds the transport: 'http' for the HTTP stream, a node id for a WebSocket.
+      transport: presence === null ? null : presence === HTTP_PRESENCE ? 'http' : 'ws',
+    };
+  };
 
   async function snapshotOf(rec: SessionRecord): Promise<SessionSnapshot> {
     const snap = (site ? toSessionSnapshot(rec.snapshot) : null) ?? (await machines.command(rec.machineId, 'snapshot', { sessionId: rec.id }));
@@ -301,29 +297,51 @@ export function browserApi(ctx: ApiContext) {
   };
 
   // ---- Machine side (no website session) -------------------------------------------------------
-  add('GET', '/install.sh', async () =>
-    new Response(ctx.installScript, {
+  const script = (text: string) => async () =>
+    new Response(text, {
       headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-cache', 'x-content-type-options': 'nosniff' },
-    }),
-  { public: true });
+    });
+  add('GET', '/install.sh', script(ctx.installScripts.sh), { public: true });
+  add('GET', '/install.ps1', script(ctx.installScripts.ps1), { public: true });
+
+  // Platform cron (e.g. Vercel Cron with CRON_SECRET). Without a secret there is no such route.
+  const maintenanceSecret = ctx.maintenance.secret;
+  if (maintenanceSecret) {
+    const expected = sha256Hex(maintenanceSecret);
+    const runMaintenance = async ({ req }: Call) => {
+      const m = /^Bearer (.+)$/.exec(req.headers.get('authorization') ?? '');
+      // Compare digests, so the comparison time does not depend on how much of the secret matched.
+      if (!m?.[1] || (await sha256Hex(m[1])) !== (await expected)) {
+        throw new UncageError('unauthorized', { message: 'Missing or invalid maintenance secret.' });
+      }
+      return json(await ctx.maintenance.run());
+    };
+    add('GET', '/maintenance', runMaintenance, { public: true });
+    add('POST', '/maintenance', runMaintenance, { public: true });
+  }
 
   add('POST', '/device/code', async ({ req, clientKey }) => {
-    const body = parse(DeviceCodeRequestSchema, (await readJson(req)) ?? {});
+    const body = parse(DeviceCodeRequestSchema, (await readJson(req, ctx.bodyTimeoutMs)) ?? {});
     return json(await ctx.device.createCode(body, clientKey));
   }, { public: true });
 
   add('POST', '/device/token', async ({ req }) => {
-    const { deviceCode } = parse(z.object({ deviceCode: z.string().min(1).max(256) }), await readJson(req));
+    const { deviceCode } = parse(z.object({ deviceCode: z.string().min(1).max(256) }), await readJson(req, ctx.bodyTimeoutMs));
     const r = await ctx.device.poll(deviceCode);
     if (!r) throw new UncageError('not_found', { message: 'Unknown device code.', hint: 'Start the connection flow again.' });
     return json(r);
   }, { public: true });
 
   // `uncage sites remove`: the machine revokes itself with its own token.
-  add('POST', '/machine/revoke', async ({ req }) => {
+  add('POST', '/machine/revoke', async ({ req, clientKey }) => {
+    // Closing: a retryable 5xx, never the 401 the CLI would read as "already revoked".
+    if (ctx.shutdown.aborted) throw new UncageError('internal_error', { message: 'The hub is shutting down; reconnect.', hint: 'Try again: another instance will serve the request.' });
     const m = /^Bearer (\S+)$/i.exec(req.headers.get('authorization') ?? '');
-    const machine = m ? await store.findMachineByTokenHash(sha256(m[1]!)) : null;
-    if (!machine) throw new UncageError('unauthorized', { message: 'Unknown or revoked machine token.' });
+    const machine = m ? await machines.authenticate(m[1]!) : null;
+    if (!machine) {
+      await ctx.agentAuthFailures.take(clientKey); // throws rate_limited (429) once over the limit
+      throw new UncageError('unauthorized', { message: 'Unknown or revoked machine token.' });
+    }
     await store.deleteMachine(machine.id);
     await machines.kick(machine.id);
     return json({ ok: true });
@@ -368,7 +386,7 @@ export function browserApi(ctx: ApiContext) {
   });
 
   add('POST', '/sessions', async ({ req, user }) => {
-    const body = parse(CreateSessionBodySchema.extend({ machineId: z.string().optional() }), await readJson(req));
+    const body = parse(CreateSessionBodySchema.extend({ machineId: z.string().optional() }), await readJson(req, ctx.bodyTimeoutMs));
     const machine = await pickMachine(user, body.machineId);
     // The hub picks the id and records the session before the machine creates it, so the
     // session's first events (which may arrive before the command result) are recognised.
@@ -412,19 +430,19 @@ export function browserApi(ctx: ApiContext) {
 
   add('PATCH', '/sessions/:id/settings', async ({ req, params, user }) => {
     const rec = await ownedSession(user, params.id!);
-    const patch = parse(UpdateSessionSettingsBodySchema, await readJson(req));
+    const patch = parse(UpdateSessionSettingsBodySchema, await readJson(req, ctx.bodyTimeoutMs));
     return json(stamp(await machines.command(rec.machineId, 'updateSettings', { sessionId: rec.id, patch }), rec.machineId));
   });
 
   add('POST', '/sessions/:id/runs', async ({ req, params, user }) => {
     const key = idempotencyKey(req);
-    const body = parse(StartRunBodySchema, await readJson(req));
+    const body = parse(StartRunBodySchema, await readJson(req, ctx.bodyTimeoutMs));
     const rec = await ownedSession(user, params.id!);
     const { manifest, warnings } = await manifestFor(user, body.prompt, rec);
     // Record the offered tools before the machine can start the run: tool calls are accepted only
     // for tools in their run's manifest (bound to the run id once it is known).
     const manifestKey = `${rec.id}:${key}`;
-    const nonce = randomBytes(12).toString('hex');
+    const nonce = randomHex(12);
     await store.putRunManifest({ key: manifestKey, sessionId: rec.id, tools: manifest.tools.map((t) => t.name), createdAt: new Date().toISOString(), nonce });
     let run;
     try {
@@ -464,7 +482,7 @@ export function browserApi(ctx: ApiContext) {
       const limit = Math.min(nonNegativeInt(url.searchParams.get('limit'), 'limit') ?? JSON_EVENTS_LIMIT, JSON_EVENTS_LIMIT);
       return json(limit === 0 ? [] : await readHistory(src, after, limit));
     }
-    return eventStreamResponse(src, { after, heartbeatMs: ctx.sseHeartbeatMs, signals: [req.signal, ctx.shutdown], requestId });
+    return eventStreamResponse(src, { after, heartbeatMs: ctx.sseHeartbeatMs, maxDurationMs: ctx.streamMaxDurationMs, signals: [req.signal, ctx.shutdown], requestId });
   });
 
   add('POST', '/sessions/:id/attachments', async ({ req, params, user }) => {
@@ -490,7 +508,7 @@ export function browserApi(ctx: ApiContext) {
         details: { maxBytes: HUB_ATTACHMENT_MAX_BYTES },
       });
     if (Number(req.headers.get('content-length')) > HUB_ATTACHMENT_MAX_BYTES) throw tooLarge();
-    const data = await readBody(req, HUB_ATTACHMENT_MAX_BYTES);
+    const data = await readBody(req, HUB_ATTACHMENT_MAX_BYTES, ctx.bodyTimeoutMs);
     if (data === null) throw tooLarge();
     const attachment =
       data.byteLength <= SINGLE_FRAME_ATTACHMENT_BYTES
@@ -542,7 +560,7 @@ export function browserApi(ctx: ApiContext) {
 
   add('POST', '/approvals/:id/decision', async ({ req, params, user }) => {
     const key = idempotencyKey(req);
-    const decision = parse(ApprovalDecisionSchema, await readJson(req));
+    const decision = parse(ApprovalDecisionSchema, await readJson(req, ctx.bodyTimeoutMs));
     const rec = await ownedResource(user, 'approval', params.id!);
     return json(await machines.command(rec.machineId, 'decide', { approvalId: params.id!, decision, idempotencyKey: key }));
   });

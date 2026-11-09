@@ -36,23 +36,29 @@ export async function driveRun(page: Page, timeoutMs: number): Promise<{ state: 
   }
 }
 
-export async function connectedGoldenPath(o: {
+export interface ConnectOptions {
   page: Page;
   stack: Stack;
   url: string;
   agent(home: string): Promise<Proc>;
-  runTimeoutMs: number;
-  prompt?: string;
+  /** The demo user to sign in as (default `alice`). */
+  user?: string;
   /** Called with the chat page once the machine is online (e.g. to pick a runtime). */
   beforeSend?(page: Page): Promise<void>;
-}): Promise<GoldenPathResult> {
+}
+
+/** Steps 1–3: sign in, real `uncage setup` approved on /device, the agent online, composer enabled. */
+export async function connectMachine(o: ConnectOptions): Promise<{ home: string; agent: Proc; input: Locator }> {
   const { page, stack, url } = o;
-  const user = 'alice';
-  await login(page, url, user);
+  await login(page, url, o.user ?? 'alice');
 
   // 1. No computer yet: the chat's empty state is ConnectMachine with this site's setup command.
   await page.goto(url);
   await expect(page.getByText('等待你的电脑上线…')).toBeVisible();
+  // One command (the site's checking installer, on the tab of this OS), plus `uncage setup` for an installed CLI.
+  await expect(page.getByRole('heading', { name: '在你的电脑上运行这条命令' })).toBeVisible();
+  await expect(page.getByRole('tabpanel').getByText(/\/install\.(sh \| bash|ps1 \| iex)$/)).toBeVisible();
+  await expect(page.getByText('已经装好 CLI？')).toBeVisible();
   await expect(page.getByText(`uncage setup ${url}`).first()).toBeVisible();
 
   // 2. `uncage setup` (real CLI) — approved on /device in a second tab of the same browser session.
@@ -68,6 +74,26 @@ export async function connectedGoldenPath(o: {
   const input = page.getByRole('textbox', { name: '消息' });
   await expect(input).toBeEnabled({ timeout: 30_000 });
   await o.beforeSend?.(page);
+  return { home, agent, input };
+}
+
+/** Picks `displayName` in the empty state's runtime picker once it is available. */
+export async function pickRuntime(page: Page, displayName: string): Promise<void> {
+  const escaped = displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const radio = page.getByRole('radio', { name: new RegExp(`^${escaped}`) });
+  await expect(radio).toBeEnabled({ timeout: 60_000 });
+  await radio.check();
+  await expect(radio).toBeChecked();
+}
+
+export async function connectedGoldenPath(
+  o: ConnectOptions & {
+    runTimeoutMs: number;
+    prompt?: string;
+  },
+): Promise<GoldenPathResult> {
+  const { page, stack, url } = o;
+  const { agent, input } = await connectMachine(o);
 
   // 4. Run: the machine works, the site's tools run on the website.
   const prompt = o.prompt ?? LANDING_PROMPT;

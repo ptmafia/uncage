@@ -58,7 +58,7 @@ In Connected Mode `<AgentChat>` also:
 
 ## 2. Use the parts
 
-`<ConnectMachine>` is the “Connect your computer” flow on its own: the install command (macOS tab; Windows “coming soon”), the `uncage setup <url>` command with copy buttons, a live “Waiting for your computer…” → “Connected: &lt;name&gt;” (it polls every 3 s while shown), and help for computers that cannot open a browser. Put it on a settings page, an onboarding step, or a dialog:
+`<ConnectMachine>` is the “Connect your computer” flow on its own: the one install command in “macOS / Linux” and “Windows” tabs (it starts on the visitor’s OS), `uncage setup <url>` for a computer that already has the CLI, copy buttons, a live “Waiting for your computer…” → “Connected: &lt;name&gt;” (it polls every 3 s while shown), and help for computers that cannot open a browser. Put it on a settings page, an onboarding step, or a dialog:
 
 ```tsx title="connect-button.tsx"
 'use client';
@@ -145,8 +145,11 @@ function Connect() {
   return (
     <section>
       <h2>Connect your computer</h2>
-      <p>Run these two commands in Terminal on your Mac:</p>
+      <p>Run this command on your computer (macOS, Linux):</p>
       <pre>{install.install}</pre>
+      {install.windows && <p>On Windows, in PowerShell:</p>}
+      {install.windows && <pre>{install.windows}</pre>}
+      <p>Already have the CLI? Run:</p>
       <pre>{install.setup}</pre>
       <p>Waiting for your computer…</p>
     </section>

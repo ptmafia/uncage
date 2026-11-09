@@ -20,7 +20,7 @@ Verify: run "npx uncage doctor" and report each line; with "npx uncage serve --w
 
 ## 1. 前置条件
 
-- macOS，Node.js **22 或更高**（`node -v`）。
+- macOS、Linux 或 Windows，以及 Node.js **22 或更高**（`node -v`）。`uncage serve` 在 CLI 能运行的地方都能运行；macOS 已在真机上验证，Linux 和 Windows 已通过 CI 验证，等待真机确认。
 - 已安装并登录 Claude Code：`npm i -g @anthropic-ai/claude-code`，然后运行一次 `claude` 并输入 `/login`。
 - 一个 Next.js（App Router）应用。从零开始：`npx create-next-app@latest my-app`（选 TypeScript、App Router）。
 

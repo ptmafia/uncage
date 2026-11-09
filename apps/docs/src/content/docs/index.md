@@ -26,7 +26,7 @@ It has two modes. Both use the same protocol, the same React hooks and the same 
 | --- | --- | --- |
 | Who runs the agent | Each end user, on their own computer, with their own Claude Code login | You, on the machine that runs your app |
 | What you add to your site | `@uncage/hub` in your Node backend, `<AgentChat>` in a page, an approval page at `/device` | A same-origin proxy route and `<AgentChat>` |
-| What the user does | Runs two commands once: `curl -fsSL https://your.site/api/uncage/install.sh \| bash`, then `uncage setup https://your.site` | Nothing: it is your machine |
+| What the user does | Runs one command once and approves the computer in the browser: `curl -fsSL https://your.site/api/uncage/install.sh \| bash` on macOS and Linux, `irm https://your.site/api/uncage/install.ps1 \| iex` on Windows | Nothing: it is your machine |
 | Good for | SaaS products where users have Claude Code and want it to work with your product | Internal tools, desktop-style apps, developer dashboards |
 
 ## What your users get
@@ -59,5 +59,5 @@ See [the trust model](/docs/concepts/trust-model/) for the full list.
 - **Using a coding agent?** Give it [the Uncage skill](/docs/skills/uncage/SKILL.md) or [`llms.txt`](/docs/llms.txt). Every page is also available as plain markdown: add `.md` to its URL. See [For coding agents](/docs/start/for-coding-agents/).
 
 :::note[Status]
-Connected Mode is part of Uncage 0.2 (`@uncage/hub`, `@uncage/agent`, and the `uncage setup` / `uncage agent` commands in `@uncage/cli`). The agent side runs on **macOS** only, with Node.js 22 or newer. Claude Code is verified live; Codex is implemented but has not been run against a real binary, and it does not support site tools yet. Details: [compatibility](https://github.com/ptmafia/uncage/blob/main/docs/compatibility.md).
+Connected Mode is part of Uncage 0.3 (`@uncage/hub`, `@uncage/agent`, and the `uncage setup` / `uncage agent` commands in `@uncage/cli`). The agent side runs on **macOS, Linux and Windows** as a per-user background service, with Node.js 22 or newer (the installer sets it up). macOS is verified on a real device; Linux and Windows are CI verified, awaiting real-device confirmation. Claude Code is verified live; Codex is implemented but has not been run against a real binary, and it does not support site tools yet. Details: [compatibility](https://github.com/ptmafia/uncage/blob/main/docs/compatibility.md).
 :::

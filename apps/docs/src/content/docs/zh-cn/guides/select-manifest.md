@@ -9,16 +9,17 @@ description: 用 selectManifest 根据用户、提示词或会话，为每次运
 selectManifest?(ctx: { user: HubUser; prompt: string; sessionId: string; runtime: string }): Promise<{ tools: string[]; skills: string[] }>;
 ```
 
-每次运行开始时（`POST <basePath>/sessions/:id/runs`），hub 会在向电脑发送任何内容之前调用它。`runtime` 是会话的运行时 id（`claude-code`、`codex`……）。返回要提供的工具和技能的**名称**。
+每次运行开始时（`POST <basePath>/sessions/:id/runs`），hub 会在向电脑发送任何内容之前调用它。`runtime` 是会话的运行时 id（`claude`、`codex`……）。返回要提供的工具和技能的**名称**。
 
 ## 示例：按套餐和按任务选择
 
 ```ts title="hub.ts"
-import { createHub, defineTool, type HubUser } from '@uncage/hub';
+import { createHub, defineTool, type HubStore, type HubUser } from '@uncage/hub';
 import type { SkillSpec } from '@uncage/protocol';
 import { z } from 'zod';
 
 declare function getUser(req: Request): Promise<HubUser | null>;
+declare const store: HubStore; // pgliteHubStore or postgresHubStore, see Mount the hub
 declare function planOf(userId: string): Promise<'free' | 'pro'>;
 
 const searchDocs = defineTool({
@@ -40,6 +41,7 @@ const invoices: SkillSpec = { name: 'invoices', description: 'House rules for in
 export const hub = await createHub({
   publicUrl: 'https://app.example.com',
   getUser,
+  store,
   tools: [searchDocs, publishPage],
   skills: [landingPage, invoices],
   async selectManifest({ user, prompt }) {

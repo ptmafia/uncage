@@ -1,15 +1,24 @@
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { checkUserOnly } from './perms.js';
+
+/** 0600 on POSIX; a user-only ACL on Windows. */
+async function expectUserOnly(p: string): Promise<void> {
+  if (process.platform === 'win32') expect((await checkUserOnly(p)).ok).toBe(true);
+  else expect(((await stat(p)).mode & 0o777).toString(8)).toBe('600');
+}
 import { defineTool } from '@uncage/hub';
 import type { MachineInfo, Run, Session, UncageEvent } from '@uncage/protocol';
-import { createFakeAdapter, type FakeStep } from '@uncage/testkit';
+import { acpAdapter } from '@uncage/runtime-acp';
+import { createFakeAdapter, fakeAcpPath, type FakeStep } from '@uncage/testkit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { readActivity } from './activity.js';
-import { createAgent, readUpgradeState, SELF_UPGRADE, UPGRADE_EXIT_CODE, type Agent } from './agent.js';
+import { createAgent, readUpgradeState, UPGRADE_EXIT_CODE, type Agent } from './agent.js';
+import { selfUpgradeCommand } from './exe.js';
 import { agentConfigPath, loadAgentConfig, updateAgentSites, type AgentConfig, type AgentSite } from './config.js';
 import { siteHost } from './site.js';
-import { FAST, memoryLogger, sleep, startProxy, startTestHub, tmpHome, until, type TestHub } from './test-helpers.js';
+import { FAST, memoryLogger, noExec, sleep, startProxy, startTestHub, tmpHome, until, type TestHub } from './test-helpers.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -39,7 +48,7 @@ async function agentFor(
 ): Promise<Agent> {
   const config: AgentConfig = { sites, localPolicy: o.policy ?? { allowBypass: false } };
   await updateAgentSites(h, () => sites);
-  const agent = await createAgent({ config, adapters: () => [fake(script)], home: h, logger: memoryLogger(), timing: FAST, ...o.extra });
+  const agent = await createAgent({ config, adapters: () => [fake(script)], home: h, logger: memoryLogger(), timing: FAST, exec: noExec, exit: () => undefined, ...o.extra });
   cleanups.push(() => agent.close());
   return agent;
 }
@@ -68,6 +77,16 @@ async function history(t: TestHub, sessionId: string): Promise<UncageEvent[]> {
 const terminal = (evs: UncageEvent[]) => evs.find((e) => e.type === 'run.completed' || e.type === 'run.failed');
 
 describe('agent ↔ real hub', () => {
+  it('uses the WebSocket URL the hub offers (attachWebSocket with a custom path)', async () => {
+    const t = await hubFor({ wsPath: '/custom' });
+    const h = await home();
+    const site = await t.pair('alice');
+    const agent = await agentFor(h, [site], []);
+    await online(t);
+    expect(await until(() => agent.transports()[site.id], 8000, 'agent connected')).toBe('ws');
+    expect((await machines(t))[0]).toMatchObject({ online: true, transport: 'ws' });
+  });
+
   it('connects, creates a per-session workspace and runs a session end to end', async () => {
     const t = await hubFor();
     const h = await home();
@@ -130,6 +149,47 @@ describe('agent ↔ real hub', () => {
     });
     expect(activity.find((e) => e.kind === 'tool_call')).toMatchObject({ name: 'lookup_order', ok: true, detail: { sessionId: session.id, input: '[redacted object]' } });
     expect(JSON.stringify(activity)).not.toContain('A-1');
+  });
+
+  it('over WebSocket, a dropped connection does not fail a pending site tool call: re-sent after reconnect, answered from the stored result, the handler runs once', async () => {
+    let started = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const slow = defineTool({
+      name: 'slow_lookup',
+      description: 'Waits for the test',
+      input: z.object({ id: z.string() }),
+      handler: async (a) => {
+        started++;
+        await gate;
+        return `found ${a.id}`;
+      },
+    });
+    const t = await hubFor({ tools: [slow] });
+    const proxy = await startProxy(Number(new URL(t.origin).port));
+    cleanups.push(() => proxy.close());
+    const h = await home();
+    const site = await t.pair('alice', { url: proxy.url });
+    const agent = await agentFor(h, [site], [{ callTool: { name: 'slow_lookup', args: { id: 'B-2' } } }]);
+    await online(t);
+    // The hub lists the machine online on its hello, a moment before the agent reads the welcome.
+    expect(await until(() => agent.transports()[site.id], 8000, 'agent connected')).toBe('ws');
+    const session = await createSession(t);
+    expect((await startRun(t, session.id)).status).toBe(202);
+    await until(() => started === 1, 8000, 'handler started');
+    proxy.cut();
+    await until(async () => !(await machines(t))[0]?.online, 8000, 'offline');
+    // The call finishes while the machine is offline: only the agent's resend can fetch the result.
+    release();
+    await until(async () => (await t.store.listToolCalls(session.id))[0]?.status === 'ok', 5000, 'call stored');
+    proxy.restore();
+    await until(() => agent.status()[site.id] === 'connected', 8000, 'reconnected');
+    const evs = await until(async () => {
+      const all = await history(t, session.id);
+      return all.some((e) => e.type === 'message.completed') && terminal(all) ? all : null;
+    }, 10_000, 'run finished');
+    expect(evs.some((e) => e.type === 'message.completed' && e.payload.text === 'found B-2')).toBe(true);
+    expect(started).toBe(1);
   });
 
   it('a runtime without siteTools still runs (site storage): tools dropped, skills kept, site_tools_unsupported shown', async () => {
@@ -211,7 +271,7 @@ describe('agent ↔ real hub', () => {
     const start = entries.find((e) => e.name === 'startRun')!;
     expect(start).toMatchObject({ kind: 'command', ok: true, detail: { sessionId: session.id, prompt: '[redacted 21 chars]' } });
     expect(entries.find((e) => e.name === 'createSession')).toMatchObject({ ok: true });
-    expect(((await stat(join(h, '.uncage', 'sites', site.id, 'activity.log'))).mode & 0o777).toString(8)).toBe('600');
+    await expectUserOnly(join(h, '.uncage', 'sites', site.id, 'activity.log'));
   });
 
   it('attachments sent through the hub land in the session workspace', async () => {
@@ -379,8 +439,8 @@ describe('agent ↔ real hub', () => {
     await agentFor(h, [site], [{ text: 'x' }], { extra: { exec, exit } });
     await until(() => exit.mock.calls.length > 0);
     expect(exec).toHaveBeenCalledTimes(1);
-    expect(exec).toHaveBeenCalledWith(...SELF_UPGRADE);
-    expect(SELF_UPGRADE).toEqual(['npm', ['i', '-g', '@uncage/cli@latest']]);
+    expect(exec).toHaveBeenCalledWith(...(await selfUpgradeCommand()));
+    expect((await selfUpgradeCommand())[1].slice(-3)).toEqual(['i', '-g', '@uncage/cli@latest']);
     expect(exit).toHaveBeenCalledWith(UPGRADE_EXIT_CODE);
   });
 
@@ -395,8 +455,8 @@ describe('agent ↔ real hub', () => {
     await online(t2);
     const a = await createSession(t1);
     const b = await createSession(t2);
-    expect(a.workspace).toContain(`${siteHost(s1.url)}/${a.id}`);
-    expect(b.workspace).toContain(`${siteHost(s2.url)}/${b.id}`);
+    expect(a.workspace).toContain(join(siteHost(s1.url), a.id));
+    expect(b.workspace).toContain(join(siteHost(s2.url), b.id));
     // Sessions are separate per site.
     expect(((await (await t1.as('alice', '/sessions')).json()) as Session[]).map((s) => s.id)).toEqual([a.id]);
     expect(((await (await t2.as('alice', '/sessions')).json()) as Session[]).map((s) => s.id)).toEqual([b.id]);
@@ -542,6 +602,25 @@ describe('agent ↔ real hub', () => {
   it('agent.yaml is written 0600', async () => {
     const h = await home();
     await updateAgentSites(h, () => []);
-    expect(((await stat(agentConfigPath(h))).mode & 0o777).toString(8)).toBe('600');
+    await expectUserOnly(agentConfigPath(h));
+  });
+  it('the agent reports ACP runtimes to the hub (machine.runtimes)', async () => {
+    const t = await hubFor();
+    const h = await home();
+    const site = await t.pair('alice');
+    await updateAgentSites(h, () => [site]);
+    const icon = { light: 'data:image/png;base64,iVBORw0KGgo=' };
+    const agent = await createAgent({
+      config: { sites: [site], localPolicy: { allowBypass: false } },
+      adapters: () => [fake([]), acpAdapter({ id: 'acp-fake', displayName: 'Fake ACP', command: [process.execPath, fakeAcpPath], icon })],
+      home: h,
+      logger: memoryLogger(),
+      timing: FAST,
+    });
+    cleanups.push(() => agent.close());
+    await online(t);
+    const m = (await machines(t))[0]!;
+    expect(m.runtimes.map((r) => r.id)).toEqual(['fake', 'acp-fake']);
+    expect(m.runtimes[1]).toMatchObject({ id: 'acp-fake', displayName: 'Fake ACP', status: 'available', icon, capabilities: { skills: 'prompt' } });
   });
 });

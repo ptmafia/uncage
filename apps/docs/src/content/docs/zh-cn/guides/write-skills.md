@@ -46,7 +46,7 @@ Use this when the user asks for a landing page, product page or marketing page.
 把它注册到 hub（类型来自 `npm i @uncage/protocol`，也可以交给 TypeScript 推断）：
 
 ```ts nocheck
-const hub = await createHub({ publicUrl, getUser, tools, skills: [landingPage] });
+const hub = await createHub({ publicUrl, getUser, store, tools, skills: [landingPage] });
 ```
 
 ## 技能如何到达 Claude Code

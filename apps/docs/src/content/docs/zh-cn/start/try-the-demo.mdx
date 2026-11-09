@@ -1,6 +1,6 @@
 ---
 title: 试用演示
-description: 用两条命令把你自己的 Mac 连接到一个在线的 Uncage 网站，让它做一个落地页，看你自己的 Claude Code 搭好页面并通过网站工具发布，浏览器里会弹出审批卡片。
+description: 用一条命令把你自己的电脑（macOS、Linux 或 Windows）连接到一个在线的 Uncage 网站，让它做一个落地页，看你自己的 Claude Code 搭好页面并通过网站工具发布，浏览器里会弹出审批卡片。
 ---
 
 import { Image } from 'astro:assets';
@@ -20,26 +20,25 @@ import offline from '../../../../assets/demo/offline.png';
 
 ## 开始之前
 
-- 一台 Mac（Uncage 守护进程运行在 macOS 上）。
-- Node.js 22 或更高版本。
-- 已安装并登录 Claude Code：`npm i -g @anthropic-ai/claude-code`，然后运行一次 `claude` 并输入 `/login`。
+- 一台装有 macOS、Linux 或 Windows 的电脑。不必事先准备 Node.js 22：缺少时，下面的命令会帮你安装。
+- 已安装并登录 Claude Code：`curl -fsSL https://claude.ai/install.sh | bash`（macOS、Linux）或 `irm https://claude.ai/install.ps1 | iex`（Windows PowerShell），然后运行一次 `claude` 并输入 `/login`。
 
 ## 以访客身份进入
 
-打开演示网站，点击 **以访客身份进入**。网站会给这个浏览器分配一个随机的访客账号，不需要注册。随后对话框会显示 **连接你的电脑** 和两条命令。
+打开演示网站，点击 **以访客身份进入**。网站会给这个浏览器分配一个随机的访客账号，不需要注册。随后对话框会显示 **连接你的电脑** 和一条命令，默认打开你的操作系统对应的标签页。
 
-<Image src={connect} alt="演示网站的对话框里显示“连接你的电脑”卡片：第 1 步用 curl 命令安装 Uncage CLI，第 2 步用演示网站的地址运行 uncage setup，下方提示正在等待电脑上线。" />
+<Image src={connect} alt="演示网站的对话框里显示“连接你的电脑”卡片：“在你的电脑上运行这条命令”下面是 macOS / Linux 和 Windows 两个标签页，以及带演示网站地址的 curl 命令；再往下是“已经装好 CLI？”和 uncage setup 命令，最后提示正在等待电脑上线。" />
 
 ## 连接你的电脑
 
-在终端里运行这两条命令，把 `<demo>` 换成演示网站的地址：
+在终端（Windows 上是 PowerShell）里运行卡片上显示的命令，把 `<demo>` 换成演示网站的地址：
 
 ```sh
-curl -fsSL <demo>/api/uncage/install.sh | bash
-uncage setup <demo>
+curl -fsSL <demo>/api/uncage/install.sh | bash        # macOS, Linux
+irm <demo>/api/uncage/install.ps1 | iex               # Windows PowerShell
 ```
 
-也可以用 `npm i -g @uncage/cli` 代替第一条命令来安装 CLI。`uncage setup` 会打印一个验证码，并在浏览器里打开演示网站的授权页。
+它会检查你的电脑，安装缺少的东西（Node.js 22、Uncage CLI）之前都会询问 `[Y/n]`；详见[在你的电脑上安装](/docs/zh-cn/start/install-on-your-computer/)。最后回答 **Y**，为演示网站运行 `uncage setup`。已经装好 CLI？那就直接运行 `uncage setup <demo>`。setup 会打印一个验证码，并在浏览器里打开演示网站的授权页。
 
 <Image src={deviceApprove} alt="授权页“连接这台电脑?”写明了请求连接的电脑，用大字显示验证码，并提供“拒绝”和“批准”两个按钮。" />
 
@@ -80,7 +79,7 @@ Claude Code 的权限模式不自动放行的步骤（输入框下方显示 **�
 ## 关于你的数据
 
 - 你以访客身份登录演示网站，身份由你使用的浏览器识别。换一个浏览器就看不到你的任何对话和页面。
-- 演示网站是公开、共享的。除非部署方把数据放在持久化卷上，每次部署和重启都会清空全部数据。素材（你创建的页面）在最后一次创建或发布 24 小时后删除。
+- 演示网站是公开、共享的。如果运行在一台没有持久化卷的服务器上，每次部署和重启都会清空全部数据；在 Vercel 上，数据保存在 Postgres 里。无论哪种情况，素材（你创建的页面）都会在最后一次创建或发布 24 小时后删除。
 - 已发布页面的页面请求仅限所有者：只有你的访客账号能打开它。页面加载的文件由页面无法猜测的 ID 保护。
 - 不要在演示网站里放任何私密内容。
 
@@ -88,4 +87,4 @@ Claude Code 的权限模式不自动放行的步骤（输入框下方显示 **�
 
 ## 自己运行演示
 
-演示网站的源码就是一个普通的 Uncage Connected 模式网站。要在你自己的电脑上运行，请按照[示例的 README](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo#run-it-single-node) 操作。要搭建你自己的网站，接着看[快速上手：Connected 模式](/docs/zh-cn/start/quickstart-connected/)。
+演示网站的源码就是一个普通的 Uncage Connected 模式网站，在同一套工具、技能和页面之上有两个入口：传统模式用的 `server.ts`（一个 Node 进程，例如部署在 Railway 上），以及 FaaS 模式用的 Next.js route handler（Vercel 加 Postgres）。要在你自己的电脑上运行，请按照[示例的 README](https://github.com/ptmafia/uncage/tree/main/examples/connected-demo#run-it-single-node) 操作。要搭建你自己的网站，接着看[快速上手：Connected 模式](/docs/zh-cn/start/quickstart-connected/)；托管在哪里，见[选择部署模式](/docs/zh-cn/start/choose-deployment-mode/)。

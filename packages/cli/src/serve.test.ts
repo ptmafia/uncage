@@ -1,14 +1,25 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig } from './config.js';
 import { buildAdapters, createLogger, formatBanner } from './serve.js';
 
+/** Tmp dirs created by this file's tests; removed after each test. */
+const madeDirs: string[] = [];
+const mkTmp = async (prefix: string): Promise<string> => {
+  const d = await mkdtemp(join(tmpdir(), prefix));
+  madeDirs.push(d);
+  return d;
+};
+afterEach(async () => {
+  await Promise.all(madeDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
+});
+
 describe('buildAdapters', () => {
   it('passes security.allowBypass to the Claude adapter', async () => {
-    const cwd = await mkdtemp(join(tmpdir(), 'uncage-cli-'));
+    const cwd = await mkTmp('uncage-cli-');
     const claude = async (env: NodeJS.ProcessEnv) =>
       buildAdapters(await loadConfig(cwd, env)).find((a) => a.id === 'claude')!.capabilities().permissionModes;
     expect(await claude({})).not.toContain('bypassPermissions');

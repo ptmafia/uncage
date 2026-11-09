@@ -1,0 +1,32 @@
+{
+  "name": "connected-cloudflare",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Uncage example: Connected Mode on Cloudflare Workers (native Worker, Hyperdrive Postgres, wrangler dev)",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "smoke": "node scripts/smoke.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@uncage/hub": "workspace:*",
+    "pg": "^8.23.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.15",
+    "@types/node": "^26.6.6",
+    "@types/pg": "^8.23.1",
+    "@uncage/agent": "workspace:*",
+    "@uncage/protocol": "workspace:*",
+    "@uncage/testkit": "workspace:*",
+    "wrangler": "~4.158.0"
+  }
+}

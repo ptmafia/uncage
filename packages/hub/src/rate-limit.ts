@@ -1,68 +1,33 @@
-import { UncageError } from '@uncage/core';
+import { UncageError } from '@uncage/core/errors';
+import type { HubStore } from './store/store.js';
 
-const MAX_KEYS = 50_000;
+/** An abuse limit shared by every hub instance on the same store. */
+export interface RateLimiter {
+  /** Counts one hit for `key`; throws `rate_limited` (429, `details.retryAfterSec`) when over the limit. */
+  take(key: string): Promise<void>;
+  /** Gives back one hit for `key` (a reserved attempt that turned out not to count). */
+  release(key: string): Promise<void>;
+}
 
 /**
- * In-memory sliding-window counter, per node. Multi-node deployments get per-node limits (each
- * node counts on its own) until limits are shared through the cluster adapter.
+ * Fixed-window limiter counted in the store (`uncage_hub_rate_limits`), so every instance (FaaS
+ * functions, several nodes) shares one count. The store key is `${name}:${key}`. Refused hits do
+ * not count. Being fixed windows, up to `2 × max` hits can land around a window boundary.
  */
-export class SlidingWindow {
-  private readonly hits = new Map<string, number[]>();
-
-  constructor(
-    readonly max: number,
-    readonly windowMs: number,
-    private readonly now: () => number = Date.now,
-  ) {}
-
-  private recent(key: string): number[] {
-    const since = this.now() - this.windowMs;
-    const list = (this.hits.get(key) ?? []).filter((t) => t > since);
-    if (list.length === 0) this.hits.delete(key);
-    else this.hits.set(key, list);
-    return list;
-  }
-
-  /** Milliseconds until `key` may act again, or 0 when under the limit. */
-  retryAfterMs(key: string): number {
-    const list = this.recent(key);
-    if (list.length < this.max) return 0;
-    return Math.max(1, list[list.length - this.max]! + this.windowMs - this.now());
-  }
-
-  record(key: string): void {
-    if (this.hits.size >= MAX_KEYS) this.prune();
-    const list = this.recent(key);
-    list.push(this.now());
-    this.hits.set(key, list);
-  }
-
-  /** Undoes the most recent `record(key)` (a reserved attempt that turned out not to count). */
-  release(key: string): void {
-    const list = this.hits.get(key);
-    if (!list) return;
-    list.pop();
-    if (list.length === 0) this.hits.delete(key);
-  }
-
-  /** Records a hit unless over the limit; throws `rate_limited` when over it. */
-  take(key: string): void {
-    this.assertAllowed(key);
-    this.record(key);
-  }
-
-  /** Throws `rate_limited` (429, `details.retryAfterSec`) when `key` is over the limit. */
-  assertAllowed(key: string): void {
-    const ms = this.retryAfterMs(key);
-    if (ms > 0) {
-      const retryAfterSec = Math.ceil(ms / 1000);
-      throw new UncageError('rate_limited', { hint: `Try again in ${retryAfterSec} s.`, details: { retryAfterSec } });
-    }
-  }
-
-  private prune(): void {
-    for (const key of [...this.hits.keys()]) this.recent(key);
-    // Still full of live keys: drop the oldest half rather than grow without bound.
-    if (this.hits.size >= MAX_KEYS) [...this.hits.keys()].slice(0, MAX_KEYS / 2).forEach((k) => this.hits.delete(k));
-  }
+export function storeRateLimiter(store: HubStore, o: { name: string; max: number; windowMs: number; now?: () => number }): RateLimiter {
+  const now = o.now ?? Date.now;
+  return {
+    async take(key) {
+      const r = await store.hitRateLimit(`${o.name}:${key}`, { max: o.max, windowMs: o.windowMs, nowMs: now() });
+      if (!r.allowed) {
+        const retryAfterSec = Math.max(1, Math.ceil(r.retryAfterMs / 1000));
+        throw new UncageError('rate_limited', { hint: `Try again in ${retryAfterSec} s.`, details: { retryAfterSec } });
+      }
+    },
+    // A release that lands in the next window gives the hit back there (never below 0); the old
+    // window keeps it. Off by at most one around a boundary, and no per-instance state to leak.
+    async release(key) {
+      await store.releaseRateLimit(`${o.name}:${key}`, { windowMs: o.windowMs, nowMs: now() });
+    },
+  };
 }

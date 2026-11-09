@@ -1,7 +1,7 @@
 ---
-import Command from './Command.astro';
 import FlowDiagram from './FlowDiagram.astro';
 import Icon from './Icon.astro';
+import InstallCommand from './InstallCommand.astro';
 import { TRY_DEMO, docsPath, docsPathEnglish, getDict, headline, type Locale } from '../i18n/index.ts';
 
 interface Props {
@@ -40,7 +40,7 @@ const phrases = headline(t.hero.title);
     </div>
     <div class="install">
       <p class="install-label">{t.hero.installLabel}</p>
-      <Command cmd={['npm i -g @uncage/cli', 'uncage setup https://your.site']} locale={locale} />
+      <InstallCommand locale={locale} id="hero-install" />
     </div>
   </div>
   <FlowDiagram locale={locale} />
@@ -143,9 +143,6 @@ const phrases = headline(t.hero.title);
   @media (max-width: 480px) {
     .ctas .btn {
       flex: 1 1 100%;
-    }
-    .install :global(.cmd) {
-      display: flex;
     }
   }
 </style>

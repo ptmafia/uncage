@@ -1,5 +1,6 @@
 import type { ActiveRunInfo, Attachment, RuntimeCapabilities, SessionSettings, UncageEvent } from '@uncage/protocol';
 import { ATTACHMENT_LIMITS } from '@uncage/protocol';
+import { createUncageClient } from '@uncage/client';
 import { describe, expect, it, vi } from 'vitest';
 import { createUncageStore, UPLOAD_FAILED_REASON } from './store.js';
 import { approval, clientError, eventFactory, fakeClient, machine, run, session, snapshot, T0 } from './test-fixtures.js';
@@ -185,6 +186,68 @@ describe('createUncageStore', () => {
     expect(store.getState().activeSessionId).toBe('ses_1');
     await store.actions.selectSession('ses_1');
     expect(f.subs.filter((s) => !s.closed)).toHaveLength(1);
+  });
+
+  it('rotation keeps the timeline intact', async () => {
+    const ev = eventFactory();
+    const words = ['The', ' rotation', ' is', ' seamless', ' for', ' the', ' reader', '.'];
+    const events: UncageEvent[] = [
+      ev('run.started', { run: run({ state: 'running' }) }),
+      ev('message.started', { messageId: 'm1', role: 'assistant' }),
+      ...words.map((text, chunkIndex) => ev('message.delta', { messageId: 'm1', chunkIndex, text })),
+      ev('tool.started', { toolId: 't1', name: 'Bash', title: 'ls', category: 'shell' }),
+      ev('message.completed', { messageId: 'm1', text: words.join('') }),
+      ev('run.completed', { runId: 'run_1', durationMs: 1 }),
+    ];
+    // Reference: the same events on one uninterrupted subscription.
+    const ref = fakeClient();
+    const refStore = createUncageStore(ref.client);
+    await refStore.actions.selectSession('ses_1');
+    for (const e of events) ref.emit(e);
+
+    // A server that ends every response after two events with `event: reconnect` (the real client).
+    const enc = new TextEncoder();
+    const requests: Headers[] = [];
+    const fetch = vi.fn(async (_u: string | URL | Request, i?: RequestInit) => {
+      const headers = new Headers(i?.headers);
+      requests.push(headers);
+      const lastId = headers.get('last-event-id');
+      const from = lastId ? events.findIndex((e) => e.eventId === lastId) + 1 : 0;
+      const chunk = events.slice(from, from + 2);
+      const body = chunk.map((e) => `id: ${e.eventId}\nevent: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join('');
+      const tail = from + 2 < events.length ? 'event: reconnect\ndata: {}\n\n' : '';
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(enc.encode(body + tail));
+            if (tail) c.close();
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'text/event-stream' } },
+      );
+    });
+    const real = createUncageClient({ fetch });
+    const f = fakeClient();
+    f.client.subscribe.mockImplementation(real.subscribe);
+    const store = createUncageStore(f.client);
+    const connections: string[] = [];
+    store.subscribe(() => {
+      const c = store.getState().active?.connection;
+      if (c && c !== connections.at(-1)) connections.push(c);
+    });
+    await store.actions.selectSession('ses_1');
+    await vi.waitFor(() => expect(store.getState().active!.lastSequence).toBe(events.length));
+    const got = store.getState().active!;
+    const want = refStore.getState().active!;
+    expect(requests.length).toBe(Math.ceil(events.length / 2));
+    expect(got.timeline).toEqual(want.timeline);
+    expect(got.messages).toEqual(want.messages);
+    expect(got.messages.m1!.text).toBe(words.join(''));
+    expect(got.tools).toEqual(want.tools);
+    expect(got.runs).toEqual(want.runs);
+    expect(connections).toEqual(['connecting', 'live']);
+    store.dispose();
+    refStore.dispose();
   });
 
   it('decide 410 marks the approval expired', async () => {

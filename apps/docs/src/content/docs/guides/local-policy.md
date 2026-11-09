@@ -14,7 +14,9 @@ This page is about the **user’s side**: the computer that runs `uncage agent`.
 | `~/.uncage/sites/<site id>/activity.log` | What that website did on this computer (JSON lines) |
 | `~/Uncage/<site host>/<session id>/` | One folder per session; Claude Code works here |
 | `~/.uncage/logs/agent.log`, `agent.err.log` | The background agent’s output |
-| `~/Library/LaunchAgents/dev.uncage.agent.plist` | The launchd service that keeps the agent running |
+| `~/Library/LaunchAgents/dev.uncage.agent.plist` | macOS: the launchd service that keeps the agent running |
+| `~/.config/systemd/user/uncage-agent.service` | Linux: the systemd user service |
+| Task Scheduler task `UncageAgent` | Windows: the scheduled task (or a `UncageAgent` value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` when Task Scheduler refuses) |
 
 `UNCAGE_HOME=/absolute/path` moves `~/.uncage` and `~/Uncage` for development and tests (the background service cannot use it: run `uncage setup <url> --no-daemon`, then `uncage agent` in the foreground with the same variable). `HOME` is not changed, so Claude Code keeps its login.
 
@@ -37,7 +39,7 @@ localPolicy:
   allowBypass: false
 ```
 
-Only `localPolicy` is meant to be edited by hand. Your comments and `localPolicy` survive when `uncage setup` or `uncage sites remove` rewrite the `sites` list. Unknown keys are rejected with an error naming them.
+Only `localPolicy` and `runtimes` are meant to be edited by hand. Your comments, `localPolicy` and `runtimes` survive when `uncage setup` or `uncage sites remove` rewrite the `sites` list. Unknown keys are rejected with an error naming them.
 
 ### `localPolicy.allowBypass`
 
@@ -61,6 +63,10 @@ localPolicy:
 ```
 
 Modes: `default`, `acceptEdits`, `plan`, `auto`, `bypassPermissions` (the last also needs `allowBypass: true`). New sessions start in `default`, so keep `default` in the list unless you want every run refused until the user picks an allowed mode.
+
+### `runtimes.acp`
+
+Which agents this computer offers besides Claude Code and Codex: Gemini CLI, OpenCode, Claude Code’s ACP adapter or any other agent that speaks the Agent Client Protocol. Agents from the ACP registry that download code (`npx`, `uvx`) only run after `uncage runtimes enable <id>`; `uncage runtimes` lists what is offered. See [Use any ACP agent](/docs/guides/use-any-acp-agent/).
 
 ### Apply a change
 
@@ -97,7 +103,11 @@ If a website revokes the computer, the agent marks the site `revoked` in `agent.
 
 ## The background agent
 
-- `uncage setup <url>` installs it as a launchd user agent: it starts at login, and launchd restarts it after a crash or a self-upgrade (not after a clean exit, for example when no websites are left).
+- `uncage setup <url>` (or `uncage agent install`) installs it as a per-user background service, pinned to the Node.js that ran the command. No admin rights.
+  - **macOS:** a launchd user agent. It starts at login, and launchd restarts it after a crash or a self-upgrade (not after a clean exit, for example when no websites are left).
+  - **Linux:** a systemd user service (`Restart=on-failure`). It stops at logout unless lingering is on: `loginctl enable-linger $USER`. Without a user systemd, run `uncage agent` in the foreground.
+  - **Windows:** a scheduled task that starts at sign-in, for the current user with least privilege; a registry Run entry if the task cannot be created. A small supervisor restarts the agent after a crash or a self-upgrade.
+- `uncage agent status` shows the service, whether it runs, and its Node.js. If that Node.js was removed (a Homebrew upgrade, a removed nvm or fnm version), run `uncage agent install` again.
 - `uncage agent uninstall` stops it and removes the service. `agent.yaml` and data stay.
 - `uncage agent` runs it in the foreground (stop the service first). `UNCAGE_LOG_LEVEL=debug` for more output.
 - Upgrades: if a hub requires a newer agent (`upgrade_required`), the agent runs `npm i -g @uncage/cli@latest` once, then restarts.
@@ -105,4 +115,4 @@ If a website revokes the computer, the agent marks the site `revoked` in `agent.
 
 ## Local extensions
 
-Executable extensions (for example a hook that deploys a project when a run completes) may only ever come from **this computer**: an npm package the user installs or a local configuration the user writes. A website can only send data (tool schemas, skill text and templates), never code to run here. Uncage 0.2 does not ship a local extension API yet; `localPolicy` is the local control surface today.
+Executable extensions (for example a hook that deploys a project when a run completes) may only ever come from **this computer**: an npm package the user installs or a local configuration the user writes. A website can only send data (tool schemas, skill text and templates), never code to run here. Uncage 0.3 does not ship a local extension API yet; `localPolicy` is the local control surface today.

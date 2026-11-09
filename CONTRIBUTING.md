@@ -21,17 +21,18 @@ in their own job on Node 24 (lint, typecheck, sample check, build). Locally:
 
 ```sh
 pnpm build                       # the packages: the API reference and the sample check read them
-pnpm --filter docs dev           # http://localhost:4321/uncage/
+pnpm --filter docs dev           # http://localhost:4321/docs/
 pnpm --filter docs check         # type-check every code sample, then build (link check included)
 ```
 
-- Pages are markdown in `apps/docs/src/content/docs/` (English) and `.../zh-cn/` (Chinese:
-  overview, quickstarts, concepts). The reading order is `apps/docs/src/nav.mjs`.
+- Pages are markdown in `apps/docs/src/content/docs/` (English), `.../zh-cn/` (Chinese) and `.../ja/` (Japanese).
+  Every page except the API reference, the changelog and `guides/ci-and-releases` needs all
+  three (`apps/docs/scripts/check-i18n.ts` enforces it; terms are in `apps/docs/i18n-glossary.md`). The reading order is `apps/docs/src/nav.mjs`.
 - Every ` ```ts ` / ` ```tsx ` block is type-checked against the workspace packages by
   `apps/docs/scripts/check-snippets.ts`. Blocks on one page form one project; a block with
   `title="lib/tools.ts"` becomes that file. Mark a fragment that is not a whole file with
   ` ```ts nocheck `.
-- Internal links are absolute and include the base path (`/uncage/guides/define-tools/`); the build
+- Internal links are absolute and include the base path (`/docs/guides/define-tools/`); the build
   fails on broken links (`starlight-links-validator`).
 - The API reference (`/api/…`) is generated at build time from the packages' TSDoc
   (TypeDoc + `typedoc-plugin-markdown`). Improve it in the source.
@@ -39,10 +40,10 @@ pnpm --filter docs check         # type-check every code sample, then build (lin
   `/skills/uncage/SKILL.md` (served from `skills/uncage/SKILL.md` in this repo; keep it in sync
   with the quickstarts).
 - CI (`.github/workflows/ci.yml`, job "Docs") runs the sample check and the build on every PR.
-  `.github/workflows/docs.yml` deploys to GitHub Pages on every push to `main`.
-
-**One-time setup:** repository Settings → Pages → Build and deployment → Source: **GitHub
-Actions**. Until that is set, the deploy job of `docs.yml` fails (the build job still runs).
+  `.github/workflows/docs.yml` (the "Web" check) builds the site and the help site as one static
+  output and validates links and translations (`pnpm build:web`, `pnpm check:web`,
+  `check-i18n`); it deploys nothing. Vercel's Git integration deploys it (`vercel.json` at the
+  root). The live demo is hosted separately: see `docs/deploy-web.md`.
 
 ## Releasing
 
@@ -61,7 +62,7 @@ Publishing uses npm trusted publishing (OIDC). There is no `NPM_TOKEN` secret.
 ### One-time setup
 
 **npm, per public package** (`@uncage/protocol`, `core`, `server`, `client`, `react`,
-`react-ui`, `runtime-claude`, `runtime-codex`, `cli`, `hub`, and `agent` once it exists):
+`react-ui`, `runtime-claude`, `runtime-codex`, `runtime-acp`, `cli`, `hub`, and `agent`):
 npmjs.com, package, Settings, Trusted publishing, GitHub Actions:
 
 - Organization or user: `ptmafia`
@@ -69,8 +70,8 @@ npmjs.com, package, Settings, Trusted publishing, GitHub Actions:
 - Workflow filename: `release.yml`
 - Environment: leave empty
 
-A package that has never been published (new in 0.2: `@uncage/hub`, `@uncage/agent`) has no
-settings page yet. Either publish it once by hand (`pnpm build`, then
+A package that has never been published (new in 0.3: `@uncage/runtime-acp`) has no
+settings page yet. Trusted publishing cannot create a package. Either publish it once by hand (`pnpm build`, then
 `pnpm --filter @uncage/hub publish --access public --no-git-checks` while logged in with
 `npm login`) and configure the trusted publisher afterwards, or create it with the first
 release using a temporary granular access token (write access, bypass 2FA) exposed to the

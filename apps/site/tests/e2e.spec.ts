@@ -10,6 +10,30 @@ function trackErrors(page: Page): string[] {
   return errors;
 }
 
+/** No empty cell in the feature grids: every row is full, and the two wide cards share the last row. */
+async function assertFeatureRows(page: Page) {
+  const grid = (await page.locator('#features ul.now').boundingBox())!;
+  const wide = await page.locator('#features li.feat.wide').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().toJSON() as DOMRect));
+  expect(wide).toHaveLength(2);
+  const [a, b] = wide as [DOMRect, DOMRect];
+  const oneColumn = a.width > grid.width - 6;
+  if (oneColumn) expect(b.width).toBeGreaterThan(grid.width - 6);
+  else {
+    expect(Math.abs(a.top - b.top)).toBeLessThan(2);
+    expect(a.width + b.width).toBeGreaterThan(grid.width - 6);
+  }
+  // Every card of the 3×2 part is in a full row too: the cards per row times the card width fill the grid.
+  const cards = await page.locator('#features li.feat:not(.soon):not(.wide)').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().width));
+  const perRow = Math.round(grid.width / cards[0]!);
+  expect(cards.length % perRow).toBe(0);
+  const later = (await page.locator('#features ul.later').boundingBox())!;
+  const soon = await page.locator('#features li.feat.soon').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().width));
+  if (oneColumn) for (const w of soon) expect(w).toBeGreaterThan(later.width - 6);
+  else expect(soon.reduce((x, y) => x + y, 0)).toBeGreaterThan(later.width - 6);
+}
+
+const WINDOWS_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+
 test('English homepage: language, headline, navigation, CTAs, Coming soon, hreflang, no errors', async ({ page }) => {
   const errors = trackErrors(page);
   await page.goto('/');
@@ -24,10 +48,14 @@ test('English homepage: language, headline, navigation, CTAs, Coming soon, hrefl
     await expect(page.locator(sel)).toHaveAttribute('href', '/docs/start/try-the-demo/');
   }
 
-  // Four Coming soon features, each badged (the group heading "Coming soon" is separate).
-  await expect(page.locator('[data-soon-badge]')).toHaveCount(4);
-  await expect(page.locator('[data-soon-badge]', { hasText: /^Coming soon$/ })).toHaveCount(4);
-  await expect(page.locator('#features li.feat:not(.soon)')).toHaveCount(6);
+  // Two Coming soon features, each badged (the group heading "Coming soon" is separate).
+  await expect(page.locator('[data-soon-badge]')).toHaveCount(2);
+  await expect(page.locator('[data-soon-badge]', { hasText: /^Coming soon$/ })).toHaveCount(2);
+  await expect(page.locator('#features li.feat:not(.soon)')).toHaveCount(8);
+  // The 7th and 8th cards (any ACP agent; macOS, Windows and Linux) share one row under the 3×2 grid.
+  await assertFeatureRows(page);
+  await expect(page.locator('#features li.feat.wide h4')).toHaveText(['Any ACP agent', 'macOS, Windows and Linux']);
+  await expect(page.locator('#hero-title ~ .install [data-install-cmd]:visible')).toContainText('curl -fsSL https://your.site/api/uncage/install.sh | bash');
 
   await expect(page.locator('link[rel="alternate"][hreflang="zh-CN"]')).toHaveAttribute('href', /\/zh\/$/);
   await expect(page.locator('link[rel="alternate"][hreflang="ja"]')).toHaveAttribute('href', /\/ja\/$/);
@@ -58,8 +86,8 @@ test('no horizontal scroll on phones (375, 360, 320) in every locale', async ({ 
 test('zh and ja homepages: language, translated copy, docs links, switcher, OG image', async ({ page }) => {
   const errors = trackErrors(page);
   for (const c of [
-    { path: '/zh/', lang: 'zh-CN', docs: '/docs/zh-cn/', og: 'zh', h1: '你的 coding agent，无处不在。', secondary: '几分钟完成接入', soon: '即将推出' },
-    { path: '/ja/', lang: 'ja', docs: '/docs/ja/', og: 'ja', h1: 'あなたのコーディングエージェントを、どこでも。', secondary: '数分で導入', soon: '近日公開' },
+    { path: '/zh/', lang: 'zh-CN', docs: '/docs/zh-cn/', og: 'zh', h1: '你的 coding agent，无处不在。', secondary: '几分钟完成接入', soon: '即将推出', installLabel: '一条命令，一次批准' },
+    { path: '/ja/', lang: 'ja', docs: '/docs/ja/', og: 'ja', h1: 'あなたのコーディングエージェントを、どこでも。', secondary: '数分で導入', soon: '近日公開', installLabel: 'コマンド1つ、承認1回' },
   ] as const) {
     await page.goto(c.path);
     await expect(page.locator('html')).toHaveAttribute('lang', c.lang);
@@ -69,8 +97,9 @@ test('zh and ja homepages: language, translated copy, docs links, switcher, OG i
     for (const sel of ['header a.cta', '[data-cta="primary"]', '[data-cta="final"]']) {
       await expect(page.locator(sel)).toHaveAttribute('href', `${c.docs}start/try-the-demo/`);
     }
-    await expect(page.locator('[data-soon-badge]', { hasText: new RegExp(`^${c.soon}$`) })).toHaveCount(4);
-    await expect(page.locator('#features li.feat:not(.soon)')).toHaveCount(6);
+    await expect(page.locator('[data-soon-badge]', { hasText: new RegExp(`^${c.soon}$`) })).toHaveCount(2);
+    await expect(page.locator('#features li.feat:not(.soon)')).toHaveCount(8);
+    await expect(page.locator('.install-label')).toHaveText(c.installLabel);
     await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', new RegExp(`${c.path}$`));
     await expect(page.locator('meta[property="og:image"]')).toHaveAttribute('content', new RegExp(`/og/og-${c.og}\\.png$`));
     await expect(page.locator('meta[name="twitter:image"]')).toHaveAttribute('content', new RegExp(`/og/og-${c.og}\\.png$`));
@@ -90,13 +119,71 @@ test('zh and ja homepages: language, translated copy, docs links, switcher, OG i
   expect(errors).toEqual([]);
 });
 
-test('copy button copies the setup command', async ({ page, context }) => {
+test('copy buttons copy the install command of the chosen OS', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.goto('/');
-  const btn = page.locator('.install button.copy');
+  let btn = page.locator('.install [data-install-cmd]:visible button.copy');
   await btn.click();
   await expect(btn).toHaveAttribute('data-copied', '');
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('npm i -g @uncage/cli && uncage setup https://your.site');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('curl -fsSL https://your.site/api/uncage/install.sh | bash');
+  await page.getByRole('tab', { name: 'Windows' }).click();
+  btn = page.locator('.install [data-install-cmd]:visible button.copy');
+  await btn.click();
+  await expect(btn).toHaveAttribute('data-copied', '');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('irm https://your.site/api/uncage/install.ps1 | iex');
+});
+
+test('install command follows the visitor OS and can be switched (mouse and keyboard)', async ({ browser }) => {
+  // Windows: the UA plus navigator.platform / userAgentData.platform, as a real Windows Chrome reports them.
+  const win = await browser.newContext({ userAgent: WINDOWS_UA });
+  await win.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'Win32' });
+    Object.defineProperty(Navigator.prototype, 'userAgentData', { get: () => ({ platform: 'Windows', mobile: false, brands: [] }) });
+  });
+  const wp = await win.newPage();
+  await wp.goto('/');
+  await expect(wp.locator('.install [data-install-cmd]:visible')).toHaveCount(1);
+  await expect(wp.locator('.install [data-install-cmd]:visible')).toContainText('irm https://your.site/api/uncage/install.ps1 | iex');
+  await expect(wp.getByRole('tab', { name: 'Windows' })).toHaveAttribute('aria-selected', 'true');
+  await expect(wp.locator('#how .step').first().locator('code .line:visible')).toHaveText('irm https://your.site/api/uncage/install.ps1 | iex');
+  await win.close();
+
+  // macOS (the default context): curl; the Windows tab switches; arrow keys switch back.
+  const mac = await browser.newContext();
+  await mac.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'MacIntel' });
+    Object.defineProperty(Navigator.prototype, 'userAgentData', { get: () => ({ platform: 'macOS', mobile: false, brands: [] }) });
+  });
+  const page = await mac.newPage();
+  await page.goto('/');
+  const visible = page.locator('.install [data-install-cmd]:visible');
+  await expect(visible).toHaveCount(1);
+  await expect(visible).toContainText('curl -fsSL');
+  await expect(page.getByRole('tablist')).toHaveAttribute('aria-label', 'Operating system');
+  const unix = page.getByRole('tab', { name: 'macOS / Linux' });
+  const windows = page.getByRole('tab', { name: 'Windows' });
+  await expect(unix).toHaveAttribute('aria-selected', 'true');
+  await windows.click();
+  await expect(visible).toContainText('irm ');
+  await expect(windows).toHaveAttribute('aria-selected', 'true');
+  await expect(unix).toHaveAttribute('tabindex', '-1');
+  await expect(page.locator('#how .step').first().locator('code .line:visible')).toHaveText('irm https://your.site/api/uncage/install.ps1 | iex');
+  await windows.focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(unix).toBeFocused();
+  await expect(unix).toHaveAttribute('aria-selected', 'true');
+  await expect(visible).toContainText('curl -fsSL');
+  await expect(page.locator('[data-soon-badge]')).toHaveCount(2);
+  await expect(page.locator('#features li.feat:not(.soon)')).toHaveCount(8);
+  await mac.close();
+});
+
+test('feature grids have no empty cell at desktop, tablet and phone widths', async ({ page }) => {
+  for (const width of [1440, 960, 800, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/');
+    await assertFeatureRows(page);
+  }
 });
 
 test('reduced motion: the flow diagram is fully visible at once', async ({ browser }) => {

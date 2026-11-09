@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { AcpRuntimesSchema, DEFAULT_ACP_RUNTIMES, type AcpRuntimesConfig } from '@uncage/agent';
 import { parse } from 'yaml';
 import { z } from 'zod';
 
@@ -7,7 +8,7 @@ export interface UncageConfig {
   server: { port: number; eventRetentionDays: number };
   security: { allowedOrigins: string[]; approvalTtlMs: number; allowBypass: boolean };
   workspace: { allowedRoots: string[]; default: string };
-  runtimes: { claude: { enabled: boolean }; codex: { enabled: boolean; command?: string[] } };
+  runtimes: { claude: { enabled: boolean }; codex: { enabled: boolean; command?: string[] }; acp: AcpRuntimesConfig };
 }
 
 export const CONFIG_FILE = 'uncage.config.yaml';
@@ -46,9 +47,11 @@ export const ConfigSchema = z
           .object({ enabled: z.boolean().default(true), command: z.array(z.string()).min(1).optional() })
           .strict()
           .default({ enabled: true }),
+        /** ACP agents: same schema as `runtimes.acp` in ~/.uncage/agent.yaml. */
+        acp: AcpRuntimesSchema.default(DEFAULT_ACP_RUNTIMES),
       })
       .strict()
-      .default({ claude: { enabled: true }, codex: { enabled: true } }),
+      .default({ claude: { enabled: true }, codex: { enabled: true }, acp: DEFAULT_ACP_RUNTIMES }),
   })
   .strict();
 
@@ -65,9 +68,14 @@ function formatIssues(file: string, err: z.ZodError): string {
 
 /**
  * Loads `./uncage.config.yaml` (optional), applies defaults, then env overrides (`UNCAGE_PORT`;
- * `UNCAGE_ALLOW_BYPASS=1` turns `security.allowBypass` on).
+ * `UNCAGE_ALLOW_BYPASS=1` turns `security.allowBypass` on). A project file cannot consent to
+ * downloading agents: `runtimes.acp.enable` / `consented` are ignored with a warning (`warn`).
  */
-export async function loadConfig(cwd: string, env: NodeJS.ProcessEnv): Promise<UncageConfig> {
+export async function loadConfig(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  warn: (message: string) => void = (m) => console.error(`! ${m}`),
+): Promise<UncageConfig> {
   const path = join(cwd, CONFIG_FILE);
   let raw: unknown = {};
   try {
@@ -80,6 +88,15 @@ export async function loadConfig(cwd: string, env: NodeJS.ProcessEnv): Promise<U
   const parsed = ConfigSchema.safeParse(raw);
   if (!parsed.success) throw new Error(formatIssues(CONFIG_FILE, parsed.error));
   const c = parsed.data;
+  const { enable, consented } = c.runtimes.acp;
+  if (enable.length > 0 || Object.keys(consented).length > 0) {
+    const ids = [...new Set([...enable, ...Object.keys(consented)])];
+    warn(
+      `${CONFIG_FILE}: runtimes.acp.enable/consented are ignored (a project file cannot consent to running downloaded agents). ` +
+        `Local Mode (uncage serve) runs only agents installed on this computer: presets and agents found on PATH, and runtimes.acp.agents[] from this file. ` +
+        `Agents started through npx/uvx (${ids.join(', ')}) run only in Connected Mode, after: ${ids.map((id) => `uncage runtimes enable ${id}`).join('; ')}`,
+    );
+  }
 
   let port = c.server.port;
   if (env.UNCAGE_PORT !== undefined && env.UNCAGE_PORT !== '') {
@@ -102,6 +119,7 @@ export async function loadConfig(cwd: string, env: NodeJS.ProcessEnv): Promise<U
         enabled: c.runtimes.codex.enabled,
         ...(c.runtimes.codex.command ? { command: c.runtimes.codex.command } : {}),
       },
+      acp: { ...c.runtimes.acp, enable: [], consented: {} },
     },
   };
 }

@@ -17,6 +17,7 @@ export const en: Dict = {
     copy: 'Copy',
     copied: 'Copied',
     external: 'opens in a new tab',
+    installOs: 'Operating system',
   },
   nav: {
     product: 'Product',
@@ -32,15 +33,15 @@ export const en: Dict = {
     dismiss: 'Dismiss',
   },
   hero: {
-    eyebrow: 'v0.2 · Connected Mode is live',
+    eyebrow: 'v0.3 · Now runs on serverless',
     title: 'Run your coding agent *everywhere.*',
     lede: 'Your users already have a powerful setup: their own Claude Code, their logins, their tools. Uncage turns that local harness into a service your product can call. The work runs on their machine; the results land on your site.',
     primary: 'Try the live demo',
     secondary: 'Integrate in minutes',
-    installLabel: 'Your users run once',
+    installLabel: 'One command, one approval',
   },
   flow: {
-    label: 'How a request flows: a chat on your site, a WebSocket opened by the user’s computer, and Claude Code running there.',
+    label: 'How a request flows: a chat on your site, a WebSocket or HTTPS stream opened by the user’s computer, and Claude Code running there.',
     browserTitle: 'your.site',
     online: 'Machine online',
     userMessage: 'Build a landing page for our launch and publish it',
@@ -48,7 +49,7 @@ export const en: Dict = {
     assistant: 'Page written. Publish it to your site?',
     allow: 'Allow once',
     deny: 'Deny',
-    wire: 'WebSocket, dialed out by the user’s machine',
+    wire: 'WebSocket or HTTPS streaming, dialed out by the user’s machine',
     termSkill: 'loaded skill',
     termWrite: 'wrote',
     termWaiting: 'waiting for approval…',
@@ -80,12 +81,12 @@ export const en: Dict = {
   how: {
     kicker: 'How it works',
     title: 'Three moving parts. One protocol.',
-    sub: 'The browser talks to your site. Your site talks to the user’s machine over a socket the machine opened itself. Nothing else.',
+    sub: 'The browser talks to your site. Your site talks to the user’s machine over a WebSocket or HTTPS stream the machine opened itself. Nothing else.',
     steps: [
       {
         tag: 'Connect',
         title: 'The user links their computer',
-        body: 'Two commands, one approval in the browser. A background agent dials out to your site, so no ports are opened.',
+        body: 'One command, one approval in the browser. A background agent dials out to your site, so no ports are opened.',
       },
       {
         tag: 'Instruct',
@@ -128,8 +129,16 @@ export const en: Dict = {
         body: 'A Claude Code-style composer with models, effort, permission modes, attachments and voice input.',
       },
       {
-        title: 'Scales out',
-        body: 'Postgres and Redis adapters run the hub on many nodes behind any load balancer.',
+        title: 'Runs anywhere',
+        body: 'A long-running Node server, Vercel, Cloudflare Workers or any Fetch platform. FaaS mode needs only Postgres; add Redis to scale out.',
+      },
+      {
+        title: 'Any ACP agent',
+        body: 'Claude Code through its ACP adapter (verified live), and any agent that speaks the Agent Client Protocol, such as Gemini CLI or OpenCode, shows up in the runtime picker.',
+      },
+      {
+        title: 'macOS, Windows and Linux',
+        body: 'One command installs everything on macOS, Windows or Linux. The agent runs as a per-user background service: no sudo on macOS and Linux, a per-user install on Windows. macOS is verified on real devices; Windows and Linux are CI verified, real-device confirmation pending.',
       },
     ],
     soon: [
@@ -138,23 +147,15 @@ export const en: Dict = {
         body: 'The Codex adapter ships today, tested against a simulated server. Verification on the real binary is next.',
       },
       {
-        title: 'Windows and Linux agents',
-        body: 'The background agent runs on macOS today.',
-      },
-      {
         title: 'More entry points',
         body: 'Mobile apps, chat apps and browser extensions driving the same local harness.',
-      },
-      {
-        title: 'Serverless-ready transport',
-        body: 'Host the hub on Vercel or Netlify. Today it needs a long-running Node process for WebSockets.',
       },
     ],
   },
   code: {
     kicker: 'For developers',
     title: 'Mount a hub. Drop in a chat.',
-    sub: 'Your auth, your database, your Node server. Uncage plugs into what you run today.',
+    sub: 'Your auth, your database, your server or functions platform. Uncage plugs into what you run today.',
     moreTitle: 'From zero to a connected computer',
     moreBody: 'The quickstart builds a Next.js app with the hub, the device approval page and your first site tool, step by step. Express, Fastify and Hono work too.',
     more: 'Follow the Connected Mode quickstart',
@@ -185,7 +186,7 @@ export const en: Dict = {
   },
   final: {
     title: 'Put your users’ agents to work in your product.',
-    sub: 'MIT licensed · 11 packages on npm · built for developers and coding agents',
+    sub: 'MIT licensed · 12 packages on npm · built for developers and coding agents',
     primary: 'Try the live demo',
     secondary: 'Read the docs',
   },

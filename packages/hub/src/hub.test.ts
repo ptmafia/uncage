@@ -1,24 +1,28 @@
 import { DeviceTokenResponseSchema, MachineInfoSchema, type MachineInfo, type Session, type UncageEvent } from '@uncage/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createHub } from './hub.js';
-import { CLOSE } from './machines.js';
-import { sha256 } from './device.js';
-import { pgliteHubStore } from './store/pglite.js';
+import { createHub, HUB_VERSION } from './hub.js';
+import { defaultCliRange } from './install/render.js';
+import { CLOSE } from './node/ws.js';
+import { pgliteHubStore } from './node/index.js';
+import { sha256Hex } from './web.js';
 import {
   connectFakeAgent,
+  connectFakeHttpAgent,
   fakeMachine,
   fakeSession,
   makeEvent,
   NO_REPLY,
   readSse,
   sleep,
+  startFaasHubs,
   startTestHub,
   until,
   type FakeAgent,
   type TestHub,
 } from './test-utils.js';
 import { defineTool } from './tools.js';
+import type { HubOptions } from './types.js';
 
 let th: TestHub | undefined;
 const agents: FakeAgent[] = [];
@@ -59,9 +63,13 @@ describe('device login over HTTP', () => {
     if (ok.status !== 'ok') throw new Error('expected ok');
     expect(ok.machineToken).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 bytes base64url
     expect(ok.site).toEqual({ id: '127.0.0.1-' + new URL(t.origin).port, name: '127.0.0.1', url: t.api });
+    expect(ok.transports).toEqual([
+      { kind: 'ws', url: t.wsUrl },
+      { kind: 'http', url: `${t.api}/agent` },
+    ]);
     const m = await t.store.getMachine(ok.machineId);
     expect(m?.userId).toBe('alice');
-    expect(m?.tokenHash).toBe(sha256(ok.machineToken));
+    expect(m?.tokenHash).toBe(await sha256Hex(ok.machineToken));
     expect(JSON.stringify(m)).not.toContain(ok.machineToken);
     await sleep(1600);
     expect(await poll()).toEqual({ status: 'expired' });
@@ -96,24 +104,37 @@ describe('machine connections', () => {
     const { machineId, machineToken } = await t.pair('alice', { name: 'Pending name' });
     expect((await machinesOf(t, 'alice'))[0]).toMatchObject({ id: machineId, online: false });
     const a = await connect({ url: t.wsUrl, token: machineToken, name: 'Alice MBP', os: 'darwin 25.6', agentVersion: '99.1.0' });
-    expect(a.frames[0]).toMatchObject({ t: 'welcome', machineId, protocol: 1 });
+    expect(a.frames[0]).toMatchObject({ t: 'welcome', machineId, protocol: 2 });
     const [m] = await machinesOf(t, 'alice');
-    expect(MachineInfoSchema.parse(m)).toMatchObject({ online: true, name: 'Alice MBP', os: 'darwin 25.6', agentVersion: '99.1.0' });
+    expect(MachineInfoSchema.parse(m)).toMatchObject({ online: true, name: 'Alice MBP', os: 'darwin 25.6', agentVersion: '99.1.0', agentOutdated: false, transport: 'ws' });
     expect(m!.runtimes.map((r) => r.id)).toEqual(['fake']);
     await a.close();
     await until(async () => (await machinesOf(t, 'alice'))[0]?.online === false);
+    expect((await machinesOf(t, 'alice'))[0]).toMatchObject({ online: false, transport: null });
+  });
+
+  it('a protocol 1 (0.2) hello gets upgrade_required', async () => {
+    const t = await start();
+    const { machineToken } = await t.pair('alice');
+    const a = await connect({ url: t.wsUrl, token: machineToken, protocol: 1, waitWelcome: false });
+    expect(await a.waitFor((f) => f.t === 'upgrade_required')).toMatchObject({ t: 'upgrade_required' });
+    expect((await a.closed).code).toBe(CLOSE.upgrade);
   });
 
   it('sends upgrade_required to agents older than minAgentVersion', async () => {
     const t = await start({ minAgentVersion: '0.2.0' });
-    const { machineToken } = await t.pair('alice');
+    const { machineId, machineToken } = await t.pair('alice');
     const a = await connect({ url: t.wsUrl, token: machineToken, agentVersion: '0.1.9', waitWelcome: false });
     expect(await a.waitFor((f) => f.t === 'upgrade_required')).toEqual({ t: 'upgrade_required', minAgentVersion: '0.2.0' });
     expect((await a.closed).code).toBe(CLOSE.upgrade);
-    expect((await machinesOf(t, 'alice'))[0]?.online).toBe(false);
-    // Exactly the minimum is fine.
+    // Refused for its version: the website shows "agent update needed" even though it never said hello.
+    expect((await machinesOf(t, 'alice'))[0]).toMatchObject({ online: false, agentVersion: '0.0.0', agentOutdated: true });
+    await t.store.updateMachine(machineId, { agentVersion: '0.1.9' });
+    expect((await machinesOf(t, 'alice'))[0]).toMatchObject({ agentVersion: '0.1.9', agentOutdated: true });
+    // Exactly the minimum is fine, and clears the notice.
     const b = await connect({ url: t.wsUrl, token: machineToken, agentVersion: '0.2.0' });
     expect(b.frames[0]?.t).toBe('welcome');
+    expect((await machinesOf(t, 'alice'))[0]).toMatchObject({ agentVersion: '0.2.0', agentOutdated: false, online: true, transport: 'ws' });
   });
 
   it('closes a socket whose first frame is not hello, and on malformed frames', async () => {
@@ -426,6 +447,76 @@ describe('browser API → machine', () => {
     expect(all.map((e) => e.sequence)).toEqual([2, 3]);
   });
 
+  it('browser SSE ends with event: reconnect at stream.maxDurationMs', async () => {
+    const t = await start({ stream: { maxDurationMs: 300 }, sseHeartbeatMs: 50 });
+    const fm = fakeMachine();
+    const { machineToken } = await t.pair('alice');
+    await connect({ url: t.wsUrl, token: machineToken, onCommand: fm.handler });
+    const s = (await (await t.as('alice', '/sessions', post({ runtime: 'fake' }))).json()) as Session;
+    const t0 = Date.now();
+    const res = await t.as('alice', `/sessions/${s.id}/events?after=0`, { headers: { accept: 'text/event-stream' } });
+    const frames: Array<{ id?: string; event?: string; data: string }> = [];
+    // The body ends by itself (the loop finishes), right after the reconnect frame.
+    for await (const f of readSse(res)) if (!f.comment) frames.push(f);
+    const elapsed = Date.now() - t0;
+    expect(frames.map((f) => f.event)).toEqual(['session.created', 'reconnect']);
+    expect(frames.at(-1)).toEqual({ event: 'reconnect', data: '{}' });
+    expect(elapsed).toBeGreaterThanOrEqual(280);
+    expect(elapsed).toBeLessThan(2000);
+  });
+
+  it('browser SSE rotation across two instances: resuming with Last-Event-ID loses and repeats nothing', async () => {
+    const hubs = await startFaasHubs({ n: 2, sessionStorage: 'site', stream: { maxDurationMs: 120 }, sseHeartbeatMs: 40 });
+    try {
+      const { token } = await hubs.pair('alice');
+      const fm = fakeMachine();
+      const agent = await connectFakeHttpAgent({ hubs, token, onCommand: fm.handler });
+      try {
+        const s = (await (await hubs.as('alice', '/sessions', post({ runtime: 'fake' }))).json()) as Session;
+        await agent.events(s.id, fm.sessions.get(s.id)!.events);
+        const TOTAL = 40;
+        // The machine produces events 2..TOTAL while the browser stream rotates several times.
+        const producer = (async () => {
+          for (let i = 2; i <= TOTAL; i++) {
+            await agent.events(s.id, [fm.append(s.id, 'message.delta', { messageId: 'm1', chunkIndex: i, text: `${i}` })]);
+            await sleep(15);
+          }
+        })();
+        const seen: number[] = [];
+        const servedBy = new Set<number>();
+        let lastId: string | undefined;
+        let rotations = 0;
+        while (seen.at(-1) !== TOTAL) {
+          const before = hubs.requests.length;
+          const res = await hubs.as('alice', `/sessions/${s.id}/events?after=0`, {
+            headers: { accept: 'text/event-stream', ...(lastId ? { 'last-event-id': lastId } : {}) },
+          });
+          servedBy.add(hubs.requests.slice(before).find((r) => r.path.endsWith('/events'))!.i);
+          let rotated = false;
+          for await (const f of readSse(res)) {
+            if (f.comment) continue;
+            if (f.event === 'reconnect') {
+              rotated = true;
+              continue;
+            }
+            seen.push((JSON.parse(f.data) as UncageEvent).sequence);
+            lastId = f.id;
+            if (seen.at(-1) === TOTAL) break;
+          }
+          if (rotated) rotations++;
+        }
+        await producer;
+        expect(seen).toEqual(Array.from({ length: TOTAL }, (_, k) => k + 1));
+        expect(rotations).toBeGreaterThanOrEqual(2);
+        expect([...servedBy].sort()).toEqual([0, 1]);
+      } finally {
+        await agent.close();
+      }
+    } finally {
+      await hubs.close();
+    }
+  });
+
   it('machine storage: history needs the machine (offline → error frame, snapshot 409)', async () => {
     const t = await start();
     const fm = fakeMachine();
@@ -485,7 +576,7 @@ describe('browser API → machine', () => {
   });
 
   it('attachment bytes: swept after attachmentRetentionDays; revoking the machine deletes them', async () => {
-    const t = await start({ attachmentRetentionDays: 1, manifestSweep: { intervalMs: 50 } });
+    const t = await start({ attachmentRetentionDays: 1, maintenance: { intervalMs: 50 } });
     const fm = fakeMachine();
     const { machineToken, machineId } = await t.pair('alice');
     let n = 0;
@@ -513,38 +604,91 @@ describe('browser API → machine', () => {
   });
 
   it('attachmentRetentionDays must be positive', async () => {
-    await expect(createHub({ publicUrl: 'https://x.test', getUser: async () => null, attachmentRetentionDays: 0 })).rejects.toThrow(/attachmentRetentionDays/);
+    const store = await pgliteHubStore({ dataDir: 'memory://' });
+    await expect(createHub({ publicUrl: 'https://x.test', getUser: async () => null, store, attachmentRetentionDays: 0 })).rejects.toThrow(/attachmentRetentionDays/);
+    await store.close();
   });
 
-  it('install info and install.sh', async () => {
+  it('install info has the Windows command and GET /install.ps1 serves the script', async () => {
     const t = await start();
     expect(await (await t.as('alice', '/machines/install')).json()).toEqual({
       install: `curl -fsSL ${t.api}/install.sh | bash`,
       setup: `uncage setup ${t.origin}`,
-      windows: null,
+      windows: `irm ${t.api}/install.ps1 | iex`,
     });
+    // Public (no website session), like install.sh.
+    const res = await fetch(`${t.api}/install.ps1`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/plain; charset=utf-8');
+    expect(res.headers.get('cache-control')).toBe('no-cache');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    const ps1 = await res.text();
+    // eslint-disable-next-line no-control-regex
+    expect(ps1).toMatch(/^[\x00-\x7f]*$/);
+    expect(ps1).toContain('param([switch]$Yes, [switch]$NoSetup, [string]$Lang)');
+    expect(ps1).toContain(`$U.SiteUrl = '${t.origin}'`);
+    expect(ps1).toContain(`npm install -g "@uncage/cli@${defaultCliRange(HUB_VERSION)}"`);
+    expect(ps1).toContain("$U.CliSpec = '@uncage/cli@");
+    expect(ps1).not.toContain('@@');
+    expect(ps1.trimEnd().split('\n').at(-1)).toMatch(/^if \(\$PSCommandPath\) \{ exit \$uncageState\.Code \} else \{ \$global:LASTEXITCODE = \$uncageState\.Code; /);
+  });
+
+  it('install info and install.sh', async () => {
+    const t = await start();
     const res = await fetch(`${t.api}/install.sh`);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('text/plain');
     const sh = await res.text();
     expect(sh.startsWith('#!/usr/bin/env bash')).toBe(true);
-    expect(sh).toContain('uname -s');
-    expect(sh).toContain('-lt 22');
-    expect(sh).toContain('command -v claude');
-    expect(sh).toContain('npm install -g "@uncage/cli@^0.2"');
-    expect(sh).toContain('uncage setup');
+    expect(sh.trimEnd().endsWith('main "$@"')).toBe(true);
+    expect(sh).toContain(`npm install -g "@uncage/cli@${defaultCliRange(HUB_VERSION)}"`);
+    expect(sh).toContain(`SITE_URL='${t.origin}'`);
+    expect(sh).toContain('uncage_msg_zh()');
+    expect(sh).not.toContain('@@');
   });
 
-  it('install.sh only varies by the version range; invalid ranges are refused', async () => {
-    const t = await start({ cliVersionRange: '~0.2.1' });
-    const a = await (await fetch(`${t.api}/install.sh`)).text();
+  it('install.sh varies only by range, site URL and extension; invalid ranges are refused', async () => {
     const store = await pgliteHubStore({ dataDir: 'memory://' });
-    const other = await createHub({ publicUrl: 'https://other.example', getUser: async () => null, store, cliVersionRange: '~0.2.1' });
-    const b = await (await other.handler(new Request('https://other.example/api/uncage/install.sh'))).text();
-    expect(a).toBe(b);
-    await other.close();
-    await store.close();
+    const sh = async (o: Partial<HubOptions> & { publicUrl: string }) => {
+      const hub = await createHub({ getUser: async () => null, store, ...o });
+      try {
+        return await (await hub.fetch(new Request(`${o.publicUrl}${o.basePath ?? '/api/uncage'}/install.sh`))).text();
+      } finally {
+        await hub.close();
+      }
+    };
+    const a = await sh({ publicUrl: 'https://one.example', cliVersionRange: '~0.2.1' });
+    expect(await sh({ publicUrl: 'https://one.example', cliVersionRange: '~0.2.1', site: { id: 'x', name: 'X' }, minAgentVersion: '0.2.0' })).toBe(a);
+    const b = await sh({ publicUrl: 'https://two.example:8443', cliVersionRange: '^0.3' });
+    expect(b.replaceAll('https://two.example:8443', 'https://one.example').replaceAll('^0.3', '~0.2.1')).toBe(a);
+    // A custom basePath puts it in the setup URL.
+    expect(await sh({ publicUrl: 'https://one.example', basePath: '/hub', cliVersionRange: '~0.2.1' })).toContain("SITE_URL='https://one.example/hub'");
+    const ext = await sh({ publicUrl: 'https://one.example', cliVersionRange: '~0.2.1', installScript: { shAfterCli: 'echo EXTRA-STEP' } });
+    expect(ext).toContain('echo EXTRA-STEP');
+    const withoutExtension = (x: string) => x.replace(/# The website's own install step[^\n]*\nuncage_extension\(\) \{[\s\S]*?\n\}\n/, '');
+    expect(withoutExtension(ext)).toBe(withoutExtension(a));
+    // install.ps1 follows the same rule, with its own extension text.
+    const ps1 = async (o: Partial<HubOptions> & { publicUrl: string }) => {
+      const hub = await createHub({ getUser: async () => null, store, ...o });
+      try {
+        return await (await hub.fetch(new Request(`${o.publicUrl}/api/uncage/install.ps1`))).text();
+      } finally {
+        await hub.close();
+      }
+    };
+    const pa = await ps1({ publicUrl: 'https://one.example', cliVersionRange: '~0.2.1' });
+    const pb = await ps1({ publicUrl: 'https://two.example:8443', cliVersionRange: '^0.3', site: { id: 'x', name: 'X' } });
+    expect(pb.replaceAll('https://two.example:8443', 'https://one.example').replaceAll('^0.3', '~0.2.1')).toBe(pa);
+    const pext = await ps1({ publicUrl: 'https://one.example', cliVersionRange: '~0.2.1', installScript: { ps1AfterCli: "Write-Host 'EXTRA-STEP'" } });
+    expect(pext).toContain("$UncageExt = 'Write-Host ''EXTRA-STEP'''");
+    const withoutPs1Extension = (x: string) => x.replace(/# The website's own install step[^\n]*\n\$UncageExt = '[^\n]*\n/, '');
+    expect(withoutPs1Extension(pext)).toBe(withoutPs1Extension(pa));
     await expect(createHub({ publicUrl: 'https://x.example', getUser: async () => null, store, cliVersionRange: '1; rm -rf /' })).rejects.toThrow(/cliVersionRange/);
+    // Review Focus 10: a site URL that is not inert in a shell never reaches the script.
+    await expect(createHub({ publicUrl: 'http://lan.example:3000', getUser: async () => null, store })).rejects.toThrow(/site URL/);
+    await expect(createHub({ publicUrl: 'https://x.example', basePath: "/a'b", getUser: async () => null, store })).rejects.toThrow(/site URL/);
+    await expect(createHub({ publicUrl: 'https://x.example', getUser: async () => null, store, installScript: { shAfterCli: 'a\0b' } })).rejects.toThrow(/installScript\.shAfterCli/);
+    await store.close();
   });
 });
 

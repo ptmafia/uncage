@@ -1,13 +1,26 @@
 ---
 title: Changelog
-description: What changed in each Uncage release, and what is coming in 0.2 (Connected Mode). The authoritative changelog is CHANGELOG.md in the repository and on each npm package.
+description: "What changed in each Uncage release: 0.3 (the hub runs anywhere, any ACP agent, macOS / Linux / Windows), 0.2 (Connected Mode) and 0.1. The authoritative changelog is CHANGELOG.md in the repository and on each npm package."
 ---
 
 All public `@uncage/*` packages share one version. The authoritative record is [`CHANGELOG.md`](https://github.com/ptmafia/uncage/blob/main/CHANGELOG.md) in the repository (and each package’s changelog on npm), written by [Changesets](/docs/guides/ci-and-releases/#releases) at release time.
 
-## 0.2.0 (upcoming): Connected Mode
+## 0.3.0 (2026-11-09): the hub runs anywhere
 
-Everything on this site under Connected Mode is new in 0.2:
+Breaking changes with before/after code: [Migrate from 0.2](/docs/reference/migrate-from-0-2/).
+
+- **Two deployment modes** ([choose one](/docs/start/choose-deployment-mode/)): traditional mode on a long-lived Node server (`toNodeHandler`, `attachWebSocket`, `pgliteHubStore` from `@uncage/hub/node`) and FaaS mode on [Vercel](/docs/deploy/vercel/), [Cloudflare Workers](/docs/deploy/cloudflare-workers/) and [other Fetch platforms](/docs/deploy/other-fetch-platforms/) (`toNextHandlers`, `fetchOnce`, `hub.fetch`) with only Postgres (`postgresHubStore` + `postgresCluster`). The `@uncage/hub` root entry is Web-standard.
+- **Connected protocol 2**: computers connect over WebSocket or HTTPS streaming (durable outbox, cursor acks, de-duplication); browser event streams rotate and resume without gaps; site tool calls survive dropped connections.
+- **Breaking**: `createHub` requires `store`; `hub.handler` → `hub.fetch`; `hub.attach` → `attachWebSocket`; `hub.close()` never closes your store; agents must be 0.3 or newer.
+- **New hub options**: `transports`, `stream.maxDurationMs`, `polling`, `maintenance`, `bodyTimeoutMs` (idle timeout), `logger` (console by default), `toolDrainMs`, `installScript`, `rateLimits.agentAuthFailuresPerMinute`; `hub.maintain()`. Rate limits are counted in the store (fixed windows: a burst across a boundary can reach twice the limit); 429 responses carry `Retry-After`.
+- **`@uncage/runtime-acp`** (new): [any ACP agent](/docs/guides/use-any-acp-agent/), auto-detected from the official ACP registry with official icons, run only with the user's consent.
+- **One-command installer** for [macOS, Linux and Windows](/docs/start/install-on-your-computer/) with `[Y/n]` prompts, Node.js 22 through the user's own version manager, no `sudo` or admin rights.
+- **Browser**: `<ConnectMachine>` with OS tabs, `<AgentOutdatedNotice>`, runtime icons.
+- **Examples**: `connected-demo` on Vercel or any container; new `connected-cloudflare`.
+
+## 0.2.0 (2026-11-08): Connected Mode
+
+Connected Mode arrived in 0.2:
 
 - **`@uncage/hub`** (new): the hub for your website’s Node backend. Device login for the CLI, machine WebSockets, the browser API (same shapes as the daemon’s `/v1`), site tools (`defineTool`, executed on the node holding the computer’s connection, as the session owner, zod-validated, 120 s timeout, audited), the file channel (`ctx.files.pull` / `read`), skills, `selectManifest`, `sessionStorage: 'site'` replication, multi-node support with `postgresHubStore` and `redisCluster`, and `attachmentRetentionDays` (default 30) for the hub's attachment copies.
 - **`@uncage/agent`** (new): the daemon on the user’s computer. Dials out to one or more hubs (backoff 1 s → 30 s), runs sessions through `@uncage/core` in `~/Uncage/<site>/<session>`, bridges tool calls, serves fenced file pulls, replicates events with backfill, enforces `localPolicy`, keeps a redacted activity log.

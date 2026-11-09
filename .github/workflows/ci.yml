@@ -39,12 +39,85 @@ jobs:
         run: pnpm --dir e2e exec playwright install --with-deps chromium
       - name: E2E (mock daemon)
         run: pnpm e2e:mock
+      # install.ps1 scenarios also run here under the runner's pwsh (bash fakes).
+      - name: Upload installer scenario logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: install-ps1-logs-node${{ matrix.node }}
+          path: packages/hub/test-results/install-ps1
+          if-no-files-found: ignore
       - name: Upload Playwright traces
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: e2e-results-node${{ matrix.node }}
           path: e2e/test-results
+          if-no-files-found: ignore
+
+  # The installers and the agent on each OS: install.ps1 under Windows PowerShell 5.1 and pwsh 7
+  # (windows), install.sh under bash 5 + shellcheck (ubuntu) and bash 3.2 (macos), the agent and CLI
+  # suites (paths, permissions, .cmd spawning), and the real per-user service on Windows (Task
+  # Scheduler) and Ubuntu (systemd --user), registered for the runner's user and removed again.
+  platform:
+    name: platform (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      UNCAGE_SERVICE_TESTS: ${{ matrix.os != 'macos-latest' && '1' || '' }}
+    steps:
+      # Keep LF in the checkout: the installers and fixtures are compared byte for byte.
+      - if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec turbo run build --filter=@uncage/cli... --filter=@uncage/hub...
+      - name: shellcheck (this is CI, not the installer)
+        if: runner.os == 'Linux'
+        run: command -v shellcheck || (sudo apt-get update && sudo apt-get install -y shellcheck)
+      - name: shellcheck the rendered install.sh
+        if: runner.os == 'Linux'
+        working-directory: packages/hub
+        run: |
+          node --input-type=module -e "import { installScript } from '@uncage/hub'; process.stdout.write(installScript({ cliRange: '^0.3.0', siteUrl: 'https://app.example.com/api/uncage' }))" > "$RUNNER_TEMP/install.sh"
+          shellcheck -s bash "$RUNNER_TEMP/install.sh"
+      # The runner user gets a user manager (linger) so the real systemd --user service test can run.
+      - name: User systemd for the real service test
+        if: runner.os == 'Linux'
+        run: |
+          sudo loginctl enable-linger "$USER" || true
+          uid="$(id -u)"
+          for _ in $(seq 1 40); do [ -S "/run/user/$uid/bus" ] && break; sleep 0.5; done
+          echo "XDG_RUNTIME_DIR=/run/user/$uid" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" >> "$GITHUB_ENV"
+          XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user show-environment > /dev/null && echo "user systemd ready" || echo "no user systemd (the real service test will skip)"
+      - name: Agent tests
+        run: pnpm --filter @uncage/agent exec vitest run --reporter=default --reporter=github-actions
+      - name: CLI tests (services, doctor, setup; the real service on Windows and Ubuntu)
+        run: pnpm --filter @uncage/cli exec vitest run --reporter=verbose --reporter=github-actions --silent=false
+      - name: Runtime tests (Windows not-found mapping, resolved executables)
+        run: pnpm --filter @uncage/runtime-claude --filter @uncage/runtime-codex test
+      - name: Starting commands without a shell (the shared resolveCommand)
+        run: pnpm --filter @uncage/protocol exec vitest run src/node --reporter=default --reporter=github-actions
+      - name: ACP agents started through resolveCommand (npm .cmd shims, cmd.exe, exact argv)
+        run: pnpm --filter @uncage/runtime-acp exec vitest run src/spawn.test.ts --reporter=verbose --reporter=github-actions
+      - name: Installer tests (static checks; install.ps1 scenarios under powershell.exe and pwsh)
+        # Verbose: every scenario and shell is listed; a failing one prints its full output.
+        run: pnpm --filter @uncage/hub exec vitest run src/install --reporter=verbose --reporter=github-actions
+      - name: Upload installer scenario logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: install-ps1-logs-${{ matrix.os }}
+          path: packages/hub/test-results/install-ps1
           if-no-files-found: ignore
 
   docs:

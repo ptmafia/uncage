@@ -1,4 +1,4 @@
-import { UncageError } from '@uncage/core';
+import { UncageError } from '@uncage/core/errors';
 import { ToolCallResultSchema, ToolSpecSchema, type ToolCallResult, type ToolSpec } from '@uncage/protocol';
 import { z } from 'zod';
 import type { FilePull } from './files.js';
@@ -10,8 +10,10 @@ export interface ToolContext {
   sessionId: string;
   runId: string;
   /**
-   * Aborted when the call is abandoned: it timed out (120 s by default), the run ended, or the
-   * machine disconnected. Pass it on to your own I/O.
+   * Aborted when the call is abandoned: it timed out (120 s by default), its run ended (on whichever
+   * hub instance learns of it), or the hub is shutting down. A dropped machine connection does not
+   * abort it: the call finishes and its result reaches the machine once it is back. Pass it on to
+   * your own I/O.
    */
   signal: AbortSignal;
   /** Files from the session workspace on the machine (the file channel). */
@@ -29,9 +31,13 @@ export interface ToolContext {
 }
 
 /**
- * A website capability offered to the agent as an MCP tool. It executes on the hub node that holds
- * the machine's connection, as the session's owner (`ctx.user`); the machine only ever receives its
- * name, description and JSON Schema.
+ * A website capability offered to the agent as an MCP tool. It executes on the hub instance that
+ * receives the call (WebSocket: the node holding the machine's connection; HTTP: whichever instance
+ * the call's POST reaches), as the session's owner (`ctx.user`); the machine only ever receives its
+ * name, description and JSON Schema. Each call runs at most once: a retried call gets the stored
+ * result, and a call whose instance died mid-handler fails with "Site tool "<name>" timed out on the
+ * website. Please try again." instead of running again — keep handlers within your platform's
+ * duration limit and, where you can, idempotent.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export interface SiteTool<I = any> {

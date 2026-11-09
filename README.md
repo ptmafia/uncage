@@ -4,21 +4,21 @@
 
 **Let your website drive Claude Code on your users’ own computers.**
 
-Your website gives the instructions. Each user’s own Claude Code does the work, on their own Mac, under their own login, and calls your website’s tools as that user. The conversation, the approvals and the results stay on your site.
+Your website gives the instructions. Each user’s own Claude Code does the work, on their own computer, under their own login, and calls your website’s tools as that user. The conversation, the approvals and the results stay on your site.
 
-- **Two commands for the user.** Your page shows `curl -fsSL https://your.site/api/uncage/install.sh | bash` and `uncage setup https://your.site`. The user approves the computer in the browser, a background agent dials out to your site, and the page shows it online. No ports, no tunnels.
+- **One command for the user, on macOS, Linux or Windows.** Your page shows `curl -fsSL https://your.site/api/uncage/install.sh | bash` (on Windows `irm https://your.site/api/uncage/install.ps1 | iex`). The installer checks the computer, asks `[Y/n]` before each step (Node.js 22 through the user’s own version manager, then the CLI), without `sudo` on macOS and Linux and without UAC on Windows (a per-user install; the Windows standard-user path is CI verified only, see [compatibility](docs/compatibility.md)), and offers to run `uncage setup https://your.site`. The user approves the computer in the browser, a background agent dials out to your site, and the page shows it online. No ports, no tunnels.
 - **A chat on your site.** `<AgentChat>` streams answers and tool steps, shows Allow / Deny cards, Stop, attachments, model and permission pickers, and keeps history across reloads.
 - **Your capabilities, your rules.** Declare site tools with `defineTool` (zod schema + handler). The handler runs in your backend as the signed-in user and can pull files from the run’s workspace. Give Claude Code your formats and templates as skills.
 - **Safe by construction.** Your site never sends code or shell to the user’s computer, only tool schemas, skill text and a fixed set of commands. Bypassing approvals can only be enabled by the user, locally. Everything a site does is logged on the user’s computer.
-- **Production shape.** Plug in your sign-in with `getUser(req)`. Keep a replica of every conversation on your site. Run the hub on several nodes with Postgres and Redis.
+- **Runs where your site runs.** In a Node server (traditional mode: zero dependencies, WebSocket), or on Vercel, Cloudflare Workers and other serverless platforms (FaaS mode: Postgres only, HTTP streaming). Plug in your sign-in with `getUser(req)`, keep a replica of every conversation on your site, run several nodes with Postgres (and Redis if you like).
 
 **Help site (for developers and coding agents): https://uncage-dev.vercel.app/docs/** · [llms.txt](https://uncage-dev.vercel.app/docs/llms.txt) · [Skill for coding agents](skills/uncage/SKILL.md)
 
-> Status: Connected Mode is new in 0.2 (`@uncage/hub`, `@uncage/agent`, `uncage setup`). The user’s side runs on macOS with Node.js 22+. Claude Code is verified live, end to end ([compatibility](docs/compatibility.md)); Codex is implemented but not yet verified against a real binary and has no site-tool support. Local Mode (the 0.1 daemon + chat, with no hub) keeps working and is documented in the help site.
+> Status: 0.3 makes the hub platform-agnostic (traditional mode and FaaS mode; [migrating from 0.2](https://uncage-dev.vercel.app/docs/reference/migrate-from-0-2/)). The user’s side needs Node.js 22+ and runs on macOS (verified live); Linux and Windows are CI verified, awaiting real-device confirmation. Claude Code is verified live, end to end ([compatibility](docs/compatibility.md)); Codex is implemented but not yet verified against a real binary and has no site-tool support. Any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (Gemini CLI, OpenCode, Claude Code’s ACP adapter, …) can be offered too, with `runtimes.acp` in `~/.uncage/agent.yaml`; Claude Code’s ACP adapter is verified live. Local Mode (the 0.1 daemon + chat, with no hub) keeps working and is documented in the help site.
 
 ## Try it in 5 minutes
 
-Run the reference website and connect your own Mac to it. You need macOS, Node.js 22.18+, pnpm, and Claude Code installed and signed in (`npm i -g @anthropic-ai/claude-code`, run `claude`, type `/login`).
+Run the reference website and connect your own computer to it. You need macOS or Linux (the demo itself is verified there; on Windows, the installer and the agent are CI verified, the demo scripts are not yet), Node.js 22.18+, pnpm, and Claude Code installed and signed in (`npm i -g @anthropic-ai/claude-code`, run `claude`, type `/login`).
 
 ```sh
 git clone https://github.com/ptmafia/uncage && cd uncage
@@ -35,7 +35,7 @@ cd examples/connected-demo && pnpm start        # http://localhost:3200
    ```
 
    `setup` opens `/device?code=…`: check that the code matches and click **批准** (approve). (Prefix both commands with `UNCAGE_HOME=/tmp/uncage-demo` to leave your `~/.uncage` untouched.)
-3. Send **做一个介绍 Uncage 的落地页并发布** (“build a landing page about Uncage and publish it”). Claude Code works on your Mac in `~/Uncage/localhost-3200/<session>/`, calls the site’s `create_asset` tool, writes the page, and asks you to confirm `publish_asset`, which pulls the folder from your Mac into the site.
+3. Send **做一个介绍 Uncage 的落地页并发布** (“build a landing page about Uncage and publish it”). Claude Code works on your computer in `~/Uncage/localhost-3200/<session>/`, calls the site’s `create_asset` tool, writes the page, and asks you to confirm `publish_asset`, which pulls the folder from your computer into the site.
 4. Open **素材** (`/assets`) to see the published page. Stop the agent and reload the chat: the whole conversation is still there.
 
 ## Add it to your website
@@ -44,12 +44,13 @@ cd examples/connected-demo && pnpm start        # http://localhost:3200
 npm i @uncage/hub @uncage/react-ui zod
 ```
 
-An excerpt to show the shape (`./auth.ts` is your own sign-in). The complete, type-checked files are in the [Connected Mode quickstart](https://uncage-dev.vercel.app/docs/start/quickstart-connected/) and [Mount the hub](https://uncage-dev.vercel.app/docs/guides/mount-the-hub/).
+An excerpt to show the shape, in traditional mode (`./auth.ts` is your own sign-in). The complete, type-checked files are in the [Connected Mode quickstart](https://uncage-dev.vercel.app/docs/start/quickstart-connected/) and [Mount the hub](https://uncage-dev.vercel.app/docs/guides/mount-the-hub/). On Vercel, Cloudflare Workers or another serverless platform, see [Choose a deployment mode](https://uncage-dev.vercel.app/docs/start/choose-deployment-mode/).
 
 ```ts
 // server.ts — mount the hub in your Node server (Express here; Fastify, Hono, Next.js custom servers work too)
 import { createServer } from 'node:http';
-import { createHub, defineTool, toNodeHandler } from '@uncage/hub';
+import { createHub, defineTool } from '@uncage/hub';
+import { attachWebSocket, pgliteHubStore, toNodeHandler } from '@uncage/hub/node';
 import express from 'express';
 import { z } from 'zod';
 import { getSessionUser } from './auth.ts'; // your sign-in: (req: Request) => Promise<{ id: string } | null>
@@ -67,11 +68,16 @@ const saveNote = defineTool({
   },
 });
 
-const hub = await createHub({ publicUrl: 'https://your.site', getUser: getSessionUser, tools: [saveNote] });
+const hub = await createHub({
+  publicUrl: 'https://your.site',
+  getUser: getSessionUser,
+  store: await pgliteHubStore({ dataDir: './.uncage-hub' }), // embedded Postgres in a folder
+  tools: [saveNote],
+});
 const app = express();
 app.use(toNodeHandler(hub)); // before body parsers
 const server = createServer(app);
-hub.attach(server); // computers connect here (WebSocket)
+attachWebSocket(hub, server); // computers connect here (WebSocket)
 server.listen(3000);
 ```
 
@@ -91,7 +97,7 @@ export default function Page() {
 }
 ```
 
-You also need an approval page at `/device` (signed-in only, unframable, decided with a CSRF-protected POST). The [Connected Mode quickstart](https://uncage-dev.vercel.app/docs/start/quickstart-connected/) has every file for a Next.js app, type-checked in CI; [Mount the hub](https://uncage-dev.vercel.app/docs/guides/mount-the-hub/) covers Express, Fastify, Hono and Next.js custom servers.
+You also need an approval page at `/device` (signed-in only, unframable, decided with a CSRF-protected POST). The [Connected Mode quickstart](https://uncage-dev.vercel.app/docs/start/quickstart-connected/) has every file for a Next.js app, type-checked in CI; [Mount the hub](https://uncage-dev.vercel.app/docs/guides/mount-the-hub/) covers Express, Fastify, Hono and Next.js custom servers; the Deploy pages cover [Node](https://uncage-dev.vercel.app/docs/deploy/node/), [Next.js on Vercel](https://uncage-dev.vercel.app/docs/deploy/vercel/), [Cloudflare Workers](https://uncage-dev.vercel.app/docs/deploy/cloudflare-workers/) and [other Fetch platforms](https://uncage-dev.vercel.app/docs/deploy/other-fetch-platforms/).
 
 ## Local Mode
 
@@ -101,10 +107,11 @@ When the agent runs on the same machine as your app (an internal tool, a dev das
 
 | | |
 | --- | --- |
-| [How it works](https://uncage-dev.vercel.app/docs/start/how-it-works/) | Architecture and the connect → task → tool call → result sequence |
+| [How it works](https://uncage-dev.vercel.app/docs/start/how-it-works/) | Architecture, transports, and the connect → task → tool call → result sequence |
+| [Choose a deployment mode](https://uncage-dev.vercel.app/docs/start/choose-deployment-mode/) · [Deploy](https://uncage-dev.vercel.app/docs/deploy/node/) | Traditional (Node) or FaaS (Vercel, Cloudflare Workers, other Fetch platforms), with complete code per platform |
 | [Concepts](https://uncage-dev.vercel.app/docs/concepts/) · [Trust model](https://uncage-dev.vercel.app/docs/concepts/trust-model/) | The vocabulary, and what a website can and cannot do on a user’s computer |
 | [Guides](https://uncage-dev.vercel.app/docs/guides/define-tools/) | Tools, skills, `selectManifest`, site storage, multi-node, auth and `/device`, custom UI, local policy |
-| [Reference](https://uncage-dev.vercel.app/docs/reference/cli/) | CLI, HTTP API, error codes, security, troubleshooting, generated TypeScript API |
+| [Reference](https://uncage-dev.vercel.app/docs/reference/cli/) | CLI, HTTP API, error codes, security, troubleshooting, migrating from 0.2, generated TypeScript API |
 | [For coding agents](https://uncage-dev.vercel.app/docs/start/for-coding-agents/) | Every page as markdown (`.md`), `llms.txt`, `llms-full.txt`, the Uncage skill, copy-paste prompts |
 
 中文：[概览](https://uncage-dev.vercel.app/docs/zh-cn/)、[快速上手](https://uncage-dev.vercel.app/docs/zh-cn/start/quickstart-connected/)、[概念](https://uncage-dev.vercel.app/docs/zh-cn/concepts/)。
@@ -113,9 +120,9 @@ When the agent runs on the same machine as your app (an internal tool, a dev das
 
 | Package | What it is |
 | --- | --- |
-| [`@uncage/hub`](packages/hub) | Connected Mode hub for your website’s Node backend |
+| [`@uncage/hub`](packages/hub) | Connected Mode hub for your website: a Fetch handler for any platform, Node parts in `@uncage/hub/node` |
 | [`@uncage/agent`](packages/agent) | The daemon on the user’s computer (run by `uncage agent`) |
-| [`@uncage/cli`](packages/cli) | `uncage setup` / `agent` / `sites` / `activity`, and `serve` / `doctor` for Local Mode |
+| [`@uncage/cli`](packages/cli) | `uncage setup` / `agent` / `sites` / `runtimes` / `activity`, and `serve` / `doctor` for Local Mode |
 | [`@uncage/react-ui`](packages/react-ui) | `<AgentChat>`, `<ConnectMachine>`, `<ApproveDevice>`, `<MachineStatus>` |
 | [`@uncage/react`](packages/react) | Headless store and hooks |
 | [`@uncage/client`](packages/client) | Browser transport with resumable SSE |
@@ -124,6 +131,7 @@ When the agent runs on the same machine as your app (an internal tool, a dev das
 | [`@uncage/protocol`](packages/protocol) | Wire types, Zod schemas, error catalog |
 | [`@uncage/runtime-claude`](packages/runtime-claude) | Claude Code adapter (Claude Agent SDK) |
 | [`@uncage/runtime-codex`](packages/runtime-codex) | Codex adapter (app-server JSON-RPC) |
+| [`@uncage/runtime-acp`](packages/runtime-acp) | Any Agent Client Protocol agent over stdio (Gemini CLI, OpenCode, Claude Code’s ACP adapter, …) |
 | [`@uncage/testkit`](packages/testkit) | Fake runtime adapter and adapter contract tests (private) |
 
 ## Development

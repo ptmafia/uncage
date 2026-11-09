@@ -58,7 +58,7 @@ export function Chat() {
 
 ## 2. 使用各个组件
 
-`<ConnectMachine>` 就是独立的“连接你的电脑”流程：安装命令（macOS 标签页；Windows 显示“即将支持”）、带复制按钮的 `uncage setup <url>` 命令、实时的“等待你的电脑上线…” → “已连接：&lt;名称&gt;”（显示期间每 3 秒轮询一次），以及给打不开浏览器的电脑的帮助。可以把它放在设置页、引导步骤或对话框里：
+`<ConnectMachine>` 就是独立的“连接你的电脑”流程：放在“macOS / Linux”和“Windows”标签页里的那一条安装命令（默认打开访问者操作系统对应的标签页）、给已经装好 CLI 的电脑的 `uncage setup <url>`、复制按钮、实时的“等待你的电脑上线…” → “已连接：&lt;名称&gt;”（显示期间每 3 秒轮询一次），以及给打不开浏览器的电脑的帮助。可以把它放在设置页、引导步骤或对话框里：
 
 ```tsx title="connect-button.tsx"
 'use client';
@@ -145,8 +145,11 @@ function Connect() {
   return (
     <section>
       <h2>Connect your computer</h2>
-      <p>Run these two commands in Terminal on your Mac:</p>
+      <p>Run this command on your computer (macOS, Linux):</p>
       <pre>{install.install}</pre>
+      {install.windows && <p>On Windows, in PowerShell:</p>}
+      {install.windows && <pre>{install.windows}</pre>}
+      <p>Already have the CLI? Run:</p>
       <pre>{install.setup}</pre>
       <p>Waiting for your computer…</p>
     </section>

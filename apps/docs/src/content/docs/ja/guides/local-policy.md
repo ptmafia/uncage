@@ -14,7 +14,9 @@ description: 'エンドユーザーが自分のコンピュータで管理する
 | `~/.uncage/sites/<site id>/activity.log` | そのウェブサイトがこのコンピュータで行ったこと（JSON Lines） |
 | `~/Uncage/<site host>/<session id>/` | セッションごとのフォルダ。Claude Codeはここで作業します |
 | `~/.uncage/logs/agent.log`、`agent.err.log` | バックグラウンドのエージェントの出力 |
-| `~/Library/LaunchAgents/dev.uncage.agent.plist` | エージェントを常駐させるlaunchdサービス |
+| `~/Library/LaunchAgents/dev.uncage.agent.plist` | macOS：エージェントを常駐させるlaunchdサービス |
+| `~/.config/systemd/user/uncage-agent.service` | Linux：systemdのユーザーサービス |
+| タスク スケジューラのタスク`UncageAgent` | Windows：タスク スケジューラのタスク（タスク スケジューラが拒否した場合は、`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`の`UncageAgent`） |
 
 開発やテストでは、`UNCAGE_HOME=/absolute/path`で`~/.uncage`と`~/Uncage`の場所を移せます（バックグラウンドサービスでは使えません。`uncage setup <url> --no-daemon`を実行してから、同じ環境変数を付けて`uncage agent`をフォアグラウンドで起動してください）。`HOME`は変わらないため、Claude Codeのログイン状態はそのまま保たれます。
 
@@ -37,7 +39,7 @@ localPolicy:
   allowBypass: false
 ```
 
-手で編集することを想定しているのは`localPolicy`だけです。`uncage setup`や`uncage sites remove`が`sites`の一覧を書き換えても、コメントと`localPolicy`は保持されます。未知のキーはエラーになり、そのキー名が表示されます。
+手で編集することを想定しているのは`localPolicy`と`runtimes`だけです。`uncage setup`や`uncage sites remove`が`sites`の一覧を書き換えても、コメント、`localPolicy`、`runtimes`は保持されます。未知のキーはエラーになり、そのキー名が表示されます。
 
 ### `localPolicy.allowBypass`
 
@@ -61,6 +63,10 @@ localPolicy:
 ```
 
 モードは`default`、`acceptEdits`、`plan`、`auto`、`bypassPermissions`です（最後のものは`allowBypass: true`も必要です）。新しいセッションは`default`で始まるため、ユーザーが許可されたモードを選ぶまですべての実行を拒否したいのでなければ、一覧に`default`を残してください。
+
+### `runtimes.acp`
+
+このコンピュータがClaude CodeとCodex以外に提供するエージェントを設定します。Gemini CLI、OpenCode、Claude CodeのACPアダプターなど、Agent Client Protocolに対応したエージェントです。ACPレジストリのエージェントのうちコードをダウンロードするもの（`npx`、`uvx`）は、`uncage runtimes enable <id>`を実行した後にだけ動きます。提供中のものは`uncage runtimes`で一覧できます。詳しくは[あらゆるACPエージェントを使う](/docs/ja/guides/use-any-acp-agent/)を参照してください。
 
 ### 変更を反映する
 
@@ -97,7 +103,11 @@ uncage sites remove app.example.com   # disconnect
 
 ## バックグラウンドのエージェント
 
-- `uncage setup <url>`はエージェントをlaunchdのユーザーエージェントとしてインストールします。ログイン時に起動し、クラッシュや自己アップグレードの後にはlaunchdが再起動します（正常終了の後、たとえば接続中のウェブサイトがなくなったときは再起動しません）。
+- `uncage setup <url>`（または`uncage agent install`）は、エージェントをユーザー単位のバックグラウンドサービスとしてインストールします。サービスはコマンドを実行したNode.jsに固定されます。管理者権限は不要です。
+  - **macOS**：launchdのユーザーエージェント。ログイン時に起動し、クラッシュや自己アップグレードの後にはlaunchdが再起動します（正常終了の後、たとえば接続中のウェブサイトがなくなったときは再起動しません）。
+  - **Linux**：systemdのユーザーサービス（`Restart=on-failure`）。linger（常駐）が有効でない限り、ログアウト時に停止します（`loginctl enable-linger $USER`）。ユーザー単位のsystemdがなければ、`uncage agent`をフォアグラウンドで実行してください。
+  - **Windows**：サインイン時に起動するタスク スケジューラのタスク。現在のユーザーだけが対象で、最小権限で動きます。タスクを作成できない場合はレジストリのRunエントリを使います。小さな監視プロセスが、クラッシュや自己アップグレードの後にエージェントを再起動します。
+- `uncage agent status`で、サービス、実行中かどうか、使っているNode.jsを確認できます。そのNode.jsが削除された場合（Homebrewでのアップグレード、nvmやfnmのバージョンの削除）は、`uncage agent install`をもう一度実行してください。
 - `uncage agent uninstall`はエージェントを停止し、サービスを削除します。`agent.yaml`とデータは残ります。
 - `uncage agent`はエージェントをフォアグラウンドで実行します（先にサービスを停止してください）。詳しい出力が必要なら`UNCAGE_LOG_LEVEL=debug`を指定します。
 - アップグレード：ハブがより新しいエージェントを要求した場合（`upgrade_required`）、エージェントは`npm i -g @uncage/cli@latest`を1回実行してから再起動します。
@@ -105,4 +115,4 @@ uncage sites remove app.example.com   # disconnect
 
 ## ローカル拡張
 
-実行可能な拡張（たとえば実行完了時にプロジェクトをデプロイするフック）は、必ず**このコンピュータ**から提供されるものに限られます。ユーザーがインストールしたnpmパッケージや、ユーザーが書いたローカル設定です。ウェブサイトが送れるのはデータ（ツールのスキーマ、スキルのテキスト、テンプレート）だけで、ここで実行するコードは送れません。Uncage 0.2にはまだローカル拡張のAPIがなく、現時点でのローカルの制御手段は`localPolicy`です。
+実行可能な拡張（たとえば実行完了時にプロジェクトをデプロイするフック）は、必ず**このコンピュータ**から提供されるものに限られます。ユーザーがインストールしたnpmパッケージや、ユーザーが書いたローカル設定です。ウェブサイトが送れるのはデータ（ツールのスキーマ、スキルのテキスト、テンプレート）だけで、ここで実行するコードは送れません。Uncage 0.3にはまだローカル拡張のAPIがなく、現時点でのローカルの制御手段は`localPolicy`です。

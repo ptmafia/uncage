@@ -98,10 +98,12 @@ export const machine = (over: Partial<MachineInfo> = {}): MachineInfo => ({
   id: 'mac_1',
   name: 'MacBook',
   os: 'darwin',
-  agentVersion: '0.2.0',
+  agentVersion: '0.3.0',
   runtimes: [],
   online: true,
   lastSeenAt: T0,
+  agentOutdated: false,
+  transport: 'ws',
   ...over,
 });
 
@@ -139,7 +141,7 @@ export function fakeClient(snap: () => SessionSnapshot = () => snapshot(), opts:
     installInfo: vi.fn<UncageClient['installInfo']>(async () => ({
       install: 'curl -fsSL https://site.test/api/uncage/install.sh | bash',
       setup: 'uncage setup https://site.test/api/uncage',
-      windows: null,
+      windows: 'irm https://site.test/api/uncage/install.ps1 | iex',
     })),
     revokeMachine: vi.fn<UncageClient['revokeMachine']>(async () => undefined),
     subscribe: vi.fn((sessionId: string, h: SubscribeHandlers) => {

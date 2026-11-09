@@ -40,6 +40,12 @@ import {
 export interface CodexAdapterOptions {
   /** App-server command line. Defaults to ['codex', 'app-server']; probe() runs `<command[0]> --version`. */
   command?: string[];
+  /**
+   * The codex executable as resolved by `resolveCommand` (e.g. on Windows an npm `codex.cmd` shim
+   * becomes `{ file: <node.exe>, args: [<codex.js>] }`). Spawned as `file ...args app-server` and
+   * probed as `file ...args --version`. Takes precedence over `command`.
+   */
+  executable?: { file: string; args: string[] };
   /** Environment for the app-server process. Defaults to process.env. */
   env?: NodeJS.ProcessEnv;
   /** Probe injection. */
@@ -139,7 +145,8 @@ function failed(code: 'runtime_unavailable' | 'internal_error' | 'policy_denied'
 }
 
 export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
-  const [executable = 'codex', ...args] = o.command ?? ['codex', 'app-server'];
+  const [executable = 'codex', ...args] = o.executable ? [o.executable.file, ...o.executable.args, 'app-server'] : (o.command ?? ['codex', 'app-server']);
+  const probePrefix = o.executable ? o.executable.args : [];
   const requestTimeoutMs = o.requestTimeoutMs ?? 30_000;
   const allowBypass = o.allowBypass === true;
   let models: ModelOption[] = DEFAULT_MODELS;
@@ -151,7 +158,7 @@ export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
   function connect(): Promise<Connection> {
     if (current) return current;
     const attempt = (async (): Promise<Connection> => {
-      const proc = spawn(executable, args, { env: o.env ?? process.env, stdio: 'pipe' });
+      const proc = spawn(executable, args, { env: o.env ?? process.env, stdio: 'pipe', windowsHide: true });
       let spawnError: Error | undefined;
       proc.on('error', (err) => (spawnError ??= err));
       const peer = new JsonRpcPeer(proc, { requestTimeoutMs });
@@ -226,7 +233,8 @@ export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
         conn = c;
       } catch (err) {
         ended = true;
-        const notFound = (err as NodeJS.ErrnoException).code === 'ENOENT';
+        const code = (err as NodeJS.ErrnoException).code;
+        const notFound = code === 'ENOENT' || (process.platform === 'win32' && code === 'EINVAL');
         return yield failed(
           'runtime_unavailable',
           notFound ? `Codex CLI was not found (${executable}).` : `Codex app-server failed to start: ${(err as Error).message}`,
@@ -377,10 +385,15 @@ export function codexAdapter(o: CodexAdapterOptions = {}): RuntimeAdapter {
       return capabilities();
     },
     probe: () =>
-      probeCodex(executable, o.execFile, async (params) => {
-        const conn = await connect();
-        return conn.peer.request<AccountReadResult>(CLIENT_REQUEST.accountRead, params satisfies AccountReadParams);
-      }),
+      probeCodex(
+        executable,
+        o.execFile,
+        async (params) => {
+          const conn = await connect();
+          return conn.peer.request<AccountReadResult>(CLIENT_REQUEST.accountRead, params satisfies AccountReadParams);
+        },
+        probePrefix,
+      ),
     run,
     async dispose() {
       const c = current;

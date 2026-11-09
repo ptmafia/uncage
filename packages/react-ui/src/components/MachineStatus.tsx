@@ -5,6 +5,7 @@ import { useRef, useState, type JSX } from 'react';
 import { useUi } from '../context.js';
 import { ConnectMachine } from './ConnectMachine.js';
 import { Popover } from './composer/Popover.js';
+import { RuntimeIcon } from './RuntimeIcon.js';
 
 const CONNECT_ID = '__connect__';
 
@@ -29,7 +30,8 @@ export function MachineStatus({ onSelect }: MachineStatusProps): JSX.Element | n
   const triggerRef = useRef<HTMLButtonElement>(null);
   if (!connected) return null;
   const now = Date.now();
-  const status = (m: MachineInfo) => (m.online ? t.machineOnline : t.machineOffline(t.ago(now - Date.parse(m.lastSeenAt))));
+  const status = (m: MachineInfo) =>
+    m.agentOutdated ? t.machineAgentOutdated : m.online ? t.machineOnline : t.machineOffline(t.ago(now - Date.parse(m.lastSeenAt)));
   const name = current?.name ?? t.machineLabel;
   const online = current?.online === true;
   return (
@@ -54,6 +56,19 @@ export function MachineStatus({ onSelect }: MachineStatusProps): JSX.Element | n
             label: m.name,
             description: `${t.osName(m.os)} · ${status(m)}`,
             checked: m.id === current?.id,
+            ...(m.runtimes.length > 0
+              ? {
+                  // The icons are decoration; screen readers get the runtime names in the description.
+                  srDescription: m.runtimes.map((r) => r.displayName).join(', '),
+                  extra: (
+                    <span className="uc-menu-icons" aria-hidden>
+                      {m.runtimes.map((r) => (
+                        <RuntimeIcon key={r.id} runtime={r} />
+                      ))}
+                    </span>
+                  ),
+                }
+              : {}),
           })),
           { id: CONNECT_ID, label: t.connectAnother, action: true },
         ]}

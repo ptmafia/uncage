@@ -42,6 +42,14 @@ const jsonLd = {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script is:inline>
+      // The install command follows the visitor's OS. Runs before the body renders, so nothing shifts:
+      // the server renders macOS / Linux, and CSS switches on html[data-os="windows"].
+      try {
+        var p = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+        if (/^win/i.test(p)) document.documentElement.setAttribute('data-os', 'windows');
+      } catch {}
+    </script>
     <title>{title}</title>
     <meta name="description" content={description} />
     {noindex && <meta name="robots" content="noindex" />}

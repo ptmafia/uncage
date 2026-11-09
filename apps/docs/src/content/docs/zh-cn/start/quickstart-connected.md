@@ -30,10 +30,10 @@ Verify: start the dev server, then curl -s http://localhost:3000/api/uncage/inst
 ## 开始之前
 
 - **网站一侧：** 一个用 Node 运行的 Next.js 16 应用（App Router）。Node.js **22.18 或更高**，因为下面的自定义服务器是一个由 Node 直接运行的 `.ts` 文件。从零开始：`npx create-next-app@latest my-site`（选 TypeScript、App Router）。
-- **用户一侧（这次测试就是你自己的 Mac）：** macOS、Node.js 22+，并且已安装并登录 Claude Code：`npm i -g @anthropic-ai/claude-code`，然后运行一次 `claude` 并输入 `/login`。
+- **用户一侧（这次测试就是你自己的电脑）：** Node.js 22+（下面的安装脚本可以帮你装好），并且已安装并登录 Claude Code：`npm i -g @anthropic-ai/claude-code`，然后运行一次 `claude` 并输入 `/login`。系统为 macOS、Linux 或 Windows（macOS 已在真机上验证；Linux 和 Windows 已通过 CI 验证，尚待真机确认）。
 
-:::caution[为什么需要自定义服务器]
-hub 要和每台已连接的电脑保持一条 WebSocket，所以它需要一个长期运行、能接触到 HTTP 服务器的 Node 进程。单靠 Next.js 的 route handler 无法接受 WebSocket 升级，Serverless 平台（例如 Vercel Functions）也无法托管 hub。在 Vercel 上，请把 hub 作为单独的 Node 服务运行，见[挂载 hub](/docs/zh-cn/guides/mount-the-hub/#serverless-托管vercelnetlify)。
+:::note[为什么需要自定义服务器]
+本快速上手使用**传统模式**：hub 和每台已连接的电脑各保持一条 WebSocket，并把数据存在一个嵌入式数据库目录里，所以不需要任何其他东西。这需要一个长期运行、能接触到 HTTP 服务器的 Node 进程，而单靠 Next.js 的 route handler 做不到。要部署到 **Vercel** 或其他 Serverless 平台？请看 [Vercel 上的 Next.js](/docs/zh-cn/deploy/vercel/)（一个 route handler 加 Postgres，不需要自定义服务器）。该选哪种：见[选择部署模式](/docs/zh-cn/start/choose-deployment-mode/)。
 :::
 
 ## 1. 安装
@@ -108,14 +108,17 @@ hub 由你的自定义服务器创建一次。页面也需要用到它（审批�
 
 ```ts title="lib/uncage-hub.ts"
 import { createHub, type Hub } from '@uncage/hub';
+import { pgliteHubStore } from '@uncage/hub/node';
 import { userFromRequest } from './auth.ts';
 import { tools } from './tools.ts';
 
-export function createAppHub(): Promise<Hub> {
+export async function createAppHub(): Promise<Hub> {
   return createHub({
     // The URL your users open. Also what `uncage setup <url>` is given.
     publicUrl: process.env.PUBLIC_URL ?? 'http://localhost:3000',
     getUser: userFromRequest,
+    // The hub's own database: embedded Postgres in this folder (computers, sessions, tool calls).
+    store: await pgliteHubStore({ dataDir: './.uncage-hub' }),
     tools,
     // Keep a copy of every conversation on the website (readable while the computer is off).
     sessionStorage: 'site',
@@ -141,15 +144,15 @@ export function getHub(): Hub {
 }
 ```
 
-不传 `store` 时，hub 把数据存在 `./.uncage-hub`（内嵌 PGlite）。把这个目录加进 `.gitignore`。
+`pgliteHubStore` 把 hub 的数据存在 `./.uncage-hub`（内嵌 PGlite，每个目录只能由一个进程使用）。把这个目录加进 `.gitignore`，部署时把它放在持久磁盘上。
 
 ## 5. 自定义服务器
 
-一个 Node HTTP 服务器承载全部内容：`/api/uncage` 下的 hub HTTP API、`/api/uncage/agent` 上电脑的 WebSocket，以及其他所有路径上的 Next.js 应用。
+一个 Node HTTP 服务器承载全部内容：`/api/uncage` 下的 hub HTTP API、`/api/uncage/agent` 上电脑的 WebSocket，以及其他所有路径上的 Next.js 应用。`toNodeHandler` 和 `attachWebSocket` 来自 `@uncage/hub/node`，也就是 hub 中只能在 Node 上运行的部分。
 
 ```ts title="server.ts"
 import { createServer } from 'node:http';
-import { toNodeHandler } from '@uncage/hub';
+import { attachWebSocket, toNodeHandler } from '@uncage/hub/node';
 import next from 'next';
 import { publishHub } from './lib/hub-registry.ts';
 import { createAppHub } from './lib/uncage-hub.ts';
@@ -172,7 +175,7 @@ server.on('request', (req, res) => {
   hubHandler(req, res, () => void handle(req, res));
 });
 
-hub.attach(server); // computers connect to ws(s)://<host>/api/uncage/agent
+attachWebSocket(hub, server); // computers connect to ws(s)://<host>/api/uncage/agent
 
 if (dev) {
   // Next.js hot reload uses WebSockets too; leave the hub's path to the hub.
@@ -208,7 +211,7 @@ server.listen(port, () => console.log(`ready on http://localhost:${port}`));
 
 ## 6. 对话页面
 
-`<AgentChat>` 默认请求 `/api/uncage`。它会发现对面是 hub（而不是本地的 Uncage 服务），自动切换到 Connected 模式：还没有电脑时，显示带两条命令的 `<ConnectMachine>`；连上之后，标题栏显示这段对话运行在哪台电脑上。
+`<AgentChat>` 默认请求 `/api/uncage`。它会发现对面是 hub（而不是本地的 Uncage 服务），自动切换到 Connected 模式：还没有电脑时，显示带一条安装命令的 `<ConnectMachine>`；连上之后，标题栏显示这段对话运行在哪台电脑上。
 
 ```tsx title="app/uncage/page.tsx"
 'use client';
@@ -350,16 +353,16 @@ curl -s http://localhost:3000/api/uncage/install.sh | head -3
 
 ## 9. 连接你的电脑（用户一侧）
 
-打开 `http://localhost:3000/uncage`。对话框显示 **Connect your computer**（连接你的电脑） 和两条命令。真实部署时用户会复制这两条命令；本地测试时：
+打开 `http://localhost:3000/uncage`。对话框显示 **Connect your computer**（连接你的电脑）和一条命令，默认打开你的操作系统对应的标签页。真实部署时用户会复制这条命令；本地测试时：
 
-1. **安装 CLI。** `curl -fsSL http://localhost:3000/api/uncage/install.sh | bash` 可以用，也可以直接安装：`npm i -g @uncage/cli`。
-2. **连接。** 运行页面上显示的 setup 命令：
+1. **运行这条命令。** 在 macOS 或 Linux 上运行 `curl -fsSL http://localhost:3000/api/uncage/install.sh | bash`；在 Windows（PowerShell）上运行 `irm http://localhost:3000/api/uncage/install.ps1 | iex`。安装脚本会先检查电脑（Node.js 22+、npm、coding agent），在每个需要执行的步骤之前询问 `[Y/n]`（如果你有 Node 版本管理器就用它；绝不使用 `sudo` 或管理员权限），安装 `@uncage/cli`，并询问是否替你运行 `uncage setup http://localhost:3000`：回答 **Y**。它在各操作系统上做了什么，见[在你的电脑上安装](/docs/zh-cn/start/install-on-your-computer/)。
+2. **已经装好 CLI**（`npm i -g @uncage/cli`）？那就改为运行页面上 **Already have the CLI?**（已经装好 CLI？）下面显示的 setup 命令：
 
    ```sh
    uncage setup http://localhost:3000
    ```
 
-   它会打印一个验证码，并打开 `http://localhost:3000/device?code=…`。确认验证码一致后点击 **Approve**（批准）。setup 会把机器令牌存到 `~/.uncage/agent.yaml`，并启动后台守护进程（launchd 服务）。
+3. **批准。** setup 会打印一个验证码，并打开 `http://localhost:3000/device?code=…`。确认验证码一致后点击 **Approve**（批准）。setup 会把机器令牌存到 `~/.uncage/agent.yaml`，并启动后台守护进程（按用户运行的服务：macOS 上是 launchd，Linux 上是 systemd，Windows 上是计划任务；用 `uncage agent status` 可以查看）。
 
 回到对话页，状态从“Waiting for your computer…”（等待你的电脑上线…）变为 **Connected: &lt;你的电脑名&gt;**（已连接）。
 
@@ -395,5 +398,6 @@ curl -s http://localhost:3000/api/uncage/install.sh | head -3
 - [定义网站工具](/docs/zh-cn/guides/define-tools/)：参数校验、错误、确认、文件通道。
 - [编写技能](/docs/zh-cn/guides/write-skills/)，并[按运行选择它们](/docs/zh-cn/guides/select-manifest/)。
 - [认证与设备授权](/docs/zh-cn/guides/auth-and-device-approval/)：接入你真正的登录。
+- [部署](/docs/zh-cn/deploy/node/)：放到服务器上（传统模式），或者迁到 [Vercel](/docs/zh-cn/deploy/vercel/)（FaaS 模式）。
 - [多节点](/docs/zh-cn/guides/multi-node/)：负载均衡后面的 Postgres + Redis。
 - **部署到代理后面之前：** 设置客户端 IP（`trust proxy` 或 `rateLimits.clientIp`），否则所有用户共用一个 `uncage setup` 限流桶。见[反向代理或负载均衡之后](/docs/zh-cn/guides/mount-the-hub/#反向代理或负载均衡之后)。

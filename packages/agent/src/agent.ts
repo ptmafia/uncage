@@ -1,11 +1,13 @@
 import { execFile } from 'node:child_process';
 import { homedir, hostname, release } from 'node:os';
 import { promisify } from 'node:util';
-import type { RuntimeAdapter } from '@uncage/protocol';
+import type { RuntimeAdapter, TransportKind } from '@uncage/protocol';
+import { isCmdLine } from '@uncage/protocol/node';
 import pino from 'pino';
 import pkg from '../package.json' with { type: 'json' };
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { execTarget, selfUpgradeCommand } from './exe.js';
 import { agentDir, ensureAgentDir, updateAgentSites, type AgentConfig } from './config.js';
 import { DEFAULT_TIMING, SiteAgent, type AgentLogger, type AgentTiming, type SiteState } from './site.js';
 
@@ -14,21 +16,38 @@ export const AGENT_VERSION: string = pkg.version;
 /** Never log secrets: tokens and auth headers are censored wherever they appear. */
 export const AGENT_REDACT_PATHS = ['token', '*.token', 'authorization', '*.authorization', 'headers.authorization', 'machineKey', '*.machineKey'];
 
-export function createAgentLogger(level = process.env.UNCAGE_LOG_LEVEL ?? 'info'): AgentLogger {
-  return pino({ level, redact: { paths: AGENT_REDACT_PATHS, censor: '[redacted]' } }, pino.destination(2));
+/**
+ * The agent's JSON logger: stderr, or appended to `logFile` (`uncage agent --log-file`; Windows
+ * scheduled tasks have no stdout redirect, so the agent writes its own log there).
+ */
+export function createAgentLogger(level = process.env.UNCAGE_LOG_LEVEL ?? 'info', logFile?: string): AgentLogger {
+  const dest = logFile ? pino.destination({ dest: logFile, append: true, mkdir: true, sync: true }) : pino.destination(2);
+  return pino({ level, redact: { paths: AGENT_REDACT_PATHS, censor: '[redacted]' } }, dest);
 }
 
 export type ExecFn = (file: string, args: string[]) => Promise<{ stdout: string; stderr: string }>;
 const execFileAsync = promisify(execFile);
-export const defaultExec: ExecFn = async (file, args) => {
-  const r = await execFileAsync(file, args, { encoding: 'utf8' });
+/**
+ * Runs a command without a shell. On Windows the console window is hidden, a bare name never comes
+ * from the current directory (system tools run from `System32`, anything else is resolved on PATH),
+ * and a `cmd.exe /d /s /c "<line>"` from `resolveCommand` is passed verbatim (Node would otherwise
+ * re-quote the line).
+ */
+export const defaultExec: ExecFn = async (file0, args0) => {
+  const { file, args } = await execTarget(file0, args0);
+  const verbatim = process.platform === 'win32' && isCmdLine(file, args);
+  const r = await execFileAsync(file, args, { encoding: 'utf8', windowsHide: true, ...(verbatim ? { windowsVerbatimArguments: true } : {}) });
   return { stdout: r.stdout, stderr: r.stderr };
 };
 
-/** The self-upgrade command run on `upgrade_required`: `npm i -g @uncage/cli@latest`. */
+/**
+ * The POSIX form of the self-upgrade command. The agent runs `selfUpgradeCommand()` instead, which
+ * resolves npm for the Node in use (on Windows: `node npm-cli.js`, never `npm.cmd`).
+ * @deprecated use `selfUpgradeCommand()`.
+ */
 export const SELF_UPGRADE: [string, string[]] = ['npm', ['i', '-g', '@uncage/cli@latest']];
 
-/** Exit code after a self-upgrade: non-zero so launchd (KeepAlive on failure) restarts the new version. */
+/** Exit code after a self-upgrade: non-zero so the service manager (launchd / systemd / Task Scheduler) restarts the new version. */
 export const UPGRADE_EXIT_CODE = 75;
 
 export interface CreateAgentOptions {
@@ -45,19 +64,26 @@ export interface CreateAgentOptions {
   agentVersion?: string;
   /** Runs commands (the self-upgrade). Injectable for tests. */
   exec?: ExecFn;
+  /** The self-upgrade command. Default `selfUpgradeCommand()` (resolved when an upgrade is needed). */
+  upgradeCommand?: [string, string[]];
   /** Called after a self-upgrade attempt. Default `process.exit`. */
   exit?: (code: number) => void;
+  /** HTTP client for `/agent/info` and the HTTP streaming transport. Default: the global `fetch` (tests inject one). */
+  fetch?: typeof fetch;
 }
 
 export interface Agent {
   close(): Promise<void>;
   /** Per configured site: connecting, connected, upgrade_failed, failed (could not start), revoked, replaced, closed. */
   status(): Record<string, SiteStatus>;
+  /** Per running site: the transport of its live link (`ws` / `http`), `null` while not connected. */
+  transports(): Record<string, TransportKind | null>;
 }
 
 /**
- * The Connected Mode daemon: one WebSocket per configured (non-revoked) site, each with its own
- * core instance, workspace root and activity log. Revocation (4401 / HTTP 401) marks the site in
+ * The Connected Mode daemon: one link per configured (non-revoked) site — WebSocket, or HTTP
+ * streaming when the site only offers that or WebSocket keeps failing — each with its own core
+ * instance, workspace root and activity log. Revocation (4401 / HTTP 401) marks the site in
  * `agent.yaml` and stops dialing it; replacement (4409) stops that connection without fighting;
  * `upgrade_required` runs `npm i -g @uncage/cli@latest` and, if that worked, exits non-zero so
  * launchd restarts (a failed upgrade keeps only that site offline, retried at most hourly). A site
@@ -103,10 +129,14 @@ export async function createAgent(o: CreateAgentOptions): Promise<Agent> {
         }
       }
       logger.warn({ minAgentVersion: min, current: version }, 'website requires a newer agent; upgrading with npm');
+      const cmd = o.upgradeCommand ?? (await selfUpgradeCommand());
       try {
-        await exec(...SELF_UPGRADE);
+        // Backstop: a test must never run the real global `npm i -g` (it happened once). Tests inject
+        // `exec` or `upgradeCommand`; anything else under Vitest fails like a failed upgrade.
+        if (!o.exec && !o.upgradeCommand && process.env.VITEST) throw new Error('self-upgrade refused under Vitest (inject exec or upgradeCommand)');
+        await exec(...cmd);
       } catch (err) {
-        logger.error({ err: (err as Error).message }, `self-upgrade failed; run: ${SELF_UPGRADE[0]} ${SELF_UPGRADE[1].join(' ')}`);
+        logger.error({ err: (err as Error).message }, `self-upgrade failed; run: npm i -g @uncage/cli@latest`);
         await writeUpgradeState(home, { fromVersion: version, minAgentVersion: min, failedAt: new Date().toISOString() }).catch(
           (e: unknown) => logger.error({ err: e }, 'could not record the failed upgrade'),
         );
@@ -142,6 +172,7 @@ export async function createAgent(o: CreateAgentOptions): Promise<Agent> {
       timing,
       machine,
       agentVersion: version,
+      ...(o.fetch ? { fetch: o.fetch } : {}),
       onStop: (reason) => {
         if (closed) return;
         if (reason === 'revoked') {
@@ -169,6 +200,7 @@ export async function createAgent(o: CreateAgentOptions): Promise<Agent> {
   return {
     close,
     status: () => ({ ...Object.fromEntries(status), ...Object.fromEntries(sites.map((x) => [x.site.id, x.state])) }),
+    transports: () => Object.fromEntries(sites.map((x) => [x.site.id, x.transport])),
   };
 }
 

@@ -424,6 +424,14 @@ describe('createUncage', () => {
     expect((await session.snapshot()).runs).toHaveLength(2);
   });
 
+  it('runtime info carries the adapter icon (an invalid one is dropped)', async () => {
+    const light = 'data:image/png;base64,iVBORw0KGgo=';
+    const withIcon = Object.assign(createFakeAdapter({ id: 'iconic', script: [] }), { icon: { light, dark: 'javascript:alert(1)' } });
+    const u = await make([withIcon, fake([])]);
+    expect((await u.runtimes.get('iconic')).icon).toEqual({ light });
+    expect((await u.runtimes.get('fake')).icon).toBeUndefined();
+  });
+
   it('validates runtime, workspace and ids', async () => {
     const u = await make([fake([])], { workspace: { allowedRoots: [dir], default: dir } });
     await expect(u.sessions.create({ runtime: 'nope' })).rejects.toMatchObject({ code: 'not_found' });

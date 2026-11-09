@@ -123,17 +123,19 @@ export const machine = (over: Partial<MachineInfo> = {}): MachineInfo => ({
   id: 'mac_1',
   name: 'MacBook Pro',
   os: 'darwin',
-  agentVersion: '0.2.0',
+  agentVersion: '0.3.0',
   runtimes: [runtime()],
   online: true,
   lastSeenAt: T0,
+  agentOutdated: false,
+  transport: 'ws',
   ...over,
 });
 
 export const INSTALL = {
   install: 'curl -fsSL https://site.test/api/uncage/install.sh | bash',
   setup: 'uncage setup https://site.test/api/uncage',
-  windows: null,
+  windows: 'irm https://site.test/api/uncage/install.ps1 | iex' as string | null,
 };
 
 export const clientError = (code: ErrorCode, status: number, message: string = code, hint?: string) =>

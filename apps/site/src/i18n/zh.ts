@@ -25,6 +25,7 @@ export const zh: Dict = {
     copy: '复制',
     copied: '已复制',
     external: '在新标签页打开',
+    installOs: '操作系统',
   },
   nav: {
     product: '产品',
@@ -40,15 +41,15 @@ export const zh: Dict = {
     dismiss: '关闭',
   },
   hero: {
-    eyebrow: 'v0.2 · Connected 模式已上线',
+    eyebrow: 'v0.3 · 现已支持 Serverless',
     title: '你的 coding agent，|*无处不在。*',
     lede: '你的用户手里早就有一套强大的环境：他们自己的 Claude Code、自己的账号、自己的工具。Uncage 把这套本地 harness 变成你的产品可以调用的服务。任务在用户的电脑上运行，结果回到你的网站上。',
     primary: '体验在线演示',
     secondary: '几分钟完成接入',
-    installLabel: '用户只需运行一次',
+    installLabel: '一条命令，一次批准',
   },
   flow: {
-    label: '一次请求的流向：你网站上的对话，由用户电脑主动建立的 WebSocket 连接，以及在这台电脑上运行的 Claude Code。',
+    label: '一次请求的流向：你网站上的对话，由用户电脑主动建立的 WebSocket 或 HTTPS 流式连接，以及在这台电脑上运行的 Claude Code。',
     browserTitle: 'your.site',
     online: '电脑在线',
     userMessage: '为这次发布做一个落地页并上线',
@@ -56,7 +57,7 @@ export const zh: Dict = {
     assistant: '页面已写好。要发布到你的网站吗？',
     allow: '允许执行',
     deny: '拒绝',
-    wire: 'WebSocket，由用户电脑主动发起',
+    wire: 'WebSocket 或 HTTPS 流式传输，由用户电脑主动发起',
     termSkill: '已加载技能',
     termWrite: '已写入',
     termWaiting: '等待审批…',
@@ -88,7 +89,7 @@ export const zh: Dict = {
       {
         tag: '连接',
         title: '用户连接自己的电脑',
-        body: '两条命令，再在浏览器里授权一次。后台的守护进程主动连向你的网站，无需开放任何端口。',
+        body: '一条命令，再在浏览器里批准一次。后台的守护进程主动连向你的网站，无需开放任何端口。',
       },
       {
         tag: '指令',
@@ -131,8 +132,16 @@ export const zh: Dict = {
         body: 'Claude Code 风格的输入框，支持选择模型、推理强度和权限模式，还有附件与语音输入。',
       },
       {
-        title: '横向扩展',
-        body: '借助 Postgres 和 Redis 适配器，hub 可以在任意负载均衡器之后多节点运行。',
+        title: '随处运行',
+        body: '长期运行的 Node 服务器、Vercel、Cloudflare Workers 或任何 Fetch 平台均可。FaaS 模式只需要 Postgres；加上 Redis 即可横向扩展。',
+      },
+      {
+        title: '任意 ACP agent',
+        body: '通过 ACP 适配器接入 Claude Code（已实机验证），以及任何支持 Agent Client Protocol 的 agent（如 Gemini CLI、OpenCode），都会出现在运行时选择器里。',
+      },
+      {
+        title: 'macOS、Windows 与 Linux',
+        body: '一条命令，在 macOS、Windows 或 Linux 上装好一切。守护进程作为当前用户的后台服务运行：macOS 和 Linux 无需 sudo，Windows 为按用户安装。macOS 已在真机上验证；Windows 和 Linux 已通过 CI 验证，真机确认待完成。',
       },
     ],
     soon: [
@@ -141,23 +150,15 @@ export const zh: Dict = {
         body: 'Codex 适配器现已发布，并已通过模拟服务器测试。下一步是在真实的可执行文件上完成验证。',
       },
       {
-        title: 'Windows 与 Linux 守护进程',
-        body: '目前后台守护进程运行在 macOS 上。',
-      },
-      {
         title: '更多入口',
         body: '移动应用、聊天应用和浏览器扩展，驱动同一套本地 harness。',
-      },
-      {
-        title: '适配 Serverless 的传输层',
-        body: '把 hub 部署在 Vercel 或 Netlify 上。目前 WebSocket 仍需要一个长期运行的 Node 进程。',
       },
     ],
   },
   code: {
     kicker: '面向开发者',
     title: '挂载 hub，放入对话框。',
-    sub: '你的认证、你的数据库、你的 Node 服务器。Uncage 直接接入你现有的技术栈。',
+    sub: '你的认证、你的数据库、你的服务器或 Serverless 函数平台。Uncage 直接接入你现有的技术栈。',
     moreTitle: '从零到连上一台电脑',
     moreBody: '快速入门会一步步带你搭建一个 Next.js 应用，包含 hub、设备授权页面和你的第一个网站工具。Express、Fastify 和 Hono 同样适用。',
     more: '查看 Connected 模式快速入门',
@@ -188,7 +189,7 @@ export const zh: Dict = {
   },
   final: {
     title: '让用户的 agent 在你的产品里开工。',
-    sub: 'MIT 许可 · npm 上的 11 个包 · 为开发者和 coding agent 打造',
+    sub: 'MIT 许可 · npm 上的 12 个包 · 为开发者和 coding agent 打造',
     primary: '体验在线演示',
     secondary: '阅读文档',
   },

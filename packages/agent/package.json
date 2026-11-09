@@ -1,6 +1,6 @@
 {
   "name": "@uncage/agent",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Uncage agent: the Connected Mode daemon on the user's machine. Dials out to one or more website hubs and runs their sessions through @uncage/core",
   "type": "module",
   "engines": {
@@ -37,6 +37,7 @@
     "@types/ioredis-mock": "^8.2.8",
     "@types/ws": "^8.18.1",
     "@uncage/hub": "workspace:*",
+    "@uncage/runtime-acp": "workspace:*",
     "@uncage/testkit": "workspace:*",
     "ioredis": "^5.11.1",
     "ioredis-mock": "^8.13.1"

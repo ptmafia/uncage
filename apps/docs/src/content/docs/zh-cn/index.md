@@ -26,7 +26,7 @@ Uncage 是一组 npm 包，把 Claude Code（以及 Codex）接入你自己的�
 | --- | --- | --- |
 | 谁在跑 agent | 每个终端用户，在自己的电脑上，用自己的 Claude Code 登录 | 你自己，在运行应用的那台机器上 |
 | 网站要加什么 | Node 后端里挂上 `@uncage/hub`，页面里放 `<AgentChat>`，再加一个 `/device` 审批页 | 一个同源代理路由和 `<AgentChat>` |
-| 用户要做什么 | 只需运行一次两条命令：`curl -fsSL https://your.site/api/uncage/install.sh \| bash`，然后 `uncage setup https://your.site` | 什么都不用做：就是你自己的机器 |
+| 用户要做什么 | 只需运行一条命令，再在浏览器里批准这台电脑：macOS 和 Linux 上是 `curl -fsSL https://your.site/api/uncage/install.sh \| bash`，Windows 上是 `irm https://your.site/api/uncage/install.ps1 \| iex` | 什么都不用做：就是你自己的机器 |
 | 适合 | 用户装有 Claude Code、希望它和你的产品一起干活的 SaaS | 内部工具、桌面类应用、开发者面板 |
 
 ## 你的用户得到什么
@@ -59,5 +59,5 @@ Uncage 是一组 npm 包，把 Claude Code（以及 Codex）接入你自己的�
 - **在用 coding agent？** 把 [Uncage 技能](/docs/skills/uncage/SKILL.md) 或 [`llms.txt`](/docs/llms.txt) 交给它。每个页面都有纯 Markdown 版本：在网址后面加 `.md` 即可。详见[面向 coding agent](/docs/zh-cn/start/for-coding-agents/)。
 
 :::note[状态]
-Connected 模式属于 Uncage 0.2（`@uncage/hub`、`@uncage/agent`，以及 `@uncage/cli` 里的 `uncage setup` / `uncage agent` 命令）。用户电脑一侧目前只支持 **macOS**，需要 Node.js 22 或更高版本。Claude Code 已实机验证；Codex 已实现，但还没有对真实二进制运行过，也暂不支持网站工具。详见[兼容性记录](https://github.com/ptmafia/uncage/blob/main/docs/compatibility.md)。
+Connected 模式属于 Uncage 0.3（`@uncage/hub`、`@uncage/agent`，以及 `@uncage/cli` 里的 `uncage setup` / `uncage agent` 命令）。用户电脑一侧支持 **macOS、Linux 和 Windows**，以按用户运行的后台服务运行，需要 Node.js 22 或更高版本（安装脚本会帮你装好）。macOS 已在真机上验证；Linux 和 Windows 已通过 CI 验证，尚待真机确认。Claude Code 已实机验证；Codex 已实现，但还没有对真实二进制运行过，也暂不支持网站工具。详见[兼容性记录](https://github.com/ptmafia/uncage/blob/main/docs/compatibility.md)。
 :::

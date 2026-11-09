@@ -30,10 +30,10 @@ Verify: start the dev server, then curl -s http://localhost:3000/api/uncage/inst
 ## Before you start
 
 - **Website side:** a Next.js 16 app (App Router) that you run with Node. Node.js **22.18 or newer**, because the custom server below is a `.ts` file that Node runs directly. Starting fresh: `npx create-next-app@latest my-site` (TypeScript, App Router).
-- **User side (your own Mac for this test):** macOS, Node.js 22+, and Claude Code installed and signed in: `npm i -g @anthropic-ai/claude-code`, then run `claude` once and type `/login`.
+- **User side (your own computer for this test):** Node.js 22+ (the installer below can set it up), and Claude Code installed and signed in: `npm i -g @anthropic-ai/claude-code`, then run `claude` once and type `/login`. macOS, Linux or Windows (macOS is verified on a real device; Linux and Windows are CI verified, awaiting real-device confirmation).
 
-:::caution[Why a custom server]
-The hub keeps a WebSocket open to every connected computer, so it needs a long-running Node process with access to the HTTP server. Next.js route handlers alone cannot accept WebSocket upgrades, and serverless platforms (such as Vercel functions) cannot host the hub. On Vercel, run the hub as its own Node service; see [Mount the hub](/docs/guides/mount-the-hub/#serverless-hosting-vercel-netlify).
+:::note[Why a custom server]
+This quickstart uses **traditional mode**: the hub keeps a WebSocket open to every connected computer and stores its data in an embedded database folder, so you need nothing else. That takes a long-running Node process with access to the HTTP server, which Next.js route handlers alone do not give. Deploying to **Vercel** or another serverless platform instead? Use [Next.js on Vercel](/docs/deploy/vercel/) (a route handler and Postgres, no custom server). Which one: [Choose a deployment mode](/docs/start/choose-deployment-mode/).
 :::
 
 ## 1. Install
@@ -108,14 +108,17 @@ The hub is created once, by your custom server. Your pages need it too (the appr
 
 ```ts title="lib/uncage-hub.ts"
 import { createHub, type Hub } from '@uncage/hub';
+import { pgliteHubStore } from '@uncage/hub/node';
 import { userFromRequest } from './auth.ts';
 import { tools } from './tools.ts';
 
-export function createAppHub(): Promise<Hub> {
+export async function createAppHub(): Promise<Hub> {
   return createHub({
     // The URL your users open. Also what `uncage setup <url>` is given.
     publicUrl: process.env.PUBLIC_URL ?? 'http://localhost:3000',
     getUser: userFromRequest,
+    // The hub's own database: embedded Postgres in this folder (computers, sessions, tool calls).
+    store: await pgliteHubStore({ dataDir: './.uncage-hub' }),
     tools,
     // Keep a copy of every conversation on the website (readable while the computer is off).
     sessionStorage: 'site',
@@ -141,15 +144,15 @@ export function getHub(): Hub {
 }
 ```
 
-With no `store` option the hub keeps its data in `./.uncage-hub` (embedded PGlite). Add that folder to `.gitignore`.
+`pgliteHubStore` keeps the hub’s data in `./.uncage-hub` (embedded PGlite, one process per folder). Add that folder to `.gitignore`, and keep it on a persistent disk when you deploy.
 
 ## 5. The custom server
 
-One Node HTTP server carries everything: the hub’s HTTP API under `/api/uncage`, the computers’ WebSockets at `/api/uncage/agent`, and the Next.js app for every other path.
+One Node HTTP server carries everything: the hub’s HTTP API under `/api/uncage`, the computers’ WebSockets at `/api/uncage/agent`, and the Next.js app for every other path. `toNodeHandler` and `attachWebSocket` come from `@uncage/hub/node`, the Node-only part of the hub.
 
 ```ts title="server.ts"
 import { createServer } from 'node:http';
-import { toNodeHandler } from '@uncage/hub';
+import { attachWebSocket, toNodeHandler } from '@uncage/hub/node';
 import next from 'next';
 import { publishHub } from './lib/hub-registry.ts';
 import { createAppHub } from './lib/uncage-hub.ts';
@@ -172,7 +175,7 @@ server.on('request', (req, res) => {
   hubHandler(req, res, () => void handle(req, res));
 });
 
-hub.attach(server); // computers connect to ws(s)://<host>/api/uncage/agent
+attachWebSocket(hub, server); // computers connect to ws(s)://<host>/api/uncage/agent
 
 if (dev) {
   // Next.js hot reload uses WebSockets too; leave the hub's path to the hub.
@@ -208,7 +211,7 @@ Run it with Node instead of `next dev`. Node runs `server.ts` directly (it strip
 
 ## 6. The chat page
 
-`<AgentChat>` talks to `/api/uncage` by default. It notices that this is a hub (not a local daemon) and switches to Connected Mode by itself: with no computer yet, it shows `<ConnectMachine>` with the two commands; afterwards, the header shows which computer the conversation runs on.
+`<AgentChat>` talks to `/api/uncage` by default. It notices that this is a hub (not a local daemon) and switches to Connected Mode by itself: with no computer yet, it shows `<ConnectMachine>` with the one-command installer; afterwards, the header shows which computer the conversation runs on.
 
 ```tsx title="app/uncage/page.tsx"
 'use client';
@@ -350,16 +353,16 @@ It prints the start of the installer (`#!/usr/bin/env bash`, `# Uncage installer
 
 ## 9. Connect your computer (the user’s side)
 
-Open `http://localhost:3000/uncage`. The chat shows **Connect your computer** with two commands. On a real deployment the user copies both. For this local test:
+Open `http://localhost:3000/uncage`. The chat shows **Connect your computer** with one command, on the tab of your operating system. On a real deployment the user copies it. For this local test:
 
-1. **Install the CLI.** `curl -fsSL http://localhost:3000/api/uncage/install.sh | bash` works, or install it directly: `npm i -g @uncage/cli`.
-2. **Connect.** Run the setup command the page shows:
+1. **Run the command.** On macOS or Linux, `curl -fsSL http://localhost:3000/api/uncage/install.sh | bash`; on Windows (PowerShell), `irm http://localhost:3000/api/uncage/install.ps1 | iex`. The installer checks the computer first (Node.js 22+, npm, a coding agent), asks `[Y/n]` before each step it needs (using your Node version manager if you have one; never `sudo` or admin rights), installs `@uncage/cli`, and offers to run `uncage setup http://localhost:3000` for you: answer **Y**. See [Install on your computer](/docs/start/install-on-your-computer/) for what it does on each OS.
+2. **Already have the CLI** (`npm i -g @uncage/cli`)? Run the setup command the page shows under **Already have the CLI?** instead:
 
    ```sh
    uncage setup http://localhost:3000
    ```
 
-   It prints a code and opens `http://localhost:3000/device?code=…`. Check that the code matches and click **Approve**. Setup saves the machine token in `~/.uncage/agent.yaml` and starts the background agent (a launchd service).
+3. **Approve.** Setup prints a code and opens `http://localhost:3000/device?code=…`. Check that the code matches and click **Approve**. Setup saves the machine token in `~/.uncage/agent.yaml` and starts the background agent (a per-user service: launchd on macOS, systemd on Linux, a scheduled task on Windows; `uncage agent status` shows it).
 
 Back on the chat page, the status changes from “Waiting for your computer…” to **Connected: &lt;your computer’s name&gt;**.
 
@@ -395,5 +398,6 @@ The repository’s [`examples/connected-demo`](https://github.com/ptmafia/uncage
 - [Define tools](/docs/guides/define-tools/): validation, errors, confirmation, the file channel.
 - [Write skills](/docs/guides/write-skills/) and [choose them per run](/docs/guides/select-manifest/).
 - [Auth and device approval](/docs/guides/auth-and-device-approval/): connect your real sign-in.
+- [Deploy](/docs/deploy/node/): put it on a server (traditional mode), or move to [Vercel](/docs/deploy/vercel/) (FaaS mode).
 - [Multi-node](/docs/guides/multi-node/): Postgres + Redis behind a load balancer.
 - **Before you deploy behind a proxy:** set the client IP (`trust proxy` or `rateLimits.clientIp`), or every user shares one `uncage setup` rate-limit bucket. See [behind a proxy](/docs/guides/mount-the-hub/#behind-a-reverse-proxy-or-load-balancer).

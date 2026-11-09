@@ -29,7 +29,21 @@ curl -fsSL https://uncage-dev.vercel.app/docs/skills/uncage/SKILL.md -o .claude/
 
 ## 提示词
 
-每篇快速上手都以一段**复制给你的 coding agent 的提示词**开头。这里把它们放在一起，另外加上两个常见的后续任务。
+每篇快速上手都以一段**复制给你的 coding agent 的提示词**开头。这里把它们放在一起，另外加上几个常见的后续任务。
+
+### 为这个项目选择集成方式
+
+还不确定网站会运行在哪里时，先用这一段。技能会告诉 agent 每个平台该按哪一页来做。
+
+```text wrap
+Add Uncage Connected Mode to this website. Read https://uncage-dev.vercel.app/docs/skills/uncage/SKILL.md and https://uncage-dev.vercel.app/docs/start/choose-deployment-mode.md first.
+Find out where this site runs (package.json scripts, vercel.json, wrangler.toml, netlify.toml, Dockerfile, Procfile, the hosting docs in the repo) and tell me which deployment mode fits and why:
+- a long-running Node server or container → traditional mode, https://uncage-dev.vercel.app/docs/deploy/node.md (or the Next.js custom server in https://uncage-dev.vercel.app/docs/start/quickstart-connected.md);
+- Next.js on Vercel → FaaS mode, https://uncage-dev.vercel.app/docs/deploy/vercel.md;
+- Cloudflare Workers → FaaS mode, https://uncage-dev.vercel.app/docs/deploy/cloudflare-workers.md;
+- another Fetch platform → FaaS mode, https://uncage-dev.vercel.app/docs/deploy/other-fetch-platforms.md.
+Then follow that page exactly, wire getUser to this app's existing sign-in, and run every item of its Verify checklist that can run locally. Report the mode you chose, the files you changed, the checklist output, and which environment variables I must set before deploying.
+```
 
 ### 给 Next.js 应用加上 Connected 模式
 
@@ -44,6 +58,18 @@ Read https://uncage-dev.vercel.app/docs/skills/uncage/SKILL.md first and follow 
 4. Change the "dev" and "start" scripts to run server.ts with node (Node.js 22.18 or newer), set "type": "module" in package.json and "allowImportingTsExtensions": true in tsconfig.json.
 5. Add .uncage-hub/ to .gitignore.
 Verify: start the dev server, then curl -s http://localhost:3000/api/uncage/install.sh | head -3 prints the installer, and curl -sI http://localhost:3000/device shows the headers Content-Security-Policy: frame-ancestors 'none' and X-Frame-Options: DENY (no ?code=: unknown codes count as failed guesses and are rate limited). Report what you changed and anything you could not wire.
+```
+
+### 给部署在 Vercel 上的 Next.js 应用加上 Connected 模式
+
+```text wrap
+Add Uncage Connected Mode to this Next.js (App Router) app for Vercel (FaaS mode), following https://uncage-dev.vercel.app/docs/deploy/vercel.md exactly.
+Read https://uncage-dev.vercel.app/docs/skills/uncage/SKILL.md first and follow its rules.
+1. npm i @uncage/hub @uncage/react-ui pg zod and npm i -D @types/pg.
+2. Create lib/auth.ts, lib/uncage-hub.ts, app/api/uncage/[...path]/route.ts (toNextHandlers with waitUntil: after, maxDuration 300, dynamic 'force-dynamic', runtime 'nodejs'), app/uncage/page.tsx, app/device/page.tsx, app/device/actions.ts, app/device/approve-page.tsx, next.config.ts headers and vercel.json (the maintenance cron), as on that page.
+3. Wire lib/auth.ts to this app's existing sign-in. Do not keep the development user unless the app has no sign-in at all.
+4. Do not add a custom server, WebSocket code or @uncage/hub/node imports: on Vercel the hub runs in the route handler and needs only Postgres.
+Verify: with a local Postgres in DATABASE_URL, run next build && next start, then curl -s http://localhost:3000/api/uncage/agent/info shows a single "http" transport, and curl -sI http://localhost:3000/device shows Content-Security-Policy: frame-ancestors 'none'. List the environment variables to set on Vercel (DATABASE_URL, PUBLIC_URL, CRON_SECRET). Report what you changed.
 ```
 
 ### 给 Next.js 应用加上 Local 模式
@@ -70,12 +96,22 @@ Add it to the hub's tools option and, if this app uses selectManifest, to the ru
 
 ```text wrap
 Make our Uncage hub run on several nodes, following https://uncage-dev.vercel.app/docs/guides/multi-node.md.
-Use postgresHubStore with DATABASE_URL and redisCluster with REDIS_URL; attach 'error' listeners to any pool or client we create ourselves; make sure the load balancer passes WebSocket upgrades on /api/uncage/agent; configure the client IP for rate limits.
+Use postgresHubStore with DATABASE_URL, and redisCluster with REDIS_URL (or postgresCluster on the same pool if we have no Redis); attach 'error' listeners to any pool or client we create ourselves; make sure the load balancer passes WebSocket upgrades on /api/uncage/agent and does not buffer streams; configure the client IP for rate limits.
+```
+
+### 从 Uncage 0.2 升级
+
+```text wrap
+Upgrade this project's Uncage packages from 0.2 to 0.3, following https://uncage-dev.vercel.app/docs/reference/migrate-from-0-2.md.
+Update every @uncage/* package together. Import toNodeHandler, attachWebSocket and pgliteHubStore from @uncage/hub/node; replace hub.attach(server) with attachWebSocket(hub, server) and hub.handler with hub.fetch; pass an explicit store to createHub (pgliteHubStore with the data folder we used before, default ./.uncage-hub, so paired computers carry over) and close it after hub.close().
+Verify: the project type-checks and builds, and curl -s http://localhost:3000/api/uncage/agent/info shows "protocol":2.
 ```
 
 ## 给 agent 的经验法则
 
-- **名称要一字不差。** API 名称严格按本站写法使用（`createHub`、`defineTool`、`toNodeHandler`、`hub.attach`、`selectManifest`、`sessionStorage`、`ctx.files.pull`）。[术语表](/docs/zh-cn/reference/glossary/)定义了每个术语；[自动生成的 API 参考](/docs/api/hub/)列出了每个签名。
+- **按平台选择挂载方式。** 长期运行的 Node 服务器：`@uncage/hub/node` 中的 `toNodeHandler(hub)` + `attachWebSocket(hub, server)` + `pgliteHubStore`。Vercel 上的 Next.js：`toNextHandlers(getHub, { waitUntil: after })` + `postgresHubStore` + `postgresCluster`，不需要自定义服务器。Cloudflare Workers：`fetchOnce` 配合按请求创建的连接池。其他支持 Fetch 的平台：`hub.fetch(req, { clientIp, waitUntil })`。绝不要在 Serverless 或 Worker 代码中导入 `@uncage/hub/node`。各自的取舍见[选择部署模式](/docs/zh-cn/start/choose-deployment-mode/)。
+- **名称要一字不差。** API 名称严格按本站写法使用（`createHub`、`defineTool`、`toNodeHandler`、`attachWebSocket`、`toNextHandlers`、`fetchOnce`、`hub.fetch`、`selectManifest`、`sessionStorage`、`ctx.files.pull`）。[术语表](/docs/zh-cn/reference/glossary/)定义了每个术语；[自动生成的 API 参考](/docs/api/hub/)列出了每个签名。
+- **coding agent 由用户选择。** 网站能用到的是用户电脑提供的运行时：Claude Code、Codex 和 [ACP agent](/docs/zh-cn/guides/use-any-acp-agent/)（从 ACP registry 发现，握手成功后启用；通过 `npx`/`uvx` 运行的，必须等用户执行 `uncage runtimes enable` 之后才会运行）。在运行时选择器可以选择的地方，不要把运行时 id 写死。
 - **示例代码都能编译。** 本站的每段 TypeScript 示例都在 CI 里对照当前版本的包做过类型检查。示例标题里写明的文件（如 `lib/tools.ts`）之间用相对路径互相导入；没有展示的模块（比如你应用里的 `./auth`）需要你自己编写。
 - **绝不要给网站加上在用户电脑上执行 shell 命令的途径**，也绝不要尝试从网站打开 `bypassPermissions`。Uncage 在设计上拒绝这两件事（见[信任模型](/docs/zh-cn/concepts/trust-model/)）。
 - **要验证，不要假设。** 完成集成后，运行技能和快速上手里的验证命令，并把输出写进你的报告。

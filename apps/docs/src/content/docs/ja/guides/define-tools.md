@@ -33,7 +33,7 @@ export const lookupOrder = defineTool({
 ## 呼び出し時に起きること
 
 1. ユーザーのコンピュータが受け取るのは、ツールの**名前**、**説明**、`input`の**JSON Schema**（`z.toJSONSchema`で生成）だけです。Claude Codeからは、このツールは`mcp__site__lookup_order`として見えます。
-2. Claude Codeがツールを呼び出すと、エージェントはWebSocket経由で呼び出しを送ります。その接続を持つハブのノードは、次の点を確認します。
+2. Claude Codeがツールを呼び出すと、エージェントは呼び出しをハブに送ります（WebSocket経由、またはFaaS モードではHTTPのPOSTで）。それを受け取ったハブのインスタンスは、次の点を確認します。
    - セッションがこのコンピュータとそのユーザーのものであること。
    - 実行がハブを通じて開始されており、ツールが**この実行のマニフェスト**に含まれていること（[selectManifest](/docs/ja/guides/select-manifest/)を参照）。
    - 引数が`input`に合致すること。引数は`input`でパースされるため、zodのデフォルト値や変換が適用されます。合致しない場合は`invalid_request`で失敗し、ハンドラーは呼ばれません。
@@ -50,7 +50,7 @@ export const lookupOrder = defineTool({
 | `requiresConfirmation` | `true`にすると、ユーザーがすべての呼び出しを事前にUIで承認します。 |
 | `handler(args, ctx)` | `args`の型は`input`から導かれます。値（後述）を返すか、例外を投げます。 |
 
-ツールが無効な場合（不正な名前、重複した名前、64 KBを超えるスキーマ）、`createHub`は起動時に例外を投げます。
+ツールが無効な場合（不正な名前、重複した名前、64KBを超えるスキーマ）、`createHub`は起動時に例外を投げます。
 
 ## `ctx`
 
@@ -58,7 +58,7 @@ export const lookupOrder = defineTool({
 | --- | --- |
 | `ctx.user` | `{ id, name? }`：`getUser`が返した、セッションの所有者。すべての参照と書き込みに使ってください。 |
 | `ctx.sessionId`、`ctx.runId` | 呼び出し元のセッションと実行。 |
-| `ctx.signal` | `AbortSignal`。呼び出しが放棄されたとき、つまりタイムアウトした（`toolTimeoutMs`、デフォルト120秒）、実行が終了した、コンピュータが切断された場合に中断されます。自分のI/Oに渡してください（`fetch(url, { signal: ctx.signal })`）。 |
+| `ctx.signal` | `AbortSignal`。呼び出しが放棄されたとき、つまりタイムアウトしたとき（`toolTimeoutMs`、デフォルト120秒）、Runが終了したとき（**Stop**）、ハブを閉じる際に`toolDrainMs`を過ぎたときに中断されます。接続が切れても中断**されません**。結果は保存され、コンピュータが再接続したときに届けられます。自分のI/Oに渡してください（`fetch(url, { signal: ctx.signal })`）。 |
 | `ctx.files` | [ファイルチャネル](#ユーザーのコンピュータからファイルを読む)。 |
 
 ## 結果を返す
@@ -68,7 +68,7 @@ export const lookupOrder = defineTool({
 - 細かく制御したい場合は`ToolCallResult`を返します：`{ content: [{ type: 'text', text }, { type: 'json', json }], isError?: boolean }`。`isError: true`を指定すると、例外を投げずに呼び出しが失敗したことをモデルに伝えられます。
 - `undefined` / `null`は空の結果になります。
 
-結果は1つのWebSocketフレームに収まる必要があり、JSONで1 MiB弱が上限です。それより大きい結果は`tool_failed`で失敗します。大きなペイロードの代わりにIDやURLを返してください。
+結果は1つのメッセージに収まる必要があり、JSONで1MiB弱が上限です。それより大きい結果は`tool_failed`で失敗します。大きなペイロードの代わりにIDやURLを返してください。
 
 ## エラー
 
@@ -108,8 +108,8 @@ export const sendInvoice = defineTool({
 
 実行のファイルは、ユーザーのコンピュータのセッションのワークスペースにあります。ハンドラーは、Claude Codeに内容を引数として貼り付けさせるのではなく、`ctx.files`を通じてファイルを読みます。
 
-- `ctx.files.pull(path, { maxBytes? })`は、`path`（ワークスペースからの相対パスで指定するファイルまたはフォルダ）配下のすべてのファイルを返します。`for await`で反復処理します。上限は合計`maxBytes`（デフォルト兼最大値は50 MiB）、1ファイルあたり10 MiBです。
-- `ctx.files.read(path)`は、1つのファイルのバイト列（`Uint8Array`、最大10 MiB）を返します。フォルダを指定すると`invalid_request`、存在しないパスなら`not_found`で失敗します。
+- `ctx.files.pull(path, { maxBytes? })`は、`path`（ワークスペースからの相対パスで指定するファイルまたはフォルダ）配下のすべてのファイルを返します。`for await`で反復処理します。上限は合計`maxBytes`（デフォルト兼最大値は50MiB）、1ファイルあたり10MiBです。
+- `ctx.files.read(path)`は、1つのファイルのバイト列（`Uint8Array`、最大10MiB）を返します。フォルダを指定すると`invalid_request`、存在しないパスなら`not_found`で失敗します。
 
 コンピュータが強制するルール：
 
@@ -216,18 +216,33 @@ describe('lookup_order', () => {
 
 `examples/connected-demo/lib/demo.test.ts`は、偽の`ctx.files.pull`も含め、この方法でデモの2つのツールをテストしています。
 
+## 接続が切れたとき、インスタンスが停止したとき
+
+コンピュータとハブの間の接続は、頻繁に切れます（ノートPCのスリープ、ネットワークの切り替え、サーバーレスプラットフォームによる長時間リクエストの切断、デプロイによるノードの再起動）。Uncageは、こうした状況でもツール呼び出しを安全に扱います。
+
+- **接続が切れた場合：ちょうど1回**。すべての呼び出しにはIDがあり、ハブは呼び出しと、ハンドラーが戻った時点でその結果を保存します。コンピュータは再接続すると同じIDで呼び出しを再送し、ハブはハンドラーをもう一度実行するのではなく、保存済みの結果を返します。別の場所でまだ実行中の呼び出しは、新たに開始せず、その完了を待ちます。保存された結果は24時間保持されます。
+- **ハンドラーの途中でインスタンスが停止した場合：最大1回**。ハンドラーを実行中のハブのプロセスや関数インスタンスが停止した場合（クラッシュ、デプロイ、プラットフォームの制限時間）、処理がどこまで進んだかは誰にもわかりません。そのため、リース（`toolTimeoutMs` + 10秒）が切れた時点で、呼び出しは次のメッセージで失敗します：「Site tool "<name>" timed out on the website. Please try again.」（`tool_failed`、`details.reason: 'interrupted'`）。自動的に再実行されることはありません。モデルはエラーを見て、たいていは再試行します。これは新しい呼び出しになります。
+- **`hub.close()`**（グレースフルシャットダウン）は、実行中のハンドラーに`toolDrainMs`（5秒）の猶予を与え、その後同じエラーで中断します。
+- **Cloudflare Workers**は、クライアントが切断するとリクエストの処理をキャンセルすることがあります。`waitUntil`（`ctx.waitUntil.bind(ctx)`）を渡せば、ハブはハンドラーを実行し続けるため、接続が切れても「ちょうど1回」が保たれます。渡さない場合は「最大1回」のケースになります。[Workers → FAQ](/docs/ja/deploy/cloudflare-workers/#workersでサイトツールはちょうど1回実行されますか)を参照してください。
+
+ハンドラーを書くうえでのポイント：
+
+- **プラットフォームの制限時間より短く**保ってください（Vercelでは`maxDuration`、デフォルトは300秒。`toolTimeoutMs`はその範囲内に収めます）。時間のかかる処理はバックグラウンドジョブに任せ、そのIDを返し、状況を確認するための2つ目のツールをモデルに渡してください。
+- **可能な限り冪等に**してください（たとえば引数から導いたキーで`upsert`する）。中断された呼び出しの後にモデルが再試行しても、問題が起きないようにするためです。
+- 自分のI/Oには`ctx.signal`を使い、放棄された呼び出しが処理を止められるようにしてください。
+
 ## 上限の一覧
 
 | 上限 | 値 |
 | --- | --- |
 | ツール名 | `^[a-z][a-z0-9_]{0,47}$`、`__`は不可 |
 | 説明 | 1000文字 |
-| `input`のJSON Schema | 64 KB |
+| `input`のJSON Schema | 64KB |
 | 実行あたりのツール数 | 64 |
-| ハンドラーの実行時間 | `toolTimeoutMs`、デフォルト120秒 |
+| ハンドラーの実行時間 | `toolTimeoutMs`、デフォルト120秒（FaaS モードでは、プラットフォームのリクエストの制限時間内にも収める） |
 | コンピュータあたりの同時呼び出し数 | `maxConcurrentToolCalls`、デフォルト8 |
-| 結果のサイズ | JSONで1 MiB弱 |
-| `ctx.files.pull` | 合計50 MiB、1ファイルあたり10 MiB |
-| `ctx.files.read` | 10 MiB |
+| 結果のサイズ | JSONで1MiB弱 |
+| `ctx.files.pull` | 合計50MiB、1ファイルあたり10MiB |
+| `ctx.files.read` | 10MiB |
 
 Codexのセッションはまだサイトツールに対応していません。Codexのセッションでの実行は拒否されません。ハブがツールを外し、スキルはそのまま渡され、セッションにはコード`site_tools_unsupported`の`system.warning`が表示されます。[実行ごとにツールとスキルを選ぶ](/docs/ja/guides/select-manifest/)を参照してください。

@@ -3,11 +3,12 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ActivityLog, agentConfigPath, loadAgentConfig, updateAgentSites, type ExecFn } from '@uncage/agent';
-import { createHub, pgliteHubStore, toNodeHandler, type Hub } from '@uncage/hub';
+import { ActivityLog, agentConfigPath, checkUserOnly, loadAgentConfig, updateAgentSites, type ExecFn } from '@uncage/agent';
+import { createHub, type Hub } from '@uncage/hub';
+import { attachWebSocket, pgliteHubStore, toNodeHandler } from '@uncage/hub/node';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { showActivity } from './activity-cmd.js';
-import { installLaunchAgent, launchctlInstallCommands, launchdPlist, plistPath, uninstallLaunchAgent } from './launchd.js';
+import { launchctlInstallCommands, launchdPlist, launchdService, plistPath, type ServiceSpec } from './service/index.js';
 import { runSetup } from './setup.js';
 import { formatSites, listSites, removeSite } from './sites.js';
 
@@ -30,7 +31,7 @@ async function startHub(): Promise<{ hub: Hub; origin: string; machines(user: st
   const hub = await createHub({ publicUrl: origin, store, getUser: async (req) => (req.headers.get('x-user') ? { id: req.headers.get('x-user')! } : null) });
   const node = toNodeHandler(hub);
   server.on('request', (req, res) => node(req, res));
-  hub.attach(server);
+  attachWebSocket(hub, server);
   cleanups.push(async () => {
     await hub.close();
     server.closeAllConnections();
@@ -58,6 +59,17 @@ function approver(hub: Hub, user = 'alice') {
 }
 
 const okExec = () => vi.fn<ExecFn>(async () => ({ stdout: '', stderr: '' }));
+
+/** What the old setup passed as programArguments / path, as a spec (macOS). */
+const macSpec = (home: string, o: Partial<ServiceSpec> = {}): ServiceSpec => ({
+  nodePath: '/usr/local/bin/node',
+  cliEntry: '/usr/local/lib/node_modules/@uncage/cli/dist/bin.js',
+  args: ['agent'],
+  env: { PATH: '/opt/homebrew/bin:/usr/bin:/bin', HOME: home },
+  workingDir: home,
+  logsDir: `${home}/.uncage/logs`,
+  ...o,
+});
 const fastSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.min(ms, 50)));
 
 describe('uncage setup', () => {
@@ -66,16 +78,18 @@ describe('uncage setup', () => {
     const home = await tmpHome();
     const exec = okExec();
     const a = approver(hub);
-    const site = await runSetup({ url: origin, home, fetch, exec, out: a.out, noDaemon: true, sleep: fastSleep, machine: { name: 'Mac', os: 'darwin' } });
+    const site = await runSetup({ url: origin, home, fetch, exec, out: a.out, noDaemon: true, platform: 'darwin', sleep: fastSleep, machine: { name: 'Mac', os: 'darwin' } });
 
     expect(site.url).toBe(`${origin}/api/uncage`); // /api/uncage appended
     expect(exec).toHaveBeenCalledWith('open', [expect.stringContaining('/device?code=')]);
     expect(a.lines.join('\n')).toMatch(/confirm the code:\s+[A-Z0-9]{4}-[A-Z0-9]{4}/);
     expect(a.lines.join('\n')).toContain('--no-daemon');
+    expect(a.lines.join('\n')).toContain('Transport: WebSocket (falls back to HTTP streaming');
     expect(exec).toHaveBeenCalledTimes(1); // no launchctl
     const cfg = await loadAgentConfig(home);
     expect(cfg.sites).toEqual([expect.objectContaining({ id: site.id, machineId: site.machineId, token: site.token, machineKey: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) })]);
-    expect(((await stat(agentConfigPath(home))).mode & 0o777).toString(8)).toBe('600');
+    if (process.platform === 'win32') expect((await checkUserOnly(agentConfigPath(home))).ok).toBe(true);
+    else expect(((await stat(agentConfigPath(home))).mode & 0o777).toString(8)).toBe('600');
     expect(a.lines.join('\n')).not.toContain(site.token);
   });
 
@@ -104,8 +118,7 @@ describe('uncage setup', () => {
       noBrowser: true,
       platform: 'darwin',
       uid: 501,
-      programArguments: ['/usr/local/bin/node', '/usr/local/lib/node_modules/@uncage/cli/dist/bin.js', 'agent'],
-      path: '/opt/homebrew/bin:/usr/bin:/bin',
+      spec: macSpec(home),
       sleep: fastSleep,
     });
     expect(exec.mock.calls).toEqual([
@@ -115,6 +128,49 @@ describe('uncage setup', () => {
     const plist = await readFile(plistPath(home), 'utf8');
     expect(plist).toContain('<string>/usr/local/lib/node_modules/@uncage/cli/dist/bin.js</string>');
     expect(plist).toContain('<string>agent</string>');
+  });
+
+  it('setup opens the browser with open / xdg-open / rundll32', async () => {
+    const { hub, origin } = await startHub();
+    for (const [platform, file, args] of [
+      ['darwin', 'open', [expect.stringContaining('/device?code=')]],
+      ['linux', 'xdg-open', [expect.stringContaining('/device?code=')]],
+      // Absolute System32 path on Windows (never looked up in the current directory).
+      ['win32', expect.stringMatching(/\\System32\\rundll32\.exe$/i), ['url.dll,FileProtocolHandler', expect.stringContaining('/device?code=')]],
+    ] as const) {
+      const exec = okExec();
+      await runSetup({ url: origin, home: await tmpHome(), fetch, exec, out: approver(hub).out, noDaemon: true, platform, sleep: fastSleep });
+      expect(exec.mock.calls).toEqual([[file, args]]);
+    }
+  });
+
+  it('detectServiceKind: linux without a user systemd → none; setup then prints the foreground hint and exits 0', async () => {
+    const { hub, origin } = await startHub();
+    const home = await tmpHome();
+    const exec = vi.fn<ExecFn>(async (file, args) => {
+      if (file === 'systemctl') throw Object.assign(new Error('Failed to connect to bus: No medium found'), { code: 1, args });
+      return { stdout: '', stderr: '' };
+    });
+    const a = approver(hub);
+    const site = await runSetup({ url: origin, home, fetch, exec, out: a.out, noBrowser: true, platform: 'linux', env: {}, sleep: fastSleep });
+    expect(site.machineId).toBeTruthy();
+    expect(exec.mock.calls).toEqual([['systemctl', ['--user', 'show-environment']]]);
+    expect(a.lines.join('\n')).toContain('Run it in the foreground (e.g. in tmux or screen): uncage agent');
+    expect((await loadAgentConfig(home)).sites).toHaveLength(1);
+  });
+
+  it('on Linux with a user systemd installs and enables the unit (injected exec)', async () => {
+    const { hub, origin } = await startHub();
+    const home = await tmpHome();
+    const exec = okExec();
+    const a = approver(hub);
+    await runSetup({ url: origin, home, fetch, exec, out: a.out, noBrowser: true, platform: 'linux', env: { USER: 'u' }, spec: macSpec(home), sleep: fastSleep });
+    expect(exec.mock.calls.slice(0, 3)).toEqual([
+      ['systemctl', ['--user', 'show-environment']],
+      ['systemctl', ['--user', 'daemon-reload']],
+      ['systemctl', ['--user', 'enable', '--now', 'uncage-agent.service']],
+    ]);
+    expect(a.lines.join('\n')).toMatch(/Background agent running \(systemd --user: .*uncage-agent\.service\)/);
   });
 
   it('a denied request ends with a clear error and saves nothing', async () => {
@@ -135,7 +191,14 @@ describe('uncage setup', () => {
 
 describe('launchd', () => {
   it('generates a plist with RunAtLoad, KeepAlive on failure, logs in ~/.uncage/logs, escaped values', () => {
-    const plist = launchdPlist({ home: '/Users/a&b', programArguments: ['/usr/bin/node', '/x/<bin>.js', 'agent'], path: '/usr/bin:/bin' });
+    const plist = launchdPlist({
+      nodePath: '/usr/bin/node',
+      cliEntry: '/x/<bin>.js',
+      args: ['agent'],
+      env: { PATH: '/usr/bin:/bin', HOME: '/Users/a&b' },
+      workingDir: '/Users/a&b',
+      logsDir: '/Users/a&b/.uncage/logs',
+    });
     expect(plist).toContain('<key>Label</key>\n  <string>dev.uncage.agent</string>');
     expect(plist).toContain('<key>RunAtLoad</key>\n  <true/>');
     expect(plist).toMatch(/<key>KeepAlive<\/key>\s*<dict>\s*<key>SuccessfulExit<\/key>\s*<false\/>/);
@@ -143,6 +206,7 @@ describe('launchd', () => {
     expect(plist).toContain('<string>/Users/a&amp;b/.uncage/logs/agent.err.log</string>');
     expect(plist).toContain('<string>/x/&lt;bin&gt;.js</string>');
     expect(plist).toContain('<key>PATH</key>\n    <string>/usr/bin:/bin</string>');
+    expect(plist).toContain('<key>WorkingDirectory</key>\n  <string>/Users/a&amp;b</string>');
   });
 
   it('builds bootout + bootstrap for gui/<uid>', () => {
@@ -158,7 +222,12 @@ describe('launchd', () => {
       if (args[0] === 'bootout') throw Object.assign(new Error('not loaded'), { stderr: 'Boot-out failed: 3: No such process' });
       return { stdout: '', stderr: '' };
     });
-    await installLaunchAgent({ home, uid: 501, exec, programArguments: ['node', 'bin.js', 'agent'], path: '/bin' });
+    const svc = (e: ExecFn) => launchdService({ platform: 'darwin', home, env: {}, exec: e, uid: 501 });
+    expect(await svc(exec).install(macSpec(home))).toEqual({ definitionPath: plistPath(home), notes: [] });
+    expect(exec.mock.calls).toEqual([
+      ['launchctl', ['bootout', 'gui/501/dev.uncage.agent']],
+      ['launchctl', ['bootstrap', 'gui/501', plistPath(home)]],
+    ]);
     expect((await stat(plistPath(home))).isFile()).toBe(true);
     expect((await stat(join(home, '.uncage', 'logs'))).isDirectory()).toBe(true);
 
@@ -166,13 +235,15 @@ describe('launchd', () => {
       if (args[0] === 'bootstrap') throw Object.assign(new Error('x'), { stderr: 'Bootstrap failed: 5: Input/output error' });
       return { stdout: '', stderr: '' };
     });
-    await expect(installLaunchAgent({ home, uid: 501, exec: failing, programArguments: ['a'], path: '/bin' })).rejects.toThrow(/Bootstrap failed: 5/);
+    await expect(svc(failing).install(macSpec(home))).rejects.toThrow(/Bootstrap failed: 5/);
 
     const ex2 = okExec();
-    expect(await uninstallLaunchAgent({ home, uid: 501, exec: ex2 })).toEqual({ removed: true });
+    expect(await svc(ex2).restart()).toBe(true);
+    expect(ex2).toHaveBeenCalledWith('launchctl', ['kickstart', '-k', 'gui/501/dev.uncage.agent']);
+    expect(await svc(ex2).uninstall()).toEqual({ removed: true });
     expect(ex2).toHaveBeenCalledWith('launchctl', ['bootout', 'gui/501/dev.uncage.agent']);
     await expect(stat(plistPath(home))).rejects.toThrow();
-    expect(await uninstallLaunchAgent({ home, uid: 501, exec: ex2 })).toEqual({ removed: false });
+    expect(await svc(ex2).uninstall()).toEqual({ removed: false });
   });
 });
 
@@ -201,6 +272,20 @@ describe('uncage sites', () => {
     const lines: string[] = [];
     await removeSite({ home, id: 'gone.example', fetch, out: (l) => lines.push(l) });
     expect(lines.join('\n')).toMatch(/Could not reach/);
+    expect((await loadAgentConfig(home)).sites).toEqual([]);
+  });
+
+  it('"already revoked" only on the hub\'s own unauthorized body; a proxy 401 keeps the local token', async () => {
+    const home = await tmpHome();
+    const entry = { id: 'p.example', name: 'P', url: 'https://p.example/api/uncage', machineId: 'm', token: 't' };
+    await updateAgentSites(home, () => [entry]);
+    const proxy = (async () => new Response('<html>Vercel Authentication</html>', { status: 401 })) as typeof fetch;
+    await expect(removeSite({ home, id: entry.id, fetch: proxy, out: () => undefined })).rejects.toThrow(/not from Uncage.*token is kept/);
+    expect((await loadAgentConfig(home)).sites.map((s) => s.id)).toEqual([entry.id]);
+    const hub401 = (async () => Response.json({ error: { code: 'unauthorized', message: 'Unknown or revoked machine token.' } }, { status: 401 })) as typeof fetch;
+    const lines: string[] = [];
+    await removeSite({ home, id: entry.id, fetch: hub401, out: (l) => lines.push(l) });
+    expect(lines.join('\n')).toMatch(/already revoked/);
     expect((await loadAgentConfig(home)).sites).toEqual([]);
   });
 

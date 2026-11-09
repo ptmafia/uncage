@@ -1,0 +1,4 @@
+# Copy to .dev.vars for `wrangler dev` (never commit .dev.vars).
+# DEMO_SECRET signs the demo sign-in cookie: at least 32 bytes. Generate one with
+#   openssl rand -hex 32
+DEMO_SECRET=

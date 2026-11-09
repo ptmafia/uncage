@@ -170,14 +170,17 @@ const en = {
   // Terminology: the background process on the user's computer (`uncage agent`) is "the agent" in
   // English and "守护进程" in Chinese, everywhere. The computer itself is "computer" / "电脑".
   connectTitle: 'Connect your computer',
-  connectSubtitle: 'Run these two commands on the computer you want to connect. It shows up here as soon as the agent is online.',
-  connectStep1: 'Install the Uncage CLI',
-  connectStep2: 'Start the agent',
-  connectStep2Note: 'Opens a browser to sign in, then keeps the agent running in the background.',
+  connectSubtitle: 'Run one command on the computer you want to connect. It shows up here as soon as the agent is online.',
+  connectOneCommand: 'Run this command on your computer',
+  connectOneCommandNote:
+    'It checks the computer and asks before installing anything it needs (Node.js 22, the Uncage CLI). Then it opens a browser to sign in and keeps the agent running in the background.',
+  connectAlreadyInstalled: 'Already have the CLI?',
   osTabs: 'Operating system',
   osUnix: 'macOS / Linux',
   osWindows: 'Windows',
+  /** @deprecated No longer shown (Windows without a command says `windowsNotOffered`). */
   comingSoon: 'Coming soon',
+  windowsNotOffered: "This site doesn't offer a Windows command.",
   copy: 'Copy',
   copied: 'Copied',
   copyFailed: 'Copy failed — select the text',
@@ -195,6 +198,10 @@ const en = {
   machineOnline: 'Online',
   machineOffline: (ago: string) => `Offline · seen ${ago}`,
   machineStatus: (name: string, online: boolean) => `Computer: ${name} (${online ? 'online' : 'offline'})`,
+  machineAgentOutdated: 'Agent update needed',
+  /** The hub refused this computer's agent as too old (`MachineInfo.agentOutdated`). Backticks mark commands. */
+  agentOutdated: (setup: string) =>
+    `This computer's Uncage agent is too old for this website. On that computer run \`npm i -g @uncage/cli@latest\`, then \`${setup}\`.`,
   connectAnother: 'Connect another computer…',
   osName: (os: string) =>
     ({ darwin: 'macOS', linux: 'Linux', win32: 'Windows' } as Record<string, string>)[os] ?? os,
@@ -382,14 +389,15 @@ const zhCN: Strings = {
   replayIncomplete: '部分较早的事件已经不在了，这段历史可能不完整。',
   dismiss: '关闭',
   connectTitle: '连接你的电脑',
-  connectSubtitle: '在要连接的电脑上运行这两条命令。守护进程一上线，这里就会自动识别。',
-  connectStep1: '安装 Uncage CLI',
-  connectStep2: '启动守护进程',
-  connectStep2Note: '会打开浏览器登录，然后在后台保持守护进程运行。',
+  connectSubtitle: '在要连接的电脑上运行一条命令。守护进程一上线，这里就会自动识别。',
+  connectOneCommand: '在你的电脑上运行这条命令',
+  connectOneCommandNote: '它会先检查这台电脑，安装所需的东西（Node.js 22、Uncage CLI）之前都会先征求你的同意；然后打开浏览器登录，并在后台保持守护进程运行。',
+  connectAlreadyInstalled: '已经装好 CLI？',
   osTabs: '操作系统',
   osUnix: 'macOS / Linux',
   osWindows: 'Windows',
   comingSoon: '即将支持',
+  windowsNotOffered: '此网站未提供 Windows 命令。',
   copy: '复制',
   copied: '已复制',
   copyFailed: '复制失败，请手动选择文本',
@@ -406,6 +414,9 @@ const zhCN: Strings = {
   machineOnline: '在线',
   machineOffline: (ago: string) => `离线 · ${ago}在线`,
   machineStatus: (name: string, online: boolean) => `电脑：${name}（${online ? '在线' : '离线'}）`,
+  machineAgentOutdated: '需要更新守护进程',
+  agentOutdated: (setup: string) =>
+    `这台电脑上的 Uncage 守护进程版本过旧。请在那台电脑上运行 \`npm i -g @uncage/cli@latest\`，然后运行 \`${setup}\` 重新连接。`,
   connectAnother: '连接另一台电脑…',
   osName: (os: string) =>
     ({ darwin: 'macOS', linux: 'Linux', win32: 'Windows' } as Record<string, string>)[os] ?? os,

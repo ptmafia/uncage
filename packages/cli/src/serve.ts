@@ -2,10 +2,13 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createUncage } from '@uncage/core';
 import type { RuntimeAdapter } from '@uncage/protocol';
+import { acpAdapter, type AcpAdapterOptions } from '@uncage/runtime-acp';
 import { claudeAdapter } from '@uncage/runtime-claude';
 import { codexAdapter } from '@uncage/runtime-codex';
 import { createUncageServer } from '@uncage/server';
 import pino, { type Logger } from 'pino';
+import { projectAcpCommands, setupAcp, withIcon, type NativeIcons } from './acp.js';
+import { claudeExecutable, codexExecutable, resolveAgentExecutables, type AgentExecutables } from './agent-cmd.js';
 import type { UncageConfig } from './config.js';
 import { ensureToken, ensureTokenAt } from './token.js';
 
@@ -26,14 +29,34 @@ export function createLogger(env: NodeJS.ProcessEnv = process.env, destination?:
   return destination ? pino(opts, destination) : pino(opts, pino.destination(2));
 }
 
-export function buildAdapters(config: UncageConfig): RuntimeAdapter[] {
+/**
+ * Local Mode adapters: Claude Code and Codex (unless disabled), then the ACP agents (`setupAcp`).
+ * `exes`: resolved claude / codex executables (Windows npm `.cmd` shims → node + JS).
+ */
+export function buildAdapters(config: UncageConfig, acp: AcpAdapterOptions[] = [], exes: AgentExecutables = {}, icons: NativeIcons = {}): RuntimeAdapter[] {
   const { allowBypass } = config.security;
   const adapters: RuntimeAdapter[] = [];
-  if (config.runtimes.claude.enabled) adapters.push(claudeAdapter({ allowBypass }));
+  const claude = claudeExecutable(exes.claude);
+  if (config.runtimes.claude.enabled) adapters.push(withIcon(claudeAdapter({ allowBypass, ...(claude ? { executable: claude } : {}) }), icons.claude));
   if (config.runtimes.codex.enabled) {
-    adapters.push(codexAdapter({ allowBypass, ...(config.runtimes.codex.command ? { command: config.runtimes.codex.command } : {}) }));
+    const exe = config.runtimes.codex.command ? undefined : codexExecutable(exes.codex);
+    const codex = codexAdapter({
+      allowBypass,
+      ...(config.runtimes.codex.command ? { command: config.runtimes.codex.command } : {}),
+      ...(exe ? { executable: exe } : {}),
+    });
+    adapters.push(withIcon(codex, icons.codex));
   }
+  for (const o of acp) adapters.push(acpAdapter({ ...o, allowBypass }));
   return adapters;
+}
+
+/** `buildAdapters` with the ACP agents of `runtimes.acp` resolved (registry detection included). */
+export async function buildAllAdapters(config: UncageConfig, home: string, exes?: AgentExecutables): Promise<RuntimeAdapter[]> {
+  const acp = await setupAcp({ acp: config.runtimes.acp, allowBypass: config.security.allowBypass, home });
+  // Windows: claude / codex are often npm .cmd shims, which cannot be started without a shell.
+  const resolved = exes ?? (process.platform === 'win32' ? await resolveAgentExecutables() : {});
+  return buildAdapters(config, acp.adapters, resolved, acp.nativeIcons);
 }
 
 /** `--workspace <dir>` sets the default workspace and, when the config left roots at the zero-config default, the allowed roots. */
@@ -70,7 +93,9 @@ export async function serve(o: ServeOptions): Promise<void> {
   const warn = (m: string) => logger.warn(m);
   const { token, path } = await (o.tokenFile ? ensureTokenAt(o.tokenFile, warn) : ensureToken(home, warn));
   const { config } = o;
-  const adapters = buildAdapters(config);
+  // Commands the project's uncage.config.yaml makes Uncage run, shown before any is started.
+  for (const line of projectAcpCommands(config.runtimes.acp)) out(`! uncage.config.yaml: ${line}`);
+  const adapters = await buildAllAdapters(config, home);
 
   const uncage = await createUncage({
     adapters,

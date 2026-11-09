@@ -49,7 +49,7 @@ async function setup(
   };
   const result = async (id: string) => (await a.waitFor((f) => f.t === 'tool_result' && f.id === id, 8000)) as ToolResultFrame;
   const call = async (tool: string, args: unknown, runId = run.id): Promise<ToolResultFrame> => result(send(tool, args, runId));
-  return { t, a, s, fm, machineId, run, startRun, send, result, call };
+  return { t, a, s, fm, machineId, machineToken, run, startRun, send, result, call };
 }
 
 describe('defineTool / normalizeToolResult', () => {
@@ -151,6 +151,37 @@ describe('site tool execution on the hub', () => {
     await sleep(100);
     expect(a.frames.some((f) => f.t === 'tool_result' && f.id === id)).toBe(false);
     await until(async () => (await t.store.listToolCalls(s.id))[0]?.status === 'cancelled');
+  });
+
+  it('a dropped connection does not abort the handler: it finishes and the result reaches the reconnected machine', async () => {
+    let signal: AbortSignal | undefined;
+    let runs = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const tool = defineTool({
+      name: 'gated',
+      description: 'x',
+      input: z.object({}),
+      handler: async (_a, ctx) => {
+        runs++;
+        signal = ctx.signal;
+        await gate;
+        return 'finished';
+      },
+    });
+    const { t, a, s, fm, send, machineToken } = await setup([tool]);
+    const id = send('gated', {});
+    await until(() => signal !== undefined);
+    await a.close();
+    await sleep(50);
+    expect(signal!.aborted).toBe(false);
+    const b = await connectFakeAgent({ url: t.wsUrl, token: machineToken, onCommand: fm.handler });
+    agents.push(b);
+    release();
+    expect(await b.waitFor((f) => f.t === 'tool_result' && f.id === id)).toMatchObject({ ok: true, result: { content: [{ type: 'text', text: 'finished' }] } });
+    expect(signal!.aborted).toBe(true); // released once the call finished
+    expect(runs).toBe(1);
+    await until(async () => (await t.store.listToolCalls(s.id))[0]?.status === 'ok');
   });
 
   it('refuses unknown tools, foreign sessions, runs of another session and runs not started through the hub', async () => {
@@ -342,7 +373,7 @@ describe('ctx.files (file channel)', () => {
 
 describe('run-manifest retention sweep', () => {
   it('the hub periodically drops unbound manifests older than their TTL', async () => {
-    const t = (th = await startTestHub({ manifestSweep: { intervalMs: 50, unboundTtlMs: 5_000, boundTtlMs: 60_000 } }));
+    const t = (th = await startTestHub({ maintenance: { intervalMs: 50 }, manifestSweep: { unboundTtlMs: 5_000, boundTtlMs: 60_000 } }));
     const at = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
     await t.store.putRunManifest({ key: 'stale', sessionId: 's', tools: [], createdAt: at(10_000), nonce: 'n' });
     await t.store.putRunManifest({ key: 'fresh', sessionId: 's', tools: [], createdAt: at(0), nonce: 'n' });

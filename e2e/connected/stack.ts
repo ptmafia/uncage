@@ -8,7 +8,8 @@
  * live run's Claude Code keeps its login.
  */
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { mkdirSync, mkdtempSync, openSync, rmSync, writeSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { appendFileSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -116,6 +117,68 @@ export class Stack {
     return { url, dataDir, proc };
   }
 
+  /**
+   * The demo website in FaaS mode: `next start` in the demo dir — no custom server, no WebSocket,
+   * no local disk (production build required). `env` must carry DATABASE_URL and DEMO_SECRET.
+   */
+  async demoFaas(port: number, env: NodeJS.ProcessEnv): Promise<{ url: string; proc: Proc; dataDir: string }> {
+    const url = `http://localhost:${port}`;
+    // A data dir that does not exist: FaaS mode must never need one.
+    const dataDir = join(this.tmp('faas-no-data'), 'must-stay-absent');
+    const proc = await this.spawn('demo-faas', [join(demoDir, 'node_modules/next/dist/bin/next'), 'start', '-p', String(port)], {
+      cwd: demoDir,
+      env: { NODE_ENV: 'production', PUBLIC_URL: url, DEMO_DATA_DIR: dataDir, ...env },
+      marker: 'Ready in',
+    });
+    return { url, proc, dataDir };
+  }
+
+  /**
+   * examples/connected-cloudflare under `wrangler dev` (workerd, local mode). `databaseUrl` replaces
+   * the Hyperdrive binding's localConnectionString; DEMO_SECRET is a throwaway `--var`.
+   */
+  async wrangler(port: number, o: { databaseUrl: string; env?: NodeJS.ProcessEnv }): Promise<{ url: string; proc: Proc }> {
+    const url = `http://localhost:${port}`;
+    const dir = join(repo, 'examples/connected-cloudflare');
+    const secret = randomBytes(32).toString('hex');
+    const proc = await this.spawn(
+      'wrangler',
+      [join(dir, 'node_modules/wrangler/bin/wrangler.js'), 'dev', '--port', String(port), '--ip', '127.0.0.1', '--inspector-port', '0', '--var', `PUBLIC_URL:${url}`, '--var', `DEMO_SECRET:${secret}`, '--persist-to', this.tmp('wrangler-state')],
+      {
+        cwd: dir,
+        env: {
+          CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE: o.databaseUrl,
+          WRANGLER_SEND_METRICS: 'false',
+          // Local mode only: no Cloudflare account, no login prompt.
+          CI: '1',
+          ...o.env,
+        },
+        marker: 'Ready on',
+        timeoutMs: 120_000,
+      },
+    );
+    return { url, proc };
+  }
+
+  /**
+   * The Railway shape: the demo's container image (examples/connected-demo/Dockerfile, built as
+   * `image`) — Next.js + hub + WebSocket on one port, PGlite in the container's /data.
+   */
+  async demoContainer(port: number, image = 'uncage-connected-demo:e2e'): Promise<{ url: string }> {
+    const docker = async (...args: string[]) => (await execFileP('docker', args, { timeout: 180_000 })).stdout.trim();
+    const url = `http://localhost:${port}`;
+    const id = await docker('run', '-d', '--rm', '-p', `127.0.0.1:${port}:3200`, '-e', `PUBLIC_URL=${url}`, image);
+    this.containers.push(id);
+    await until(async () => (await fetch(`${url}/api/uncage/agent/info`)).ok, 120_000, 'demo container ready');
+    this.log(`docker: demo container ${id.slice(0, 12)} on ${url}`);
+    return { url };
+  }
+
+  /** How many times `re` matches in `proc`'s output (stdout + stderr). */
+  count(proc: Proc, re: RegExp): number {
+    return proc.output().match(new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`))?.length ?? 0;
+  }
+
   /** Two (or `nodes`) demo servers on Redis + Postgres behind the round-robin proxy. */
   async multinode(port: number, o: { redisUrl: string; databaseUrl: string; nodes?: number }): Promise<{ url: string; dataDir: string; proc: Proc }> {
     const dataDir = this.tmp('demo-data');
@@ -136,6 +199,18 @@ export class Stack {
       timeoutMs: 120_000,
     });
     return { url, dataDir, proc };
+  }
+
+  /** Throwaway postgres:16-alpine on a random loopback port (FaaS mode needs nothing else). */
+  async dockerPostgres(): Promise<{ databaseUrl: string }> {
+    const docker = async (...args: string[]) => (await execFileP('docker', args, { timeout: 180_000 })).stdout.trim();
+    const pg = await docker('run', '-d', '--rm', '-p', '127.0.0.1::5432', '-e', 'POSTGRES_PASSWORD=uncage', '-e', 'POSTGRES_USER=uncage', 'postgres:16-alpine');
+    this.containers.push(pg);
+    const port = Number(/:(\d+)\s*$/m.exec((await docker('port', pg, '5432/tcp')).split('\n')[0] ?? '')?.[1]);
+    const databaseUrl = `postgres://uncage:uncage@127.0.0.1:${port}/uncage`;
+    await until(async () => (await docker('exec', pg, 'pg_isready', '-U', 'uncage', '-h', '127.0.0.1')).includes('accepting'), 60_000, 'postgres ready');
+    this.log(`docker: ${databaseUrl}`);
+    return { databaseUrl };
   }
 
   /** Throwaway redis:7-alpine + postgres:16-alpine on random loopback ports. */
@@ -182,13 +257,38 @@ export class Stack {
   }
 
   /** The e2e fake agent (real @uncage/agent + testkit fake adapter), foreground. */
-  fakeAgent(home: string): Promise<Proc> {
-    return this.spawn('fake-agent', [join(repo, 'e2e/connected/fake-agent.ts')], { env: { UNCAGE_HOME: home }, marker: 'fake agent ready' });
+  fakeAgent(home: string, env: NodeJS.ProcessEnv = {}): Promise<Proc> {
+    return this.spawn('fake-agent', [join(repo, 'e2e/connected/fake-agent.ts')], { env: { ...env, UNCAGE_HOME: home }, marker: 'fake agent ready' });
   }
 
-  /** The real `uncage agent` (Claude Code + Codex adapters), foreground. HOME stays real. */
+  /**
+   * The real `uncage agent` (Claude Code + Codex adapters, plus `runtimes.acp`), foreground. HOME
+   * stays real. No daily ACP registry download (`UNCAGE_ACP_REGISTRY_REFRESH=0`).
+   */
   realAgent(home: string): Promise<Proc> {
-    return this.spawn('agent', [cliBin, 'agent'], { env: { UNCAGE_HOME: home, UNCAGE_LOG_LEVEL: 'info' } });
+    return this.spawn('agent', [cliBin, 'agent'], { env: { UNCAGE_HOME: home, UNCAGE_LOG_LEVEL: 'info', UNCAGE_ACP_REGISTRY_REFRESH: '0' } });
+  }
+
+  /**
+   * The real `uncage agent` with Claude Code only: `runtimes.acp` gets no presets, no registry
+   * detection and no agents, so no other local agent is probed (the native Codex adapter only
+   * checks for a `codex` binary).
+   */
+  claudeAgent(home: string): Promise<Proc> {
+    this.writeAcpRuntimes(home, []);
+    return this.realAgent(home);
+  }
+
+  /**
+   * Adds `runtimes.acp` to `<home>/.uncage/agent.yaml` (written by `uncage setup`): exactly
+   * `agents`, no presets from PATH and no registry detection, so the run starts only these agents.
+   */
+  writeAcpRuntimes(home: string, agents: AcpTestAgent[]): void {
+    const file = join(home, '.uncage', 'agent.yaml');
+    if (/^runtimes:/m.test(readFileSync(file, 'utf8'))) throw new Error(`${file} already has runtimes`);
+    // JSON is valid YAML (flow style).
+    appendFileSync(file, `\nruntimes: ${JSON.stringify({ acp: { presets: 'off', autoDetect: false, agents } })}\n`);
+    this.log(`agent.yaml runtimes.acp: ${JSON.stringify(agents)}`);
   }
 
   async cleanup(): Promise<void> {
@@ -196,6 +296,16 @@ export class Stack {
     if (this.containers.length > 0) await execFileP('docker', ['rm', '-f', ...this.containers.splice(0)]).catch(() => undefined);
     for (const d of this.dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   }
+}
+
+/** One `runtimes.acp.agents[]` entry. */
+export interface AcpTestAgent {
+  id: string;
+  preset?: 'claude' | 'gemini' | 'opencode';
+  displayName?: string;
+  command?: string[];
+  env?: Record<string, string>;
+  mcp?: 'auto' | 'http' | 'stdio' | 'off';
 }
 
 export async function until(fn: () => Promise<boolean>, timeoutMs: number, what: string): Promise<void> {
@@ -211,12 +321,22 @@ export async function until(fn: () => Promise<boolean>, timeoutMs: number, what:
   }
 }
 
-/** DEMO-ONLY sign-in form. */
-export async function login(page: Page, url: string, user: string): Promise<void> {
+/**
+ * DEMO-ONLY sign-in form; returns the signed-in name. A public demo (`DEMO_PUBLIC=1`) has no name
+ * field: it hands out a random guest, and `user` is ignored.
+ */
+export async function login(page: Page, url: string, user: string): Promise<string> {
   await page.goto(`${url}/login`);
+  const guest = page.getByRole('button', { name: '以访客身份进入' });
+  if (await guest.isVisible()) {
+    await guest.click();
+    await expect(page.getByTestId('demo-user')).toHaveText(/^guest-[a-z2-7]{12}$/);
+    return (await page.getByTestId('demo-user').textContent()) ?? '';
+  }
   await page.getByLabel('用户名').fill(user);
   await page.getByRole('button', { name: '登录' }).click();
   await expect(page.getByTestId('demo-user')).toHaveText(user);
+  return user;
 }
 
 export const LANDING_PROMPT = '做一个介绍 Uncage 的落地页并发布';

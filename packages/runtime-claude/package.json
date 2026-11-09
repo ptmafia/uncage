@@ -1,6 +1,6 @@
 {
   "name": "@uncage/runtime-claude",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Uncage runtime adapter for Claude Code via the Claude Agent SDK",
   "type": "module",
   "engines": {

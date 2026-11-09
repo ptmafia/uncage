@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { getAsset } from '../../../lib/assets.ts';
+import { assetStore } from '../../../lib/assets.ts';
 import { requireUser } from '../../../lib/session.ts';
 
 export const dynamic = 'force-dynamic';
@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 export default async function AssetPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const user = await requireUser(`/assets/${id}`);
-  const asset = await getAsset(id);
+  const asset = await assetStore().get(id);
   if (!asset || asset.owner !== user.id) notFound();
   return (
     <div className="demo-page">

@@ -10,6 +10,7 @@ import {
 } from './domain.js';
 import { SkillSpecSchema, type ToolCallResult, type ToolSpec } from './connected.js';
 import { ErrorBodySchema } from './errors.js';
+import type { RuntimeIcon } from './icon.js';
 import { ToolInfoSchema } from './events.js';
 
 export const RuntimeProbeSchema = z.object({
@@ -105,6 +106,8 @@ export interface AdapterRunContext {
 export interface RuntimeAdapter {
   readonly id: string;
   readonly displayName: string;
+  /** Official icon, reported with the runtime info (data URIs only; see `RuntimeIconSchema`). */
+  readonly icon?: RuntimeIcon;
   probe(): Promise<RuntimeProbe>;
   capabilities(): RuntimeCapabilities;
   /** Re-detect dynamic capabilities (e.g. model list). */

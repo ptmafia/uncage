@@ -1,8 +1,8 @@
-import { createHash, randomBytes, randomInt } from 'node:crypto';
-import type { DeviceCodeRequest, DeviceCodeResponse, DeviceTokenResponse } from '@uncage/protocol';
-import type { SlidingWindow } from './rate-limit.js';
+import type { DeviceCodeRequest, DeviceCodeResponse, DeviceTokenResponse, TransportOffer } from '@uncage/protocol';
+import type { RateLimiter } from './rate-limit.js';
 import type { HubStore } from './store/store.js';
 import type { HubUser } from './types.js';
+import { randomInt, randomToken, sha256Hex } from './web.js';
 
 export const DEVICE_INTERVAL_SEC = 2;
 export const DEVICE_EXPIRES_IN_SEC = 600;
@@ -10,10 +10,8 @@ export const DEVICE_EXPIRES_IN_SEC = 600;
 /** No 0/O, 1/I/L, or vowel-ish lookalikes beyond what users can tell apart (31 symbols). */
 export const USER_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
-export const sha256 = (s: string): string => createHash('sha256').update(s).digest('hex');
-
 /** 32 random bytes, base64url (machine tokens, device codes). */
-export const randomSecret = (): string => randomBytes(32).toString('base64url');
+export const randomSecret = (): string => randomToken(32);
 
 export function generateUserCode(): string {
   let s = '';
@@ -32,16 +30,19 @@ export interface DeviceFlowDeps {
   store: HubStore;
   verificationUri: string;
   site: { id: string; name: string; url: string };
+  /** Transports handed to the agent with its token (at least one), read at each issue. */
+  transports(): [TransportOffer, ...TransportOffer[]];
   /**
    * Creates (or, for a known `machineKeyHash`, re-pairs) the machine for an approved code;
    * resolves its id and (one-time) token.
    */
   createMachine(o: { userId: string; name?: string; os?: string; machineKeyHash?: string }): Promise<{ machineId: string; machineToken: string }>;
+  /** Shared through the store, so every hub instance counts together. */
   limits: {
     /** Failed approve/deny/lookup attempts per user (user-code guessing). */
-    userFailures: SlidingWindow;
+    userFailures: RateLimiter;
     /** `POST /device/code` per client. */
-    codesPerClient: SlidingWindow;
+    codesPerClient: RateLimiter;
   };
   now?: () => number;
 }
@@ -66,23 +67,21 @@ const clipLabel = (v: string | undefined): string | undefined =>
 export function deviceFlow(d: DeviceFlowDeps) {
   const now = d.now ?? Date.now;
   const expired = (r: { expiresAt: string }) => Date.parse(r.expiresAt) <= now();
-  /** Last poll time per device-code hash (for `slow_down`). */
-  const lastPoll = new Map<string, number>();
 
   /** Rate-limited per user: unknown codes count as failed guesses. Throws `rate_limited`. */
   async function guarded<T>(user: HubUser, fn: () => Promise<T>, failed: (r: T) => boolean): Promise<T> {
     const limit = d.limits.userFailures;
-    // Reserve the attempt synchronously (check + record) so parallel guesses cannot overshoot the
-    // limit; give it back if it turns out not to be a failure.
-    limit.take(user.id);
+    // Reserve the attempt first (one atomic count in the store) so parallel guesses, on any
+    // instance, cannot overshoot the limit; give it back if it turns out not to be a failure.
+    await limit.take(user.id);
     let r: T;
     try {
       r = await fn();
     } catch (e) {
-      limit.release(user.id);
+      await limit.release(user.id);
       throw e;
     }
-    if (!failed(r)) limit.release(user.id);
+    if (!failed(r)) await limit.release(user.id);
     return r;
   }
 
@@ -92,7 +91,7 @@ export function deviceFlow(d: DeviceFlowDeps) {
       async (): Promise<DeviceDecision> => {
         const code = normalizeUserCode(userCode);
         if (!code) return 'not_found';
-        const rec = await d.store.findDeviceCodeByUserCode(sha256(code));
+        const rec = await d.store.findDeviceCodeByUserCode(await sha256Hex(code));
         if (!rec) return 'not_found';
         if (expired(rec)) return 'expired';
         if (rec.status !== 'pending') return 'not_found';
@@ -103,20 +102,17 @@ export function deviceFlow(d: DeviceFlowDeps) {
     );
   }
 
-  function tooFast(hash: string): boolean {
+  /** Records this poll in the store (shared by every instance); `true` when it came too soon after the last one. */
+  async function tooFast(hash: string): Promise<boolean> {
     const t = now();
-    if (lastPoll.size > 10_000) {
-      for (const [k, at] of lastPoll) if (t - at > DEVICE_EXPIRES_IN_SEC * 1000) lastPoll.delete(k);
-    }
-    const prev = lastPoll.get(hash);
-    lastPoll.set(hash, t);
-    return prev !== undefined && t - prev < DEVICE_INTERVAL_SEC * 1000 - POLL_TOLERANCE_MS;
+    const prev = await d.store.recordDevicePoll(hash, new Date(t).toISOString());
+    return prev !== null && t - Date.parse(prev) < DEVICE_INTERVAL_SEC * 1000 - POLL_TOLERANCE_MS;
   }
 
   return {
     /** `clientKey` identifies the caller for rate limiting (normally its IP). Throws `rate_limited`. */
     async createCode(body: DeviceCodeRequest, clientKey: string): Promise<DeviceCodeResponse> {
-      d.limits.codesPerClient.take(clientKey);
+      await d.limits.codesPerClient.take(clientKey);
       const deviceCode = randomSecret();
       // Retry on the (astronomically unlikely) user-code collision with a live code.
       for (let attempt = 0; ; attempt++) {
@@ -126,12 +122,12 @@ export function deviceFlow(d: DeviceFlowDeps) {
         const os = clipLabel(body.os);
         try {
           await d.store.insertDeviceCode({
-            deviceCodeHash: sha256(deviceCode),
-            userCodeHash: sha256(userCode),
+            deviceCodeHash: await sha256Hex(deviceCode),
+            userCodeHash: await sha256Hex(userCode),
             status: 'pending',
             ...(name ? { name } : {}),
             ...(os ? { os } : {}),
-            ...(body.machineKey ? { machineKeyHash: sha256(body.machineKey) } : {}),
+            ...(body.machineKey ? { machineKeyHash: await sha256Hex(body.machineKey) } : {}),
             createdAt,
             expiresAt: new Date(now() + DEVICE_EXPIRES_IN_SEC * 1000).toISOString(),
           });
@@ -153,24 +149,23 @@ export function deviceFlow(d: DeviceFlowDeps) {
 
     /** One poll. `null` = unknown device code. The machine token is issued exactly once. */
     async poll(deviceCode: string): Promise<DeviceTokenResponse | null> {
-      const hash = sha256(deviceCode);
+      const hash = await sha256Hex(deviceCode);
       const rec = await d.store.getDeviceCode(hash);
       if (!rec) return null;
       if (rec.status === 'consumed') return { status: 'expired' };
-      if (tooFast(hash)) return { status: 'slow_down' };
+      if (await tooFast(hash)) return { status: 'slow_down' };
       if (rec.status === 'denied') return { status: 'denied' };
       if (expired(rec)) return { status: 'expired' };
       if (rec.status === 'pending') return { status: 'pending' };
       const won = await d.store.transitionDeviceCode(hash, 'approved', 'consumed');
       if (!won?.userId) return { status: 'expired' };
-      lastPoll.delete(hash);
       const m = await d.createMachine({
         userId: won.userId,
         ...(won.name ? { name: won.name } : {}),
         ...(won.os ? { os: won.os } : {}),
         ...(won.machineKeyHash ? { machineKeyHash: won.machineKeyHash } : {}),
       });
-      return { status: 'ok', machineId: m.machineId, machineToken: m.machineToken, site: d.site };
+      return { status: 'ok', machineId: m.machineId, machineToken: m.machineToken, site: d.site, transports: d.transports() };
     },
 
     approve: (userCode: string, user: HubUser) => decide(userCode, user, 'approved'),
@@ -183,7 +178,7 @@ export function deviceFlow(d: DeviceFlowDeps) {
         async () => {
           const code = normalizeUserCode(userCode);
           if (!code) return null;
-          const rec = await d.store.findDeviceCodeByUserCode(sha256(code));
+          const rec = await d.store.findDeviceCodeByUserCode(await sha256Hex(code));
           if (!rec || rec.status !== 'pending' || expired(rec)) return null;
           const known = rec.machineKeyHash ? await d.store.findMachineByKey(user.id, rec.machineKeyHash) : null;
           return {

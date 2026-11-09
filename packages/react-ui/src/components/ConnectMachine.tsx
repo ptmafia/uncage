@@ -1,7 +1,7 @@
 import type { MachineInfo } from '@uncage/protocol';
 import { useMachines, useUncageStore } from '@uncage/react';
 import { CheckCircle2, ChevronRight, Laptop } from 'lucide-react';
-import { useEffect, useId, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { cx, useUi } from '../context.js';
 import { errorText } from '../i18n.js';
 import { CopyCommand } from './CopyCommand.js';
@@ -29,9 +29,20 @@ export interface ConnectMachineProps {
 const FOCUSABLE =
   'button:not([disabled]):not([tabindex="-1"]), [href]:not([tabindex="-1"]), summary:not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])';
 
+/** `useLayoutEffect` in the browser (runs before paint, so the detected tab shows without a flash); `useEffect` on the server, where layout effects warn. */
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
+
+/** The visitor's OS from the browser (`userAgentData.platform`, else `platform`); macOS / Linux when unknown. */
+function detectOs(nav: { platform?: string; userAgentData?: { platform?: string } } | undefined = globalThis.navigator): 'unix' | 'windows' {
+  const p = nav?.userAgentData?.platform ?? nav?.platform ?? '';
+  return /^win/i.test(p) ? 'windows' : 'unix';
+}
+
 /**
- * "Connect your computer": the two commands to run on the computer (install the CLI, then
- * `uncage setup <url>`), each with a copy button, and a live status row that switches from
+ * "Connect your computer": the one command to run on the computer (the site's checking installer:
+ * `install.sh` on macOS / Linux, `install.ps1` on Windows, in OS tabs that start on the detected OS),
+ * with a copy button, a secondary `uncage setup <url>` for a computer that already has the CLI, and
+ * a live status row that switches from
  * "Waiting for your computer…" to "Connected: <name>" once a computer comes online. Polls the
  * hub every 3 s while shown and the page is visible. Mount it only while it should be visible
  * (unmounting stops the polling). Connected mode only (needs an Uncage hub).
@@ -42,6 +53,12 @@ export function ConnectMachine({ variant = 'dialog', onClose, onConnected, class
   const { machines, install, error, connected, loadInstallInfo } = useMachines({ watch: CONNECT_POLL_MS });
   const id = useId();
   const [tab, setTab] = useState<'unix' | 'windows'>('unix');
+  // After mount, not in the initializer: the server render (and hydration) must match, and Node has a
+  // `navigator` of its own, which describes the server. A layout effect, so the browser never paints
+  // the default tab first.
+  useIsomorphicLayoutEffect(() => {
+    setTab(detectOs());
+  }, []);
   const [installFailed, setInstallFailed] = useState<typeof error>();
   const [joined, setJoined] = useState<MachineInfo>();
   /** Ids online when the dialog opened (captured from the first connected-mode list). */
@@ -164,13 +181,10 @@ export function ConnectMachine({ variant = 'dialog', onClose, onConnected, class
         </div>
       </div>
 
-      <ol className="uc-connect-steps">
-        <li className="uc-connect-step">
-          <span className="uc-connect-num" aria-hidden>
-            1
-          </span>
+      <div className="uc-connect-steps">
+        <div className="uc-connect-step">
           <div className="uc-connect-step-body">
-            <h3 className="uc-connect-step-title">{t.connectStep1}</h3>
+            <h3 className="uc-connect-step-title">{t.connectOneCommand}</h3>
             <div className="uc-tabs" role="tablist" aria-label={t.osTabs}>
               {(['unix', 'windows'] as const).map((k) => (
                 <button
@@ -206,26 +220,20 @@ export function ConnectMachine({ variant = 'dialog', onClose, onConnected, class
               ) : install.windows ? (
                 <CopyCommand command={install.windows} />
               ) : (
-                <p className="uc-connect-soon">
-                  <span className="uc-pill" data-tone="neutral">
-                    {t.comingSoon}
-                  </span>
-                </p>
+                // A custom client without a Windows installer: the site's choice, not a promise.
+                <p className="uc-connect-muted">{t.windowsNotOffered}</p>
               )}
             </div>
+            <p className="uc-connect-note">{t.connectOneCommandNote}</p>
+            {install && (
+              <div className="uc-connect-alt">
+                <p className="uc-connect-note">{t.connectAlreadyInstalled}</p>
+                <CopyCommand command={install.setup} />
+              </div>
+            )}
           </div>
-        </li>
-        <li className="uc-connect-step">
-          <span className="uc-connect-num" aria-hidden>
-            2
-          </span>
-          <div className="uc-connect-step-body">
-            <h3 className="uc-connect-step-title">{t.connectStep2}</h3>
-            {install ? <CopyCommand command={install.setup} /> : !shownError && <p className="uc-connect-muted">{t.loadingCommands}</p>}
-            <p className="uc-connect-note">{t.connectStep2Note}</p>
-          </div>
-        </li>
-      </ol>
+        </div>
+      </div>
 
       <p className="uc-connect-status" role="status" data-state={joined ? 'connected' : 'waiting'}>
         {joined ? <CheckCircle2 className="uc-connect-ok" aria-hidden /> : <span className="uc-live-dot" aria-hidden />}

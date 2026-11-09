@@ -275,6 +275,149 @@ describe('subscribe', () => {
     expect(errors).toEqual(['not_found']);
     expect(states).toEqual(['connecting', 'reconnecting', 'offline']);
   });
+
+  it('a reconnect frame resumes at once with Last-Event-ID, no state change, no gap or duplicate', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    // A server that produces events 1..50 (one every 6 ms) and rotates each response after 100 ms.
+    const log: number[] = [];
+    const producer = setInterval(() => {
+      if (log.length < 50) log.push(log.length + 1);
+      else clearInterval(producer);
+    }, 6);
+    const requests: Array<{ url: string; headers: Headers }> = [];
+    const fetch = vi.fn<F>(async (u, i) => {
+      const headers = new Headers(i?.headers);
+      requests.push({ url: String(u), headers });
+      const lastId = headers.get('last-event-id');
+      let sent = lastId ? Number(lastId.slice(4)) : Number(new URL(String(u), 'http://x').searchParams.get('after'));
+      const enc = new TextEncoder();
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(c) {
+            const flush = () => {
+              while (sent < log.length) c.enqueue(enc.encode(frame(++sent)));
+            };
+            flush();
+            const tick = setInterval(flush, 3);
+            setTimeout(() => {
+              clearInterval(tick);
+              flush();
+              c.enqueue(enc.encode('event: reconnect\ndata: {}\n\n'));
+              c.close();
+            }, 100);
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'text/event-stream' } },
+      );
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const seen: number[] = [];
+    const states: ConnectionState[] = [];
+    let lastIdOfFirstStream: string | undefined;
+    const unsub = createUncageClient({ fetch }).subscribe('ses_1', {
+      after: 0,
+      onEvent: (e) => {
+        seen.push(e.sequence);
+        if (requests.length === 1) lastIdOfFirstStream = e.eventId;
+      },
+      onState: (s) => states.push(s),
+    });
+    await vi.advanceTimersByTimeAsync(330);
+    unsub();
+    expect(states).toEqual(['connecting', 'live']);
+    expect(seen).toEqual(Array.from({ length: 50 }, (_, k) => k + 1));
+    expect(requests.length).toBeGreaterThanOrEqual(3);
+    expect(requests[1]!.headers.get('last-event-id')).toBe(lastIdOfFirstStream);
+    expect(requests[1]!.url).toBe(`/api/uncage/sessions/ses_1/events?after=${Number(lastIdOfFirstStream!.slice(4))}`);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('a stream cut without the reconnect frame (platform timeout) still recovers with backoff', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const times: number[] = [];
+    const fetch = vi
+      .fn<F>()
+      // Cut mid-frame: the unterminated frame 3 is discarded and fetched again.
+      .mockImplementationOnce(async () => {
+        times.push(Date.now());
+        return sseResponse([frame(1), frame(2), frame(3).slice(0, 20)]);
+      })
+      .mockImplementation(async () => {
+        times.push(Date.now());
+        return new Response(new ReadableStream({ start: (c) => c.enqueue(new TextEncoder().encode(frame(3))) }), {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      });
+    const seen: number[] = [];
+    const states: ConnectionState[] = [];
+    const unsub = createUncageClient({ fetch }).subscribe('ses_1', {
+      after: 0,
+      onEvent: (e) => seen.push(e.sequence),
+      onState: (s) => states.push(s),
+    });
+    await vi.advanceTimersByTimeAsync(2000);
+    unsub();
+    expect(seen).toEqual([1, 2, 3]);
+    expect(states).toEqual(['connecting', 'live', 'reconnecting', 'live']);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(times[1]! - times[0]!).toBeGreaterThanOrEqual(375);
+    expect((fetch.mock.calls[1]![1]!.headers as Record<string, string>)['last-event-id']).toBe(evt(2).eventId);
+  });
+
+  it('a live event past a gap resumes from the last event after a short jitter instead of skipping', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const fetch = vi
+      .fn<F>()
+      .mockResolvedValueOnce(sseResponse([frame(1), frame(3), frame(4)]))
+      // The resumed response stays open.
+      .mockResolvedValueOnce(
+        new Response(new ReadableStream({ start: (c) => c.enqueue(new TextEncoder().encode(frame(2) + frame(3) + frame(4))) }), {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        }),
+      )
+      .mockImplementation(() => new Promise<Response>(() => undefined));
+    const seen: number[] = [];
+    const states: ConnectionState[] = [];
+    const unsub = createUncageClient({ fetch }).subscribe('ses_1', { after: 0, onEvent: (e) => seen.push(e.sequence), onState: (s) => states.push(s) });
+    // Resumes after a 100–500 ms jitter, not the reconnect backoff.
+    await vi.advanceTimersByTimeAsync(90);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(420);
+    unsub();
+    expect(seen).toEqual([1, 2, 3, 4]);
+    expect(states).toEqual(['connecting', 'live']);
+    expect(fetch.mock.calls[1]![0]).toBe('/api/uncage/sessions/ses_1/events?after=1');
+    expect((fetch.mock.calls[1]![1]!.headers as Record<string, string>)['last-event-id']).toBe(evt(1).eventId);
+  });
+
+  it('a gap the server still has after one resume is accepted (no reconnect loop)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const fetch = vi
+      .fn<F>()
+      .mockResolvedValueOnce(sseResponse([frame(1), frame(3)]))
+      .mockResolvedValueOnce(sseResponse([frame(3), frame(4)]))
+      .mockImplementation(() => new Promise<Response>(() => undefined));
+    const seen: number[] = [];
+    const unsub = createUncageClient({ fetch }).subscribe('ses_1', { after: 0, onEvent: (e) => seen.push(e.sequence) });
+    await vi.advanceTimersByTimeAsync(510);
+    unsub();
+    expect(seen).toEqual([1, 3, 4]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('back-to-back reconnect frames with nothing in between back off instead of spinning', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const fetch = vi.fn<F>(async () => sseResponse(['event: reconnect\ndata: {}\n\n']));
+    const states: ConnectionState[] = [];
+    const unsub = createUncageClient({ fetch }).subscribe('ses_1', { after: 0, onEvent: () => undefined, onState: (s) => states.push(s) });
+    await vi.advanceTimersByTimeAsync(3000);
+    unsub();
+    expect(fetch.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(fetch.mock.calls.length).toBeLessThanOrEqual(5);
+    expect(states).toEqual(['connecting', 'live']);
+  });
 });
 
 describe('structural guards (no zod in the browser path)', () => {
@@ -322,7 +465,8 @@ describe('structural guards (no zod in the browser path)', () => {
     const fetch = vi.fn(async () => sseResponse([bad(1), bad(2), frame(3)]));
     const events: number[] = [];
     const unsub = createUncageClient({ fetch }).subscribe('ses_1', { after: 0, onEvent: (ev) => events.push(ev.sequence) });
-    await vi.advanceTimersByTimeAsync(0);
+    // The dropped frames leave a gap before 3: one jittered resume, then the repeated gap is accepted.
+    await vi.advanceTimersByTimeAsync(510);
     unsub();
     expect(events).toEqual([3]);
     expect(warn).toHaveBeenCalledTimes(1);

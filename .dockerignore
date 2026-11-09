@@ -10,3 +10,8 @@
 .superpowers
 e2e/**/results
 apps/docs/src/content/docs/api
+# Local secrets and state never enter the build context.
+**/.dev.vars
+**/.dev.vars.*
+**/.env*
+**/.wrangler

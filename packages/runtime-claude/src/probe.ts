@@ -6,16 +6,30 @@ export type ExecFile = (cmd: string, args: string[]) => Promise<{ stdout: string
 
 export const INSTALL_URL = 'https://docs.claude.com/en/docs/claude-code/setup';
 
-const defaultExecFile: ExecFile = (cmd, args) => promisify(nodeExecFile)(cmd, args, { timeout: 10_000 });
+const defaultExecFile: ExecFile = (cmd, args) => promisify(nodeExecFile)(cmd, args, { timeout: 10_000, windowsHide: true });
 
-/** Runs `claude --version`. Login can't be checked without spending tokens, so it is deferred to the first run. */
-export async function probeClaude(executable = 'claude', execFile: ExecFile = defaultExecFile): Promise<RuntimeProbe> {
+/**
+ * Not found: `ENOENT` everywhere; on Windows also `EINVAL`, which Node raises when asked to start a
+ * `.cmd`/`.bat` without a shell (a bare `claude` that only exists as an npm `claude.cmd` shim).
+ */
+export function isNotFound(err: unknown, platform: NodeJS.Platform = process.platform): boolean {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return code === 'ENOENT' || (platform === 'win32' && code === 'EINVAL');
+}
+
+/**
+ * Runs `claude --version` (a `.js` executable — an npm JS bin — through the running Node). Login
+ * can't be checked without spending tokens, so it is deferred to the first run.
+ */
+export async function probeClaude(executable = 'claude', execFile: ExecFile = defaultExecFile, platform: NodeJS.Platform = process.platform): Promise<RuntimeProbe> {
   try {
-    const { stdout } = await execFile(executable, ['--version']);
+    const { stdout } = /\.[cm]?js$/i.test(executable)
+      ? await execFile(process.execPath, [executable, '--version'])
+      : await execFile(executable, ['--version']);
     const version = /\d+\.\d+\.\d+\S*/.exec(stdout)?.[0];
     return { status: 'available', ...(version ? { version } : {}), message: 'Login is checked on first run' };
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+    if (isNotFound(err, platform)) {
       return {
         status: 'not_installed',
         message: 'Claude Code CLI was not found.',

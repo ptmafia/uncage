@@ -1,6 +1,6 @@
 {
   "name": "@uncage/hub",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Uncage hub: device login, machine connections and the browser API for Connected Mode, mounted in your website's Node backend",
   "type": "module",
   "engines": {
@@ -17,10 +17,15 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "import": "./dist/node/index.js"
     }
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/check-web-entry.mjs",
+    "embed:installers": "node scripts/embed-installers.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint ."
@@ -50,6 +55,8 @@
     "@types/ioredis-mock": "^8.2.8",
     "@types/pg": "^8.23.1",
     "@types/ws": "^8.18.1",
+    "@uncage/client": "workspace:*",
+    "esbuild": "^0.28.2",
     "express": "^5.3.0",
     "ioredis": "^5.11.1",
     "ioredis-mock": "^8.13.1",

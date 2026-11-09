@@ -3,6 +3,7 @@ import { useRuntimes } from '@uncage/react';
 import { ExternalLink } from 'lucide-react';
 import { useId, useState, type JSX } from 'react';
 import { useUi } from '../context.js';
+import { RuntimeIcon } from './RuntimeIcon.js';
 
 const TONE: Record<RuntimeStatus, 'ok' | 'neutral' | 'warn' | 'err'> = {
   available: 'ok',
@@ -62,6 +63,7 @@ export function RuntimeSelector({ value, onChange }: RuntimeSelectorProps): JSX.
                   onChange?.(r.id);
                 }}
               />
+              <RuntimeIcon runtime={r} />
               <span className="uc-runtime-name">{r.displayName}</span>
               {r.version && <span className="uc-runtime-version">{r.version}</span>}
               <span className="uc-pill" data-tone={TONE[r.status]}>

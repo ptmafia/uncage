@@ -13,7 +13,8 @@ Sessions run on the user’s computer, and that computer’s local database is t
 Choose `'site'` when the process should stay visible on your website: reviewing what the agent did, sharing results, support. The reference demo uses it. Choose `'machine'` when conversations must not leave the user’s computer except while they are being viewed.
 
 ```ts title="hub.ts"
-import { createHub, pgliteHubStore, type HubUser } from '@uncage/hub';
+import { createHub, type HubUser } from '@uncage/hub';
+import { pgliteHubStore } from '@uncage/hub/node';
 
 declare function getUser(req: Request): Promise<HubUser | null>;
 

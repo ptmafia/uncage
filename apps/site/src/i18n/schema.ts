@@ -23,9 +23,10 @@ export interface TrustPoint {
   body: string;
 }
 
-type Six<T> = [T, T, T, T, T, T];
+type Eight<T> = [T, T, T, T, T, T, T, T];
 type Four<T> = [T, T, T, T];
 type Three<T> = [T, T, T];
+type Two<T> = [T, T];
 
 export interface Dict {
   meta: {
@@ -46,6 +47,8 @@ export interface Dict {
     copy: string;
     copied: string;
     external: string;
+    /** aria-label of the install command's OS tabs ("macOS / Linux", "Windows"). */
+    installOs: string;
   };
   nav: {
     product: string;
@@ -71,6 +74,7 @@ export interface Dict {
     lede: string;
     primary: string;
     secondary: string;
+    /** Above the one-command installer. */
     installLabel: string;
   };
   flow: {
@@ -108,8 +112,9 @@ export interface Dict {
     availableLabel: string;
     soonLabel: string;
     soonBadge: string;
-    available: Six<Feature>;
-    soon: Four<Feature>;
+    /** Six cards in a 3×2 grid, then a two-column row: “Any ACP agent” and “macOS, Windows and Linux”. */
+    available: Eight<Feature>;
+    soon: Two<Feature>;
   };
   code: {
     kicker: string;

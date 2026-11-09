@@ -64,7 +64,7 @@ function leaves(v: unknown, path = ''): Map<string, unknown> {
  * - `flow.browserTitle`: the example domain "your.site" (a URL, not copy).
  * - ja `flow.allow` / `flow.deny`: the approval buttons as the real UI shows them. @uncage/react-ui has
  *   no Japanese strings, so a Japanese visitor sees "Allow once" / "Deny" (zh has 允许执行 / 拒绝).
- * - `hero.eyebrow` is NOT allowed: "v0.2" stays, but the sentence is translated.
+ * - `hero.eyebrow` is NOT allowed: "v0.3" stays, but the sentence is translated.
  * - Brand names, "GitHub", "npm", "MIT", commands and code are not in the dictionaries at all
  *   (they live in the components), so they need no entry here.
  */
@@ -94,5 +94,36 @@ describe.each(locales.filter((l) => l !== 'en') as Exclude<Locale, 'en'>[])('%s 
   it('is translated: no value equals the English one (allow-list aside)', () => {
     const untranslated = [...english].filter(([k, v]) => !sameAsEnglishAllowed[locale].has(k) && dict.get(k) === v).map(([k]) => k);
     expect(untranslated).toEqual([]);
+  });
+});
+
+describe('features', () => {
+  it('every locale has the ACP feature card', () => {
+    const [en, zh, ja] = (['en', 'zh', 'ja'] as const).map((l) => getDict(l));
+    for (const d of [en!, zh!, ja!]) {
+      expect(d.features.available).toHaveLength(8);
+      expect(d.features.available[6].title).toMatch(/ACP/);
+      expect(d.features.available[7].title).toMatch(/macOS.*Windows.*Linux/);
+    }
+  });
+
+  it('no locale still lists serverless transport as coming soon', () => {
+    for (const d of [getDict('en'), getDict('zh'), getDict('ja')]) {
+      expect(JSON.stringify(d.features.soon)).not.toMatch(/Serverless|无服务器|サーバーレス|Vercel/);
+      expect(d.features.soon).toHaveLength(2);
+    }
+  });
+
+  it('every locale says one command, one approval and lists Windows and Linux as available', () => {
+    const [en, zh, ja] = [getDict('en'), getDict('zh'), getDict('ja')];
+    for (const d of [en, zh, ja]) {
+      expect(d.features.available).toHaveLength(8);
+      expect(d.features.soon).toHaveLength(2);
+      expect(JSON.stringify(d.features.soon)).not.toMatch(/Windows|Linux/);
+      expect(JSON.stringify(d.how.steps[0])).not.toMatch(/Two commands|两条命令|コマンドを2つ/);
+    }
+    expect(en.hero.installLabel).toBe('One command, one approval');
+    expect(zh.hero.installLabel).toBe('一条命令，一次批准');
+    expect(ja.hero.installLabel).toBe('コマンド1つ、承認1回');
   });
 });

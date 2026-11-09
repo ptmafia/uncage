@@ -1,8 +1,9 @@
 import { DeviceCodeResponseSchema } from '@uncage/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { deviceFlow, generateUserCode, normalizeUserCode, sha256, USER_CODE_ALPHABET } from './device.js';
-import { SlidingWindow } from './rate-limit.js';
-import { pgliteHubStore } from './store/pglite.js';
+import { deviceFlow, generateUserCode, normalizeUserCode, USER_CODE_ALPHABET } from './device.js';
+import { sha256Hex } from './web.js';
+import { storeRateLimiter } from './rate-limit.js';
+import { pgliteHubStore } from './node/index.js';
 import type { HubStore } from './store/store.js';
 
 describe('user codes', () => {
@@ -30,12 +31,13 @@ describe('deviceFlow', () => {
   const flow = (limits = { failures: 10, codes: 1000 }) =>
     deviceFlow({
       limits: {
-        userFailures: new SlidingWindow(limits.failures, 600_000, () => now),
-        codesPerClient: new SlidingWindow(limits.codes, 60_000, () => now),
+        userFailures: storeRateLimiter(store, { name: 'user_code', max: limits.failures, windowMs: 600_000, now: () => now }),
+        codesPerClient: storeRateLimiter(store, { name: 'device_code', max: limits.codes, windowMs: 60_000, now: () => now }),
       },
       store,
       verificationUri: 'https://app.example.com/device',
       site: { id: 'app.example.com', name: 'app.example.com', url: 'https://app.example.com/api/uncage' },
+      transports: () => [{ kind: 'ws', url: 'wss://app.example.com/api/uncage/agent' }],
       async createMachine(o) {
         created.push(o);
         return { machineId: `mch_${created.length}`, machineToken: `tok_${created.length}` };
@@ -58,8 +60,8 @@ describe('deviceFlow', () => {
     expect(code.expiresInSec).toBe(600);
     expect(code.verificationUri).toBe(`https://app.example.com/device?code=${code.userCode}`);
     // Stored hashed, never in plaintext.
-    const rec = await store.getDeviceCode(sha256(code.deviceCode));
-    expect(rec?.userCodeHash).toBe(sha256(code.userCode));
+    const rec = await store.getDeviceCode(await sha256Hex(code.deviceCode));
+    expect(rec?.userCodeHash).toBe(await sha256Hex(code.userCode));
     expect(JSON.stringify(rec)).not.toContain(code.deviceCode);
 
     expect(await f.poll(code.deviceCode)).toEqual({ status: 'pending' });
@@ -68,7 +70,7 @@ describe('deviceFlow', () => {
     expect(await f.lookup(code.userCode, { id: 'alice' })).toBeNull();
     now += 2000;
     const ok = await f.poll(code.deviceCode);
-    expect(ok).toMatchObject({ status: 'ok', machineId: 'mch_1', machineToken: 'tok_1', site: { id: 'app.example.com' } });
+    expect(ok).toMatchObject({ status: 'ok', machineId: 'mch_1', machineToken: 'tok_1', site: { id: 'app.example.com' }, transports: [{ kind: 'ws', url: 'wss://app.example.com/api/uncage/agent' }] });
     expect(created).toEqual([{ userId: 'alice', name: 'Nathan’s MacBook', os: 'darwin' }]);
     // The token is issued exactly once.
     now += 2000;
@@ -172,8 +174,8 @@ describe('deviceFlow', () => {
     const code = await f.createCode({ machineKey: key }, 'ip1');
     await f.approve(code.userCode, { id: 'alice' });
     await f.poll(code.deviceCode);
-    expect(created).toEqual([{ userId: 'alice', machineKeyHash: sha256(key) }]);
-    expect(JSON.stringify(await store.getDeviceCode(sha256(code.deviceCode)))).not.toContain(key);
+    expect(created).toEqual([{ userId: 'alice', machineKeyHash: await sha256Hex(key) }]);
+    expect(JSON.stringify(await store.getDeviceCode(await sha256Hex(code.deviceCode)))).not.toContain(key);
   });
 
   it('unknown codes', async () => {

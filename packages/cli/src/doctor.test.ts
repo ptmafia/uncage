@@ -1,12 +1,25 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { RuntimeAdapter, RuntimeProbe } from '@uncage/protocol';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { updateAgentSites } from '@uncage/agent';
 import { loadConfig } from './config.js';
-import { DOCTOR_HELP, doctorExitCode, exportEvents, formatChecks, nonLoopbackWarning, parseDoctorArgs, runDoctor } from './doctor.js';
+import { DOCTOR_HELP, doctorExitCode, exportEvents, formatChecks, nodeFix, nonLoopbackWarning, parseDoctorArgs, runDoctor } from './doctor.js';
+import { probeNode, type AgentService, type ServiceKind, type ServiceSpec, type ServiceStatus } from './service/index.js';
 import { ensureToken, ensureTokenAt } from './token.js';
+
+/** Tmp dirs created by this file's tests; removed after each test. */
+const madeDirs: string[] = [];
+const mkTmp = async (prefix: string): Promise<string> => {
+  const d = await mkdtemp(join(tmpdir(), prefix));
+  madeDirs.push(d);
+  return d;
+};
+afterEach(async () => {
+  await Promise.all(madeDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
+});
 
 const adapter = (id: string, probe: RuntimeProbe): RuntimeAdapter =>
   ({ id, displayName: id, probe: async () => probe }) as unknown as RuntimeAdapter;
@@ -17,14 +30,14 @@ const downFetch = (async () => {
 }) as typeof fetch;
 
 async function setup() {
-  const home = await mkdtemp(join(tmpdir(), 'uncage-doc-'));
+  const home = await mkTmp('uncage-doc-');
   await ensureToken(home);
   const config = await loadConfig(home, {});
   return { home, config };
 }
 
 async function gitRepo(): Promise<string> {
-  const repo = await realpath(await mkdtemp(join(tmpdir(), 'uncage-repo-')));
+  const repo = await realpath(await mkTmp('uncage-repo-'));
   execFileSync('git', ['init', '-q', repo]);
   return repo;
 }
@@ -62,7 +75,7 @@ describe('runDoctor: .uncage/ git ignore hint', () => {
   });
 
   it('is skipped when the workspace is not a git repo or git is missing', async () => {
-    const plain = await realpath(await mkdtemp(join(tmpdir(), 'uncage-plain-')));
+    const plain = await realpath(await mkTmp('uncage-plain-'));
     expect((await inWorkspace(plain)).some((x) => x.id.startsWith('gitignore.'))).toBe(false);
     const repo = await gitRepo();
     expect((await inWorkspace(repo, join(plain, 'no-such-git'))).some((x) => x.id.startsWith('gitignore.'))).toBe(false);
@@ -90,6 +103,38 @@ describe('runDoctor', () => {
     expect(formatChecks(checks)).toContain('fix: npm i -g @openai/codex && codex login');
   });
 
+  it('doctor lists ACP runtimes and never fails on them', async () => {
+    const { home, config } = await setup();
+    const disposed: string[] = [];
+    const acp = (id: string, probe: RuntimeProbe): RuntimeAdapter =>
+      ({ id, displayName: id, probe: async () => probe, dispose: async () => void disposed.push(id) }) as unknown as RuntimeAdapter;
+    const checks = await runDoctor({
+      config,
+      home,
+      fetch: okFetch,
+      adapters: [
+        adapter('claude', { status: 'available', version: '2.0.0' }),
+        acp('acp-gemini', { status: 'not_installed', hint: 'npm i -g @google/gemini-cli', installUrl: 'https://github.com/google-gemini/gemini-cli' }),
+        acp('acp-mine', { status: 'auth_required', message: 'Sign in first.', hint: 'Sign in to mine in a terminal, then retry.' }),
+        acp('acp-ok', { status: 'available', version: '1.0.0' }),
+      ],
+    });
+    expect(checks.find((c) => c.id === 'runtime.acp-gemini')).toMatchObject({ ok: false, fix: 'npm i -g @google/gemini-cli' });
+    expect(checks.find((c) => c.id === 'runtime.acp-mine')).toMatchObject({ ok: false, fix: 'Sign in to mine in a terminal, then retry.' });
+    expect(checks.find((c) => c.id === 'runtime.acp-ok')).toMatchObject({ ok: true, detail: '1.0.0' });
+    expect(doctorExitCode(checks)).toBe(0);
+    // Probing may start agent processes: doctor disposes every adapter afterwards.
+    expect(disposed.sort()).toEqual(['acp-gemini', 'acp-mine', 'acp-ok']);
+  });
+
+  it('doctor shows which command each uncage.config.yaml ACP agent runs (warning, not a failure)', async () => {
+    const { home, config } = await setup();
+    const acp = { ...config.runtimes.acp, agents: [{ id: 'mine', command: ['node', 'agent.js'], mcp: 'auto' as const, enabled: true }] };
+    const checks = await runDoctor({ config: { ...config, runtimes: { ...config.runtimes, acp } }, home, fetch: okFetch, adapters: [] });
+    expect(checks.find((c) => c.id === 'acp.command.mine')).toMatchObject({ ok: false, warn: true, detail: 'acp-mine runs: node agent.js' });
+    expect(doctorExitCode(checks)).toBe(0);
+  });
+
   it('fails when server unreachable with fix "uncage serve"', async () => {
     const { home, config } = await setup();
     const checks = await runDoctor({ config, home, fetch: downFetch, adapters: [] });
@@ -109,7 +154,7 @@ describe('runDoctor', () => {
 
   it('fails the token check with a fix when the token file is missing', async () => {
     const { config } = await setup();
-    const empty = await mkdtemp(join(tmpdir(), 'uncage-empty-'));
+    const empty = await mkTmp('uncage-empty-');
     const checks = await runDoctor({ config, home: empty, fetch: okFetch, adapters: [] });
     const t = checks.find((c) => c.id === 'token');
     expect(t?.ok).toBe(false);
@@ -118,18 +163,59 @@ describe('runDoctor', () => {
 
   it('checks and sends the token from tokenFile when given', async () => {
     const { config } = await setup();
-    const dir = await mkdtemp(join(tmpdir(), 'uncage-tf-'));
+    const dir = await mkTmp('uncage-tf-');
     const { path, token } = await ensureTokenAt(join(dir, 'my-token'));
     let auth = '';
     const f = (async (_u: string, init: RequestInit) => {
       auth = (init.headers as Record<string, string>).authorization ?? '';
       return new Response('{}');
     }) as unknown as typeof fetch;
-    const empty = await mkdtemp(join(tmpdir(), 'uncage-empty-'));
+    const empty = await mkTmp('uncage-empty-');
     const checks = await runDoctor({ config, home: empty, tokenFile: path, fetch: f, adapters: [] });
     expect(checks.find((c) => c.id === 'token')).toMatchObject({ ok: true });
     expect(checks.find((c) => c.id === 'token')?.detail).toContain(path);
     expect(auth).toBe(`Bearer ${token}`);
+  });
+});
+
+describe('runDoctor: connected websites', () => {
+  it('doctor prints each site’s transports and warns when minAgentVersion is above the installed agent', async () => {
+    const { home, config } = await setup();
+    const agentHome = await mkdtemp(join(tmpdir(), 'uncage-agent-home-'));
+    const site = (id: string, url: string, extra: Record<string, unknown> = {}) => ({ id, name: id, url, machineId: `mch_${id}`, token: `tok_${id}`, ...extra });
+    await updateAgentSites(agentHome, () => [
+      site('faas', 'https://faas.example/api/uncage'),
+      site('trad', 'https://trad.example/api/uncage'),
+      site('down', 'https://down.example/api/uncage'),
+      site('gone', 'https://gone.example/api/uncage', { revokedAt: new Date().toISOString() }),
+    ]);
+    const seen: string[] = [];
+    const f = (async (input: string) => {
+      const url = String(input);
+      seen.push(url);
+      const offer = (kinds: string[]) => kinds.map((kind) => ({ kind, url: `${kind}://x/agent` }));
+      if (url === 'https://faas.example/api/uncage/agent/info') return Response.json({ protocol: 2, minAgentVersion: '9.0.0', transports: offer(['http']) });
+      if (url === 'https://trad.example/api/uncage/agent/info') return Response.json({ protocol: 2, minAgentVersion: '0.3.0', transports: offer(['ws', 'http']) });
+      if (url.startsWith('https://down.example')) throw new TypeError('fetch failed');
+      return new Response(JSON.stringify({ ok: true }));
+    }) as unknown as typeof fetch;
+    const checks = await runDoctor({ config, home, agentHome, agentVersion: '0.3.0', fetch: f, adapters: [] });
+    expect(checks.find((c) => c.id === 'site.trad')).toMatchObject({ ok: true, detail: expect.stringContaining('WebSocket, HTTP streaming') });
+    expect(checks.find((c) => c.id === 'site.faas')).toMatchObject({ ok: true, detail: expect.stringContaining('HTTP streaming') });
+    expect(checks.find((c) => c.id === 'site.faas.version')).toMatchObject({
+      ok: false,
+      warn: true,
+      detail: expect.stringContaining('9.0.0'),
+      fix: 'npm i -g @uncage/cli@latest',
+    });
+    expect(checks.find((c) => c.id === 'site.trad.version')).toBeUndefined();
+    expect(checks.find((c) => c.id === 'site.down')).toMatchObject({ ok: false, warn: true });
+    expect(checks.some((c) => c.id.startsWith('site.gone'))).toBe(false);
+    expect(seen.some((u) => u.startsWith('https://gone.example'))).toBe(false);
+    const out = formatChecks(checks);
+    expect(out).toContain('✓ Website faas');
+    expect(out).toContain('! Agent version for faas');
+    expect(doctorExitCode(checks)).toBe(0);
   });
 });
 
@@ -153,7 +239,7 @@ describe('doctor flags: --port, --url, UNCAGE_URL, --workspace, --help (F5)', ()
     );
     expect(() => parseDoctorArgs(['--port', 'abc'], {}, config, cwd)).toThrow(/--port/);
     const o = parseDoctorArgs(['--workspace', 'ws', '--data-dir', 'd', '--token-file', 't'], {}, config, cwd);
-    expect(o).toMatchObject({ workspace: '/here/ws', dataDir: '/here/d', tokenFile: '/here/t', help: false });
+    expect(o).toMatchObject({ workspace: resolve(cwd, 'ws'), dataDir: resolve(cwd, 'd'), tokenFile: resolve(cwd, 't'), help: false });
   });
 
   it('--help / -h is accepted and documents --port and UNCAGE_URL', async () => {
@@ -276,5 +362,95 @@ describe('exportEvents', () => {
     const text = JSON.stringify(await exportEvents({ sessionId: 's', config, home, fetch: f, includeContent: false }));
     expect(text).not.toContain('SECRET');
     expect(text).toContain('tool_1');
+  });
+});
+
+describe('runDoctor: Node, background agent service, Windows token', () => {
+  const svcSpec = (nodePath: string): ServiceSpec => ({
+    nodePath,
+    cliEntry: '/usr/local/lib/node_modules/@uncage/cli/dist/bin.js',
+    args: ['agent'],
+    env: { PATH: '/usr/bin:/bin', HOME: '/home/u' },
+    workingDir: '/home/u',
+    logsDir: '/home/u/.uncage/logs',
+  });
+  /** A service whose status is computed like the real ones (the pinned Node is probed). */
+  const fakeService = (o: { kind?: ServiceKind; installed?: boolean; running?: boolean | null; spec?: ServiceSpec | null } = {}): AgentService => ({
+    kind: o.kind ?? 'systemd',
+    install: async () => ({ definitionPath: '/def', notes: [] }),
+    uninstall: async () => ({ removed: true }),
+    restart: async () => true,
+    status: async (): Promise<ServiceStatus> => {
+      const spec = o.spec === undefined ? svcSpec(process.execPath) : o.spec;
+      const node = spec ? await probeNode(async (f, a) => ({ stdout: execFileSync(f, a, { encoding: 'utf8' }), stderr: '' }), spec.nodePath) : { nodeExists: null, nodeVersion: null };
+      return { kind: o.kind ?? 'systemd', installed: o.installed ?? true, running: o.running ?? true, spec, ...node, definitionPath: '/def' };
+    },
+  });
+  const site = { url: 'https://app.example.com/api/uncage' };
+  const lingerExec = (value: 'yes' | 'no') => async (file: string) => ({ stdout: file === 'loginctl' ? `Linger=${value}\n` : '', stderr: '' });
+  const run = async (extra: Partial<Parameters<typeof runDoctor>[0]>) => {
+    const { home, config } = await setup();
+    return runDoctor({ config, home, fetch: okFetch, adapters: [], exec: lingerExec('yes'), username: 'u', ...extra });
+  };
+
+  it('node: the version and the binary in use; per-platform fix when it is too old', async () => {
+    const checks = await run({});
+    expect(checks.find((c) => c.id === 'node')).toMatchObject({ ok: true, detail: `v${process.versions.node} · ${process.execPath}` });
+    const old = async (platform: NodeJS.Platform, hasBrew: boolean, sites: Array<{ url: string }> = []) =>
+      (await run({ platform, hasBrew, sites, nodeVersion: '20.11.0', execPath: '/usr/bin/node' })).find((c) => c.id === 'node');
+    expect(await old('darwin', true)).toMatchObject({ ok: false, detail: 'v20.11.0 · /usr/bin/node', fix: 'brew install node@22' });
+    expect((await old('darwin', false, [site]))?.fix).toBe('curl -fsSL https://app.example.com/api/uncage/install.sh | bash');
+    expect((await old('linux', false, [site]))?.fix).toBe('curl -fsSL https://app.example.com/api/uncage/install.sh | bash');
+    expect((await old('linux', false))?.fix).toBe('https://nodejs.org');
+    expect(nodeFix('win32', false, site.url)).toBe('irm https://app.example.com/api/uncage/install.ps1 | iex');
+  });
+
+  it('service: ok when running; missing fails only when websites are connected', async () => {
+    expect((await run({ service: fakeService() })).find((c) => c.id === 'service')).toMatchObject({ ok: true, detail: 'systemd: running · /def' });
+    const missing = fakeService({ installed: false, spec: null });
+    expect((await run({ service: missing })).find((c) => c.id === 'service')).toMatchObject({ ok: true });
+    const failing = await run({ service: missing, sites: [site] });
+    expect(failing.find((c) => c.id === 'service')).toMatchObject({ ok: false, fix: 'uncage agent install' });
+    expect(doctorExitCode(failing.filter((c) => c.id === 'service'))).toBe(1);
+    const stopped = (await run({ service: fakeService({ running: false }), sites: [site] })).find((c) => c.id === 'service');
+    expect(stopped).toMatchObject({ ok: false, warn: true });
+    const none = (await run({ service: fakeService({ kind: 'none', installed: false, spec: null, running: null }), sites: [site] })).find((c) => c.id === 'service');
+    expect(none).toMatchObject({ ok: false, warn: true, fix: expect.stringContaining('uncage agent') });
+    const noneIdle = (await run({ service: fakeService({ kind: 'none', installed: false, spec: null, running: null }) })).find((c) => c.id === 'service');
+    expect(noneIdle).toMatchObject({ ok: true });
+    expect(noneIdle).not.toHaveProperty('fix');
+  });
+
+  it('doctor: missing pinned Node → fix uncage agent install', async () => {
+    const checks = await runDoctor({ ...(await setup()), fetch: okFetch, adapters: [], exec: lingerExec('yes'), service: fakeService({ spec: svcSpec('/gone/node') }) });
+    expect(checks.find((c) => c.id === 'service.node')).toMatchObject({ ok: false, fix: 'uncage agent install' });
+    expect(checks.find((c) => c.id === 'service.node')?.detail).toContain('/gone/node no longer exists');
+    const fine = await run({ service: fakeService() });
+    expect(fine.find((c) => c.id === 'service.node')).toMatchObject({ ok: true, detail: `${process.version} · ${process.execPath}` });
+  });
+
+  it('doctor: linger off is a warning with loginctl enable-linger', async () => {
+    const off = await run({ service: fakeService(), exec: lingerExec('no') });
+    const c = off.find((x) => x.id === 'service.linger');
+    expect(c).toMatchObject({ ok: false, warn: true, fix: 'loginctl enable-linger u' });
+    expect(c?.detail).toMatch(/stops when you log out/);
+    expect(doctorExitCode(off.filter((x) => x.id.startsWith('service')))).toBe(0);
+    expect((await run({ service: fakeService() })).find((x) => x.id === 'service.linger')).toMatchObject({ ok: true });
+    expect((await run({ service: fakeService({ kind: 'launchd' }) })).some((x) => x.id === 'service.linger')).toBe(false);
+  });
+
+  it('token on win32 uses icacls (checkUserOnly)', async () => {
+    const { home, config } = await setup();
+    const tp = join(home, '.uncage', 'token');
+    const icacls = (extra: string) => async (file: string) => ({
+      stdout: file === 'icacls' ? `${tp} PC\\u:(F)\n${extra}\nSuccessfully processed 1 files; Failed processing 0 files\n` : '',
+      stderr: '',
+    });
+    const user = process.env.USERNAME ?? process.env.USER ?? 'u';
+    const asUser = (s: string) => s.replace('PC\\u', `PC\\${user}`);
+    const good = await runDoctor({ config, home, fetch: okFetch, adapters: [], platform: 'win32', exec: async (f) => ({ stdout: asUser((await icacls(' NT AUTHORITY\\SYSTEM:(F)')(f)).stdout), stderr: '' }) });
+    expect(good.find((c) => c.id === 'token')).toMatchObject({ ok: true });
+    const bad = await runDoctor({ config, home, fetch: okFetch, adapters: [], platform: 'win32', exec: async (f) => ({ stdout: asUser((await icacls(' BUILTIN\\Users:(I)(RX)')(f)).stdout), stderr: '' }) });
+    expect(bad.find((c) => c.id === 'token')).toMatchObject({ ok: false, detail: expect.stringContaining('BUILTIN\\Users'), fix: expect.stringContaining('icacls') });
   });
 });
