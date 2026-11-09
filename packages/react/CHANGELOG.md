@@ -1,5 +1,12 @@
 # @uncage/react
 
+## 0.3.1
+
+### Patch Changes
+
+- @uncage/client@0.3.1
+  - @uncage/protocol@0.3.1
+
 ## 0.3.0
 
 ### Minor Changes

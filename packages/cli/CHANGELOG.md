@@ -1,5 +1,17 @@
 # @uncage/cli
 
+## 0.3.1
+
+### Patch Changes
+
+- @uncage/agent@0.3.1
+  - @uncage/core@0.3.1
+  - @uncage/protocol@0.3.1
+  - @uncage/runtime-acp@0.3.1
+  - @uncage/runtime-claude@0.3.1
+  - @uncage/runtime-codex@0.3.1
+  - @uncage/server@0.3.1
+
 ## 0.3.0
 
 ### Minor Changes

@@ -5,6 +5,10 @@ description: "What changed in each Uncage release: 0.3 (the hub runs anywhere, a
 
 All public `@uncage/*` packages share one version. The authoritative record is [`CHANGELOG.md`](https://github.com/ptmafia/uncage/blob/main/CHANGELOG.md) in the repository (and each package’s changelog on npm), written by [Changesets](/docs/guides/ci-and-releases/#releases) at release time.
 
+## 0.3.1 (2026-11-09)
+
+- `@uncage/hub`: importing it from a Next.js page, route handler or Server Action no longer fails with "Can't resolve 'ioredis'" (or `pg`) when those optional packages are not installed.
+
 ## 0.3.0 (2026-11-09): the hub runs anywhere
 
 Breaking changes with before/after code: [Migrate from 0.2](/docs/reference/migrate-from-0-2/).
