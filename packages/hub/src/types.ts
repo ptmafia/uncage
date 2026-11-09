@@ -1,4 +1,5 @@
 import type { SkillSpec, TransportKind } from '@uncage/protocol';
+import type { OnAttention } from './attention.js';
 import type { ClusterAdapter } from './cluster/cluster.js';
 import type { InstallScriptExtension } from './install/render.js';
 import type { HubLogger, MachineHub } from './machines.js';
@@ -133,6 +134,18 @@ export interface HubOptions {
    * `[uncage]`). Pass your own (pino and most loggers fit) or `{ warn() {}, error() {} }` to silence it.
    */
   logger?: HubLogger;
+  /**
+   * Called when a user's computer needs them or finished something: an approval was requested, a
+   * run completed or failed (e.g. to send a push notification; `expoPushNotifier` is one). Fired
+   * once per event after the hub accepted it, in both `sessionStorage` modes, however often the
+   * agent resends it and however many hub nodes see it (deduped through `store.claimOnce`, kept a
+   * day; a custom store without it gets per-node in-memory dedupe, best effort). Not fired for
+   * events older than 10 minutes (an agent backfilling after a reconnect) nor, in `'site'` mode,
+   * for an approval the stored snapshot already shows answered. Never blocks or fails ingest:
+   * errors (thrown or rejected) go to `logger.error`. When `hub.fetch` got `info.waitUntil` the
+   * call runs under it, and `ctx.waitUntil` hands further work to the same request context.
+   */
+  onAttention?: OnAttention;
   /** SSE comment heartbeat for browser event streams. Defaults to 15 000 ms. */
   sseHeartbeatMs?: number;
   /** How long a browser request waits for the machine. Defaults to 30 000 ms. */
@@ -212,7 +225,8 @@ export interface HubOptions {
    * Retention: unbound run manifests (startRun never answered) 1 h, bound ones 7 days; hub copies
    * of attachments `attachmentRetentionDays` (30); finished upstream-dedupe (inbox) rows 24 h
    * (beyond any agent resend window); outbox items when they expire; rate-limit windows once older
-   * than the longest window (`userCodeWindowMs`, at least 60 s); device codes an hour after expiry.
+   * than the longest window (`userCodeWindowMs`, at least 60 s); device codes an hour after expiry;
+   * `onAttention` dedupe claims once expired (a day).
    */
   maintenance?: {
     /** Default 60 000 ms. */

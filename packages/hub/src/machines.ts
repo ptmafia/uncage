@@ -200,7 +200,8 @@ export interface MachineHubDeps {
   /** After `welcome`: e.g. send replication `ack`s. */
   onConnected(machine: MachineRecord, send: (f: HubFrame) => void): Promise<void>;
   /** An `events` frame from `machine` (each event already checked to carry `sessionId`). */
-  onEvents(machine: MachineRecord, sessionId: string, events: UncageEvent[], send: (f: HubFrame) => void): Promise<void>;
+  /** `waitUntil`: the platform hook of the request that carried the events (HTTP transport on FaaS). */
+  onEvents(machine: MachineRecord, sessionId: string, events: UncageEvent[], send: (f: HubFrame) => void, waitUntil?: (p: Promise<unknown>) => void): Promise<void>;
   /**
    * A `tool_call` frame; resolves the `tool_result` frame to send back, or `null` to send nothing
    * now (running elsewhere, or abandoned because its run ended: over HTTP the message is retried).
@@ -587,18 +588,18 @@ export class MachineHub {
    * received it. Resolves once it is handled (an `events` frame applied, a `tool_call`'s result
    * sent into the link's replies); rejects when handling failed, so the message is retried.
    */
-  async handleUpstream(link: MachineLink, frame: AgentFrame): Promise<void> {
+  async handleUpstream(link: MachineLink, frame: AgentFrame, waitUntil?: (p: Promise<unknown>) => void): Promise<void> {
     // Sends are awaited before this resolves, so the response's replies are complete.
     const sent: Array<Promise<void>> = [];
     const send = (f: HubFrame) => void sent.push(link.send(f));
     try {
-      await this.upstream(link, frame, send);
+      await this.upstream(link, frame, send, waitUntil);
     } finally {
       await Promise.all(sent);
     }
   }
 
-  private async upstream(link: MachineLink, frame: AgentFrame, send: (f: HubFrame) => void): Promise<void> {
+  private async upstream(link: MachineLink, frame: AgentFrame, send: (f: HubFrame) => void, waitUntil?: (p: Promise<unknown>) => void): Promise<void> {
     const machineId = link.machine.id;
     /** A pull sent through the outbox by this instance for this machine. */
     const pullOf = (id: string) => {
@@ -631,7 +632,7 @@ export class MachineHub {
           return;
         }
         // The agent sends one batch at a time and the batch is processed in order.
-        await this.d.onEvents(link.machine, frame.sessionId, frame.events, send);
+        await this.d.onEvents(link.machine, frame.sessionId, frame.events, send, waitUntil);
         return;
       }
       case 'tool_call': {

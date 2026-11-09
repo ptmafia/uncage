@@ -100,7 +100,7 @@ describe('hub.maintain()', () => {
     return h;
   }
 
-  it('prunes expired outbox rows, done inbox rows older than a day, old rate-limit windows, unbound manifests and old attachments', async () => {
+  it('prunes expired outbox rows, done inbox rows older than a day, old rate-limit windows, unbound manifests, old attachments and expired claims', async () => {
     await store.insertMachine(machine('m1'));
     await store.openLink('m1', { linkId: 'l1', transport: 'http', at: iso() });
     const msg = { t: 'ping', at: 1 } as const;
@@ -114,13 +114,18 @@ describe('hub.maintain()', () => {
     const att = (id: string, createdAt: string) => ({ id, sessionId: 's', name: `${id}.txt`, mime: 'text/plain', size: 1, kind: 'file' as const, sha256: 'x', createdAt });
     await store.putAttachment({ attachment: att('att_old', iso(-40 * D)), userId: 'alice', data: new Uint8Array([1]), machineId: 'm1' });
     await store.putAttachment({ attachment: att('att_new', iso()), userId: 'alice', data: new Uint8Array([1]), machineId: 'm1' });
+    // onAttention claims: an expired one goes, a live one stays.
+    await store.claimOnce!('ses_x:1:run_completed', { ttlSec: 60, now: iso(-2 * D) });
+    await store.claimOnce!('ses_x:2:run_completed', { ttlSec: 86_400, now: iso() });
 
     const h = await hub();
     expect(await h.maintain()).toEqual({
       ran: true,
-      pruned: { runManifests: 1, attachments: 1, outbox: 1, inbox: 1, rateLimits: 1, deviceCodes: 0, toolResults: 0 },
+      pruned: { runManifests: 1, attachments: 1, outbox: 1, inbox: 1, rateLimits: 1, deviceCodes: 0, toolResults: 0, claims: 1 },
       interruptedToolCalls: 0,
     });
+    expect(await store.claimOnce!('ses_x:1:run_completed', { ttlSec: 60, now: iso() })).toBe(true);
+    expect(await store.claimOnce!('ses_x:2:run_completed', { ttlSec: 60, now: iso() })).toBe(false);
     expect((await store.pollLink('m1', 'l1', { after: 0, limit: 10, now: iso(-2000) })).items.map((i) => i.msgId)).toEqual(['live']);
     expect(await store.claimInbox('m1', ['done_2d', 'done_1h'], { leaseUntil: iso(1000), now: iso() })).toEqual({ done_2d: 'new', done_1h: 'done' });
     expect(await store.getAttachment('att_old')).toBeNull();

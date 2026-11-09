@@ -1,4 +1,5 @@
 import { UncageError } from '@uncage/core/errors';
+import { attentionDispatcher, type WaitUntil } from './attention.js';
 import {
   CONNECTED_PROTOCOL,
   MIN_AGENT_VERSION,
@@ -265,8 +266,16 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     SHARED_CLIENT_KEY;
   let warnedSharedKey = false;
 
+  const attention = attentionDispatcher({ store, onAttention: o.onAttention, logger, sessionStorage });
+
   /** Index (and in site mode replicate) events from `machine`; returns the events to fan out. */
-  async function ingest(machine: MachineRecord, sessionId: string, events: UncageEvent[], send: (f: HubFrame) => void): Promise<UncageEvent[]> {
+  async function ingest(
+    machine: MachineRecord,
+    sessionId: string,
+    events: UncageEvent[],
+    send: (f: HubFrame) => void,
+    waitUntil?: WaitUntil,
+  ): Promise<UncageEvent[]> {
     if (events.length === 0) return [];
     let rec: SessionRecord | null = await store.getSession(sessionId);
     if (!rec && sessionStorage === 'site') {
@@ -323,6 +332,8 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
         await store.putResource(e.payload.approval.id, 'approval', rec.id);
       }
     }
+    // After the events were accepted (site mode: stored), never awaited.
+    attention.fire(machine, rec, accepted, waitUntil);
     return accepted;
   }
 
@@ -342,11 +353,11 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
         if (s.machineId === machine.id) send({ t: 'ack', sessionId: s.id, sequence: s.lastSequence });
       }
     },
-    async onEvents(machine, sessionId, events, send) {
+    async onEvents(machine, sessionId, events, send, waitUntil) {
       // A run that ended abandons its pending tool calls (the machine no longer waits for them).
       // (Other instances hear of it on the session channel.)
       for (const e of events) if (RUN_END.has(e.type) && e.runId) calls.runEnded(machine.id, e.runId);
-      const out = await ingest(machine, sessionId, events, send);
+      const out = await ingest(machine, sessionId, events, send, waitUntil);
       if (out.length > 0) await cluster.publish(sessionChannel(sessionId), JSON.stringify({ events: out }));
     },
     onToolCall: (machine, call) => calls.handle(machine, call),
@@ -404,6 +415,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
       },
       async () => ({ interruptedToolCalls: await calls.interruptStale() }),
       async () => ({ toolResults: await store.pruneToolCallResults(new Date(Date.now() - TOOL_RESULT_RETENTION_MS).toISOString()) }),
+      async (): Promise<Record<string, number>> => (store.pruneClaims ? { claims: await store.pruneClaims(new Date().toISOString()) } : {}),
     ],
   });
 
@@ -500,6 +512,8 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
       (closing ??= (async () => {
         // Running site tool handlers get a bounded drain; the rest are finished as interrupted.
         await calls.close(toolDrainMs);
+        // onAttention calls still running get the same bounded drain (the store is closed after us).
+        await attention.idle(toolDrainMs);
         shutdown.abort();
         upkeep.stop();
         await upkeep.idle();
