@@ -71,6 +71,16 @@ Two ways to host the same code: **Railway** runs `server.ts` (traditional mode: 
 - 刷新对话，历史仍在；停止 `uncage agent` 后历史仍可读，电脑显示离线。
 - `curl -H "Authorization: Bearer $CRON_SECRET" https://<域名>/api/uncage/maintenance` 返回 `{"ran":true,…}`（或在别的实例刚跑过时返回 `ran: false`）。
 
+### 配套 App：推送与应用链接
+
+连接演示可以服务 `examples/connected-expo`（React Native / Expo）。下面的变量在 Railway 和 Vercel 上都一样，没有设置时这些功能保持关闭。
+
+- App 登录：`POST /api/app/token` 返回 30 天有效的 App 令牌，App 以 `Authorization: Bearer <令牌>` 调用 Hub。公开模式下得到随机访客；非公开模式按用户名登录（与 `/login` 一样没有密码，仅用于演示）。无需额外配置。
+- 推送（`EXPO_PUSH=1`，可选 `EXPO_ACCESS_TOKEN`）：需要审批或运行结束时，Hub 的 `onAttention` 通过 Expo 推送服务通知用户的设备。App 在 `POST /api/app/push-token` 登记令牌（每个用户最多 10 个，存在数据目录或 Postgres 的 `demo_push_tokens` 表）。推送需要开发构建（Expo Go 不支持）：免费的 Expo 账号 + EAS 免费构建额度可以打出 Android 开发版 APK，Android 推送还需要一个免费的 Firebase 项目（FCM），把它的凭据上传到 EAS。详细步骤见 `examples/connected-expo` 的 README。
+- Android 应用链接（`ANDROID_PACKAGE` + `ANDROID_SHA256`）：站点提供 `/.well-known/assetlinks.json`，扫描 CLI 的二维码（`/device?code=…`）时直接打开 App。指纹用 `eas credentials` 查看（形如 `AB:CD:…`，多个用逗号分隔）。验证：`curl https://<域名>/.well-known/assetlinks.json` 返回 `application/json`。
+- iOS 通用链接（`APPLE_TEAM_ID` + `IOS_BUNDLE_ID`）：站点提供 `/.well-known/apple-app-site-association`。需要付费的 Apple 开发者账号；已实现并有单元测试，尚未在真机上验证。没有它时，iOS 上的二维码会打开网页版审批页面。
+- 浏览器扩展（`TRUSTED_ORIGINS=chrome-extension://<扩展 ID>`）：允许 `examples/connected-extension` 的侧边栏使用站点的登录状态调用 Hub。
+
 ## English
 
 These steps use Railway to host the connected demo as a public demo (visitors get a random guest account automatically).
@@ -137,3 +147,13 @@ The same code runs without `server.ts`: the Next.js route `app/api/uncage/[[...p
 - Ask Claude Code for a landing page and to publish it: `publish_asset` raises an approval card, and the published page appears on `/assets`.
 - Reload the conversation: the history is there. Stop `uncage agent`: the history stays readable, the computer shows offline.
 - `curl -H "Authorization: Bearer $CRON_SECRET" https://<domain>/api/uncage/maintenance` returns `{"ran":true,…}` (or `ran: false` when another instance just ran it).
+
+### Companion app: push and app links
+
+The connected demo can serve `examples/connected-expo` (React Native / Expo). These variables are the same on Railway and Vercel; unset, the features stay off.
+
+- App sign-in: `POST /api/app/token` returns an app token valid for 30 days; the app calls the hub with `Authorization: Bearer <token>`. Public mode hands out a random guest; otherwise it signs in by username (no password, like `/login`: demo only). Nothing to configure.
+- Push (`EXPO_PUSH=1`, optionally `EXPO_ACCESS_TOKEN`): when an approval is needed or a run ends, the hub's `onAttention` notifies the user's devices through Expo's push service. The app registers its token at `POST /api/app/push-token` (at most 10 per user, kept in the data dir or the Postgres table `demo_push_tokens`). Push needs a development build (not Expo Go): a free Expo account and the free EAS build tier produce an Android development APK; Android push also needs a free Firebase project (FCM) whose credentials you upload to EAS. Step by step: the README of `examples/connected-expo`.
+- Android App Links (`ANDROID_PACKAGE` + `ANDROID_SHA256`): the site serves `/.well-known/assetlinks.json`, so scanning the CLI's QR code (`/device?code=…`) opens the app. Get the fingerprint from `eas credentials` (`AB:CD:…`; several comma-separated). Check: `curl https://<domain>/.well-known/assetlinks.json` returns `application/json`.
+- iOS universal links (`APPLE_TEAM_ID` + `IOS_BUNDLE_ID`): the site serves `/.well-known/apple-app-site-association`. Needs a paid Apple Developer account; implemented and unit-tested, not verified on a device. Without it, the QR code opens the mobile web approval page on iOS.
+- Browser extension (`TRUSTED_ORIGINS=chrome-extension://<extension id>`): lets the side panel of `examples/connected-extension` call the hub with the site's sign-in.

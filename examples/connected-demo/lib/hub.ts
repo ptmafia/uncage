@@ -12,12 +12,13 @@
  * Both get the same tools, skills, sign-in and options otherwise.
  */
 import { join } from 'node:path';
-import { createHub, postgresCluster, postgresHubStore, redisCluster, type ClusterAdapter, type Hub, type HubOptions, type HubStore } from '@uncage/hub';
+import { createHub, expoPushNotifier, postgresCluster, postgresHubStore, redisCluster, type ClusterAdapter, type Hub, type HubOptions, type HubStore, type OnAttention } from '@uncage/hub';
 import { assetStore } from './assets.ts';
 import { endSharedPool, sharedPool } from './db.ts';
 import { userFromRequest } from './auth.ts';
 import { dataDir, isPublicDemo, publicUrl } from './config.ts';
 import { requireFaasEnv, type DemoMode } from './mode.ts';
+import { pushTokenStore } from './push-tokens.ts';
 import { demoSkills } from './skills.ts';
 import { demoTools } from './tools.ts';
 
@@ -53,6 +54,8 @@ export async function createDemoHub(o: { mode: DemoMode; env?: Record<string, st
     site: { name: 'Uncage Connected Demo' },
     // `TRUSTED_ORIGINS=chrome-extension://<id>,…`: extensions (or other apps) allowed past the cross-site guard.
     ...trustedOrigins(env),
+    // `EXPO_PUSH=1`: push notifications to the companion app (approval needed, run finished / failed).
+    ...withAttention(attentionHandler(env)),
     // Per-IP rate limits behind a proxy: see clientIpResolver.
     ...withClientIp(clientIpResolver(env)),
   };
@@ -84,6 +87,26 @@ export async function createDemoHub(o: { mode: DemoMode; env?: Record<string, st
 function trustedOrigins(env: Record<string, string | undefined>) {
   const list = (env.TRUSTED_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   return list.length > 0 ? { trustedOrigins: list } : {};
+}
+
+/**
+ * `EXPO_PUSH=1`: the hub's `onAttention` sends Expo push notifications to the user's devices, the
+ * tokens the app registered at `POST /api/app/push-token` (lib/push-tokens.ts). `EXPO_ACCESS_TOKEN`
+ * when the Expo project has enhanced push security on. Tokens Expo reports as unregistered are deleted.
+ */
+export function attentionHandler(env: Record<string, string | undefined> = process.env, o: { fetch?: typeof fetch } = {}): OnAttention | undefined {
+  if (env.EXPO_PUSH !== '1') return undefined;
+  const accessToken = env.EXPO_ACCESS_TOKEN?.trim();
+  return expoPushNotifier({
+    tokensFor: (userId) => pushTokenStore(env).list(userId),
+    onInvalidToken: (token) => pushTokenStore(env).remove(token),
+    ...(accessToken ? { accessToken } : {}),
+    ...(o.fetch ? { fetch: o.fetch } : {}),
+  });
+}
+
+function withAttention(onAttention: OnAttention | undefined) {
+  return onAttention ? { onAttention } : {};
 }
 
 function withClientIp(clientIp: ((req: Request) => string | undefined) | undefined) {
