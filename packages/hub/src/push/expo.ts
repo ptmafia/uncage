@@ -11,7 +11,10 @@ export interface ExpoPushNotifierOptions {
   /** Expo access token, when "enhanced push security" is on for your project. */
   accessToken?: string;
   fetch?: typeof fetch;
-  /** Title and body per event; `null` sends nothing. Defaults to short English messages. */
+  /**
+   * Title and body per event; `null` sends nothing. Defaults to `defaultPushMessage` (short English
+   * messages that include the session and approval titles; see there for what leaves your hub).
+   */
   message?(e: AttentionEvent): { title: string; body: string } | null;
   /** A token Expo reports as `DeviceNotRegistered` (app uninstalled): delete it from your database. */
   onInvalidToken?(token: string): void | Promise<void>;
@@ -23,17 +26,37 @@ export interface ExpoPushNotifierOptions {
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 
-/** The default messages (English; pass `message` to localize). */
+/** Longest title or body `defaultPushMessage` produces, in characters (an ellipsis included). */
+const MAX_PUSH_TEXT = 180;
+
+/** One line (newlines and runs of spaces collapsed), at most `MAX_PUSH_TEXT` characters. */
+function pushText(s: string): string {
+  const line = s.replace(/\s+/g, ' ').trim();
+  const chars = [...line];
+  return chars.length <= MAX_PUSH_TEXT ? line : `${chars.slice(0, MAX_PUSH_TEXT - 1).join('').trimEnd()}…`;
+}
+
+/**
+ * The default messages (English; pass `message` to localize or to send generic text).
+ *
+ * **What leaves your hub**: the message goes to Expo, then Apple (APNs) or Google (FCM), and shows
+ * on the lock screen. By default it contains the session title and, for an approval, the
+ * approval's `title`: the runtime's summary of the tool call, often the shell command or the file it
+ * touches. Nothing else from the event (no tool input, output or file contents) is included, and
+ * each text is cut to one line of at most 180 characters. To send nothing specific, pass for example
+ * `message: () => ({ title: 'Approval needed', body: 'Open the app to review.' })`.
+ */
 export function defaultPushMessage(e: AttentionEvent): { title: string; body: string } {
+  const out = (title: string, body: string) => ({ title: pushText(title), body: pushText(body) });
   switch (e.kind) {
     case 'approval_requested': {
-      const what = e.approval?.title ?? 'Your agent is waiting for your approval.';
-      return { title: 'Approval needed', body: e.sessionTitle ? `${e.sessionTitle}: ${what}` : what };
+      const what = e.approval?.title || 'Your agent is waiting for your approval.';
+      return out('Approval needed', e.sessionTitle ? `${e.sessionTitle}: ${what}` : what);
     }
     case 'run_completed':
-      return { title: 'Run finished', body: e.sessionTitle || 'Your agent finished.' };
+      return out('Run finished', e.sessionTitle || 'Your agent finished.');
     case 'run_failed':
-      return { title: 'Run failed', body: e.sessionTitle || 'Your agent stopped with an error.' };
+      return out('Run failed', e.sessionTitle || 'Your agent stopped with an error.');
   }
 }
 
@@ -45,7 +68,8 @@ type Ticket = { status: 'ok'; id?: string } | { status: 'error'; message?: strin
  * to open the right screen. Tokens Expo reports as `DeviceNotRegistered` go to `onInvalidToken`.
  * Rejects (the hub logs it) when a request fails or times out (`timeoutMs`), when `onInvalidToken`
  * throws, or when Expo refused messages for another reason (e.g. `InvalidCredentials`: error codes
- * and counts only, never tokens). Uses only `fetch` (any platform).
+ * and counts only, never tokens). Several failures reject with an `AggregateError` (all of them in
+ * `errors`). Uses only `fetch` (any platform).
  */
 export function expoPushNotifier(o: ExpoPushNotifierOptions): OnAttention {
   const message = o.message ?? defaultPushMessage;
@@ -99,7 +123,11 @@ export function expoPushNotifier(o: ExpoPushNotifierOptions): OnAttention {
       const reported = await Promise.allSettled(ok.flatMap((r) => r.invalid).map(async (t) => o.onInvalidToken!(t)));
       for (const r of reported) if (r.status === 'rejected') failures.push(r.reason);
     }
-    if (failures.length > 0) throw failures[0];
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      const first = failures[0] instanceof Error ? `: ${failures[0].message}` : '';
+      throw new AggregateError(failures, `Expo push failed (${failures.length} failures)${first}`);
+    }
     const counts = new Map<string, number>();
     for (const code of ok.flatMap((r) => r.errors)) counts.set(code, (counts.get(code) ?? 0) + 1);
     if (counts.size > 0) {

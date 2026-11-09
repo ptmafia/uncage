@@ -31,6 +31,12 @@ export interface HubOptions {
    * extension `chrome-extension://<id>`. Only origins you control: exact `scheme://host[:port]`
    * strings (no wildcards, paths, credentials or trailing slash); https, browser-extension schemes,
    * or plain http on localhost / 127.0.0.1 / [::1] only. Checked by `createHub`.
+   *
+   * This is not CORS: the hub sends no `Access-Control-*` headers and does not answer preflight
+   * requests. It is meant for browser extensions (with host permissions they are not subject to
+   * CORS) and native apps (which send no `Origin` and pass anyway). Listing another website's
+   * `https://` origin only helps if your framework adds the CORS headers itself; otherwise the
+   * browser blocks its JSON requests even though the hub would accept them.
    */
   trustedOrigins?: string[];
   /**
@@ -145,8 +151,9 @@ export interface HubOptions {
    * from the computer's clock with this hub's clock: keep both within a few minutes (NTP); a
    * computer whose clock is over 10 minutes behind never notifies (the hub logs a warning, at most
    * hourly per machine). Never blocks or fails ingest: errors (thrown or rejected) go to
-   * `logger.error`. Delivery is at most once: if your handler fails, the event is not retried. When `hub.fetch` got `info.waitUntil` the
-   * call runs under it, and `ctx.waitUntil` hands further work to the same request context.
+   * `logger.error`. Delivery is at most once: if your handler fails, the event is not retried.
+   * When `hub.fetch` got `info.waitUntil` the call runs under it, and `ctx.waitUntil` hands further
+   * work to the same request context.
    */
   onAttention?: OnAttention;
   /** SSE comment heartbeat for browser event streams. Defaults to 15 000 ms. */

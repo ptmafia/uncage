@@ -12,7 +12,12 @@ export type AttentionEvent = {
   machineName?: string;
   /** The session's runtime id (`claude`, `codex`, …) when known. */
   runtime?: string;
-  approval?: { id: string; title: string; kind: string };
+  /**
+   * The approval that is waiting (`approval_requested` only). `title` is the runtime's own summary
+   * of the tool call (often the command or the file it touches); `category` is the protocol's
+   * `ApprovalRequest.category` (`shell`, `edit`, …).
+   */
+  approval?: { id: string; title: string; category: string };
   /** When it happened on the machine (the event's `occurredAt`). */
   at: string;
 };
@@ -112,7 +117,7 @@ export function attentionDispatcher(d: {
       if (e.type === 'approval.requested') {
         const a = e.payload.approval;
         if (answered.has(a.id)) continue;
-        approval = { id: a.id, title: a.title, kind: a.category };
+        approval = { id: a.id, title: a.title, category: a.category };
         runtime ??= a.runtimeId;
       }
       out.push({

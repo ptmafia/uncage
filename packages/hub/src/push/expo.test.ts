@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { until } from '../test-utils.js';
 import type { AttentionEvent } from '../attention.js';
-import { EXPO_PUSH_ENDPOINT, expoPushNotifier } from './expo.js';
+import { defaultPushMessage, EXPO_PUSH_ENDPOINT, expoPushNotifier } from './expo.js';
 
 const event = (over: Partial<AttentionEvent> = {}): AttentionEvent => ({
   kind: 'approval_requested',
@@ -11,7 +11,7 @@ const event = (over: Partial<AttentionEvent> = {}): AttentionEvent => ({
   machineId: 'mch_1',
   machineName: 'MacBook',
   runtime: 'claude',
-  approval: { id: 'apr_1', title: 'Run npm test', kind: 'shell' },
+  approval: { id: 'apr_1', title: 'Run npm test', category: 'shell' },
   at: new Date().toISOString(),
   ...over,
 });
@@ -153,5 +153,34 @@ describe('expoPushNotifier', () => {
     await notify(event({ kind: 'run_failed', approval: undefined }), ctx);
     expect(expo.calls).toHaveLength(1);
     expect(expo.calls[0]!.messages[0]).toMatchObject({ title: 'T run_failed', body: 'B' });
+  });
+
+  it('every failed batch is reported (AggregateError when more than one)', async () => {
+    const failing = (async () => new Response('{}', { status: 500 })) as typeof fetch;
+    const err = await settle(expoPushNotifier({ tokensFor: async () => tokens(250), fetch: failing })(event(), ctx)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AggregateError);
+    expect((err as AggregateError).errors).toHaveLength(3);
+    expect((err as AggregateError).message).toMatch(/3 failures/);
+    expect((err as AggregateError).message).toMatch(/HTTP 500/);
+    // A single failure is thrown as is.
+    const one = await settle(expoPushNotifier({ tokensFor: async () => tokens(1), fetch: failing })(event(), ctx)).catch((e: unknown) => e);
+    expect(one).not.toBeInstanceOf(AggregateError);
+    expect((one as Error).message).toMatch(/HTTP 500/);
+  });
+});
+
+describe('defaultPushMessage', () => {
+  it('caps title and body at 180 characters on one line', () => {
+    const command = `rm -rf ./build && ${'x'.repeat(5_000)}\nsecond line`;
+    const m = defaultPushMessage(event({ approval: { id: 'apr_1', title: command, category: 'shell' } }));
+    expect(m.title).toBe('Approval needed');
+    expect([...m.body].length).toBeLessThanOrEqual(180);
+    expect(m.body.endsWith('…')).toBe(true);
+    expect(m.body.startsWith('Fix the build: rm -rf ./build && xxx')).toBe(true);
+    expect(m.body).not.toContain('\n');
+    const long = defaultPushMessage(event({ kind: 'run_completed', approval: undefined, sessionTitle: 'é'.repeat(400) }));
+    expect([...long.body].length).toBe(180);
+    // Short text is untouched.
+    expect(defaultPushMessage(event()).body).toBe('Fix the build: Run npm test');
   });
 });

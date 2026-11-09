@@ -98,7 +98,7 @@ describe('onAttention', () => {
       machineId,
       machineName: 'Test Mac',
       runtime: 'fake',
-      approval: { id: 'apr_1', title: 'Run ls', kind: 'shell' },
+      approval: { id: 'apr_1', title: 'Run ls', category: 'shell' },
       at: ev[2]!.occurredAt,
     });
     expect(byKind('run_completed').e).toMatchObject({ kind: 'run_completed', sessionId: sid, machineId, at: ev[3]!.occurredAt });
