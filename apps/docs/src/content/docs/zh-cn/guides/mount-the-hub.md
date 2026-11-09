@@ -199,7 +199,7 @@ curl -s http://localhost:3000/api/uncage/health                 # needs a signed
 | --- | --- | --- |
 | `publicUrl` | （必填） | 你网站的公开源，例如 `https://app.example.com`。用于安装和 setup 命令、`/device` 链接、传输方式的 URL，以及 CSRF 源校验。必须是 `https://`（只有 `localhost`、`127.0.0.1`、`[::1]` 可以用普通的 `http://`）。 |
 | `getUser(req)` | （必填） | 你的认证：已登录的浏览器请求或应用（`Authorization: Bearer …`，[指南](/docs/zh-cn/guides/authenticate-apps/)）返回 `{ id, name? }`，否则返回 `null`。 |
-| `trustedOrigins` | `[]` | 允许越过跨站防护的额外精确 origin，例如 `chrome-extension://<id>`（[指南](/docs/zh-cn/guides/browser-extension/)）。不能有通配符或路径；只接受 https、扩展 scheme，或仅限 localhost 的 `http`。只能是你自己掌控的 origin。原生应用不需要它：它们不发送 `Origin`。 |
+| `trustedOrigins` | `[]` | 允许越过跨站防护的额外精确 origin，例如 `chrome-extension://<id>`（[指南](/docs/zh-cn/guides/browser-extension/)）。不能有通配符或路径；只接受 https、扩展 scheme，或仅限 localhost 的 `http`。只能是你自己掌控的 origin。原生应用不需要它：它们不发送 `Origin`。它不会添加 CORS：hub 不回应预检请求，所以受信任的 `https` origin 只有在你自己的框架添加了 CORS 时才有用；拥有主机权限的扩展会绕过 CORS。 |
 | `onAttention(event, ctx)` | 无 | 在请求审批、或一次运行完成或失败时调用，用来发送推送通知。每个事件最多一次，早于 10 分钟的事件不会触发。`expoPushNotifier` 是现成的处理函数。[指南](/docs/zh-cn/guides/push-notifications/) |
 | `store` | （必填） | `HubStore`。单个 Node 进程用 `@uncage/hub/node` 中的 `pgliteHubStore({ dataDir })`；多节点和 FaaS 用 `postgresHubStore({ connectionString } \| { pool })`。hub 从不关闭它。 |
 | `cluster` | `memoryCluster()` | `ClusterAdapter`。多节点和 FaaS 用 `redisCluster` 或 `postgresCluster`。[指南](/docs/zh-cn/guides/multi-node/) |

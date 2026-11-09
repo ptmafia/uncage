@@ -5,6 +5,8 @@ description: 网站为连接你的电脑而给出的那一条命令，在 macOS�
 
 用 Uncage 搭建的网站会给出一条命令，用来连接你的电脑。这条命令会先检查电脑，每安装一样东西之前都会问 `[Y/n]`：先是 Node.js 22（有版本管理器时就用你自己的版本管理器），然后是 Uncage CLI。它会列出找到的 coding agent，最后提议为这个网站运行 `uncage setup`：它会打开浏览器，让你批准这台电脑。整个过程不使用 `sudo`，也不需要管理员权限；除非你同意，它不会改动你的默认 Node.js。
 
+要一键连接更多网站，需要 `@uncage/cli` 0.4 或更高版本。如果你装的是 0.3，请运行 `npm i -g @uncage/cli@latest`，然后再次运行 `uncage agent install`（或 `uncage setup`）：`uncage://` 处理程序只在那里注册。
+
 下面的示例使用 `https://your.site`；请复制网站上显示的命令，那里是网站自己的地址。
 
 ## macOS

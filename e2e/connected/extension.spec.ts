@@ -47,6 +47,7 @@ test('side panel lists the signed-in user\'s computer and runs a session through
   });
   try {
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker', { timeout: 8_000 }).catch(() => undefined));
+    if (process.env.CI) expect(worker, 'the unpacked extension must load on CI (no skipping there)').toBeTruthy();
     test.skip(!worker, `this browser did not load the unpacked extension (${executablePath ?? 'system Chrome'}); Chrome 137+ ignores --load-extension. Set UNCAGE_EXTENSION_CHROME to a Chromium / Chrome for Testing binary.`);
     expect(new URL(worker!.url()).host).toBe(EXTENSION_ID);
 

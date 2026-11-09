@@ -50,6 +50,7 @@ export const hub = createHub({
 - 使えるスキーム：`https`、`chrome-extension`、`moz-extension`、`safari-web-extension`、そして`localhost`、`127.0.0.1`、`[::1]`に限り`http`。`file:`、`data:`、`javascript:`、`blob:`などは拒否されます。
 - **自分で管理しているオリジンだけ。** 信頼されたオリジンは、ユーザーのCookieを使って状態を変更するリクエストを行えます。その拡張機能内で動くスクリプトはすべてユーザーとして振る舞うため、自社アプリと同じ扱いで配布してください。
 - ウェブサイトに対する保護は弱まりません。ほかの別のオリジンは、引き続きすべて拒否されます。
+- CORSは追加されません。ハブはCORSヘッダーを送らず、プリフライトにも応答しないため、拡張機能（ホスト権限がCORSを回避します）とネイティブのシェル向けです。信頼された`https`オリジンのウェブページがブラウザからハブを呼べるのは、フレームワーク側でCORSを追加した場合だけです。
 
 `examples/connected-demo`では、`TRUSTED_ORIGINS=chrome-extension://<id>`（カンマ区切り）を設定します。
 
@@ -63,7 +64,7 @@ export const hub = createHub({
 HUB_ORIGIN=https://your.site pnpm --filter connected-extension build
 ```
 
-`HUB_ORIGIN`（サイトのオリジン。パスなし）は、マニフェストの唯一の`host_permissions`エントリとパネルの`baseUrl`になります。`chrome://extensions`を開き、デベロッパーモードをオンにして、**パッケージ化されていない拡張機能を読み込む**で`dist`フォルダを選び、ツールバーのアイコンをクリックしてサイドパネルを開きます。同じChromeプロファイルでサイトにサインインし、コンピュータを接続します（[ワンクリック接続](/docs/ja/guides/one-click-connect/)または`uncage setup`）。
+`HUB_ORIGIN`（サイトのオリジン。パスなし）は、マニフェストの唯一の`host_permissions`エントリとパネルの`baseUrl`になります。ローカルのハブには、開発モードでデモを動かしてください：`TRUSTED_ORIGINS=chrome-extension://<id> pnpm --filter connected-demo dev`（`start`スクリプトは本番モードで、先に`pnpm build`が必要です）。`chrome://extensions`を開き、デベロッパーモードをオンにして、**パッケージ化されていない拡張機能を読み込む**で`dist`フォルダを選び、ツールバーのアイコンをクリックしてサイドパネルを開きます。同じChromeプロファイルでサイトにサインインし、コンピュータを接続します（[ワンクリック接続](/docs/ja/guides/one-click-connect/)または`uncage setup`）。
 
 ## CookieとSameSite
 

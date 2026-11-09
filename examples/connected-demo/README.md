@@ -94,7 +94,7 @@ Everything here is off until its variables are set, and works the same in both m
 | `APPLE_TEAM_ID` + `IOS_BUNDLE_ID` | `/.well-known/apple-app-site-association` (iOS universal links for `/device`). Needs a paid Apple Developer account; built and unit-tested, not verified on a device. |
 | `TRUSTED_ORIGINS` | Comma-separated exact origins (e.g. `chrome-extension://<id>`) allowed past the hub's cross-site guard, for `examples/connected-extension`. |
 
-Step by step (free Expo account, EAS development build, Firebase for Android push): [DEPLOY.md](DEPLOY.md#companion-app-push-and-app-links).
+Step by step (free Expo account, EAS development build, Firebase for Android push): the [connected-expo README](../connected-expo/README.md), sections 2 and 3. The environment variables for the app are listed in [DEPLOY.md](DEPLOY.md).
 
 ## Run it (FaaS mode, locally)
 

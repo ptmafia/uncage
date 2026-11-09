@@ -5,6 +5,8 @@ description: The one command a website shows to connect your computer, on macOS,
 
 A website built with Uncage shows one command to connect your computer. The command checks the computer and asks `[Y/n]` before each thing it installs: Node.js 22 (with your own version manager when you have one), then the Uncage CLI. It lists the coding agents it finds and then offers to run `uncage setup` for that website, which opens the browser so you can approve the computer. It never uses `sudo` or admin rights, and it never changes your default Node.js unless you say yes.
 
+One-click connect to more sites needs `@uncage/cli` 0.4 or newer. If you installed 0.3, run `npm i -g @uncage/cli@latest` and then `uncage agent install` (or `uncage setup`) again: that is the only place the `uncage://` handler is registered.
+
 The examples use `https://your.site`; copy the command the website shows, which has its own address.
 
 ## macOS

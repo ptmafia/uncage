@@ -56,15 +56,15 @@ Because of this, the QR code and link from `uncage setup` point at `localhost`, 
    HOST=0.0.0.0 pnpm dev
    ```
 
-4. Start the app, then scan the QR code in the terminal: with the Camera app on iOS, or from inside Expo Go on Android.
+4. Start the app in Expo Go mode (`start:go`: plain `pnpm start` opens a development build, which Expo Go cannot open), then scan the QR code in the terminal: with the Camera app on iOS, or from inside Expo Go on Android.
 
    ```sh
    cd examples/connected-expo
-   EXPO_PUBLIC_HUB_URL=http://192.168.1.20:3200 pnpm start
+   EXPO_PUBLIC_HUB_URL=http://192.168.1.20:3200 pnpm start:go
    ```
 
 5. Sign in to the app with a username, e.g. `alice`. Sign in to the website on the Mac (`http://localhost:3200`) with the **same** username, so both see the same computers and chats.
-6. Connect the Mac: run `uncage setup http://localhost:3200` (the website shows the install and setup commands). It prints a code like `ABCD-EFGH`. In the app, tap **Approve a computer**, type the code and tap **Approve**. Alternatively, open the link it prints in the Mac's browser and approve it there. The computer then appears in the app; tap **New chat**.
+6. Connect the Mac with the CLI built from this repository (the published `@uncage/cli` is 0.3 until 0.4 is released: it has no QR code or `uncage://` handler, and a plain `uncage setup` would also install a background service). From the repository root: `node packages/cli/dist/bin.js setup http://localhost:3200 --no-daemon`, then `node packages/cli/dist/bin.js agent` in another terminal. It prints a code like `ABCD-EFGH`. In the app, tap **Approve a computer**, type the code, tap **Continue**, then **Approve**. (macOS may ask whether `node` may accept incoming connections; allow it, because the phone reaches the Mac through `HOST=0.0.0.0`.) Alternatively, open the link it prints in the Mac's browser and approve it there. The computer then appears in the app; tap **New chat**.
 
 ## 2. Android development build (free: EAS free tier + Firebase)
 
@@ -88,7 +88,7 @@ A development build adds push notifications and App Links. You need a free [Expo
    ```
 
    Check that `https://your-demo.example.com/.well-known/assetlinks.json` returns the JSON. Android verifies the link when the app is installed, so reinstall the APK if you set this up afterwards. With adb installed, check it with `adb shell pm get-app-links com.yourname.uncagedemo`.
-6. **Try it**: sign in on the phone and allow notifications. Run `uncage setup https://your-demo.example.com` on a computer and scan its QR code with the phone camera. The app's approval screen opens. Start a run that needs an approval on the website, then lock the phone: a push arrives, and tapping it opens the chat.
+6. **Try it**: sign in on the phone and allow notifications. Run `node packages/cli/dist/bin.js setup https://your-demo.example.com` (the 0.4 CLI built from this repository; the QR code needs it, not the published 0.3) on a computer and scan its QR code with the phone camera. The app's approval screen opens. Start a run that needs an approval on the website, then lock the phone: a push arrives, and tapping it opens the chat.
 
 ## 3. iOS (not verified on a device)
 

@@ -32,7 +32,7 @@ export const client = createUncageClient({
 ```
 
 - **流式读取。** React Native 内置的 `fetch` 无法流式读取响应体，而客户端从 `response.body.getReader()` 读取事件。Expo 的 `expo/fetch` 支持流式。在裸 React Native 中，可以使用任何提供 `body.getReader()` 的 `fetch` polyfill。如果没有 `TextDecoder`（较旧的 Hermes），客户端会使用内置的小型 UTF-8 解码器。
-- **上传。** `uploadAttachment` 接受浏览器的 `File`，也接受来自 `expo-image-picker` 的 `{ uri, name, type }` 对象。对于后者，客户端先用全局的 `fetch(uri)`（React Native 自带的，能读 `file://` 和 `content://`）读出文件，再通过你传入的 `fetch` 发送。如果你传入的是 `expo/fetch`，就是这个原因：文件是单独读取的。`examples/connected-expo` 把事件流交给 `expo/fetch`，其余请求交给内置 `fetch`。
+- **上传。** `uploadAttachment` 接受浏览器的 `File`，也接受来自 `expo-image-picker` 的 `{ uri, name, type }` 对象。对于后者，客户端先用全局的 `fetch(uri)`读出文件，再通过你传入的 `fetch` 发送。在 Expo SDK 58 及更高版本中，全局 `fetch` 就是 `expo/fetch`（只有设置 `EXPO_PUBLIC_USE_RN_FETCH=1` 才是 React Native 自带的 `fetch`）。它能读取 `file://`，但**不能**读取 `content://`：`expo-image-picker` 已经交出 `file://` 副本，任何 `content://` URI 都必须先复制到缓存文件。`examples/connected-expo` 让事件流走 `expo/fetch`，其余请求走全局 `fetch`。`useAttachments().add()` 接受有名字的 `Blob`，而不是 `{ uri, name, type }`：先把选取的文件读成 `Blob` 并命名（见示例里的 `lib/attachments.ts`）。
 - **图片。** `client.attachmentUrl(id)` 需要认证头，所以用 `<Image source={{ uri, headers }} />` 渲染。
 - **异步请求头。** 如果 `headers()` 抛出错误（比如令牌刷新失败），请求会以 `unauthorized` 失败，并带有 `details.reason: 'headers'`；事件流通过 `onError` 报告并重试。
 

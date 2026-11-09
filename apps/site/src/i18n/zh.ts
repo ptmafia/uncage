@@ -149,11 +149,11 @@ export const zh: Dict = {
       },
       {
         title: '浏览器扩展',
-        body: 'Chrome 侧边栏对着你的 hub 运行同样的对话。只需按精确的 origin 信任你的扩展。',
+        body: 'Chrome 侧边栏对着你的 hub 运行同样的对话。只需按精确的 origin 信任你的扩展。已在 Chromium 中测试，手动测试待完成。',
       },
       {
         title: '一个 agent，所有网站',
-        body: '只装一次，之后一键连接任何 Uncage 网站。电脑上的确认框会核对网站身份，本地 dashboard 列出并可断开每个网站。',
+        body: '只装一次，之后一键连接任何 Uncage 网站。电脑上的确认框会核对网站身份，本地 dashboard 列出并可断开每个网站。真机确认待完成。',
       },
     ],
     soon: [

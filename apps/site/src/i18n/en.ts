@@ -146,11 +146,11 @@ export const en: Dict = {
       },
       {
         title: 'Browser extensions',
-        body: 'A Chrome side panel runs the same chat against your hub. Trust your extension by its exact origin.',
+        body: 'A Chrome side panel runs the same chat against your hub. Trust your extension by its exact origin. Tested in Chromium; hand-testing pending.',
       },
       {
         title: 'One agent, every site',
-        body: 'Install once, then connect any Uncage site in one click. A confirmation on your computer checks the site’s identity, and a local dashboard lists and disconnects every site.',
+        body: 'Install once, then connect any Uncage site in one click. A confirmation on your computer checks the site’s identity, and a local dashboard lists and disconnects every site. Real-device confirmation pending.',
       },
     ],
     soon: [

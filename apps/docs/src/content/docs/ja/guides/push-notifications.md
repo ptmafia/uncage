@@ -13,7 +13,7 @@ import type { AttentionEvent, OnAttention } from '@uncage/hub';
 export const onAttention: OnAttention = async (e: AttentionEvent, { waitUntil }) => {
   // e.kind: 'approval_requested' | 'run_completed' | 'run_failed'
   // e.userId, e.sessionId, e.sessionTitle?, e.machineId, e.machineName?, e.runtime?,
-  // e.approval?: { id, title, kind }, e.at (when it happened on the computer)
+  // e.approval?: { id, title, category }, e.at (when it happened on the computer)
   waitUntil(sendPush(e.userId, `${e.kind}: ${e.sessionTitle ?? e.sessionId}`));
 };
 
@@ -27,6 +27,21 @@ declare function sendPush(userId: string, text: string): Promise<void>;
 - **取り込みをブロックしない。** エラーでイベントが失敗することはありません。FaaSプラットフォームでは、呼び出しはリクエストの`waitUntil`の下で実行されます。`ctx.waitUntil`で、同じコンテキストにさらに処理を渡せます。
 - **古いイベントはスキップ。** イベントの時刻が**10分**より古いもの（エージェントが再接続後に補完した古いイベント）は通知されません。`'site'`モードでは、保存済みのスナップショットですでに回答済みの承認もスキップされます。
 - **時計に関する注意。** 「古い」かどうかは、コンピュータの時計によるイベント時刻とハブの時計を比較して判断します。両方の時計を数分以内（NTP）に保ってください。時計が10分以上遅れているコンピュータは通知されません。ハブは警告をログに出します（コンピュータごとに最大1時間に1回）。
+
+## ハブから外に出るもの
+
+プッシュは、ハブからExpo、さらにAppleまたはGoogleを経由して、ロック画面に表示されます。既定の文面はイベントと**承認のタイトル**から作られ、そのタイトルはランタイムがツール呼び出しから決めるため、コマンドやファイルパスが含まれることがあります。既定の文面は約180文字で切り詰められますが、それでもこれらのサービスとロック画面には届きます。ユーザーにとって多すぎる場合は、`message`で汎用の文面を返してください。
+
+```ts
+import { expoPushNotifier } from '@uncage/hub';
+
+declare const tokensFor: (userId: string) => Promise<string[]>;
+
+expoPushNotifier({
+  tokensFor,
+  message: (e) => ({ title: 'Uncage', body: e.approval ? 'An action needs your approval' : 'Your run has finished' }),
+});
+```
 
 ## `expoPushNotifier`
 

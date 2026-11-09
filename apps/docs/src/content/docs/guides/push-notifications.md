@@ -13,7 +13,7 @@ import type { AttentionEvent, OnAttention } from '@uncage/hub';
 export const onAttention: OnAttention = async (e: AttentionEvent, { waitUntil }) => {
   // e.kind: 'approval_requested' | 'run_completed' | 'run_failed'
   // e.userId, e.sessionId, e.sessionTitle?, e.machineId, e.machineName?, e.runtime?,
-  // e.approval?: { id, title, kind }, e.at (when it happened on the computer)
+  // e.approval?: { id, title, category }, e.at (when it happened on the computer)
   waitUntil(sendPush(e.userId, `${e.kind}: ${e.sessionTitle ?? e.sessionId}`));
 };
 
@@ -27,6 +27,21 @@ Pass it as `createHub({ …, onAttention })`. How it behaves:
 - **Never blocks ingest.** Errors never fail the event. On FaaS platforms the call runs under the request’s `waitUntil`; `ctx.waitUntil` hands more work to the same context.
 - **Stale events are skipped.** An event whose time is older than **10 minutes** (an agent backfilling after a reconnect) never notifies. In `'site'` mode an approval that the stored snapshot already shows answered is skipped too.
 - **Clock note.** “Older” compares the event’s time from the computer’s clock with the hub’s clock. Keep both within a few minutes (NTP). A computer whose clock is more than 10 minutes behind never notifies; the hub logs a warning about it, at most once an hour per machine.
+
+## What leaves your hub
+
+A push goes from your hub to Expo, then to Apple or Google, and shows on the lock screen. The default text is built from the event and the **approval title**, and runtimes set that title from the tool call, so it can name a command or a file path. The default is cut to about 180 characters, but it still reaches those services and the lock screen. If that is too much for your users, return a generic text from `message`:
+
+```ts
+import { expoPushNotifier } from '@uncage/hub';
+
+declare const tokensFor: (userId: string) => Promise<string[]>;
+
+expoPushNotifier({
+  tokensFor,
+  message: (e) => ({ title: 'Uncage', body: e.approval ? 'An action needs your approval' : 'Your run has finished' }),
+});
+```
 
 ## `expoPushNotifier`
 

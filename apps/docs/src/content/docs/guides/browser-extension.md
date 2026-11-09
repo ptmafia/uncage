@@ -50,6 +50,7 @@ export const hub = createHub({
 - Allowed schemes: `https`, `chrome-extension`, `moz-extension`, `safari-web-extension`, and `http` only for `localhost`, `127.0.0.1` and `[::1]`. `file:`, `data:`, `javascript:`, `blob:` and others are refused.
 - **Only origins you control.** A trusted origin is allowed to make state-changing requests with the user’s cookies. Any script that runs in that extension acts as the user, so ship it like a first-party app.
 - This does not weaken the guard for websites: every other foreign `Origin` is still refused.
+- It does not add CORS. The hub sends no CORS headers and does not answer preflight, so it is meant for extensions (whose host permission bypasses CORS) and native shells. A web page on a trusted `https` origin can call the hub from a browser only if your framework adds CORS.
 
 In `examples/connected-demo`, set `TRUSTED_ORIGINS=chrome-extension://<id>` (comma-separated).
 
@@ -63,7 +64,7 @@ An unpacked extension’s id depends on its path unless `manifest.json` carries 
 HUB_ORIGIN=https://your.site pnpm --filter connected-extension build
 ```
 
-`HUB_ORIGIN` (the site’s origin, no path) becomes the manifest’s only `host_permissions` entry and the panel’s `baseUrl`. Open `chrome://extensions`, turn on Developer mode, **Load unpacked** and pick the `dist` folder; click the toolbar icon to open the side panel. Sign in on the site in the same Chrome profile and connect a computer ([one-click connect](/docs/guides/one-click-connect/) or `uncage setup`).
+`HUB_ORIGIN` (the site’s origin, no path) becomes the manifest’s only `host_permissions` entry and the panel’s `baseUrl`. For a local hub, run the demo in development mode, `TRUSTED_ORIGINS=chrome-extension://<id> pnpm --filter connected-demo dev` (the `start` script is production mode and needs `pnpm build` first). Open `chrome://extensions`, turn on Developer mode, **Load unpacked** and pick the `dist` folder; click the toolbar icon to open the side panel. Sign in on the site in the same Chrome profile and connect a computer ([one-click connect](/docs/guides/one-click-connect/) or `uncage setup`).
 
 ## Cookies and SameSite
 

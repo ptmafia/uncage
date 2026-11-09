@@ -32,7 +32,7 @@ export const client = createUncageClient({
 ```
 
 - **ストリーミング。** React Native組み込みの`fetch`はレスポンスボディをストリーミングできませんが、クライアントは`response.body.getReader()`からイベントを読み取ります。Expoの`expo/fetch`はストリーミングできます。素のReact Nativeでは、`body.getReader()`を提供する任意の`fetch`ポリフィルを使います。`TextDecoder`がない環境（古いHermes）では、クライアントが内蔵の小さなUTF-8デコーダーを使います。
-- **アップロード。** `uploadAttachment`は、ブラウザの`File`のほか、`expo-image-picker`の`{ uri, name, type }`オブジェクトも受け付けます。後者の場合、クライアントはグローバルの`fetch(uri)`（React Native自身のもので、`file://`や`content://`を読めます）でファイルを読み、渡された`fetch`で送信します。渡す`fetch`が`expo/fetch`のときにファイルを別に読むのはこのためです。`examples/connected-expo`は、イベントストリームを`expo/fetch`に、それ以外のリクエストを組み込みの`fetch`に振り分けています。
+- **アップロード。** `uploadAttachment`は、ブラウザの`File`のほか、`expo-image-picker`の`{ uri, name, type }`オブジェクトも受け付けます。後者の場合、クライアントはグローバルの`fetch(uri)`でファイルを読み、渡された`fetch`で送信します。Expo SDK 58以降では、グローバルの`fetch`は`expo/fetch`です（React Native自身の`fetch`になるのは`EXPO_PUBLIC_USE_RN_FETCH=1`のときだけ）。`file://`は読めますが、`content://`は読めません。`expo-image-picker`はすでに`file://`のコピーを渡すので、`content://`のURIは先にキャッシュのファイルへコピーしてください。`examples/connected-expo`は、イベントストリームを`expo/fetch`に、それ以外のリクエストをグローバルの`fetch`に振り分けています。`useAttachments().add()`は、`{ uri, name, type }`ではなく名前付きの`Blob`を受け取ります。選んだファイルを`Blob`に読み込み、名前を付けてから渡してください（サンプルの`lib/attachments.ts`を参照）。
 - **画像。** `client.attachmentUrl(id)`には認証ヘッダーが必要なので、`<Image source={{ uri, headers }} />`で表示します。
 - **非同期ヘッダー。** `headers()`が例外を投げる（トークン更新の失敗など）と、リクエストは`details.reason: 'headers'`付きの`unauthorized`で失敗します。ストリームは`onError`で通知し、再試行します。
 

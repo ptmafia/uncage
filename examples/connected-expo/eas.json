@@ -18,17 +18,6 @@
         "ANDROID_PACKAGE": "dev.uncage.connectedexpo",
         "EAS_PROJECT_ID": ""
       }
-    },
-    "preview": {
-      "distribution": "internal",
-      "android": {
-        "buildType": "apk"
-      },
-      "env": {
-        "EXPO_PUBLIC_HUB_URL": "https://demo.example.com",
-        "ANDROID_PACKAGE": "dev.uncage.connectedexpo",
-        "EAS_PROJECT_ID": ""
-      }
     }
   }
 }

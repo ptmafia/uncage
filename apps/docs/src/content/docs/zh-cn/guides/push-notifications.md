@@ -13,7 +13,7 @@ import type { AttentionEvent, OnAttention } from '@uncage/hub';
 export const onAttention: OnAttention = async (e: AttentionEvent, { waitUntil }) => {
   // e.kind: 'approval_requested' | 'run_completed' | 'run_failed'
   // e.userId, e.sessionId, e.sessionTitle?, e.machineId, e.machineName?, e.runtime?,
-  // e.approval?: { id, title, kind }, e.at (when it happened on the computer)
+  // e.approval?: { id, title, category }, e.at (when it happened on the computer)
   waitUntil(sendPush(e.userId, `${e.kind}: ${e.sessionTitle ?? e.sessionId}`));
 };
 
@@ -27,6 +27,21 @@ declare function sendPush(userId: string, text: string): Promise<void>;
 - **从不阻塞写入。** 错误不会让事件失败。在 FaaS 平台上，调用运行在请求的 `waitUntil` 之下；`ctx.waitUntil` 可以把更多工作交给同一个上下文。
 - **过期事件会被跳过。** 事件时间早于 **10 分钟**的（守护进程重连后补发的旧事件）永远不会通知。在 `'site'` 模式下，存储的快照已显示为已回答的审批也会被跳过。
 - **时钟说明。** “早于”是用电脑时钟给出的事件时间和 hub 的时钟比较的。请让两者相差不超过几分钟（NTP）。时钟慢了超过 10 分钟的电脑永远不会触发通知；hub 会记录一条警告，每台电脑每小时最多一次。
+
+## 离开你的 hub 的内容
+
+推送会从你的 hub 发到 Expo，再到 Apple 或 Google，并显示在锁屏上。默认文案由事件和**审批标题**生成，而运行时会根据工具调用来设置这个标题，所以它可能包含命令或文件路径。默认文案会被截断到约 180 个字符，但仍会到达这些服务和锁屏。如果这对你的用户来说太多，可以从 `message` 返回一段通用文案：
+
+```ts
+import { expoPushNotifier } from '@uncage/hub';
+
+declare const tokensFor: (userId: string) => Promise<string[]>;
+
+expoPushNotifier({
+  tokensFor,
+  message: (e) => ({ title: 'Uncage', body: e.approval ? 'An action needs your approval' : 'Your run has finished' }),
+});
+```
 
 ## `expoPushNotifier`
 

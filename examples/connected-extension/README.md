@@ -36,10 +36,10 @@ The extension's id is stable during development because `manifest.json` carries 
 chrome-extension://bocaoaanfikfdhmnhipmjpkcepaioapj
 ```
 
-Start the hub with that origin (the `connected-demo` reads `TRUSTED_ORIGINS`, comma separated):
+Start the hub with that origin (`dev` is the development mode; `start` is production mode and needs `pnpm build` first; the `connected-demo` reads `TRUSTED_ORIGINS`, comma separated):
 
 ```sh
-TRUSTED_ORIGINS=chrome-extension://bocaoaanfikfdhmnhipmjpkcepaioapj pnpm --filter connected-demo start
+TRUSTED_ORIGINS=chrome-extension://bocaoaanfikfdhmnhipmjpkcepaioapj pnpm --filter connected-demo dev
 ```
 
 or, in your own hub: `createHub({ ..., trustedOrigins: ['chrome-extension://bocaoaanfikfdhmnhipmjpkcepaioapj'] })`.

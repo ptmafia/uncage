@@ -50,6 +50,7 @@ export const hub = createHub({
 - 允许的 scheme：`https`、`chrome-extension`、`moz-extension`、`safari-web-extension`，以及仅限 `localhost`、`127.0.0.1` 和 `[::1]` 的 `http`。`file:`、`data:`、`javascript:`、`blob:` 等一律拒绝。
 - **只能是你自己掌控的 origin。** 受信任的 origin 可以携带用户的 cookie 发出会修改状态的请求。在那个扩展里运行的任何脚本都等同于用户本人，所以请像第一方应用那样发布它。
 - 这不会削弱对网站的防护：其他所有外部 `Origin` 仍然会被拒绝。
+- 它不会添加 CORS。hub 不发送 CORS 头，也不回应预检请求，所以它面向扩展（其主机权限会绕过 CORS）和原生外壳。受信任 `https` origin 上的网页，只有在你的框架添加了 CORS 时，才能在浏览器里调用 hub。
 
 在 `examples/connected-demo` 里，设置 `TRUSTED_ORIGINS=chrome-extension://<id>`（逗号分隔）。
 
@@ -63,7 +64,7 @@ export const hub = createHub({
 HUB_ORIGIN=https://your.site pnpm --filter connected-extension build
 ```
 
-`HUB_ORIGIN`（站点的 origin，不带路径）会成为清单里唯一的 `host_permissions` 项和侧边栏的 `baseUrl`。打开 `chrome://extensions`，打开开发者模式，点击**加载已解压的扩展程序**并选择 `dist` 文件夹；点击工具栏图标打开侧边栏。在同一个 Chrome 配置文件里登录站点，并连接一台电脑（[一键连接](/docs/zh-cn/guides/one-click-connect/)或 `uncage setup`）。
+`HUB_ORIGIN`（站点的 origin，不带路径）会成为清单里唯一的 `host_permissions` 项和侧边栏的 `baseUrl`。本地 hub 请用开发模式运行演示：`TRUSTED_ORIGINS=chrome-extension://<id> pnpm --filter connected-demo dev`（`start` 脚本是生产模式，需要先 `pnpm build`）。打开 `chrome://extensions`，打开开发者模式，点击**加载已解压的扩展程序**并选择 `dist` 文件夹；点击工具栏图标打开侧边栏。在同一个 Chrome 配置文件里登录站点，并连接一台电脑（[一键连接](/docs/zh-cn/guides/one-click-connect/)或 `uncage setup`）。
 
 ## Cookie 与 SameSite
 

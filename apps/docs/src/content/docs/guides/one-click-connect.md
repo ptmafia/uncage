@@ -21,6 +21,8 @@ Built and unit-tested on macOS, Linux and Windows. The test that registers the r
 
 You can also run it by hand: `uncage connect https://app.example.com`. See the [CLI reference](/docs/reference/cli/#uncage-connect).
 
+One-click needs `@uncage/cli` 0.4 or newer. An existing 0.3 install gets the handler only after `npm i -g @uncage/cli@latest` and running `uncage agent install` (or `uncage setup`) again, because that is the only place it is registered.
+
 ## What is accepted
 
 `uncage connect` accepts `uncage://connect?url=<site>` with **exactly one** parameter, or a bare URL. It refuses, before anything else happens, a site URL that:
@@ -32,7 +34,7 @@ You can also run it by hand: `uncage connect https://app.example.com`. See the [
 
 ## The confirmation and site identity checks
 
-Before any pairing, a dialog on this computer asks: **Connect this computer to `example.com`?** It shows the site’s **registrable domain** first (from the Public Suffix List, including private suffixes such as `vercel.app`, so each project there is its own owner), then the full hub URL, and what connecting allows: starting coding-agent sessions on this computer when the user uses that site. **Cancel is the default.** The dialog is in the system language (English, Chinese or Japanese).
+Before any pairing, a dialog on this computer asks: **Connect this computer to `example.com`?** It shows the site’s **registrable domain** first (from the Public Suffix List, including private suffixes such as `vercel.app`, so each project there is its own owner), then the full hub URL, and what connecting allows: whoever runs the site can start coding-agent sessions on this computer at any time and answer their approval prompts within your local policy, so only connect sites you trust. **Cancel is the default.** The dialog is in the system language (English, Chinese or Japanese).
 
 It adds a line for each of these:
 
@@ -49,12 +51,15 @@ How the question is asked, per operating system:
 | OS | Dialog |
 | --- | --- |
 | macOS | `/usr/bin/osascript` (an alert that gives up, as a No, after 10 minutes) |
-| Windows | A PowerShell `MessageBox` with OK and Cancel (default Cancel), through the system’s own PowerShell |
-| Linux | `zenity`, else `kdialog`, when a display is available (`DISPLAY` or `WAYLAND_DISPLAY`) |
+| Windows | A message box (`WScript.Shell` Popup) with OK and Cancel (default Cancel), shown through the system’s own Windows PowerShell |
+| Linux | `zenity` (preferred), else `kdialog`, when a display is available (`DISPLAY` or `WAYLAND_DISPLAY`) |
 
 If there is no dialog tool, or it could not be shown (no graphical session), and the command runs in a terminal, it asks `Connect? [y/N]` there. Without a dialog and without a terminal it refuses and prints how to run it by hand. **No dialog, no connection.** Also:
 
 - Only one question at a time: a page that fires links repeatedly cannot stack dialogs.
+- Every prompt, including the terminal one, counts as a No after 10 minutes.
+- After the user cancels, the same site is not asked again for 30 seconds.
+- Started from a link (`uncage connect --from-link`, which the registered handler uses), the outcome, connected or not and why, is shown as a native notice. On Windows that run is hidden, so no console window appears.
 - After the user confirms, the approval page the hub announces must be on the confirmed origin, and the site that answers must be the confirmed URL; otherwise nothing is saved.
 - A site’s self-declared name is never shown without its domain.
 - Exit codes: `0` connected, `1` cancelled or refused, `2` bad link.
@@ -67,7 +72,7 @@ If there is no dialog tool, or it could not be shown (no graphical session), and
 - **Disconnect**: revokes the machine token on the site (like `uncage sites remove`) and restarts the agent;
 - turn ACP agents on or off (the same consent as `uncage runtimes enable|disable`), and a read-only view of the local policy.
 
-It is a page on `127.0.0.1` at a random port. The link carries a one-time secret that is traded for an `HttpOnly`, `SameSite=Strict` cookie; every request must have the right `Host` (`127.0.0.1:<port>`, which defeats DNS rebinding), no foreign `Origin` and the secret, otherwise it gets `403`. There are no CORS headers. It exits when the page is closed or after 30 minutes without a request (`--no-browser` prints the link instead of opening it). The page follows the system language.
+It is a page on `127.0.0.1` at a random port. The link carries a one-time token in its fragment (`#…`, which browsers never send to a server). The page trades it once for an API token that it keeps in `sessionStorage`, and removes the fragment from the address bar; there is no cookie. Every request must have the right `Host` (`127.0.0.1:<port>`, which defeats DNS rebinding), no foreign `Origin` and the API token in a header, otherwise it gets `403`. There are no CORS headers. It exits when the page is closed or after 30 minutes without a request (`--no-browser` prints the link instead of opening it). The page follows the system language.
 
 ## Threat model
 
@@ -75,7 +80,7 @@ One-click makes a phishing attempt cheaper: any web page can fire `uncage://conn
 
 - **The native confirmation** shows who is asking, outside the web page, and defaults to No. A page cannot click it.
 - **Identity warnings** make look-alikes, IDNs, IP hosts and first-time sites stand out.
-- **The device flow is unchanged:** after the confirmation the user must still approve the code on the site’s `/device` page, which compares the code and shows the computer.
+- **Against a hostile site the device flow adds nothing:** the site controls its own `/device` page and can approve on its side. **The native confirmation is the only gate**, so confirm only sites you trust. (For an honest site the device flow still compares the code and shows the computer.)
 - **No central registry:** Uncage does not vouch for sites. The dialog shows what the link says, not a verdict; users should only confirm a connection they just started.
 - What a connected site can do on the computer is unchanged: the [trust model](/docs/concepts/trust-model/), the [local policy](/docs/guides/local-policy/) and per-tool approvals. The dashboard shows and revokes every connection.
 
