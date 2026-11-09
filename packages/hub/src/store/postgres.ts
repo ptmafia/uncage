@@ -120,7 +120,7 @@ export async function postgresHubStore(
   else {
     let pg: { Pool: new (c: { connectionString: string }) => PgPoolLike };
     try {
-      const mod = (await import('pg')) as unknown as { default?: typeof pg } & typeof pg;
+      const mod = (await import(/* webpackIgnore: true */ 'pg')) as unknown as { default?: typeof pg } & typeof pg;
       pg = mod.default ?? mod;
     } catch (e) {
       throw new Error('postgresHubStore({ connectionString }) needs the "pg" package: npm install pg', { cause: e });

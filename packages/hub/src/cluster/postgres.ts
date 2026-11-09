@@ -504,7 +504,7 @@ export function postgresCluster(o: ({ connectionString: string } | { pool: PgPoo
     (poolP ??= (async () => {
       let pg: { Pool: new (c: { connectionString: string }) => PgPoolLike };
       try {
-        const mod = (await import('pg')) as unknown as { default?: typeof pg } & typeof pg;
+        const mod = (await import(/* webpackIgnore: true */ 'pg')) as unknown as { default?: typeof pg } & typeof pg;
         pg = mod.default ?? mod;
       } catch (e) {
         poolP = undefined;

@@ -71,6 +71,20 @@ for (const m of code.matchAll(/(typeof\s+)?__uncage_node_globalthis_(\w+?)__(.{0
   globals.push(`globalThis.${m[2]}${m[3].split('\n')[0]}`);
 }
 
+// Optional peers (ioredis, pg) are loaded only when used. Bundlers that resolve dynamic imports at
+// build time (Turbopack, webpack) must skip them, or every app without them installed fails to build
+// ("Can't resolve 'ioredis'"): each such import needs the webpackIgnore annotation in the output.
+const unannotated = [];
+for (const f of result.outputFiles) {
+  for (const m of f.text.matchAll(/import\(\s*((?:\/\*[^*]*\*\/\s*)*)["'](ioredis|pg)["']\s*\)/g)) {
+    if (!m[1].includes('webpackIgnore: true')) unannotated.push(m[2]);
+  }
+}
+if (unannotated.length > 0) {
+  console.error(`check-web-entry: dynamic import of optional peer(s) without /* webpackIgnore: true */: ${[...new Set(unannotated)].join(', ')}`);
+  process.exit(1);
+}
+
 if (offenders.size > 0 || globals.length > 0) {
   console.error('check-web-entry: the root @uncage/hub entry must use Web-standard APIs only.');
   for (const o of offenders) console.error(`  Node built-in: ${o}`);

@@ -1,5 +1,12 @@
 # @uncage/agent
 
+## 0.3.1
+
+### Patch Changes
+
+- @uncage/core@0.3.1
+  - @uncage/protocol@0.3.1
+
 ## 0.3.0
 
 ### Minor Changes

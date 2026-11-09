@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1 — 2026-11-09
+
+- `@uncage/hub`: Next.js apps (Turbopack or webpack) that import `@uncage/hub` from a page, route handler or Server Action no longer fail with "Can't resolve 'ioredis'" (or `pg`) when those optional packages are not installed. No `serverExternalPackages` workaround needed.
+- Docs: the quickstart's custom server exits when its port is taken instead of holding the hub's data folder lock.
+
 ## 0.3.0 — 2026-11-09
 
 The hub runs anywhere, any ACP agent can be offered, and the user's side runs on macOS, Linux and Windows. All public `@uncage/*` packages move to 0.3.0 together, including the new `@uncage/runtime-acp`. Breaking changes and before/after code: [Migrate from 0.2](https://uncage-dev.vercel.app/docs/reference/migrate-from-0-2/).
