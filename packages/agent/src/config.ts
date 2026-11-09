@@ -29,6 +29,8 @@ export const AgentSiteSchema = z.object({
     .optional(),
   /** Set when the hub revoked this machine (close 4401 / HTTP 401): the agent stops dialing it. */
   revokedAt: z.string().optional(),
+  /** When this computer was (last) paired with the site (ISO); absent for sites paired before 0.4. */
+  connectedAt: z.string().optional(),
 });
 export type AgentSite = z.infer<typeof AgentSiteSchema>;
 

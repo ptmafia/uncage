@@ -114,6 +114,7 @@ export async function pairSite(d: PairDeps): Promise<AgentSite> {
     machineId: grant.machineId,
     token: grant.machineToken,
     machineKey,
+    connectedAt: new Date().toISOString(),
   };
   await updateAgentSites(d.home, (sites) => [...sites.filter((s) => s.id !== site.id && s.url !== siteUrl), site]);
   d.out(`✓ Connected to ${site.name} (${new URL(siteUrl).host}) as machine ${site.machineId}.`);

@@ -10,6 +10,12 @@ export const LIVE_PORTS = { daemon: 4795, control: 4796, app: 3102, headlessApp:
 export const CONNECTED_PORTS = { mock: 3210, multinode: 3220, live: 3230, faas: 3240, acpLive: 3250, faasLive: 3260, cloudflareLive: 3270, container: 3280, extension: 3290 } as const;
 
 const live = process.env.UNCAGE_LIVE === '1';
+/**
+ * UNCAGE_E2E_STANDALONE=1: start none of the shared web servers (mock daemon, example apps on fixed
+ * ports). For specs that start their own stack (dashboard-mock, e2e/connected/*), e.g. when a port
+ * like 3100 is already taken on this machine.
+ */
+const standalone = process.env.UNCAGE_E2E_STANDALONE === '1';
 const exampleEnv = (daemonPort: number) => ({ UNCAGE_URL: `http://127.0.0.1:${daemonPort}`, UNCAGE_TOKEN: 'test-token' });
 // Next builds route-handler `req.url` with host `localhost`; loopback.spec.ts covers browsing
 // via 127.0.0.1 (the proxy treats loopback names on the same port as one origin).
@@ -85,6 +91,13 @@ export default defineConfig<ExampleOptions>({
       testMatch: 'extension.spec.ts',
     },
     {
+      // `uncage dashboard` (the built CLI, temp UNCAGE_HOME) over the mock connected stack on a
+      // random port: shows the connected site and disconnects it.
+      name: 'dashboard-mock',
+      testDir: '.',
+      testMatch: 'dashboard.spec.ts',
+    },
+    {
       // Connected Mode with REAL Claude Code (`uncage setup` + `uncage agent`). UNCAGE_LIVE=1 only.
       name: 'connected-live',
       testDir: './connected',
@@ -127,7 +140,9 @@ export default defineConfig<ExampleOptions>({
       testMatch: 'container.spec.ts',
     },
   ],
-  webServer: live
+  webServer: standalone
+    ? []
+    : live
     ? [
         {
           command: 'node live-supervisor.ts',
