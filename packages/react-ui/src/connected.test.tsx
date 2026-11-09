@@ -176,6 +176,22 @@ describe('connected mode: no computer yet', () => {
     }
   });
 
+  it('only links connectUrl values that use the uncage://connect? scheme', async () => {
+    for (const bad of ['javascript:alert(1)', 'https://evil.test/connect?x=1', 'uncage://other?x=1']) {
+      const f = fakeClient({ machines: [] });
+      f.client.installInfo.mockResolvedValue({ ...INSTALL, connectUrl: bad });
+      renderChat(f);
+      const region = await screen.findByRole('region', { name: 'Connect your computer' });
+      await within(region).findByText(INSTALL.install);
+      expect(within(region).queryByRole('link', { name: /Connect in one click/ })).toBeNull();
+      cleanup();
+    }
+    const f = fakeClient({ machines: [] });
+    f.client.installInfo.mockResolvedValue({ ...INSTALL, connectUrl: 'UNCAGE://connect?url=x' });
+    renderChat(f);
+    expect(await screen.findByRole('link', { name: /Connect in one click/ })).toBeTruthy();
+  });
+
   it('Windows tab says the site offers no Windows command when the hub has none', async () => {
     const f = fakeClient({ machines: [] });
     f.client.installInfo.mockResolvedValue({ ...INSTALL, windows: null });

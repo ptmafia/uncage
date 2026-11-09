@@ -233,7 +233,7 @@ export function ConnectMachine({ variant = 'dialog', onClose, onConnected, class
               )}
             </div>
             <p className="uc-connect-note">{t.connectOneCommandNote}</p>
-            {install?.connectUrl && !mobile && (
+            {install?.connectUrl && /^uncage:\/\/connect\?/i.test(install.connectUrl) && !mobile && (
               <p className="uc-connect-oneclick">
                 <a className="uc-connect-oneclick-link" href={install.connectUrl}>
                   {t.connectOneClick}
