@@ -140,6 +140,18 @@ export const en: Dict = {
         title: 'macOS, Windows and Linux',
         body: 'One command installs everything on macOS, Windows or Linux. The agent runs as a per-user background service: no sudo on macOS and Linux, a per-user install on Windows. macOS is verified on real devices; Windows and Linux are CI verified, real-device confirmation pending.',
       },
+      {
+        title: 'Mobile apps',
+        body: 'The same SDK in a React Native app: streaming, approvals, photos, push and QR approval of a new computer. Real-device confirmation pending.',
+      },
+      {
+        title: 'Browser extensions',
+        body: 'A Chrome side panel runs the same chat against your hub. Trust your extension by its exact origin.',
+      },
+      {
+        title: 'One agent, every site',
+        body: 'Install once, then connect any Uncage site in one click. A confirmation on your computer checks the site’s identity, and a local dashboard lists and disconnects every site.',
+      },
     ],
     soon: [
       {
@@ -147,8 +159,8 @@ export const en: Dict = {
         body: 'The Codex adapter ships today, tested against a simulated server. Verification on the real binary is next.',
       },
       {
-        title: 'More entry points',
-        body: 'Mobile apps, chat apps and browser extensions driving the same local harness.',
+        title: 'Chat apps',
+        body: 'Slack, Feishu and Telegram bots driving the same local harness.',
       },
     ],
   },

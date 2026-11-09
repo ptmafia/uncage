@@ -10,25 +10,22 @@ function trackErrors(page: Page): string[] {
   return errors;
 }
 
-/** No empty cell in the feature grids: every row is full, and the two wide cards share the last row. */
+/** No empty cell in the feature grids: the cards of every row add up to the grid's width. */
 async function assertFeatureRows(page: Page) {
   const grid = (await page.locator('#features ul.now').boundingBox())!;
+  const rects = await page.locator('#features ul.now li.feat').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().toJSON() as DOMRect));
+  const rows = new Map<number, number>();
+  for (const r of rects) rows.set(Math.round(r.top), (rows.get(Math.round(r.top)) ?? 0) + r.width);
+  for (const [top, width] of rows) expect(width, `row at ${top}`).toBeGreaterThan(grid.width - 6);
+  // The two wide cards (ACP agent; macOS, Windows and Linux) share a row, or stack full width on a phone.
   const wide = await page.locator('#features li.feat.wide').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().toJSON() as DOMRect));
   expect(wide).toHaveLength(2);
   const [a, b] = wide as [DOMRect, DOMRect];
-  const oneColumn = a.width > grid.width - 6;
-  if (oneColumn) expect(b.width).toBeGreaterThan(grid.width - 6);
-  else {
-    expect(Math.abs(a.top - b.top)).toBeLessThan(2);
-    expect(a.width + b.width).toBeGreaterThan(grid.width - 6);
-  }
-  // Every card of the 3×2 part is in a full row too: the cards per row times the card width fill the grid.
-  const cards = await page.locator('#features li.feat:not(.soon):not(.wide)').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().width));
-  const perRow = Math.round(grid.width / cards[0]!);
-  expect(cards.length % perRow).toBe(0);
+  if (a.width > grid.width - 6) expect(b.width).toBeGreaterThan(grid.width - 6);
+  else expect(Math.abs(a.top - b.top)).toBeLessThan(2);
   const later = (await page.locator('#features ul.later').boundingBox())!;
   const soon = await page.locator('#features li.feat.soon').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().width));
-  if (oneColumn) for (const w of soon) expect(w).toBeGreaterThan(later.width - 6);
+  if (a.width > grid.width - 6) for (const w of soon) expect(w).toBeGreaterThan(later.width - 6);
   else expect(soon.reduce((x, y) => x + y, 0)).toBeGreaterThan(later.width - 6);
 }
 
@@ -51,7 +48,7 @@ test('English homepage: language, headline, navigation, CTAs, Coming soon, hrefl
   // Two Coming soon features, each badged (the group heading "Coming soon" is separate).
   await expect(page.locator('[data-soon-badge]')).toHaveCount(2);
   await expect(page.locator('[data-soon-badge]', { hasText: /^Coming soon$/ })).toHaveCount(2);
-  await expect(page.locator('#features li.feat:not(.soon)')).toHaveCount(8);
+  await expect(page.locator('#features li.feat:not(.soon)')).toHaveCount(11);
   // The 7th and 8th cards (any ACP agent; macOS, Windows and Linux) share one row under the 3×2 grid.
   await assertFeatureRows(page);
   await expect(page.locator('#features li.feat.wide h4')).toHaveText(['Any ACP agent', 'macOS, Windows and Linux']);
@@ -98,7 +95,7 @@ test('zh and ja homepages: language, translated copy, docs links, switcher, OG i
       await expect(page.locator(sel)).toHaveAttribute('href', `${c.docs}start/try-the-demo/`);
     }
     await expect(page.locator('[data-soon-badge]', { hasText: new RegExp(`^${c.soon}$`) })).toHaveCount(2);
-    await expect(page.locator('#features li.feat:not(.soon)')).toHaveCount(8);
+    await expect(page.locator('#features li.feat:not(.soon)')).toHaveCount(11);
     await expect(page.locator('.install-label')).toHaveText(c.installLabel);
     await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', new RegExp(`${c.path}$`));
     await expect(page.locator('meta[property="og:image"]')).toHaveAttribute('content', new RegExp(`/og/og-${c.og}\\.png$`));
@@ -174,7 +171,7 @@ test('install command follows the visitor OS and can be switched (mouse and keyb
   await expect(unix).toHaveAttribute('aria-selected', 'true');
   await expect(visible).toContainText('curl -fsSL');
   await expect(page.locator('[data-soon-badge]')).toHaveCount(2);
-  await expect(page.locator('#features li.feat:not(.soon)')).toHaveCount(8);
+  await expect(page.locator('#features li.feat:not(.soon)')).toHaveCount(11);
   await mac.close();
 });
 
