@@ -7,5 +7,5 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["@uncage/testkit", "@uncage/e2e", "nextjs-default-chat", "react-headless-chat", "connected-demo", "connected-cloudflare", "connected-extension"]
+  "ignore": ["@uncage/testkit", "@uncage/e2e", "nextjs-default-chat", "react-headless-chat", "connected-demo", "connected-cloudflare", "connected-extension", "connected-expo"]
 }

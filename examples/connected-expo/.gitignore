@@ -1,0 +1,7 @@
+.expo/
+dist/
+android/
+ios/
+*.apk
+*.aab
+google-services.json

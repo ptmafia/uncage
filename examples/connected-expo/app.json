@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "Uncage Demo",
+    "slug": "uncage-connected-expo",
+    "version": "0.0.0",
+    "scheme": "uncagedemo",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "platforms": ["ios", "android"],
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Attach photos to your messages to the agent."
+      }
+    },
+    "android": {
+      "edgeToEdgeEnabled": true
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        { "photosPermission": "Attach photos to your messages to the agent.", "cameraPermission": false, "microphonePermission": false }
+      ],
+      ["expo-notifications", { "color": "#1f6feb" }]
+    ],
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}
