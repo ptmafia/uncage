@@ -1,6 +1,6 @@
 # Uncage for React Native apps (and browser extensions) — design
 
-Status: approved direction, pending final read · 2026-11-09 · branch `feat/react-native`
+Status: approved by user 2026-11-09 ("就按照这个方案来做即可。8 也做在同一期") · 2026-11-09 · branch `feat/react-native`
 
 ## Intent
 
@@ -16,14 +16,14 @@ Why it matters (user's words, paraphrased): the long-term moat is "one agent, ev
 4. **Approval push notifications.** The hub calls a developer hook when a user's attention is needed (an approval was requested; a run finished or failed), so the developer can send a push through their own provider. Ship a ready Web-standard helper for **Expo Push**.
 5. **Scan to connect a computer.** `uncage setup` also prints the approval link as a terminal QR code; the developer maps the hub's verification path (`/device`) to the app with universal / app links, so a phone scan opens the app's approval screen (falling back to the mobile web page).
 6. **Browser extension example** (`examples/connected-extension`, Chrome Manifest V3 side panel) using `@uncage/react-ui` against a hub, with the hub accepting its origin explicitly.
-7. Docs (3 locales), site card "More entry points" updated (mobile apps + browser extensions available; chat apps stay "Coming soon"), changeset (minor → 0.4.0? see open choices).
+7. **One agent, every site** (user decision: same release, see section below): one-click connect from any Uncage site once the agent is installed, a local dashboard of connected sites, and site identity checks before any computer is bound to a site.
+8. Docs (3 locales), site card "More entry points" updated (mobile apps + browser extensions available; chat apps stay "Coming soon"), changeset (minor → 0.4.0? see open choices).
 
 ## Non-goals
 
 - A React Native UI component library (`@uncage/react-native-ui`). The example app shows how to build the UI with the headless hooks; a component library is a possible follow-up.
 - Flutter, native iOS / Android SDKs (the HTTP API is documented; no SDKs now).
 - Chat-app bots (Slack, Feishu, Telegram): separate project (needs a server-side session API and account linking).
-- The "one agent everywhere" items (one-click connect via `uncage://`, user-side dashboard of connected sites, site verification): separate next project.
 - An official Uncage mobile app or relay service.
 
 ## Anti-goals
@@ -67,8 +67,34 @@ Why it matters (user's words, paraphrased): the long-term moat is "one agent, ev
 - `examples/connected-expo`: Expo (current stable SDK, TypeScript, expo-router). Screens: sign-in (token against connected-demo; add a small token endpoint to connected-demo for app sign-in, dev-only guest token allowed), computers, chat (messages, tool steps, approval cards Allow once / Deny, runtime/model/effort/permission pickers, photo attach), device approval screen opened by a universal link to `/device?code=…`, push registration (expo-notifications) wired to connected-demo's `onAttention` via `expoPushNotifier`.
 - `examples/connected-extension`: MV3 side panel, Vite build, `@uncage/react-ui` `<AgentChat>` against a hub URL, using cookies of the site (`credentials: 'include'` + host permission) and the hub's `trustedOrigins`.
 
+## One agent, every site (item 7)
+
+Why: the moat is the two-sided network — users install the agent once, every product that embeds Uncage can use it with one click; more installed agents make integrating cheaper, more integrations make installing worth more. Today a second site still needs a terminal (`uncage setup <url>`).
+
+### One-click connect
+- The agent registers an OS URL handler for **`uncage://connect?url=<site url>`** when the background agent is installed (`uncage agent install`, the end of `uncage setup`), and removes it on `uncage agent uninstall`:
+  - macOS: a minimal per-user app bundle in `~/Library/Application Support/Uncage/UncageConnect.app` (Info.plist `CFBundleURLTypes`, executable runs the pinned Node + CLI `connect` command), registered with LaunchServices (`lsregister`, absolute path). No admin rights.
+  - Linux: `~/.local/share/applications/uncage-connect.desktop` with `MimeType=x-scheme-handler/uncage;` + `xdg-mime default` (skipped with a note when `xdg-mime` is missing).
+  - Windows: `HKCU\Software\Classes\uncage` (`URL Protocol`, `shell\open\command` → pinned Node + CLI), via `systemTool('reg')`.
+- New command **`uncage connect <url>`** (what the handler runs; also usable by hand): validates the URL (https, or loopback http), runs the **native confirmation** (below), then the normal device flow (`setup` minus installing the service when it is already installed: it restarts it). Opens the site's `/device?code=…`; the user clicks Approve as today.
+- `<ConnectMachine>` gets a secondary action **"Already use Uncage on this computer? Connect in one click"** linking `uncage://connect?url=<publicUrl>` (shown on desktop OS tabs, hidden on mobile); the hub's `installInfo` exposes `connectUrl`. The install command stays the primary path (a website cannot detect whether the handler exists).
+
+### Site identity checks (verification)
+One-click makes phishing cheaper (a hostile page can fire `uncage://connect?url=https://evil.example`, and the attacker is "signed in" on their own `/device` page, which would bind the victim's computer to the attacker's account). So before any device flow started by `connect`:
+- **Native confirmation dialog** on this computer, showing the site's **registrable domain** prominently and the full origin: "Connect this computer to **example.com**? It will be able to start Claude Code / Codex sessions on this computer when you use that site." Buttons Connect / Cancel, default Cancel. macOS `osascript` (absolute path), Windows PowerShell `MessageBox` (`systemTool`), Linux `zenity` / `kdialog` when present, else the terminal prompt if a TTY, else refuse with a message. No dialog → no connection.
+- **Warnings in that dialog** for: IDN / punycode hosts (show the punycode form), raw IP hosts, a domain never connected before on this computer ("first time"), and a domain that looks like one already connected (confusable skeleton or edit distance ≤ 2 on the registrable label).
+- `http://` is refused except loopback (existing rule). The site's self-declared name is never shown without the domain.
+- Registrable domain via the Public Suffix List (a maintained npm dependency, MIT/ISC) — builder's call which package.
+- Not in scope: a central "verified by Uncage" registry (possible later; the dialog design leaves room for a badge).
+
+### Local dashboard
+- **`uncage dashboard`** starts a local web UI on `127.0.0.1` (random port, one-time token in the URL, token required on every request, `Host` checked against `127.0.0.1:<port>`, no CORS), opens the browser, exits when the tab closes or after 30 min idle.
+- Shows per connected site: name + domain, machine id, connected since, online / transport (from the running agent's status, `uncage agent status --json` data), runtimes offered, recent activity (redacted activity log), and actions: **Disconnect** (revokes the machine token on the hub like `uncage sites remove`, then restarts the agent), runtime enable / disable (same consent rules as `uncage runtimes`), local policy view. Plain server-rendered HTML + a little JS, the Uncage/Kumi look, en / zh-CN / ja by system locale.
+- The tray / menu-bar app is out of scope.
+
 ## Verification
 
+- One agent, every site: unit tests for URL validation, registrable domain + warnings (IDN, IP, first time, lookalike), dialog command construction per OS (fakes; never show a real dialog in tests), handler registration files per OS (temp dirs; never register a real handler on the user's Mac), `uncage connect` flow with a fake dialog + real test hub, dashboard (token / Host checks, disconnect, runtime toggles) with Playwright in system Chrome against a temp `UNCAGE_HOME`. CI runs the per-OS registration code on the three-OS job (temp home / HKCU test key cleaned up). Real one-click on the user's Mac: the user verifies (installing a handler is a change to their system).
 - Unit tests: client + hooks in a simulated RN environment (no `window.location` / `localStorage`, a streaming fetch shaped like `expo/fetch`, file-URI uploads, async headers, storage adapter), hub `onAttention` (each kind, dedupe across resend and two nodes, waitUntil on FaaS), `trustedOrigins`, `expoPushNotifier` (batching, invalid tokens) against a fake Expo endpoint, CLI QR (TTY / non-TTY / `--no-qr`).
 - Example apps: type-check and build (`expo export` for the app; Vite build for the extension) in CI. The extension also gets a Playwright run in system Chrome (load unpacked, side panel chat against the mock hub) if feasible.
 - **Real device, free path only (user decision: "尽量先用免费方案"):** no Xcode / Android SDK on this machine, no paid accounts.
