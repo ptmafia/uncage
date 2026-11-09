@@ -67,5 +67,5 @@ Uncage 是一组 npm 包，把 Claude Code（以及 Codex）接入你自己的�
 - **在用 coding agent？** 把 [Uncage 技能](/docs/skills/uncage/SKILL.md) 或 [`llms.txt`](/docs/llms.txt) 交给它。每个页面都有纯 Markdown 版本：在网址后面加 `.md` 即可。详见[面向 coding agent](/docs/zh-cn/start/for-coding-agents/)。
 
 :::note[状态]
-Connected 模式属于 Uncage 0.3（`@uncage/hub`、`@uncage/agent`，以及 `@uncage/cli` 里的 `uncage setup` / `uncage agent` 命令）。用户电脑一侧支持 **macOS、Linux 和 Windows**，以按用户运行的后台服务运行，需要 Node.js 22 或更高版本（安装脚本会帮你装好）。macOS 已在真机上验证；Linux 和 Windows 已通过 CI 验证，尚待真机确认。Claude Code 已实机验证；Codex 已实现，但还没有对真实二进制运行过，也暂不支持网站工具。详见[兼容性记录](https://github.com/ptmafia/uncage/blob/main/docs/compatibility.md)。
+Connected 模式属于 Uncage 0.4（`@uncage/hub`、`@uncage/agent`，以及 `@uncage/cli` 里的 `uncage setup` / `uncage agent` 命令）。用户电脑一侧支持 **macOS、Linux 和 Windows**，以按用户运行的后台服务运行，需要 Node.js 22 或更高版本（安装脚本会帮你装好）。macOS 已在真机上验证；Linux 和 Windows 已通过 CI 验证，尚待真机确认。Claude Code 已实机验证；Codex 已实现，但还没有对真实二进制运行过，也暂不支持网站工具。详见[兼容性记录](https://github.com/ptmafia/uncage/blob/main/docs/compatibility.md)。
 :::

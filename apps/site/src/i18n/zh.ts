@@ -41,7 +41,7 @@ export const zh: Dict = {
     dismiss: '关闭',
   },
   hero: {
-    eyebrow: 'v0.3 · 现已支持 Serverless',
+    eyebrow: 'v0.4 · 现已支持移动 App',
     title: '你的 coding agent，|*无处不在。*',
     lede: '你的用户手里早就有一套强大的环境：他们自己的 Claude Code、自己的账号、自己的工具。Uncage 把这套本地 harness 变成你的产品可以调用的服务。任务在用户的电脑上运行，结果回到你的网站上。',
     primary: '体验在线演示',

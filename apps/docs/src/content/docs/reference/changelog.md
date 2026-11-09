@@ -1,9 +1,17 @@
 ---
 title: Changelog
-description: "What changed in each Uncage release: 0.3 (the hub runs anywhere, any ACP agent, macOS / Linux / Windows), 0.2 (Connected Mode) and 0.1. The authoritative changelog is CHANGELOG.md in the repository and on each npm package."
+description: "What changed in each Uncage release: 0.4 (React Native apps, browser extensions, one agent for every site), 0.3 (the hub runs anywhere, any ACP agent, macOS / Linux / Windows), 0.2 (Connected Mode) and 0.1. The authoritative changelog is CHANGELOG.md in the repository and on each npm package."
 ---
 
 All public `@uncage/*` packages share one version. The authoritative record is [`CHANGELOG.md`](https://github.com/ptmafia/uncage/blob/main/CHANGELOG.md) in the repository (and each package’s changelog on npm), written by [Changesets](/docs/guides/ci-and-releases/#releases) at release time.
+
+## 0.4.0 (2026-11-10): React Native, browser extensions, one agent for every site
+
+- **[React Native apps](/docs/guides/react-native/)**: `@uncage/client` and `@uncage/react` run in Expo / React Native (async bearer headers, native file uploads, `reconnect()`, storage-adapter persistence, `useDeviceApproval`). [Authenticate apps](/docs/guides/authenticate-apps/), [push notifications](/docs/guides/push-notifications/) with `onAttention` + `expoPushNotifier`.
+- **[Browser extensions](/docs/guides/browser-extension/)**: the hub's `trustedOrigins`.
+- **[One-click connect](/docs/guides/one-click-connect/)**: `uncage://` links, `uncage connect` with a native confirmation and site identity checks, `uncage dashboard`, a QR code in `uncage setup`.
+- **Breaking for custom implementations**: `UncageClient` requires `reconnect`, `lookupDevice`, `decideDevice`; `UncageStore` requires `client`; session restore is asynchronous.
+- Device features (Expo Go, Android push, app links) await confirmation on a real device; iOS links and push are not verified on a device.
 
 ## 0.3.1 (2026-11-09)
 

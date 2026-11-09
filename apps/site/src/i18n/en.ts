@@ -33,7 +33,7 @@ export const en: Dict = {
     dismiss: 'Dismiss',
   },
   hero: {
-    eyebrow: 'v0.3 · Now runs on serverless',
+    eyebrow: 'v0.4 · Now in mobile apps',
     title: 'Run your coding agent *everywhere.*',
     lede: 'Your users already have a powerful setup: their own Claude Code, their logins, their tools. Uncage turns that local harness into a service your product can call. The work runs on their machine; the results land on your site.',
     primary: 'Try the live demo',

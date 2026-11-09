@@ -212,6 +212,22 @@ Found and fixed during this run:
 
 Screenshots: `e2e/connected/results/` (gitignored): `faas-live-asset.png`, `faas-live-history-offline.png`, `cloudflare-live-notes.png`, `live-asset.png`, `acp-live-history.png`, `acp-live-stopped.png`, `container-asset.png`.
 
+## 0.4: React Native apps, browser extensions, one agent for every site
+
+Run record, 2026-11-10. Environment: macOS 26.6.2 (arm64), Node 24.15.0, pnpm 10.33.0, Playwright 1.65.0.
+
+| What | How it was verified | Result |
+| --- | --- | --- |
+| Website path with real Claude Code (regression) | `UNCAGE_LIVE=1 playwright test --project=connected-live` | ✓ 1.9 min |
+| `uncage://` handler registration (macOS app bundle + LaunchServices, Linux `.desktop` + `xdg-mime`, Windows `HKCU`) | CI platform job on macos-latest, ubuntu-latest, windows-latest (`UNCAGE_URL_HANDLER_TESTS=1`; real registration in a temp home / throwaway scheme, cleaned up) | ✓ all three |
+| Windows confirmation Popup returns "cancel" on timeout | CI smoke test on windows-latest | ✓ |
+| Browser extension side panel against the hub (`trustedOrigins`) | `extension-mock` (Chrome for Testing, unpacked extension) | ✓ |
+| `uncage dashboard` (one-time link, header token, disconnect) | `dashboard-mock` (system Chrome, temp `UNCAGE_HOME`) | ✓ |
+| Expo app bundles for Android and iOS | `pnpm --filter connected-expo bundle:check` (CI) | ✓ |
+| `onAttention` dedupe and `claimOnce` on Postgres 16 | `UNCAGE_DOCKER_TESTS=1` hub docker suite | ✓ 34/34 |
+
+**Awaiting confirmation on a real device:** the Expo app in Expo Go (chat, computers, approvals, photos, foreground resume), Android push and Android app links (development build), one-click connect on your own computer (the native dialog and notification). **Not verified on a device:** iOS universal links and iOS push (need a paid Apple Developer account).
+
 ## Operating systems
 
 The user's side (the one-command installer, the CLI and the background agent) on each OS. Details of the service per OS are in the next section.

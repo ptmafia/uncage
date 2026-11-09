@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0 — 2026-11-10
+
+React Native apps and browser extensions become entry points, and one installed agent serves every Uncage site. All public `@uncage/*` packages move to 0.4.0 together.
+
+- **React Native.** `@uncage/client` and `@uncage/react` run in React Native / Expo: `headers` may be async (bearer tokens), uploads accept native file references (`{ uri, name, type, size? }`, exported as `AttachmentFile`), `reconnect()` / `useReconnect()` resume streams when the app returns to the foreground (a healthy stream is kept unless `{ force: true }`), `usePersistSession` takes a storage adapter (SecureStore, AsyncStorage), and `useDeviceApproval(code)` approves a computer from the app (with `retry()`). UTF-8 decoding and idempotency keys no longer need `TextDecoder` / `crypto.randomUUID`. Reference app: `examples/connected-expo`.
+- **Hub.** `trustedOrigins` (exact origins such as `chrome-extension://<id>`, allowed past the cross-site guard; not CORS), `GET <base>/device/lookup` and `POST <base>/device/decision` (JSON only), `onAttention` (approval requested, run completed or failed; once per event across nodes via the optional `HubStore.claimOnce`, stale and already-answered events skipped, at most once) with `expoPushNotifier` (batched, 15 s timeout, push text capped at 180 characters), and `installInfo.connectUrl`. Store migration 9 adds `uncage_hub_claims`.
+- **One agent, every site.** `uncage connect` and an OS `uncage://` link handler (macOS app bundle, Linux `.desktop`, Windows `HKCU`) registered with the background agent: a site's "Connect in one click" link asks for confirmation in a native dialog that shows the registrable domain, the full hub URL and warnings (international lookalikes, IP addresses, first-time domains, lookalikes of sites you already use, paths), then runs the device flow. `uncage dashboard` opens a local page with connected sites, status, activity, disconnect and runtime switches. `uncage setup` prints the approval link as a QR code (`--no-qr`).
+- **Browser.** `<ConnectMachine>` shows "Connect in one click" on desktop when the hub offers `connectUrl`.
+- **Examples.** `examples/connected-expo` (Expo app: chat, computers, approvals, photos, push, device approval), `examples/connected-extension` (Chrome side panel), and `connected-demo` app tokens, push tokens, Expo push, Android / iOS app-link files and `TRUSTED_ORIGINS`.
+- **Breaking for custom implementations:** `UncageClient` requires `reconnect()`, `lookupDevice(code)` and `decideDevice(code, approve)`; `UncageStore` requires `client`; `PersistSessionMode` also accepts a storage adapter, and restoring is now asynchronous (also for `'url'` / `'localStorage'`), skipped while a draft is open, and a no-op without `window.location` / `localStorage`; `SubscribeHandlers.onError` can now also report a failing `headers()` while the stream keeps retrying; `AttentionEvent` is new (its approval field is `category`).
+- **Verification.** Device-dependent features (Expo Go, Android push and app links) are awaiting confirmation on a real device; iOS universal links and push are not verified on a device. The URL handler registration runs for real on the macOS, Linux and Windows CI runners.
+
 ## 0.3.1 — 2026-11-09
 
 - `@uncage/hub`: Next.js apps (Turbopack or webpack) that import `@uncage/hub` from a page, route handler or Server Action no longer fail with "Can't resolve 'ioredis'" (or `pg`) when those optional packages are not installed. No `serverExternalPackages` workaround needed.
