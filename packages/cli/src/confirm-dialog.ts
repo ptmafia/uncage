@@ -92,8 +92,8 @@ export interface ConfirmDeps {
   exec: ExecFn;
   /** Is there a terminal to ask in (the fallback when no dialog tool is available)? */
   isTTY: boolean;
-  /** Asks one line in the terminal; the answer. */
-  prompt?: (question: string) => Promise<string>;
+  /** Asks one line in the terminal; the answer. `signal` aborts the question (no answer in time). */
+  prompt?: (question: string, signal?: AbortSignal) => Promise<string>;
   /** Locale variables, DISPLAY / WAYLAND_DISPLAY, PATH, SystemRoot. Default `process.env`. */
   env?: NodeJS.ProcessEnv;
   /** Finds zenity / kdialog on PATH (default `findCommand` from @uncage/protocol/node). */
@@ -101,13 +101,30 @@ export interface ConfirmDeps {
   /** Where the terminal fallback prints the question and refusals are explained. */
   out?: (line: string) => void;
   locale?: DialogLocale;
+  /** How long any prompt waits for an answer (default `DIALOG_TIMEOUT_S`); no answer is a cancel. */
+  timeoutMs?: number;
+}
+
+/** Every confirmation gives up after this long (macOS `giving up after`, zenity, timeout(1), Popup); giving up is a cancel. */
+export const DIALOG_TIMEOUT_S = 600;
+/** Extra time a dialog process gets past its own timeout before it is treated as a cancel anyway. */
+const CUTOFF_MARGIN_MS = 30_000;
+
+/** `p`, or `fallback` once `ms` passed (the slower side is ignored). */
+function bounded<T>(p: Promise<T>, ms: number, fallback: () => T): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback()), ms);
+    timer.unref?.();
+  });
+  return Promise.race([p, late]).finally(() => clearTimeout(timer));
 }
 
 /** AppleScript that reads every text from argv: nothing user-controlled is ever parsed as script. */
 const OSASCRIPT = [
   'on run argv',
   'activate',
-  'display dialog (item 1 of argv) with title (item 2 of argv) buttons {(item 3 of argv), (item 4 of argv)} default button (item 3 of argv) cancel button (item 3 of argv) with icon caution giving up after 600',
+  `display dialog (item 1 of argv) with title (item 2 of argv) buttons {(item 3 of argv), (item 4 of argv)} default button (item 3 of argv) cancel button (item 3 of argv) with icon caution giving up after ${DIALOG_TIMEOUT_S}`,
   'end run',
 ];
 
@@ -116,12 +133,12 @@ const b64 = (s: string): string => Buffer.from(s, 'utf8').toString('base64');
 /** The PowerShell script (texts base64-encoded, so no quoting can break out). */
 function powershellScript(title: string, body: string): string {
   return [
-    'Add-Type -AssemblyName System.Windows.Forms',
     `$body = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64(body)}'))`,
     `$title = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64(title)}'))`,
-    '$owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true }',
-    "$r = [System.Windows.Forms.MessageBox]::Show($owner, $body, $title, 'OKCancel', 'Warning', 'Button2')",
-    "if ($r -eq 'OK') { 'connect' } else { 'cancel' }",
+    // WScript.Shell Popup: OK/Cancel 0x1, warning 0x30, Cancel default 0x100, topmost 0x1000; gives
+    // up after DIALOG_TIMEOUT_S (-1). Only OK (1) connects.
+    `$r = (New-Object -ComObject WScript.Shell).Popup($body, ${DIALOG_TIMEOUT_S}, $title, 0x1131)`,
+    "if ($r -eq 1) { 'connect' } else { 'cancel' }",
   ].join('\n');
 }
 
@@ -173,13 +190,18 @@ async function nativeDialog(t: ReturnType<typeof confirmText>, d: ConfirmDeps, e
     if (zenity) {
       return run(
         zenity,
-        ['--question', `--title=${t.title}`, `--text=${t.body}`, `--ok-label=${t.connect}`, `--cancel-label=${t.cancel}`, '--default-cancel', '--no-markup', '--width=440'],
+        ['--question', `--title=${t.title}`, `--text=${t.body}`, `--ok-label=${t.connect}`, `--cancel-label=${t.cancel}`, '--default-cancel', '--no-markup', '--width=440', `--timeout=${DIALOG_TIMEOUT_S}`],
         [1, 5],
       );
     }
     const kdialog = await find('kdialog');
-    // warningcontinuecancel: Cancel is the default button.
-    if (kdialog) return run(kdialog, ['--title', t.title, '--warningcontinuecancel', t.body, '--continue-label', t.connect, '--cancel-label', t.cancel], [1, 2]);
+    // warningcontinuecancel: Cancel is the default button. kdialog has no timeout: coreutils
+    // timeout(1) ends it (exit 124 = gave up = no); without timeout(1) the cut-off below applies.
+    if (kdialog) {
+      const args = ['--title', t.title, '--warningcontinuecancel', t.body, '--continue-label', t.connect, '--cancel-label', t.cancel];
+      const timeout = await find('timeout');
+      return timeout ? run(timeout, [String(DIALOG_TIMEOUT_S), kdialog, ...args], [1, 2, 124]) : run(kdialog, args, [1, 2]);
+    }
   }
   return null;
 }
@@ -195,14 +217,21 @@ export async function confirmConnect(i: SiteIdentity, d: ConfirmDeps): Promise<b
   const env = d.env ?? process.env;
   const t = confirmText(i, d.locale ?? detectLocale(env));
   const out = d.out ?? (() => undefined);
-  const native = await nativeDialog(t, d, env);
+  const timeoutMs = d.timeoutMs ?? DIALOG_TIMEOUT_S * 1000;
+  // A dialog that never returns (its own timeout failed, a stuck process) counts as a cancel.
+  const native = await bounded(nativeDialog(t, d, env), d.timeoutMs ?? timeoutMs + CUTOFF_MARGIN_MS, () => ({ answer: 'no' as const }));
   if (native?.answer === 'yes') return true;
   if (native?.answer === 'no') return false;
   if (native?.answer === 'error') out(`The confirmation dialog could not be shown (${native.detail?.split('\n')[0] ?? 'unknown error'}).`);
   if (d.isTTY && d.prompt) {
     out(`${t.title}\n\n${t.body}\n`);
-    const answer = (await d.prompt(t.question).catch(() => '')).trim();
-    return /^y(es)?$/i.test(answer);
+    const ac = new AbortController();
+    const answer = await bounded(d.prompt(t.question, ac.signal).catch(() => ''), timeoutMs, () => {
+      ac.abort();
+      out(`No answer in ${Math.round(timeoutMs / 1000)} s; not connected.`);
+      return '';
+    });
+    return /^y(es)?$/i.test(answer.trim());
   }
   out('Could not ask for confirmation on this computer (no dialog and no terminal), so it was not connected. Run "uncage connect <url>" in a terminal.');
   return false;

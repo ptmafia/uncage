@@ -1,7 +1,8 @@
-import { mkdir, open, rm, stat } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { agentConfigPath, loadAgentConfig, normalizeHubUrl, type ExecFn } from '@uncage/agent';
-import { confirmConnect, type ConfirmDeps } from './confirm-dialog.js';
+import { confirmConnect, DIALOG_TIMEOUT_S, type ConfirmDeps } from './confirm-dialog.js';
 import { agentService, type AgentService } from './service/index.js';
 import { pairSite, type PairDeps } from './setup.js';
 import { registrableDomain, siteIdentity, type SiteIdentity } from './site-identity.js';
@@ -75,26 +76,92 @@ export function parseConnectLink(raw: string): { url: string } | { error: string
   return checkSiteUrl(link.searchParams.get('url') ?? '');
 }
 
-/** A lock older than this is left over from a crashed run and is taken over. */
-export const LOCK_STALE_MS = 2 * 60_000;
+/**
+ * A lock whose PID is alive is still held until it is this old (the longest dialog, its cut-off
+ * margin, plus slack): after that the PID was most likely reused by another process.
+ */
+export const LOCK_MAX_AGE_MS = (DIALOG_TIMEOUT_S + 60) * 1000;
+/** A takeover lock (held for milliseconds) older than this was left by a crash. */
+const TAKEOVER_STALE_MS = 10_000;
 
-/** Creates `path` exclusively (taking over a stale one); null when another run holds it. */
-async function takeLock(path: string): Promise<{ release(): Promise<void> } | null> {
+/** Whether `pid` runs (EPERM: it runs, as another user). */
+function pidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/**
+ * Creates `path` exclusively with `<pid> <time> <random token>`; null when another live run holds
+ * it. A lock is stale when its PID is not alive, or it is older than `LOCK_MAX_AGE_MS`. A stale
+ * lock is taken over under an exclusive `<path>.takeover` lock: checked again, moved aside by an
+ * atomic rename, then the exclusive create is retried. `release()` deletes the file only
+ * while it still carries our token.
+ */
+export async function takeLock(path: string, o: { isAlive?: (pid: number) => boolean } = {}): Promise<{ release(): Promise<void> } | null> {
+  const isAlive = o.isAlive ?? pidAlive;
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const token = randomBytes(16).toString('base64url');
+  const content = `${process.pid} ${new Date().toISOString()} ${token}\n`;
+  const read = (p: string) => readFile(p, 'utf8').catch(() => null);
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const fh = await open(path, 'wx', 0o600);
-      await fh.writeFile(`${process.pid} ${new Date().toISOString()}\n`);
-      await fh.close();
-      return { release: () => rm(path, { force: true }) };
+      try {
+        await fh.writeFile(content);
+      } finally {
+        await fh.close();
+      }
+      return {
+        release: async () => {
+          if ((await read(path)) === content) await rm(path, { force: true });
+        },
+      };
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+    }
+    const stale = async (): Promise<boolean | null> => {
+      const held = await read(path);
       const age = await stat(path).then(
         (st) => Date.now() - st.mtimeMs,
-        () => Infinity,
+        () => null,
       );
-      if (age < LOCK_STALE_MS) return null;
-      await rm(path, { force: true });
+      if (held === null || age === null) return null; // released meanwhile
+      // Created but not written yet (between the exclusive create and the write): held.
+      if (held.trim() === '') return age > TAKEOVER_STALE_MS;
+      return !(isAlive(Number(held.trim().split(/\s+/)[0])) && age < LOCK_MAX_AGE_MS);
+    };
+    const first = await stale();
+    if (first === null) continue;
+    if (!first) return null;
+    // Stale. Take it over under a short exclusive takeover lock, so two runs that both judged it
+    // stale cannot both replace it; inside, check again and move it aside by atomic rename.
+    const takeover = `${path}.takeover`;
+    let mutex;
+    try {
+      mutex = await open(takeover, 'wx', 0o600);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      // Another run is taking over right now; a takeover lock left by a crash expires quickly.
+      const age = await stat(takeover).then((st) => Date.now() - st.mtimeMs, () => 0);
+      if (age > TAKEOVER_STALE_MS) await rm(takeover, { force: true });
+      return null;
+    }
+    try {
+      if ((await stale()) === true) {
+        const aside = `${path}.stale-${token}`;
+        await rename(path, aside).catch((e: NodeJS.ErrnoException) => {
+          if (e.code !== 'ENOENT') throw e;
+        });
+        await rm(aside, { force: true });
+      }
+    } finally {
+      await mutex.close();
+      await rm(takeover, { force: true });
     }
   }
   return null;

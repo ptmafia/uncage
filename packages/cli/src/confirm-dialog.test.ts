@@ -1,6 +1,6 @@
 import type { ExecFn } from '@uncage/agent';
 import { describe, expect, it, vi } from 'vitest';
-import { confirmConnect, confirmText, detectLocale } from './confirm-dialog.js';
+import { confirmConnect, confirmText, detectLocale, DIALOG_TIMEOUT_S } from './confirm-dialog.js';
 import type { SiteIdentity } from './site-identity.js';
 
 const plain: SiteIdentity = { origin: 'https://app.example.com', url: 'https://app.example.com/api/uncage', registrableDomain: 'example.com', displayHost: 'app.example.com', warnings: [] };
@@ -112,9 +112,9 @@ describe('confirmConnect', () => {
     expect(args.slice(0, 4)).toEqual(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass']);
     expect(args[4]).toBe('-EncodedCommand');
     const script = Buffer.from(args[5]!, 'base64').toString('utf16le');
-    expect(script).toContain('[System.Windows.Forms.MessageBox]::Show(');
-    expect(script).toContain("'OKCancel'");
-    expect(script).toContain("'Button2'");
+    // WScript.Shell Popup: OK/Cancel (1) + warning (0x30) + Cancel default (0x100) + topmost (0x1000), 600 s timeout.
+    expect(script).toContain('.Popup($body, 600, $title, 0x1131)');
+    expect(script).toContain("if ($r -eq 1) { 'connect' } else { 'cancel' }");
     expect(script).not.toContain('example.com'); // text travels base64-encoded inside the script
     const b64 = [...script.matchAll(/FromBase64String\('([A-Za-z0-9+/=]*)'\)/g)].map((m) => Buffer.from(m[1]!, 'base64').toString('utf8'));
     expect(b64[0]).toContain(confirmText(risky, 'en').body);
@@ -138,6 +138,7 @@ describe('confirmConnect', () => {
       '--default-cancel',
       '--no-markup',
       '--width=440',
+      '--timeout=600',
     ]);
     expect(await confirmConnect(plain, { platform: 'linux', exec: cancelled(), isTTY: false, env: { DISPLAY: ':0' }, findCommand: find })).toBe(false);
   });
@@ -184,7 +185,47 @@ describe('confirmConnect', () => {
     expect(await confirmConnect(plain, { platform: 'linux', exec, isTTY: true, env: {}, findCommand: find, prompt, out })).toBe(true);
     expect(exec).not.toHaveBeenCalled();
     expect(out.mock.calls.flat().join('\n')).toContain('Connect this computer to example.com?');
-    expect(prompt).toHaveBeenCalledWith(expect.stringMatching(/\[y\/N\]/));
+    expect(prompt).toHaveBeenCalledWith(expect.stringMatching(/\[y\/N\]/), expect.any(AbortSignal));
+  });
+
+  it('every prompt gives up like the macOS dialog (600 s); giving up is a cancel', async () => {
+    expect(DIALOG_TIMEOUT_S).toBe(600);
+    // kdialog has no timeout of its own: coreutils timeout(1) wraps it; 124 (timed out) is a no.
+    const find = vi.fn(async (c: string) => (c === 'kdialog' ? '/usr/bin/kdialog' : c === 'timeout' ? '/usr/bin/timeout' : null));
+    const exec = ok();
+    expect(await confirmConnect(plain, { platform: 'linux', exec, isTTY: false, env: { DISPLAY: ':0', LANG: 'en_US.UTF-8' }, findCommand: find })).toBe(true);
+    expect(exec.mock.calls[0]![0]).toBe('/usr/bin/timeout');
+    expect(exec.mock.calls[0]![1].slice(0, 3)).toEqual(['600', '/usr/bin/kdialog', '--title']);
+    const timedOut = vi.fn<ExecFn>(async () => {
+      throw Object.assign(new Error('exit 124'), { code: 124, stderr: '' });
+    });
+    const prompt = vi.fn(async () => 'y');
+    expect(await confirmConnect(plain, { platform: 'linux', exec: timedOut, isTTY: true, prompt, env: { DISPLAY: ':0' }, findCommand: find, out: () => undefined })).toBe(false);
+    expect(prompt).not.toHaveBeenCalled(); // a timeout is a cancel, not "could not be shown"
+
+    // Any dialog that never returns (kdialog without timeout(1), a stuck PowerShell) is cut off: no.
+    const hang = vi.fn<ExecFn>(() => new Promise(() => undefined));
+    const kdOnly = async (c: string) => (c === 'kdialog' ? '/usr/bin/kdialog' : null);
+    for (const [platform, env, findCommand] of [
+      ['linux', { DISPLAY: ':0' }, kdOnly],
+      ['win32', { SystemRoot: 'C:\\Windows' }, undefined],
+      ['darwin', {}, undefined],
+    ] as const) {
+      const p2 = vi.fn(async () => 'y');
+      expect(await confirmConnect(plain, { platform, exec: hang, isTTY: true, prompt: p2, env, ...(findCommand ? { findCommand } : {}), timeoutMs: 30, out: () => undefined })).toBe(false);
+      expect(p2).not.toHaveBeenCalled();
+    }
+
+    // The terminal question too: no answer in time is a no, and the question is aborted.
+    let signal: AbortSignal | undefined;
+    const silent = vi.fn((_q: string, s?: AbortSignal) => {
+      signal = s;
+      return new Promise<string>(() => undefined);
+    });
+    const out = vi.fn();
+    expect(await confirmConnect(plain, { platform: 'freebsd', exec: ok(), isTTY: true, prompt: silent, env: {}, timeoutMs: 30, out })).toBe(false);
+    expect(signal?.aborted).toBe(true);
+    expect(out.mock.calls.flat().join('\n')).toMatch(/no answer/i);
   });
 
   it('terminal prompt: only y / yes connects (default No)', async () => {

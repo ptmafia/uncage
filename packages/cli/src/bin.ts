@@ -214,11 +214,11 @@ async function main(argv: string[]): Promise<number> {
       exec: defaultExec,
       out: (l) => console.log(l),
       isTTY,
-      prompt: async (question) => {
+      prompt: async (question, signal) => {
         const { createInterface } = await import('node:readline/promises');
         const rl = createInterface({ input: process.stdin, output: process.stdout });
         try {
-          return await rl.question(question);
+          return await rl.question(question, signal ? { signal } : {});
         } finally {
           rl.close();
         }

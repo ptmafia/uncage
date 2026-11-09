@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -7,7 +7,8 @@ import { loadAgentConfig, updateAgentSites, type ExecFn } from '@uncage/agent';
 import { createHub, type Hub } from '@uncage/hub';
 import { pgliteHubStore, toNodeHandler } from '@uncage/hub/node';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { parseConnectLink, runConnect } from './connect.js';
+import { DIALOG_TIMEOUT_S } from './confirm-dialog.js';
+import { LOCK_MAX_AGE_MS, parseConnectLink, runConnect, takeLock } from './connect.js';
 import type { AgentService } from './service/index.js';
 import type { SiteIdentity } from './site-identity.js';
 
@@ -179,16 +180,54 @@ describe('uncage connect: one at a time', () => {
     expect(confirm3).toHaveBeenCalledTimes(1); // lock released
   });
 
-  it('a lock older than 2 minutes is stale and taken over', async () => {
+  it('a lock whose PID is gone is stale and taken over; a live PID keeps it for the longest dialog + margin', async () => {
     const home = await tmpHome();
     await mkdir(join(home, '.uncage'), { recursive: true });
     const lock = join(home, '.uncage', 'connect.lock');
-    await writeFile(lock, '12345');
-    const old = new Date(Date.now() - 3 * 60_000);
+    const run = async () => {
+      const confirm = vi.fn(async () => false);
+      await runConnect({ link: link('https://example.com'), home, fetch: vi.fn<typeof fetch>(), exec: vi.fn<ExecFn>(), out: () => undefined, confirm });
+      return confirm.mock.calls.length;
+    };
+    // A dead PID (legacy "<pid> <time>" format): stale at once.
+    await writeFile(lock, '999999999 2026-11-09T00:00:00.000Z\n');
+    expect(await run()).toBe(1);
+    // A live PID, 3 minutes old (a dialog still open): kept.
+    await writeFile(lock, `${process.pid} ${new Date().toISOString()} other-token\n`);
+    const three = new Date(Date.now() - 3 * 60_000);
+    await utimes(lock, three, three);
+    expect(await run()).toBe(0);
+    // A live PID older than the longest dialog + margin (a reused PID): stale.
+    expect(LOCK_MAX_AGE_MS).toBeGreaterThan(DIALOG_TIMEOUT_S * 1000);
+    const old = new Date(Date.now() - LOCK_MAX_AGE_MS - 1000);
     await utimes(lock, old, old);
-    const confirm = vi.fn(async () => false);
-    await runConnect({ link: link('https://example.com'), home, fetch: vi.fn<typeof fetch>(), exec: vi.fn<ExecFn>(), out: () => undefined, confirm });
-    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(await run()).toBe(1);
+  });
+
+  it('release only deletes our own lock', async () => {
+    const home = await tmpHome();
+    const lock = join(home, '.uncage', 'connect.lock');
+    const mine = await takeLock(lock);
+    expect(mine).not.toBeNull();
+    expect(await readFile(lock, 'utf8')).toMatch(new RegExp(`^${process.pid} \\S+ [A-Za-z0-9_-]{22,}\\n$`));
+    // Another run took the lock over meanwhile (e.g. ours was judged stale).
+    await writeFile(lock, `${process.pid} ${new Date().toISOString()} someone-else\n`);
+    await mine!.release();
+    expect(await readFile(lock, 'utf8')).toContain('someone-else');
+  });
+
+  it('two runs taking over the same stale lock: exactly one wins', async () => {
+    const home = await tmpHome();
+    await mkdir(join(home, '.uncage'), { recursive: true });
+    const lock = join(home, '.uncage', 'connect.lock');
+    for (let i = 0; i < 20; i++) {
+      await writeFile(lock, '999999999 2026-11-09T00:00:00.000Z\n');
+      const got = await Promise.all([takeLock(lock), takeLock(lock), takeLock(lock)]);
+      expect(got.filter(Boolean)).toHaveLength(1);
+      await got.find(Boolean)!.release();
+      await expect(stat(lock)).rejects.toThrow();
+    }
+    expect((await readdir(join(home, '.uncage'))).filter((f) => f.startsWith('connect.lock'))).toEqual([]);
   });
 });
 
