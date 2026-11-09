@@ -30,7 +30,7 @@ Pass it as `createHub({ …, onAttention })`. How it behaves:
 
 ## What leaves your hub
 
-A push goes from your hub to Expo, then to Apple or Google, and shows on the lock screen. The default text is built from the event and the **approval title**, and runtimes set that title from the tool call, so it can name a command or a file path. The default is cut to about 180 characters, but it still reaches those services and the lock screen. If that is too much for your users, return a generic text from `message`:
+A push goes from your hub to Expo, then to Apple or Google, and shows on the lock screen. The default text is built from the event and the **approval title**, and runtimes set that title from the tool call, so it can name a command or a file path. The default is one line of at most 180 characters (it includes the approval title and the session title), but it still reaches those services and the lock screen. If that is too much for your users, return a generic text from `message`:
 
 ```ts
 import { expoPushNotifier } from '@uncage/hub';
@@ -72,7 +72,7 @@ It uses only `fetch`, so it runs anywhere the hub does (it is exported from the 
 | `fetch`, `endpoint` | Replace `fetch` or the Expo endpoint (tests). |
 | `timeoutMs` | A request to Expo unanswered after this is aborted and the call rejects (the hub logs it). Default `15000`. |
 
-It rejects (and the hub logs, with error codes and counts but never tokens) when a request fails or times out, when `onInvalidToken` throws, or when Expo refused messages for another reason, for example `InvalidCredentials`.
+It rejects (and the hub logs, with error codes and counts but never tokens) when a request fails or times out, when `onInvalidToken` throws, or when Expo refused messages for another reason, for example `InvalidCredentials`. When several sends fail, it rejects with an `AggregateError` that holds all of them.
 
 ## Registering tokens
 

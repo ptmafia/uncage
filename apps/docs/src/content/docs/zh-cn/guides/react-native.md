@@ -32,7 +32,7 @@ export const client = createUncageClient({
 ```
 
 - **流式读取。** React Native 内置的 `fetch` 无法流式读取响应体，而客户端从 `response.body.getReader()` 读取事件。Expo 的 `expo/fetch` 支持流式。在裸 React Native 中，可以使用任何提供 `body.getReader()` 的 `fetch` polyfill。如果没有 `TextDecoder`（较旧的 Hermes），客户端会使用内置的小型 UTF-8 解码器。
-- **上传。** `uploadAttachment` 接受浏览器的 `File`，也接受来自 `expo-image-picker` 的 `{ uri, name, type }` 对象。对于后者，客户端先用全局的 `fetch(uri)`读出文件，再通过你传入的 `fetch` 发送。在 Expo SDK 58 及更高版本中，全局 `fetch` 就是 `expo/fetch`（只有设置 `EXPO_PUBLIC_USE_RN_FETCH=1` 才是 React Native 自带的 `fetch`）。它能读取 `file://`，但**不能**读取 `content://`：`expo-image-picker` 已经交出 `file://` 副本，任何 `content://` URI 都必须先复制到缓存文件。`examples/connected-expo` 让事件流走 `expo/fetch`，其余请求走全局 `fetch`。`useAttachments().add()` 接受有名字的 `Blob`，而不是 `{ uri, name, type }`：先把选取的文件读成 `Blob` 并命名（见示例里的 `lib/attachments.ts`）。
+- **上传。** `uploadAttachment` 接受浏览器的 `File`，也接受来自 `expo-image-picker` 的 `{ uri, name, type }` 对象。对于后者，客户端先用全局的 `fetch(uri)`读出文件，再通过你传入的 `fetch` 发送。在 Expo SDK 58 及更高版本中，全局 `fetch` 就是 `expo/fetch`（只有设置 `EXPO_PUBLIC_USE_RN_FETCH=1` 才是 React Native 自带的 `fetch`）。它能读取 `file://`，但**不能**读取 `content://`：`expo-image-picker` 已经交出 `file://` 副本，任何 `content://` URI 都必须先复制到缓存文件。`examples/connected-expo` 让事件流走 `expo/fetch`，其余请求走全局 `fetch`。`useAttachments().add()` 既接受有名字的 `Blob`，也接受同样的 `{ uri, name, type, size? }` 文件引用（类型 `AttachmentFile`）。
 - **图片。** `client.attachmentUrl(id)` 需要认证头，所以用 `<Image source={{ uri, headers }} />` 渲染。
 - **异步请求头。** 如果 `headers()` 抛出错误（比如令牌刷新失败），请求会以 `unauthorized` 失败，并带有 `details.reason: 'headers'`；事件流通过 `onError` 报告并重试。
 
@@ -62,7 +62,7 @@ export function useAppLifecycle() {
 ```
 
 - **`usePersistSession(storage)`** 接受一个 `{ get, set }` 适配器（同步或异步均可：AsyncStorage、SecureStore、MMKV）。使用默认的 `'url'`，或在没有 `window` / `localStorage` 时使用 `'localStorage'`，它什么也不做，也不会抛出错误。
-- **`useReconnect()`** 返回 `client.reconnect()`：它立即从最后的序号重新开始每一条打开的事件流，所以应用在后台停留几分钟之后，既不会丢事件，也不会重复。在 `AppState` 变为 `active` 时调用它。
+- **`useReconnect()`** 返回 `client.reconnect()`：它立即从最后的序号重新开始每一条打开的事件流，所以应用在后台停留几分钟之后，既不会丢事件，也不会重复。在 `AppState` 变为 `active` 时调用它。健康的流（最近 20 秒内有数据到达）会被保留；`reconnect({ force: true })` 则无论如何都重启。
 - **`useDeviceApproval(code)`** 驱动下面的审批界面。
 
 ## 4. 用手机批准一台电脑
@@ -82,7 +82,7 @@ export function ApproveScreen({ code }: { code: string }) {
 }
 ```
 
-当查询本身失败（例如 `rate_limited`）时，`state` 为 `'error'`；决定失败时会回到 `'idle'` 并设置 `error`，用户可以重试。`approve()` 和 `deny()` 只在 `'idle'` 时生效。它们底层调用 [`GET /device/lookup` 和 `POST /device/decision`](/docs/zh-cn/reference/http-api/)；`client.lookupDevice(code)` 和 `client.decideDevice(code, approve)` 是不依赖 React 的同一功能。
+当查询本身失败（例如 `rate_limited`）时，`state` 为 `'error'`；可以调用 `retry()` 再次查询；决定失败时会回到 `'idle'` 并设置 `error`，用户可以重试。`approve()` 和 `deny()` 只在 `'idle'` 时生效。它们底层调用 [`GET /device/lookup` 和 `POST /device/decision`](/docs/zh-cn/reference/http-api/)；`client.lookupDevice(code)` 和 `client.decideDevice(code, approve)` 是不依赖 React 的同一功能。
 
 - **Android App Links：** 在你的网站上提供 `/.well-known/assetlinks.json`（包名和签名证书指纹）。`examples/connected-demo` 用 `ANDROID_PACKAGE` 和 `ANDROID_SHA256` 生成它。已构建并做过单元测试；等待真机确认。
 - **iOS universal links：** 提供 `/.well-known/apple-app-site-association`（Team ID 和 bundle id；演示里是 `APPLE_TEAM_ID`、`IOS_BUNDLE_ID`）。需要付费的 Apple Developer 账号；已实现且可配置，**尚未在真机上验证**。在 iOS 上，二维码会回退到移动网页审批页。

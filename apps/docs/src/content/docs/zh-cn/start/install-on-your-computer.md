@@ -146,7 +146,7 @@ npm uninstall -g @uncage/cli
 
 ## 另一个网站：一键连接
 
-`uncage setup` 安装好后台守护进程之后，还会为你的用户注册一个 `uncage://` 链接处理程序（macOS 上是一个小应用，Linux 上是 `.desktop` 文件，Windows 上是 `HKCU` 注册表项；不需要管理员权限）。之后任何其他 Uncage 网站都可以提供**一键连接**：链接会在你的电脑上弹出对话框，写明网站的域名并对相似域名发出警告，只有你点击“连接”之后，常规审批才会开始。不用终端，也不用再安装一次。你也可以自己运行 `uncage connect https://other.site`，而 `uncage dashboard` 会列出并可断开每个网站。[详情](/docs/zh-cn/guides/one-click-connect/)。`uncage agent uninstall` 会移除这个处理程序。
+`uncage setup` 安装好后台守护进程之后，还会为你的用户注册一个 `uncage://` 链接处理程序（macOS 上是一个小应用，Linux 上是 `.desktop` 文件，Windows 上是 `HKCU` 注册表项；不需要管理员权限）。之后任何其他 Uncage 网站都可以提供**一键连接**：链接会在你的电脑上弹出对话框，写明网站的域名并对相似域名发出警告，只有你点击“连接”之后，常规审批才会开始。不用终端，也不用再安装一次。你也可以自己运行 `uncage connect https://other.site`，而 `uncage dashboard` 会列出并可断开每个网站。[详情](/docs/zh-cn/guides/one-click-connect/)。`uncage agent uninstall` 会移除这个处理程序。请先运行 `uncage agent uninstall`，再运行 `npm uninstall -g @uncage/cli`：它会移除处理程序，先卸载 CLI 会留下一个失效的处理程序。
 
 ## 参数
 

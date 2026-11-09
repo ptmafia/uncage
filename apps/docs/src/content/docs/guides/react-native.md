@@ -32,7 +32,7 @@ export const client = createUncageClient({
 ```
 
 - **Streaming.** React Native’s built-in `fetch` cannot stream a response body, and the client reads events from `response.body.getReader()`. Expo’s `expo/fetch` streams. In bare React Native use any `fetch` polyfill that exposes `body.getReader()`. Where `TextDecoder` is missing (older Hermes) the client uses a small built-in UTF-8 decoder.
-- **Uploads.** `uploadAttachment` accepts a browser `File` or an `{ uri, name, type }` object from `expo-image-picker`. For the second form the client reads the file with the global `fetch(uri)` then sends it through your `fetch`. In Expo SDK 58 and later the global `fetch` is `expo/fetch` (React Native’s own `fetch` only with `EXPO_PUBLIC_USE_RN_FETCH=1`). It reads `file://` URIs but **not** `content://`: `expo-image-picker` already hands over `file://` copies, and any `content://` URI must be copied to a cache file first. `examples/connected-expo` keeps event streams on `expo/fetch` and sends other requests through the global one. `useAttachments().add()` takes named `Blob`s, not `{ uri, name, type }`: read the picked file into a `Blob` and give it a name first (see `lib/attachments.ts` in the example).
+- **Uploads.** `uploadAttachment` accepts a browser `File` or an `{ uri, name, type }` object from `expo-image-picker`. For the second form the client reads the file with the global `fetch(uri)` then sends it through your `fetch`. In Expo SDK 58 and later the global `fetch` is `expo/fetch` (React Native’s own `fetch` only with `EXPO_PUBLIC_USE_RN_FETCH=1`). It reads `file://` URIs but **not** `content://`: `expo-image-picker` already hands over `file://` copies, and any `content://` URI must be copied to a cache file first. `examples/connected-expo` keeps event streams on `expo/fetch` and sends other requests through the global one. `useAttachments().add()` accepts the same `{ uri, name, type, size? }` file references (the `AttachmentFile` type) as well as named `Blob`s.
 - **Images.** `client.attachmentUrl(id)` needs the auth header, so render with `<Image source={{ uri, headers }} />`.
 - **Async headers.** If `headers()` throws (a failed token refresh) requests fail with `unauthorized` and `details.reason: 'headers'`; the stream reports it through `onError` and retries.
 
@@ -62,7 +62,7 @@ export function useAppLifecycle() {
 ```
 
 - **`usePersistSession(storage)`** takes an adapter `{ get, set }` (sync or async: AsyncStorage, SecureStore, MMKV). With the default `'url'` or with `'localStorage'` and no `window` / `localStorage` it does nothing and never throws.
-- **`useReconnect()`** returns `client.reconnect()`: it restarts every open event stream at once from its last sequence, so after the app was in the background for minutes nothing is lost and nothing repeats. Call it when `AppState` becomes `active`.
+- **`useReconnect()`** returns `client.reconnect()`: it restarts every open event stream at once from its last sequence, so after the app was in the background for minutes nothing is lost and nothing repeats. Call it when `AppState` becomes `active`. A stream that is healthy (bytes arrived in the last 20 seconds) is kept; `reconnect({ force: true })` restarts it anyway.
 - **`useDeviceApproval(code)`** drives the approve screen below.
 
 ## 4. Approving a computer from the phone
@@ -82,7 +82,7 @@ export function ApproveScreen({ code }: { code: string }) {
 }
 ```
 
-`state` is `'error'` when the lookup itself failed (for example `rate_limited`); a failed decision returns to `'idle'` with `error` set so the user can retry. `approve()` and `deny()` act only from `'idle'`. Under the hood these call [`GET /device/lookup` and `POST /device/decision`](/docs/reference/http-api/#device-approval-for-apps); `client.lookupDevice(code)` and `client.decideDevice(code, approve)` are the same without React.
+`state` is `'error'` when the lookup itself failed (for example `rate_limited`); call `retry()` to run the lookup again; a failed decision returns to `'idle'` with `error` set so the user can retry. `approve()` and `deny()` act only from `'idle'`. Under the hood these call [`GET /device/lookup` and `POST /device/decision`](/docs/reference/http-api/#device-approval-for-apps); `client.lookupDevice(code)` and `client.decideDevice(code, approve)` are the same without React.
 
 - **Android App Links:** serve `/.well-known/assetlinks.json` (package name and signing-certificate fingerprint) from your site. `examples/connected-demo` builds it from `ANDROID_PACKAGE` and `ANDROID_SHA256`. Built and unit-tested; awaiting device confirmation.
 - **iOS universal links:** serve `/.well-known/apple-app-site-association` (Team ID and bundle id: `APPLE_TEAM_ID`, `IOS_BUNDLE_ID` in the demo). Needs a paid Apple Developer account; implemented and configurable, **not verified on a device**. On iOS the QR code falls back to the mobile web approval page.

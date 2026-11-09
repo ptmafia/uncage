@@ -32,7 +32,7 @@ export const client = createUncageClient({
 ```
 
 - **ストリーミング。** React Native組み込みの`fetch`はレスポンスボディをストリーミングできませんが、クライアントは`response.body.getReader()`からイベントを読み取ります。Expoの`expo/fetch`はストリーミングできます。素のReact Nativeでは、`body.getReader()`を提供する任意の`fetch`ポリフィルを使います。`TextDecoder`がない環境（古いHermes）では、クライアントが内蔵の小さなUTF-8デコーダーを使います。
-- **アップロード。** `uploadAttachment`は、ブラウザの`File`のほか、`expo-image-picker`の`{ uri, name, type }`オブジェクトも受け付けます。後者の場合、クライアントはグローバルの`fetch(uri)`でファイルを読み、渡された`fetch`で送信します。Expo SDK 58以降では、グローバルの`fetch`は`expo/fetch`です（React Native自身の`fetch`になるのは`EXPO_PUBLIC_USE_RN_FETCH=1`のときだけ）。`file://`は読めますが、`content://`は読めません。`expo-image-picker`はすでに`file://`のコピーを渡すので、`content://`のURIは先にキャッシュのファイルへコピーしてください。`examples/connected-expo`は、イベントストリームを`expo/fetch`に、それ以外のリクエストをグローバルの`fetch`に振り分けています。`useAttachments().add()`は、`{ uri, name, type }`ではなく名前付きの`Blob`を受け取ります。選んだファイルを`Blob`に読み込み、名前を付けてから渡してください（サンプルの`lib/attachments.ts`を参照）。
+- **アップロード。** `uploadAttachment`は、ブラウザの`File`のほか、`expo-image-picker`の`{ uri, name, type }`オブジェクトも受け付けます。後者の場合、クライアントはグローバルの`fetch(uri)`でファイルを読み、渡された`fetch`で送信します。Expo SDK 58以降では、グローバルの`fetch`は`expo/fetch`です（React Native自身の`fetch`になるのは`EXPO_PUBLIC_USE_RN_FETCH=1`のときだけ）。`file://`は読めますが、`content://`は読めません。`expo-image-picker`はすでに`file://`のコピーを渡すので、`content://`のURIは先にキャッシュのファイルへコピーしてください。`examples/connected-expo`は、イベントストリームを`expo/fetch`に、それ以外のリクエストをグローバルの`fetch`に振り分けています。`useAttachments().add()`は、名前付きの`Blob`のほか、同じ`{ uri, name, type, size? }`のファイル参照（型`AttachmentFile`）も受け取ります。
 - **画像。** `client.attachmentUrl(id)`には認証ヘッダーが必要なので、`<Image source={{ uri, headers }} />`で表示します。
 - **非同期ヘッダー。** `headers()`が例外を投げる（トークン更新の失敗など）と、リクエストは`details.reason: 'headers'`付きの`unauthorized`で失敗します。ストリームは`onError`で通知し、再試行します。
 
@@ -62,7 +62,7 @@ export function useAppLifecycle() {
 ```
 
 - **`usePersistSession(storage)`**は`{ get, set }`アダプターを受け取ります（同期でも非同期でも可：AsyncStorage、SecureStore、MMKV）。既定の`'url'`、または`window` / `localStorage`がない環境での`'localStorage'`では何もせず、例外も投げません。
-- **`useReconnect()`**は`client.reconnect()`を返します。開いているすべてのイベントストリームを、最後のシーケンスからすぐにやり直すので、アプリが数分間バックグラウンドにいても、取りこぼしも重複もありません。`AppState`が`active`になったときに呼びます。
+- **`useReconnect()`**は`client.reconnect()`を返します。開いているすべてのイベントストリームを、最後のシーケンスからすぐにやり直すので、アプリが数分間バックグラウンドにいても、取りこぼしも重複もありません。`AppState`が`active`になったときに呼びます。健全なストリーム（直近20秒以内にデータが届いている）は維持され、`reconnect({ force: true })`なら必ず再起動します。
 - **`useDeviceApproval(code)`**は、次の承認画面を動かします。
 
 ## 4. スマートフォンでコンピュータを承認する
@@ -82,7 +82,7 @@ export function ApproveScreen({ code }: { code: string }) {
 }
 ```
 
-照会自体が失敗した場合（たとえば`rate_limited`）、`state`は`'error'`になります。判定の失敗では`error`が設定されて`'idle'`に戻るので、再試行できます。`approve()`と`deny()`は`'idle'`のときだけ動作します。内部では[`GET /device/lookup`と`POST /device/decision`](/docs/ja/reference/http-api/)を呼んでいます。`client.lookupDevice(code)`と`client.decideDevice(code, approve)`は、Reactなしで同じことをします。
+照会自体が失敗した場合（たとえば`rate_limited`）、`state`は`'error'`になります。`retry()`で照会をやり直せます。判定の失敗では`error`が設定されて`'idle'`に戻るので、再試行できます。`approve()`と`deny()`は`'idle'`のときだけ動作します。内部では[`GET /device/lookup`と`POST /device/decision`](/docs/ja/reference/http-api/)を呼んでいます。`client.lookupDevice(code)`と`client.decideDevice(code, approve)`は、Reactなしで同じことをします。
 
 - **Android App Links：** サイトで`/.well-known/assetlinks.json`（パッケージ名と署名証明書のフィンガープリント）を配信します。`examples/connected-demo`は`ANDROID_PACKAGE`と`ANDROID_SHA256`から生成します。ビルド済みでユニットテスト済み。実機での確認待ちです。
 - **iOSユニバーサルリンク：** `/.well-known/apple-app-site-association`（Team IDとバンドルID。デモでは`APPLE_TEAM_ID`と`IOS_BUNDLE_ID`）を配信します。有料のApple Developerアカウントが必要です。実装済みで設定可能ですが、**実機では未検証**です。iOSでは、QRコードはモバイルウェブの承認ページにフォールバックします。

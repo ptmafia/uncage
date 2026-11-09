@@ -34,7 +34,7 @@ One-click needs `@uncage/cli` 0.4 or newer. An existing 0.3 install gets the han
 
 ## The confirmation and site identity checks
 
-Before any pairing, a dialog on this computer asks: **Connect this computer to `example.com`?** It shows the site’s **registrable domain** first (from the Public Suffix List, including private suffixes such as `vercel.app`, so each project there is its own owner), then the full hub URL, and what connecting allows: whoever runs the site can start coding-agent sessions on this computer at any time and answer their approval prompts within your local policy, so only connect sites you trust. **Cancel is the default.** The dialog is in the system language (English, Chinese or Japanese).
+Before any pairing, a dialog on this computer asks: **Connect this computer to `example.com`?** It shows the site’s **registrable domain** first (from the Public Suffix List, including private suffixes such as `vercel.app`, so each project there is its own owner), then the full hub URL, and what connecting allows: whoever runs the site can start coding-agent sessions on this computer at any time and answer their approval prompts within your local policy, so only connect sites you trust. The warnings come before the URL, and a very long URL is shortened. **Cancel is the default.** The dialog is in the system language (English, Chinese or Japanese).
 
 It adds a line for each of these:
 
@@ -44,7 +44,7 @@ It adds a line for each of these:
 | Bare IP address | The site is an IP, not a domain. |
 | A specific page | The path is neither the root nor the default `/api/uncage`: on a shared origin a path can belong to someone other than the domain’s owner. |
 | First time | This computer never connected to that registrable domain before. |
-| Looks like another site | The label has the same look-alike skeleton as a connected domain (digits and Cyrillic or Greek letters mapped to Latin, `rn` ≈ `m`, …), or is within edit distance 2 of it. |
+| Looks like another site | The label has the same look-alike skeleton as a connected domain (digits and Cyrillic or Greek letters mapped to Latin, `rn` ≈ `m`, …), or is within edit distance 2 of it. For names shorter than 4 characters, only a look-alike match counts. |
 
 How the question is asked, per operating system:
 
@@ -52,17 +52,18 @@ How the question is asked, per operating system:
 | --- | --- |
 | macOS | `/usr/bin/osascript` (an alert that gives up, as a No, after 10 minutes) |
 | Windows | A message box (`WScript.Shell` Popup) with OK and Cancel (default Cancel), shown through the system’s own Windows PowerShell |
-| Linux | `zenity` (preferred), else `kdialog`, when a display is available (`DISPLAY` or `WAYLAND_DISPLAY`) |
+| Linux | `zenity` (preferred), else `kdialog`, when a display is available (`DISPLAY` or `WAYLAND_DISPLAY`). With only `kdialog` the buttons are “Don’t connect” (the default), Connect and Cancel |
 
 If there is no dialog tool, or it could not be shown (no graphical session), and the command runs in a terminal, it asks `Connect? [y/N]` there. Without a dialog and without a terminal it refuses and prints how to run it by hand. **No dialog, no connection.** Also:
 
 - Only one question at a time: a page that fires links repeatedly cannot stack dialogs.
 - Every prompt, including the terminal one, counts as a No after 10 minutes.
-- After the user cancels, the same site is not asked again for 30 seconds.
-- Started from a link (`uncage connect --from-link`, which the registered handler uses), the outcome, connected or not and why, is shown as a native notice. On Windows that run is hidden, so no console window appears.
+- After the user cancels, the same domain cannot ask again for 30 seconds (for links).
+- The registered handler runs `uncage connect --from-link <link>`, and the outcome, connected or not and why, is shown as a system notification: on macOS in Notification Center through `osascript` (notifications may need to be allowed for Script Editor), on Linux with `notify-send` when installed, on Windows as a message box that closes after 60 seconds (the run is hidden, so the console only flashes).
+- Connecting restarts the background agent, which interrupts running sessions of the other sites.
 - After the user confirms, the approval page the hub announces must be on the confirmed origin, and the site that answers must be the confirmed URL; otherwise nothing is saved.
 - A site’s self-declared name is never shown without its domain.
-- Exit codes: `0` connected, `1` cancelled or refused, `2` bad link.
+- Exit codes: `0` connected, `1` cancelled, refused or pairing failed (`Not connected: <reason>`), `2` bad link.
 
 ## The local dashboard
 
@@ -72,7 +73,7 @@ If there is no dialog tool, or it could not be shown (no graphical session), and
 - **Disconnect**: revokes the machine token on the site (like `uncage sites remove`) and restarts the agent;
 - turn ACP agents on or off (the same consent as `uncage runtimes enable|disable`), and a read-only view of the local policy.
 
-It is a page on `127.0.0.1` at a random port. The link carries a one-time token in its fragment (`#…`, which browsers never send to a server). The page trades it once for an API token that it keeps in `sessionStorage`, and removes the fragment from the address bar; there is no cookie. Every request must have the right `Host` (`127.0.0.1:<port>`, which defeats DNS rebinding), no foreign `Origin` and the API token in a header, otherwise it gets `403`. There are no CORS headers. It exits when the page is closed or after 30 minutes without a request (`--no-browser` prints the link instead of opening it). The page follows the system language.
+It is a page on `127.0.0.1` at a random port. The link is `http://127.0.0.1:<port>/#t=…`: the one-time token sits in the fragment, which browsers never send to a server. The page trades it once for an API token that it keeps in `sessionStorage` and removes the fragment from the address bar; there is no cookie. Reloading works in that tab; another tab or browser cannot use the link again. Every request must have the right `Host` (`127.0.0.1:<port>`, which defeats DNS rebinding), no foreign `Origin` and the API token in a header, otherwise it gets `403`. There are no CORS headers. It exits when the page is closed or after 30 minutes without a request (`--no-browser` prints the link instead of opening it). The page follows the system language.
 
 ## Threat model
 

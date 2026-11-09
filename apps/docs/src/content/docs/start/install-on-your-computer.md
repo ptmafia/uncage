@@ -146,7 +146,7 @@ Then remove `%USERPROFILE%\.uncage` and `%USERPROFILE%\Uncage` if you want. Fold
 
 ## Another site: one click
 
-Once `uncage setup` has installed the background agent, it also registers an `uncage://` link handler for your user (a small app on macOS, a `.desktop` file on Linux, a `HKCU` registry key on Windows; no admin rights). Any other Uncage site can then offer **Connect in one click**: the link opens a dialog on your computer that names the site’s domain and warns about look-alikes, and only after you press Connect does the usual approval start. No terminal and no second install. You can also run `uncage connect https://other.site` yourself, and `uncage dashboard` lists and disconnects every site. [Details](/docs/guides/one-click-connect/). `uncage agent uninstall` removes the handler.
+Once `uncage setup` has installed the background agent, it also registers an `uncage://` link handler for your user (a small app on macOS, a `.desktop` file on Linux, a `HKCU` registry key on Windows; no admin rights). Any other Uncage site can then offer **Connect in one click**: the link opens a dialog on your computer that names the site’s domain and warns about look-alikes, and only after you press Connect does the usual approval start. No terminal and no second install. You can also run `uncage connect https://other.site` yourself, and `uncage dashboard` lists and disconnects every site. [Details](/docs/guides/one-click-connect/). `uncage agent uninstall` removes the handler. Run `uncage agent uninstall` before `npm uninstall -g @uncage/cli`: it removes the handler, and removing the CLI first leaves a dead one behind.
 
 ## Flags
 

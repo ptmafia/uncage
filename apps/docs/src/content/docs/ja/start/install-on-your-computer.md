@@ -146,7 +146,7 @@ npm uninstall -g @uncage/cli
 
 ## 別のサイト：ワンクリック
 
-`uncage setup`がバックグラウンドのエージェントをインストールすると、あなたのユーザー用に`uncage://`リンクハンドラーも登録されます（macOSでは小さなアプリ、Linuxでは`.desktop`ファイル、Windowsでは`HKCU`のレジストリキー。管理者権限は不要です）。以後、ほかのUncageサイトは**ワンクリックで接続**を提供できます。リンクを開くとコンピュータ上にダイアログが出て、サイトのドメインを示し、紛らわしいドメインを警告します。接続を押して初めて、通常の承認が始まります。ターミナルも、2回目のインストールも不要です。`uncage connect https://other.site`を自分で実行することもでき、`uncage dashboard`ですべてのサイトの一覧表示と切断ができます。[詳細](/docs/ja/guides/one-click-connect/)。`uncage agent uninstall`でハンドラーは削除されます。
+`uncage setup`がバックグラウンドのエージェントをインストールすると、あなたのユーザー用に`uncage://`リンクハンドラーも登録されます（macOSでは小さなアプリ、Linuxでは`.desktop`ファイル、Windowsでは`HKCU`のレジストリキー。管理者権限は不要です）。以後、ほかのUncageサイトは**ワンクリックで接続**を提供できます。リンクを開くとコンピュータ上にダイアログが出て、サイトのドメインを示し、紛らわしいドメインを警告します。接続を押して初めて、通常の承認が始まります。ターミナルも、2回目のインストールも不要です。`uncage connect https://other.site`を自分で実行することもでき、`uncage dashboard`ですべてのサイトの一覧表示と切断ができます。[詳細](/docs/ja/guides/one-click-connect/)。`uncage agent uninstall`でハンドラーは削除されます。`npm uninstall -g @uncage/cli`の前に`uncage agent uninstall`を実行してください。ハンドラーが削除されます。先にCLIを削除すると、動かないハンドラーが残ります。
 
 ## フラグ
 

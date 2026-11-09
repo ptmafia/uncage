@@ -322,7 +322,7 @@ describe('POST /api/app/push-token', () => {
 });
 
 describe('EXPO_PUSH: onAttention through expoPushNotifier', () => {
-  const event: AttentionEvent = { kind: 'approval_requested', userId: 'alice', sessionId: 's1', machineId: 'm1', approval: { id: 'ap1', title: 'Run npm test', kind: 'command' }, at: new Date().toISOString() };
+  const event: AttentionEvent = { kind: 'approval_requested', userId: 'alice', sessionId: 's1', machineId: 'm1', approval: { id: 'ap1', title: 'Run npm test', category: 'command' }, at: new Date().toISOString() };
   const ctx = { waitUntil: () => undefined };
 
   it('is off unless EXPO_PUSH=1', () => {

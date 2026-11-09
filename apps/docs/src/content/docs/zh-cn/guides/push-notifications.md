@@ -30,7 +30,7 @@ declare function sendPush(userId: string, text: string): Promise<void>;
 
 ## 离开你的 hub 的内容
 
-推送会从你的 hub 发到 Expo，再到 Apple 或 Google，并显示在锁屏上。默认文案由事件和**审批标题**生成，而运行时会根据工具调用来设置这个标题，所以它可能包含命令或文件路径。默认文案会被截断到约 180 个字符，但仍会到达这些服务和锁屏。如果这对你的用户来说太多，可以从 `message` 返回一段通用文案：
+推送会从你的 hub 发到 Expo，再到 Apple 或 Google，并显示在锁屏上。默认文案由事件和**审批标题**生成，而运行时会根据工具调用来设置这个标题，所以它可能包含命令或文件路径。默认文案是一行，最多 180 个字符（包含审批标题和会话标题），但仍会到达这些服务和锁屏。如果这对你的用户来说太多，可以从 `message` 返回一段通用文案：
 
 ```ts
 import { expoPushNotifier } from '@uncage/hub';
@@ -72,7 +72,7 @@ export const onAttention = expoPushNotifier({
 | `fetch`、`endpoint` | 替换 `fetch` 或 Expo 端点（用于测试）。 |
 | `timeoutMs` | 对 Expo 的请求超过这个时间没有应答就会中止，调用随之 reject（hub 会记录）。默认 `15000`。 |
 
-当请求失败或超时、`onInvalidToken` 抛出错误，或 Expo 因其他原因（例如 `InvalidCredentials`）拒绝了消息时，它会 reject（hub 会记录错误码和数量，但绝不记录令牌）。
+当请求失败或超时、`onInvalidToken` 抛出错误，或 Expo 因其他原因（例如 `InvalidCredentials`）拒绝了消息时，它会 reject；多次发送失败时，会以包含全部失败的 `AggregateError` reject（hub 会记录错误码和数量，但绝不记录令牌）。
 
 ## 登记令牌
 
