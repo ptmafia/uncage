@@ -29,6 +29,20 @@ describe('usePersistSession with a storage adapter', () => {
     await waitFor(() => expect(storage.set).toHaveBeenCalledWith('ses_9'));
   });
 
+  it('an inline adapter (new object every render) reads once and still saves', async () => {
+    const f = fakeClient(() => snapshot({ session: session({ id: 'ses_9' }) }));
+    const get = vi.fn(async () => 'ses_9');
+    const set = vi.fn(async () => undefined);
+    const { rerender } = renderHook(() => usePersistSession({ get, set }), { wrapper: wrap(f.client) });
+    await waitFor(() => expect(set).toHaveBeenCalledWith('ses_9'));
+    rerender();
+    rerender();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
   it('default persist mode is a safe no-op without window.location', async () => {
     vi.stubGlobal('window', {});
     for (const mode of ['url', 'localStorage'] as const) {
@@ -159,6 +173,22 @@ describe('useDeviceApproval guards', () => {
     expect(f.client.decideDevice).not.toHaveBeenCalled();
     expect(result.current.error?.code).toBe('rate_limited');
   });
+
+  it('retry() re-runs a failed lookup; does nothing in other states', async () => {
+    const f = fakeClient();
+    f.client.lookupDevice.mockRejectedValueOnce(err('rate_limited', 429));
+    f.client.lookupDevice.mockResolvedValue(lookup);
+    const { result } = renderHook(() => useDeviceApproval('ABCD'), { wrapper: wrap(f.client) });
+    await waitFor(() => expect(result.current.state).toBe('error'));
+    act(() => result.current.retry());
+    await waitFor(() => expect(result.current.state).toBe('idle'));
+    expect(result.current.error).toBeUndefined();
+    expect(result.current.lookup).toEqual(lookup);
+    expect(f.client.lookupDevice).toHaveBeenCalledTimes(2);
+    act(() => result.current.retry());
+    await act(async () => Promise.resolve());
+    expect(f.client.lookupDevice).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('useDeviceApproval', () => {
@@ -210,6 +240,9 @@ describe('useReconnect', () => {
     const { result } = renderHook(() => useReconnect(), { wrapper: wrap(f.client) });
     result.current();
     expect(f.client.reconnect).toHaveBeenCalledTimes(1);
+    expect(f.client.reconnect).toHaveBeenLastCalledWith(undefined);
+    result.current({ force: true });
+    expect(f.client.reconnect).toHaveBeenLastCalledWith({ force: true });
   });
 });
 void render;

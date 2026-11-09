@@ -42,5 +42,5 @@ export type {
   ToolView,
 } from './state.js';
 export { checkAttachment, createUncageStore, newestFirst, UPLOAD_FAILED_REASON } from './store.js';
-export type { UncageStore } from './store.js';
+export type { AttachmentFile, UncageStore } from './store.js';
 export type { ConnectionState, DeviceDecision, DeviceLookup, InstallInfo } from '@uncage/client';

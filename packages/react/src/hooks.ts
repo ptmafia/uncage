@@ -25,7 +25,7 @@ import {
   type TimelineItem,
   type ToolView,
 } from './state.js';
-import type { UncageStore } from './store.js';
+import type { AttachmentFile, UncageStore } from './store.js';
 
 const EMPTY_RECORD: Record<string, never> = {};
 const EMPTY_TIMELINE: TimelineItem[] = [];
@@ -199,11 +199,12 @@ export function useSessionSettings(): {
  * Composer attachments. `add` validates client-side (type, runtime capability, size, at most
  * `ATTACHMENT_LIMITS.maxPerMessage`) and uploads to the open session; in a draft, files queue and
  * upload right after `commitDraft`. `ready` is false while an upload is in flight or has failed
- * (queued draft files count as ready: `sendPrompt` waits for their uploads).
+ * (queued draft files count as ready: `sendPrompt` waits for their uploads). In React Native, pass
+ * file references `{ uri, name, type, size? }` (see `AttachmentFile`).
  */
 export function useAttachments(): {
   items: DraftAttachment[];
-  add(files: (Blob & { name: string })[]): void;
+  add(files: AttachmentFile[]): void;
   remove(localId: string): void;
   clear(): void;
   ready: boolean;
@@ -369,10 +370,16 @@ function writePersisted(mode: PersistSessionMode, id: string | undefined): void 
 
 /**
  * Remembers the open session so a reload lands on the same conversation: on mount it reopens the
- * remembered session (`?session=<id>` with `'url'`, a `localStorage` entry with `'localStorage'`),
- * then mirrors the open session there (`history.replaceState`, no new history entries) and clears
- * it when a new draft is opened. A remembered session that cannot be opened falls back to a new
- * draft (the error is shown unless the session simply no longer exists). `<AgentChat>` calls this (default `'url'`); headless UIs call it once near the root.
+ * remembered session (`?session=<id>` with `'url'`, a `localStorage` entry with `'localStorage'`, or
+ * `mode.get()` with a {@link PersistSessionStorage} adapter), then mirrors the open session there
+ * (`history.replaceState`, no new history entries) and clears it when a new draft is opened. A
+ * remembered session that cannot be opened falls back to a new draft (the error is shown unless the
+ * session simply no longer exists). `<AgentChat>` calls this (default `'url'`); headless UIs call it
+ * once near the root.
+ *
+ * An adapter does not need to be referentially stable (an inline `{ get, set }` is fine): it is read
+ * once per mount, and the latest `get` / `set` are used. Switching between modes (e.g. `'url'` to an
+ * adapter) restores again.
  */
 export function usePersistSession(mode: PersistSessionMode = 'url'): void {
   const store = useUncageStore();
@@ -380,11 +387,15 @@ export function usePersistSession(mode: PersistSessionMode = 'url'): void {
   const draftOpen = useStoreSelector((s) => s.draft.open);
   // Writes wait for the first (possibly async) read, so they never clobber the stored id.
   const [restored, setRestored] = useState(false);
+  // An inline adapter is a new object every render: effects key on the kind of mode, not its identity.
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const modeKey = typeof mode === 'object' ? 'adapter' : mode;
 
   useEffect(() => {
     let cancelled = false;
     setRestored(false);
-    void readPersisted(mode).then((id) => {
+    void readPersisted(modeRef.current).then((id) => {
       if (cancelled) return;
       setRestored(true);
       const now = store.getState();
@@ -396,21 +407,21 @@ export function usePersistSession(mode: PersistSessionMode = 'url'): void {
         // Forget it and start fresh. A deleted session (or one from another server) is not worth an
         // error; anything else (daemon down, …) stays visible in lastError.
         if (s.lastError.code === 'not_found') store.actions.dismissError();
-        writePersisted(mode, undefined);
+        writePersisted(modeRef.current, undefined);
         store.actions.openDraft();
       });
     });
     return () => {
       cancelled = true;
     };
-  }, [store, mode]);
+  }, [store, modeKey]);
 
   useEffect(() => {
     // Before anything is open (first render, restore in flight) there is nothing to write.
     if (!restored) return;
-    if (draftOpen) writePersisted(mode, undefined);
-    else if (activeSessionId !== undefined) writePersisted(mode, activeSessionId);
-  }, [mode, restored, draftOpen, activeSessionId]);
+    if (draftOpen) writePersisted(modeRef.current, undefined);
+    else if (activeSessionId !== undefined) writePersisted(modeRef.current, activeSessionId);
+  }, [modeKey, restored, draftOpen, activeSessionId]);
 }
 
 export type DeviceApprovalState =
@@ -431,10 +442,19 @@ const toApprovalError = (err: unknown): { code: string; message: string } =>
 
 /**
  * Headless device approval (connected mode): looks the code up, then approves or denies it.
- * `not_found` / `expired` mean the code is unknown or too old; other failures (e.g. `rate_limited`)
- * leave `state` as it was and set `error`. A failed lookup (e.g. `rate_limited`) gives state `'error'`
- * with `error` set (`approve` / `deny` do nothing); a failed decision returns to `'idle'` so it can be retried.
- * `approve` / `deny` only act from `'idle'` (no double submit).
+ *
+ * | `state` | meaning | what you can do |
+ * | --- | --- | --- |
+ * | `'loading'` | the lookup is in flight | wait |
+ * | `'idle'` | `lookup` is set; also after a failed decision (`error` set) | `approve()` / `deny()` |
+ * | `'approving'` / `'denying'` | the decision is in flight | wait (further calls are ignored) |
+ * | `'approved'` / `'denied'` | done | nothing (final) |
+ * | `'not_found'` | the code is unknown (lookup returned `null`, or the decision said so) | ask for a new code |
+ * | `'expired'` | the code is too old | ask for a new code |
+ * | `'error'` | the lookup failed (e.g. `rate_limited`, network); `error` is set | `retry()` |
+ *
+ * `approve` / `deny` only act from `'idle'` (no double submit); `retry` only acts from `'error'`.
+ * Changing `code` starts over at `'loading'`.
  */
 export function useDeviceApproval(code: string): {
   lookup: DeviceLookup | null;
@@ -442,11 +462,14 @@ export function useDeviceApproval(code: string): {
   error?: { code: string; message: string };
   approve(): Promise<void>;
   deny(): Promise<void>;
+  /** Re-runs a failed lookup (only from `'error'`). */
+  retry(): void;
 } {
   const { client } = useUncageStore();
   const [lookup, setLookup] = useState<DeviceLookup | null>(null);
   const [state, setState] = useState<DeviceApprovalState>('loading');
   const [error, setError] = useState<{ code: string; message: string } | undefined>();
+  const [attempt, setAttempt] = useState(0);
   const inFlight = useRef(false);
   const generation = useRef(0);
 
@@ -473,7 +496,7 @@ export function useDeviceApproval(code: string): {
       cancelled = true;
       if (generation.current === gen) generation.current++;
     };
-  }, [client, code]);
+  }, [client, code, attempt]);
 
   const decide = useCallback(
     async (approve: boolean): Promise<void> => {
@@ -498,11 +521,21 @@ export function useDeviceApproval(code: string): {
   );
   const approve = useCallback(() => decide(true), [decide]);
   const deny = useCallback(() => decide(false), [decide]);
-  return { lookup, state, ...(error ? { error } : {}), approve, deny };
+  const retry = useCallback(() => {
+    if (state === 'error') setAttempt((n) => n + 1);
+  }, [state]);
+  return { lookup, state, ...(error ? { error } : {}), approve, deny, retry };
 }
 
-/** Returns a function that restarts the event stream now (wire it to `AppState` 'active' in React Native). */
-export function useReconnect(): () => void {
+/**
+ * Returns a function that restarts the event stream now (wire it to `AppState` 'active' in React
+ * Native). A healthy live stream is kept (see `UncageClient.reconnect`); `{ force: true }` restarts
+ * it anyway.
+ */
+export function useReconnect(): (opts?: { force?: boolean }) => void {
   const { client } = useUncageStore();
-  return useCallback(() => client.reconnect(), [client]);
+  return useCallback(
+    (opts?: { force?: boolean }) => client.reconnect(opts?.force === true ? { force: true } : undefined),
+    [client],
+  );
 }

@@ -16,7 +16,7 @@ import type {
 } from '@uncage/protocol';
 import { ERROR_REASONS, UncageClientError } from './errors.js';
 import { isErrorBody, isUncageEvent } from './guards.js';
-import { parseSSE } from './sse.js';
+import { readSSE } from './sse.js';
 
 export type ConnectionState = 'connecting' | 'live' | 'reconnecting' | 'offline';
 
@@ -24,6 +24,15 @@ export interface SubscribeHandlers {
   after: number;
   onEvent(e: UncageEvent): void;
   onState?(s: ConnectionState): void;
+  /**
+   * Called in two cases:
+   * - **Terminal**: the stream stopped for good (state `'offline'`, no more retries) on a definitive
+   *   4xx answer (`not_found`, `unauthorized`, …) or `event_replay_unavailable`. Subscribe again
+   *   (after a fresh snapshot) to resume.
+   * - **Non-terminal**: `headers()` threw (`unauthorized`, `details.reason: 'headers'`, e.g. a failed
+   *   token refresh). Reported once per failure streak while the stream keeps retrying; the next
+   *   `onState('live')` means it recovered. A UI can ask the user to sign in again meanwhile.
+   */
   onError?(e: UncageClientError): void;
 }
 
@@ -83,11 +92,16 @@ export interface UncageClient {
   decide(approvalId: string, d: ApprovalDecision, idempotencyKey?: string): Promise<ApprovalRequest>;
   subscribe(sessionId: string, h: SubscribeHandlers): () => void;
   /**
-   * Restarts every open subscription at once from its last sequence (no duplicates, no gap),
+   * Restarts the open subscriptions at once from their last sequence (no duplicates, no gap),
    * skipping any backoff wait. Call it when a mobile app returns to the foreground. No-op when
    * nothing is subscribed.
+   *
+   * A stream that is `live` and received bytes (an event or the server's heartbeat) within the
+   * last 20 s is kept: it is only restarted if no byte arrives before that window runs out (a
+   * socket that died silently while the app was briefly in the background). `{ force: true }`
+   * restarts every stream regardless.
    */
-  reconnect(): void;
+  reconnect(opts?: { force?: boolean }): void;
   /**
    * Connected mode (an Uncage hub): the signed-in user's computers. A local daemon has no
    * `/machines` and rejects with status 404, which is how UIs tell the two modes apart.
@@ -111,6 +125,11 @@ export interface UncageClientOptions {
 }
 
 const BACKOFF_MS = [500, 1000, 2000, 5000];
+/**
+ * A live stream that received bytes within this window counts as healthy for `reconnect()`.
+ * Above the default server heartbeat (15 s for `@uncage/server` and `@uncage/hub`).
+ */
+const HEALTHY_WITHIN_MS = 20_000;
 const OFFLINE_AFTER_MS = 60_000;
 /**
  * Event type of the frame a server writes before ending an event stream on its own initiative
@@ -253,7 +272,7 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
     }
   };
   /** Restart hooks of the open subscriptions (`reconnect()`). */
-  const live = new Set<() => void>();
+  const live = new Set<(force: boolean) => void>();
 
   async function request<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
     const init: RequestInit = { method, headers: { accept: 'application/json', ...(await extraHeaders()), ...headers } };
@@ -321,11 +340,30 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
     /** Aborts the current attempt (fetch, stream or backoff wait); replaced on every attempt. */
     let attempt$: AbortController | undefined;
     let kicked = false;
-    const kick = () => {
+    /** When the current stream last received bytes (events or heartbeat comments). */
+    let lastByteAt = 0;
+    let check: ReturnType<typeof setTimeout> | undefined;
+    const restart = () => {
       kicked = true;
       attempt$?.abort();
     };
-    const forget = () => live.delete(kick);
+    const healthy = () => state === 'live' && Date.now() - lastByteAt < HEALTHY_WITHIN_MS;
+    const kick = (force: boolean) => {
+      if (check !== undefined) clearTimeout(check);
+      check = undefined;
+      if (force || !healthy()) return restart();
+      // Looks healthy: keep it, but restart it if no byte arrives before the window runs out.
+      const stream = attempt$;
+      check = setTimeout(() => {
+        check = undefined;
+        if (attempt$ === stream && !signal.aborted && !healthy() && state === 'live') restart();
+      }, lastByteAt + HEALTHY_WITHIN_MS - Date.now());
+    };
+    const forget = () => {
+      live.delete(kick);
+      if (check !== undefined) clearTimeout(check);
+      check = undefined;
+    };
     live.add(kick);
     signal.addEventListener('abort', forget, { once: true });
     /** A `headers()` failure was reported through `onError` since the stream was last live. */
@@ -403,6 +441,7 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
             throw err;
           }
           if (!res.body) throw new Error('empty response body');
+          lastByteAt = Date.now();
           setState('live');
           failingSince = undefined;
           headersReported = false;
@@ -410,7 +449,10 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
           let delivered = false;
           let rotated = false;
           let gap = false;
-          for await (const frame of parseSSE(res.body, attemptSignal)) {
+          const onChunk = () => {
+            lastByteAt = Date.now();
+          };
+          for await (const frame of readSSE(res.body, attemptSignal, onChunk)) {
             if (attemptSignal.aborted) break;
             if (frame.event === STREAM_RECONNECT_EVENT) {
               // The server ends this response between two whole frames: resume after the last
@@ -501,8 +543,9 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
     decide: (id, d, key) =>
       request('POST', `/approvals/${enc(id)}/decision`, d, { 'idempotency-key': key ?? randomUUID() }),
     subscribe,
-    reconnect: () => {
-      for (const kick of [...live]) kick();
+    reconnect: (opts) => {
+      const force = opts?.force === true;
+      for (const kick of [...live]) kick(force);
     },
     machines: () => request('GET', '/machines'),
     installInfo: () => request('GET', '/machines/install'),

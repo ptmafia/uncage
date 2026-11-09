@@ -133,7 +133,7 @@ describe('@uncage/client in React Native', () => {
   });
 
   it('reconnect() resumes after the last sequence without duplicates', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     const signals: AbortSignal[] = [];
     // Worst case: the stream of a backgrounded app is torn down silently and the fetch ignores
     // the abort signal; the body just never yields again.
@@ -285,6 +285,58 @@ describe('parseSSE without TextDecoder', () => {
   });
 });
 
+describe('reconnect() and a healthy stream', () => {
+  /** A hanging stream the test writes to (`push`), e.g. a server heartbeat. */
+  function controlled() {
+    const enc = new TextEncoder();
+    let ctl!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({ start: (c) => void (ctl = c) });
+    return { body, push: (s: string) => ctl.enqueue(enc.encode(s)) };
+  }
+
+  it('skips a live stream that received bytes recently; force restarts it anyway', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const fetch = vi.fn<F>(async () => sse(liveStream([frame(1)], { hang: true })));
+    const client = createUncageClient({ fetch });
+    const events: number[] = [];
+    const unsub = client.subscribe('ses_1', { after: 0, onEvent: (e) => events.push(e.sequence) });
+    await vi.advanceTimersByTimeAsync(1_000);
+    client.reconnect();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    client.reconnect({ force: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[1]![0]).toBe('/api/uncage/sessions/ses_1/events?after=1');
+    expect(events).toEqual([1]);
+    unsub();
+  });
+
+  it('a skipped stream that then stays silent past the heartbeat window is restarted', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const first = controlled();
+    const fetch = vi
+      .fn<F>()
+      .mockImplementationOnce(async () => sse(first.body))
+      .mockImplementation(async () => sse(liveStream([], { hang: true })));
+    const client = createUncageClient({ fetch });
+    const unsub = client.subscribe('ses_1', { after: 0, onEvent: () => undefined });
+    await vi.advanceTimersByTimeAsync(0);
+    first.push(frame(1));
+    await vi.advanceTimersByTimeAsync(5_000);
+    client.reconnect(); // looks healthy: kept, but checked
+    await vi.advanceTimersByTimeAsync(10_000);
+    first.push(': ping\n\n'); // heartbeat arrives: still healthy
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    client.reconnect();
+    // Socket died silently: no more bytes, so the check restarts it after the window.
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    unsub();
+  });
+});
+
 describe('review fixes', () => {
   it('a stream response that arrives after reconnect() aborted it has its body cancelled', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -336,7 +388,7 @@ describe('review fixes', () => {
     const unsub = client.subscribe('ses_1', { after: 0, onEvent: (e) => events.push(e.sequence) });
     await vi.advanceTimersByTimeAsync(0);
     expect(events).toEqual([1]);
-    client.reconnect();
+    client.reconnect({ force: true });
     await vi.advanceTimersByTimeAsync(0);
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(fetch.mock.calls[1]![0]).toBe('/api/uncage/sessions/ses_1/events?after=1');

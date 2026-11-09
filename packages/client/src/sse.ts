@@ -75,7 +75,16 @@ export function utf8Decoder(): StreamDecoder {
  * across chunks stay intact. Aborting `signal` cancels the body, even when the fetch that made it
  * ignores aborts (a stream torn down while a mobile app was in the background never ends otherwise).
  */
-export async function* parseSSE(stream: ReadableStream<Uint8Array>, signal?: AbortSignal): AsyncIterable<SSEFrame> {
+export function parseSSE(stream: ReadableStream<Uint8Array>, signal?: AbortSignal): AsyncIterable<SSEFrame> {
+  return readSSE(stream, signal);
+}
+
+/** `parseSSE`, plus `onChunk` called whenever bytes arrive (heartbeat comments included). @internal */
+export async function* readSSE(
+  stream: ReadableStream<Uint8Array>,
+  signal?: AbortSignal,
+  onChunk?: () => void,
+): AsyncIterable<SSEFrame> {
   const reader = stream.getReader();
   const decoder: StreamDecoder = typeof TextDecoder === 'function' ? new TextDecoder('utf-8') : utf8Decoder();
   // Pending reads are raced with the abort too: a polyfilled stream may not settle them on cancel().
@@ -133,6 +142,7 @@ export async function* parseSSE(stream: ReadableStream<Uint8Array>, signal?: Abo
       const { done, value } = await Promise.race([read, aborted]);
       if (signal?.aborted) return;
       if (done) break;
+      onChunk?.();
       buffer += decoder.decode(value, { stream: true });
       yield* drain(false);
     }

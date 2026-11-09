@@ -1,6 +1,6 @@
 import type { ActiveRunInfo, Attachment, RuntimeCapabilities, SessionSettings, UncageEvent } from '@uncage/protocol';
 import { ATTACHMENT_LIMITS } from '@uncage/protocol';
-import { createUncageClient } from '@uncage/client';
+import { createUncageClient, UncageClientError } from '@uncage/client';
 import { describe, expect, it, vi } from 'vitest';
 import { createUncageStore, UPLOAD_FAILED_REASON } from './store.js';
 import { approval, clientError, eventFactory, fakeClient, machine, run, session, snapshot, T0 } from './test-fixtures.js';
@@ -23,6 +23,27 @@ describe('createUncageStore', () => {
     expect(active.runs.run_1!.state).toBe('completed');
     f.state('live');
     expect(store.getState().active!.connection).toBe('live');
+  });
+
+  it('a non-terminal headers error from the stream is cleared once the stream is live again', async () => {
+    const f = fakeClient();
+    const store = createUncageStore(f.client);
+    await store.actions.selectSession('ses_1');
+    const headersErr = new UncageClientError(
+      { code: 'unauthorized', message: 'refresh failed', retryable: true, details: { reason: 'headers' } },
+      0,
+    );
+    f.state('reconnecting');
+    f.subs.at(-1)!.onError!(headersErr);
+    expect(store.getState().lastError).toBe(headersErr);
+    f.state('live');
+    expect(store.getState().lastError).toBeUndefined();
+
+    // Any other error stays until dismissed.
+    f.state('reconnecting');
+    f.subs.at(-1)!.onError!(clientError('rate_limited', 429));
+    f.state('live');
+    expect(store.getState().lastError?.code).toBe('rate_limited');
   });
 
   it('sessions are newest-first before and after a reload; a first-run title reaches the list', async () => {
@@ -459,6 +480,34 @@ describe('composer: settings and attachments', () => {
       ['ok.jpg', 'image', 'uploading'],
     ]);
     await vi.waitFor(() => expect(store.getState().attachments.items.every((i) => i.status === 'ready')).toBe(true));
+  });
+
+  it('attachments: React Native file references ({ uri, name, type, size? }) are validated and uploaded as-is', async () => {
+    const { f } = composerClient();
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const store = createUncageStore(f.client);
+    await store.actions.selectSession('ses_1');
+    const photo = { uri: 'file:///cache/a.jpg', name: 'a.jpg', type: 'image/jpeg', size: 1000 };
+    const doc = { uri: 'file:///cache/notes.md', name: 'notes.md', type: 'text/markdown' }; // size unknown
+    store.actions.addAttachments([
+      photo,
+      doc,
+      { uri: 'file:///cache/big.png', name: 'big.png', type: 'image/png', size: 5 * 1024 * 1024 + 1 },
+      { uri: 'file:///cache/x.exe', name: 'x.exe', type: 'application/octet-stream' },
+    ]);
+    expect(store.getState().attachments.rejected).toEqual([
+      { name: 'big.png', reason: 'size' },
+      { name: 'x.exe', reason: 'type' },
+    ]);
+    expect(f.client.uploadAttachment.mock.calls.map((c) => c[1])).toEqual([photo, doc]);
+    const items = store.getState().attachments.items;
+    expect(items.map((i) => [i.name, i.kind, i.size, i.previewUrl])).toEqual([
+      ['a.jpg', 'image', 1000, 'file:///cache/a.jpg'],
+      ['notes.md', 'file', 0, undefined],
+    ]);
+    store.actions.removeAttachment(items[0]!.localId);
+    expect(revoke).not.toHaveBeenCalled();
+    revoke.mockRestore();
   });
 
   it('attachments of a kind the runtime does not accept are rejected as type', async () => {
