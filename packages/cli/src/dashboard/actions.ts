@@ -139,6 +139,17 @@ function runtimeViews(acp: typeof DEFAULT_ACP_RUNTIMES, registry: AcpRegistry): 
   return rows;
 }
 
+/** A site URL's origin and registrable domain; a malformed or host-less URL in agent.yaml shows as is, domain `?`. */
+function siteWhere(url: string): { origin: string; domain: string } {
+  try {
+    const u = new URL(url);
+    if (u.hostname) return { origin: u.origin, domain: registrableDomain(u.hostname) };
+  } catch {
+    // shown as is below
+  }
+  return { origin: url, domain: '?' };
+}
+
 /** `GET /api/sites`: every connected site with its domain, status, runtimes and recent activity. */
 export async function dashboardData(d: DashboardDeps): Promise<DashboardData> {
   const config = await loadAgentConfig(d.home);
@@ -149,14 +160,13 @@ export async function dashboardData(d: DashboardDeps): Promise<DashboardData> {
   const sites = await Promise.all(
     config.sites.map(async (site): Promise<SiteView> => {
       const log = await readActivity(d.home, site.id).catch(() => []);
-      const u = new URL(site.url);
+      const where = siteWhere(site.url);
       const firstConnected = log.find((e) => e.kind === 'connected')?.at;
       const connectedAt = site.connectedAt ?? firstConnected;
       return {
         id: site.id,
         name: site.name,
-        origin: u.origin,
-        domain: registrableDomain(u.hostname),
+        ...where,
         machineId: site.machineId,
         ...(connectedAt ? { connectedAt } : {}),
         ...(site.revokedAt ? { revokedAt: site.revokedAt } : {}),
@@ -203,7 +213,7 @@ export async function disconnectSite(d: DashboardDeps, id: string): Promise<Acti
     throw new ActionError(502, e instanceof NotRevokedError ? 'not_revoked' : 'revoke_failed', e instanceof Error ? e.message : String(e));
   }
   const restarted = await restart(d, messages);
-  return { code: 'disconnected', name: site.name, domain: registrableDomain(new URL(site.url).hostname), revoke, restart: restarted, messages };
+  return { code: 'disconnected', name: site.name, domain: siteWhere(site.url).domain, revoke, restart: restarted, messages };
 }
 
 /**

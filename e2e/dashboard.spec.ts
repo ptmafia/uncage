@@ -42,8 +42,10 @@ test('dashboard shows the connected test site and disconnects it', async ({ page
     marker: 'Uncage dashboard: ',
   });
   const link = /Uncage dashboard: (\S+)/.exec(dash.output())?.[1];
-  expect(link).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/\?t=[A-Za-z0-9_-]{43}$/);
+  // The one-time token is in the fragment: browsers never send it (no request line, log or Referer).
+  expect(link).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/#t=[A-Za-z0-9_-]{43}$/);
   const dashOrigin = new URL(link!).origin;
+  const linkToken = new URL(link!).hash.slice('#t='.length);
 
   // Another origin (the website itself, open in the browser) cannot read the dashboard.
   const crossSite = await page.evaluate(async (u) => {
@@ -62,7 +64,8 @@ test('dashboard shows the connected test site and disconnects it', async ({ page
     if (m.type() === 'error') problems.push(m.text());
   });
   await tab.goto(link!);
-  // The token is traded for a cookie and dropped from the address bar.
+  // The page script trades the token for an API token (sessionStorage, no cookie) and drops it
+  // from the address bar.
   await expect(tab).toHaveURL(`${dashOrigin}/`);
   await expect(tab.getByRole('heading', { name: 'Connected websites' })).toBeVisible();
 
@@ -77,8 +80,13 @@ test('dashboard shows the connected test site and disconnects it', async ({ page
   await expect(card.locator('ol.activity li').first()).toContainText(/connected (ws|http)/);
   await expect(tab.getByRole('region', { name: 'Agents on this computer' })).toContainText('Gemini CLI (ACP)');
   await expect(tab.getByRole('region', { name: 'Local policy' })).toContainText('Not allowed');
-  // The link works once: opening it again (another browser, a leaked shell history) gets nothing.
-  expect((await page.request.get(link!, { maxRedirects: 0, failOnStatusCode: false })).status()).toBe(403);
+  expect(await tab.context().cookies(dashOrigin)).toEqual([]);
+  // The link works once: trading its token again (another browser, a leaked shell history) gets nothing.
+  const again = await page.request.post(`${dashOrigin}/api/session`, { headers: { origin: dashOrigin, 'x-uncage-link': linkToken }, failOnStatusCode: false });
+  expect(again.status()).toBe(403);
+  // A reload keeps the session (the API token is in this tab's sessionStorage).
+  await tab.reload();
+  await expect(card).toBeVisible();
 
   // A transient server error is shown, and the page keeps refreshing (it is not "stopped").
   expect(problems).toEqual([]);

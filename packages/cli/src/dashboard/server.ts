@@ -16,8 +16,8 @@ Usage:
 Opens a page (only on this computer, at 127.0.0.1) that shows every connected website with its
 domain, machine id, status and recent activity, lets you disconnect a website (like
 "uncage sites remove") and turn ACP agents on or off (like "uncage runtimes enable|disable").
-The link works once (it carries a one-time secret, traded for a session in that browser); the
-page stops when you close it or after 30 minutes idle. Run it again for a new link.
+The link works once (it carries a one-time secret after "#", traded for a session in that browser
+tab); the page stops when you close it or after 30 minutes idle. Run it again for a new link.
 
 Options:
   --no-browser   Print the link instead of opening a browser.
@@ -42,7 +42,7 @@ export interface StartDashboardDeps {
 }
 
 export interface Dashboard {
-  /** `http://127.0.0.1:<port>/?t=<token>`: the one link that opens the page. */
+  /** `http://127.0.0.1:<port>/#t=<token>`: the one link that opens the page (the token is never sent in a request line). */
   url: string;
   /** Resolves once the server stopped (idle, page closed, or `close()`). */
   closed: Promise<void>;
@@ -65,14 +65,6 @@ function decode(segment: string): string {
   }
 }
 
-function cookieValue(header: string | undefined, name: string): string | undefined {
-  for (const part of (header ?? '').split(';')) {
-    const i = part.indexOf('=');
-    if (i > 0 && part.slice(0, i).trim() === name) return part.slice(i + 1).trim();
-  }
-  return undefined;
-}
-
 const SECURITY_HEADERS = {
   'cache-control': 'no-store',
   'referrer-policy': 'no-referrer',
@@ -84,17 +76,20 @@ const SECURITY_HEADERS = {
 
 /**
  * `uncage dashboard`: a page on 127.0.0.1 (random port). Every request must carry `Host:
- * 127.0.0.1:<port>` (DNS rebinding) and no foreign `Origin`. The link's 32-byte token works once:
- * it is traded for a separate session secret in an HttpOnly SameSite=Strict cookie, and `/api/*`
- * also needs the session's header token (`x-uncage-dashboard`, embedded in the page). State
- * changes are POSTs with both and this page's own `Origin`. No CORS headers, ever.
+ * 127.0.0.1:<port>` (DNS rebinding) and no foreign `Origin`. No cookies (they ignore ports, so any
+ * other 127.0.0.1 server could collect one). The link's 32-byte token sits in the URL fragment,
+ * which browsers never send: `GET /` serves a page with no secret, whose script trades the token
+ * once (`POST /api/session`, header `x-uncage-link`, this page's own `Origin`) for an API token it
+ * keeps in `sessionStorage` (per origin, so per port). Every other `/api/*` needs that token in
+ * `x-uncage-dashboard`; state changes are POSTs that also carry this page's own `Origin`. No CORS
+ * headers, ever.
  */
 export async function startDashboard(d: StartDashboardDeps): Promise<Dashboard> {
   /** The link's one-time token: void once traded for a session. */
   let token: string | null = randomBytes(32).toString('base64url');
   const linkToken = token;
-  /** The session: a cookie secret, and a header token only the page's own script can read. */
-  let session: { cookie: string; api: string } | null = null;
+  /** The session's API token (header `x-uncage-dashboard`), once the link was traded. */
+  let api: string | null = null;
   const locale = d.locale ?? detectLocale(process.env);
   const deps: DashboardDeps = {
     home: d.home,
@@ -107,7 +102,6 @@ export async function startDashboard(d: StartDashboardDeps): Promise<Dashboard> 
   const graceMs = d.graceMs ?? 10_000;
   let host = '';
   let self = '';
-  let cookieName = '';
 
   let resolveClosed!: () => void;
   const closed = new Promise<void>((r) => (resolveClosed = r));
@@ -124,6 +118,10 @@ export async function startDashboard(d: StartDashboardDeps): Promise<Dashboard> 
   };
   const json = (res: ServerResponse, status: number, v: unknown) => send(res, status, JSON.stringify(v), { 'content-type': 'application/json; charset=utf-8' });
   const deny = (res: ServerResponse) => send(res, 403, 'Forbidden', { 'content-type': 'text/plain; charset=utf-8' });
+  const header = (req: IncomingMessage, name: string): string | undefined => {
+    const v = req.headers[name];
+    return typeof v === 'string' ? v : undefined;
+  };
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // DNS rebinding: a page on evil.com resolving to 127.0.0.1 sends its own Host.
@@ -134,38 +132,31 @@ export async function startDashboard(d: StartDashboardDeps): Promise<Dashboard> 
     const url = new URL(req.url ?? '/', self);
     const method = req.method ?? 'GET';
 
-    if (method === 'GET' && url.pathname === '/' && url.searchParams.has('t')) {
-      if (token === null || !sameSecret(url.searchParams.get('t') ?? undefined, token)) return deny(res);
-      // One time: trade the link's token for a fresh session secret in a cookie, and drop it from
-      // the address bar (and history). The link opens nothing after this.
-      token = null;
-      session = { cookie: randomBytes(32).toString('base64url'), api: randomBytes(32).toString('base64url') };
-      arm(idleMs);
-      return send(res, 303, '', {
-        location: '/',
-        'set-cookie': `${cookieName}=${session.cookie}; HttpOnly; SameSite=Strict; Path=/`,
-      });
-    }
-    if (!session || !sameSecret(cookieValue(req.headers.cookie, cookieName), session.cookie)) return deny(res);
-    // Cookies ignore ports, so another 127.0.0.1 server could collect this one: the API also needs
-    // the header token, which only the page (same origin) can read.
-    if (url.pathname.startsWith('/api/')) {
-      const header = req.headers['x-uncage-dashboard'];
-      if (!sameSecret(typeof header === 'string' ? header : undefined, session.api)) return deny(res);
-    }
-    arm(idleMs);
-
+    // The page itself holds no secret: anyone who can reach it learns nothing.
     if (method === 'GET' && url.pathname === '/') {
       const nonce = randomBytes(16).toString('base64');
-      return send(res, 200, dashboardPage(locale, nonce, session.api), {
+      return send(res, 200, dashboardPage(locale, nonce), {
         'content-type': 'text/html; charset=utf-8',
         'content-security-policy': `default-src 'self'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
       });
     }
+    if (!url.pathname.startsWith('/api/')) return send(res, 404, 'Not found', { 'content-type': 'text/plain; charset=utf-8' });
+
+    // One time: the link's token (from the fragment, read by the page script) becomes the API token.
+    if (url.pathname === '/api/session') {
+      if (method !== 'POST' || origin !== self || token === null || !sameSecret(header(req, 'x-uncage-link'), token)) return deny(res);
+      token = null;
+      api = randomBytes(32).toString('base64url');
+      arm(idleMs);
+      return json(res, 200, { apiToken: api });
+    }
+    if (api === null || !sameSecret(header(req, 'x-uncage-dashboard'), api)) return deny(res);
+    arm(idleMs);
+
     if (method === 'GET' && url.pathname === '/api/sites') return json(res, 200, await dashboardData(deps));
     if (method !== 'POST') return send(res, 404, 'Not found', { 'content-type': 'text/plain; charset=utf-8' });
 
-    // State changes: the cookie (checked above) and this page's own Origin, never a missing one.
+    // State changes: the API token (checked above) and this page's own Origin, never a missing one.
     if (origin !== self) return deny(res);
     if (url.pathname === '/api/bye') {
       arm(graceMs);
@@ -194,8 +185,6 @@ export async function startDashboard(d: StartDashboardDeps): Promise<Dashboard> 
   const port = (server.address() as AddressInfo).port;
   host = `127.0.0.1:${port}`;
   self = `http://${host}`;
-  // Cookies ignore ports: one name per dashboard so two never clash.
-  cookieName = `uncage_dashboard_${port}`;
   arm(idleMs);
 
   let closing: Promise<void> | undefined;
@@ -208,7 +197,7 @@ export async function startDashboard(d: StartDashboardDeps): Promise<Dashboard> 
     return closing;
   }
 
-  const url = `${self}/?t=${linkToken}`;
+  const url = `${self}/#t=${linkToken}`;
   if (d.open !== false) {
     await d.exec(...openUrlCommand(url, d.platform ?? process.platform)).catch(() => undefined);
   }

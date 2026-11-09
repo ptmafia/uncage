@@ -105,17 +105,15 @@ async function dashboard(home: string, extra: Partial<Parameters<typeof startDas
   const d = await startDashboard({ home, exec, open: false, service: fakeService(), fetch, ...extra });
   cleanups.push(() => d.close());
   const u = new URL(d.url);
-  const token = u.searchParams.get('t')!;
+  const token = /^#t=([A-Za-z0-9_-]+)$/.exec(u.hash)?.[1] ?? '';
   const self = `${u.protocol}//${u.host}`;
-  /** The first visit: the session cookie it sets, and the per-session API header token from the page. */
-  const login = async (): Promise<{ cookie: string; api: string; h: Record<string, string> }> => {
-    const r = await raw(d.url, { headers: { host: u.host } });
-    expect(r.status).toBe(303);
-    const cookie = String(r.headers['set-cookie']).split(';')[0]!;
-    const page = await raw(`${self}/`, { headers: { host: u.host, cookie } });
-    const api = /"apiToken":"([A-Za-z0-9_-]+)"/.exec(page.body)?.[1] ?? '';
+  /** What the page script does: trade the link's fragment token for the API token. */
+  const login = async (): Promise<{ api: string; h: Record<string, string> }> => {
+    const r = await raw(`${self}/api/session`, { method: 'POST', headers: { host: u.host, origin: self, 'x-uncage-link': token } });
+    expect(r.status).toBe(200);
+    const api = (JSON.parse(r.body) as { apiToken: string }).apiToken;
     expect(api).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    return { cookie, api, h: { host: u.host, cookie, 'x-uncage-dashboard': api } };
+    return { api, h: { host: u.host, 'x-uncage-dashboard': api } };
   };
   return { d, u, token, self, host: u.host, login, exec };
 }
@@ -126,58 +124,57 @@ describe('uncage dashboard', () => {
     const { d, u, token, self, host } = await dashboard(home);
     expect(u.hostname).toBe('127.0.0.1');
     expect(u.port).not.toBe('');
+    expect(u.pathname).toBe('/');
+    expect(u.search).toBe(''); // the token is only in the fragment: never in a request line, log or Referer
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 bytes, base64url
+    const session = (headers: Record<string, string>) => raw(`${self}/api/session`, { method: 'POST', headers });
 
-    // No token at all.
-    expect((await raw(`${self}/`, { headers: { host } })).status).toBe(403);
-    expect((await raw(`${self}/api/sites`, { headers: { host } })).status).toBe(403);
-    // Wrong token.
-    expect((await raw(`${self}/?t=${'A'.repeat(43)}`, { headers: { host } })).status).toBe(403);
-    // DNS rebinding: the right token, but a page on evil.com resolving to 127.0.0.1.
-    expect((await raw(d.url, { headers: { host: `evil.com:${u.port}` } })).status).toBe(403);
-    expect((await raw(d.url, { headers: { host: 'evil.com' } })).status).toBe(403);
-    expect((await raw(d.url, { headers: { host: `localhost:${u.port}` } })).status).toBe(403);
-
-    // The first visit trades the token for an HttpOnly SameSite=Strict session cookie (a separate
-    // secret) and drops it from the URL.
-    const first = await raw(d.url, { headers: { host } });
-    expect(first.status).toBe(303);
-    expect(first.headers.location).toBe('/');
-    const setCookie = String(first.headers['set-cookie']);
-    expect(setCookie).toMatch(/HttpOnly/i);
-    expect(setCookie).toMatch(/SameSite=Strict/i);
-    expect(setCookie).not.toContain(token);
-    expect(first.headers['referrer-policy']).toBe('no-referrer');
-    const cookie = setCookie.split(';')[0]!;
-    // One-time: the link (in shell history, the browser's argv) no longer opens anything.
-    expect((await raw(d.url, { headers: { host } })).status).toBe(403);
-    // The token itself is never a session.
-    expect((await raw(`${self}/`, { headers: { host, cookie: `${cookie.split('=')[0]}=${token}` } })).status).toBe(403);
-
-    // With the cookie: the page works, with no CORS headers and a strict CSP.
-    const page = await raw(`${self}/`, { headers: { host, cookie } });
+    // The page holds no secret: served to anyone on this host, with a strict CSP and no CORS.
+    const page = await raw(`${self}/`, { headers: { host } });
     expect(page.status).toBe(200);
+    expect(page.body).not.toContain(token);
+    expect(page.body).not.toMatch(/[A-Za-z0-9_-]{43}/); // no token of any kind
+    expect(page.headers['set-cookie']).toBeUndefined();
     expect(page.headers['access-control-allow-origin']).toBeUndefined();
+    expect(page.headers['referrer-policy']).toBe('no-referrer');
     const csp = String(page.headers['content-security-policy']);
     expect(csp).toContain("default-src 'self'");
     const nonce = /'nonce-([^']+)'/.exec(csp)?.[1];
     expect(nonce).toBeTruthy();
     expect(page.body).toContain(`<script nonce="${nonce}">`);
-    expect(page.body).not.toContain(token);
-    const api = /"apiToken":"([A-Za-z0-9_-]+)"/.exec(page.body)?.[1] ?? '';
-    expect(api).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(cookie).not.toContain(api);
-    const h = { host, cookie, 'x-uncage-dashboard': api };
+    // DNS rebinding / other origins get not even the page.
+    expect((await raw(`${self}/`, { headers: { host: `evil.com:${u.port}` } })).status).toBe(403);
+    expect((await raw(`${self}/`, { headers: { host: 'evil.com' } })).status).toBe(403);
+    expect((await raw(`${self}/`, { headers: { host: `localhost:${u.port}` } })).status).toBe(403);
+    expect((await raw(`${self}/`, { headers: { host, origin: 'http://evil.com' } })).status).toBe(403);
 
-    // The API also needs the per-session header token (a cookie harvested by another
-    // 127.0.0.1 server, cookies ignore ports, is not enough).
-    expect((await raw(`${self}/api/sites`, { headers: { host, cookie } })).status).toBe(403);
+    // No API without a session.
+    expect((await raw(`${self}/api/sites`, { headers: { host } })).status).toBe(403);
+    expect((await raw(`${self}/api/sites`, { headers: { host, 'x-uncage-dashboard': token } })).status).toBe(403); // the link token is not an API token
+    // Trading the token: POST, this page's own Origin, the right token, the right Host.
+    expect((await session({ host, origin: self, 'x-uncage-link': 'A'.repeat(43) })).status).toBe(403);
+    expect((await session({ host, 'x-uncage-link': token })).status).toBe(403); // no Origin
+    expect((await session({ host, origin: 'http://evil.com', 'x-uncage-link': token })).status).toBe(403);
+    expect((await session({ host: `evil.com:${u.port}`, origin: self, 'x-uncage-link': token })).status).toBe(403);
+    expect((await raw(`${self}/api/session`, { headers: { host, origin: self, 'x-uncage-link': token } })).status).toBe(403); // GET
+    expect((await raw(`${self}/?t=${token}`, { headers: { host } })).headers['set-cookie']).toBeUndefined(); // the old query form opens nothing
+    const first = await session({ host, origin: self, 'x-uncage-link': token });
+    expect(first.status).toBe(200);
+    expect(first.headers['set-cookie']).toBeUndefined();
+    const api = (JSON.parse(first.body) as { apiToken: string }).apiToken;
+    expect(api).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(api).not.toBe(token);
+    // One-time: the link (in shell history, the browser's argv) no longer opens a session.
+    expect((await session({ host, origin: self, 'x-uncage-link': token })).status).toBe(403);
+    void d;
+
+    // Every /api/* needs the header; a cookie (or anything else) never stands in for it.
+    const h = { host, 'x-uncage-dashboard': api };
+    expect((await raw(`${self}/api/sites`, { headers: { host, cookie: `uncage_dashboard_${u.port}=${api}` } })).status).toBe(403);
     expect((await raw(`${self}/api/sites`, { headers: { ...h, 'x-uncage-dashboard': 'C'.repeat(43) } })).status).toBe(403);
-    expect((await raw(`${self}/api/sites`, { headers: { host, 'x-uncage-dashboard': api } })).status).toBe(403);
     const ok = await raw(`${self}/api/sites`, { headers: h });
     expect(ok.status).toBe(200);
     expect(ok.headers['access-control-allow-origin']).toBeUndefined();
-
     // Neither helps a rebinding page or another origin.
     expect((await raw(`${self}/api/sites`, { headers: { ...h, host: `evil.com:${u.port}` } })).status).toBe(403);
     expect((await raw(`${self}/api/sites`, { headers: { ...h, origin: 'http://evil.com' } })).status).toBe(403);
@@ -187,20 +184,33 @@ describe('uncage dashboard', () => {
     expect(pre.status).toBe(403);
     expect(pre.headers['access-control-allow-origin']).toBeUndefined();
 
-    // POSTs need the cookie, the header token AND the dashboard's own Origin.
+    // POSTs need the header token AND the dashboard's own Origin.
     const post = (headers: Record<string, string>) => raw(`${self}/api/runtimes/gemini/disable`, { method: 'POST', headers });
-    expect((await post({ host, 'x-uncage-dashboard': api, origin: self })).status).toBe(403); // no cookie
-    expect((await post({ host, cookie, origin: self })).status).toBe(403); // no header token
+    expect((await post({ host, origin: self })).status).toBe(403); // no header token
     expect((await post(h)).status).toBe(403); // no Origin
     expect((await post({ ...h, origin: 'http://evil.com' })).status).toBe(403);
-    expect((await post({ ...h, cookie: `${cookie.split('=')[0]}=${'B'.repeat(43)}`, origin: self })).status).toBe(403);
     expect((await post({ ...h, origin: 'null' })).status).toBe(403);
+    expect((await post({ host, origin: self, 'x-uncage-link': token })).status).toBe(403);
     expect((await raw(`${self}/api/runtimes/gemini/disable?t=${token}`, { method: 'POST', headers: { host, origin: self } })).status).toBe(403);
     expect((await loadAgentConfig(home)).runtimes?.acp.disable).toEqual([]);
     expect((await post({ ...h, origin: self })).status).toBe(200);
     // A malformed escape in the path is a bad request, not a server error.
     expect((await raw(`${self}/api/sites/%E0%A4%A/disconnect`, { method: 'POST', headers: { ...h, origin: self } })).status).toBe(400);
     expect((await raw(`${self}/api/runtimes/%ZZ/enable`, { method: 'POST', headers: { ...h, origin: self } })).status).toBe(400);
+  });
+
+  it('one malformed site URL in agent.yaml does not break the list (shown as is, domain ?)', async () => {
+    const home = await tmpHome();
+    await updateAgentSites(home, () => [
+      { id: 'bad', name: 'Bad', url: 'mailto:someone', machineId: 'm', token: 't' },
+      { id: 'a.example', name: 'A', url: 'https://a.example/api/uncage', machineId: 'm', token: 't2' },
+    ]);
+    const { self, login } = await dashboard(home, { service: fakeService(false) });
+    const { h } = await login();
+    const r = await raw(`${self}/api/sites`, { headers: h });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body) as { sites: Array<{ id: string; domain: string; origin: string }> };
+    expect(body.sites).toEqual([expect.objectContaining({ id: 'bad', domain: '?', origin: 'mailto:someone' }), expect.objectContaining({ id: 'a.example', domain: 'a.example' })]);
   });
 
   it('lists sites with domain and status', async () => {
@@ -337,7 +347,7 @@ describe('uncage dashboard', () => {
     const d = await startDashboard({ home, exec, platform: 'darwin', service: null });
     cleanups.push(() => d.close());
     expect(exec).toHaveBeenCalledWith('open', [d.url]);
-    expect(d.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/\?t=[A-Za-z0-9_-]{43}$/);
+    expect(d.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/#t=[A-Za-z0-9_-]{43}$/);
   });
 
   it('exits after the idle timeout and when the page says goodbye', async () => {
@@ -359,13 +369,12 @@ describe('uncage dashboard', () => {
       ['zh', 'zh-CN', '已在网站上撤销这台电脑'],
       ['zh', 'zh-CN', '"failed":"失败"'],
       ['ja', 'ja', '接続済みのサイト'],
-      ['ja', 'ja', 'サイト上でこのコンピューターを取り消しました'],
+      ['ja', 'ja', 'サイト上でこのコンピュータを取り消しました'],
       ['ja', 'ja', '"failed":"失敗"'],
       ['en', 'en', 'Connected websites'],
     ] as const) {
-      const { self, login } = await dashboard(home, { service: null, locale });
-      const { h } = await login();
-      const page = await raw(`${self}/`, { headers: h });
+      const { self, host } = await dashboard(home, { service: null, locale });
+      const page = await raw(`${self}/`, { headers: { host } });
       expect(page.body).toContain(`<html lang="${lang}">`);
       expect(page.body).toContain(text);
     }

@@ -69,17 +69,18 @@ const STRINGS = {
     err_bad_request: 'The request was not understood.',
     loadError: 'Could not refresh ({detail}); trying again.',
     closed: 'The dashboard has stopped. Run uncage dashboard to open it again.',
+    expired: 'This link was already used (it works once). Run uncage dashboard for a new link.',
   },
   zh: {
     title: 'Uncage 控制台',
     heading: '已连接的网站',
     lead: '这台电脑已连接的网站，以及它们在这里做了什么。只有你能打开此页面；30 分钟无操作后自动关闭。',
-    agent: '后台代理',
+    agent: '守护进程（agent）',
     agentRunning: '运行中',
     agentStopped: '未运行',
     agentInstalled: '已安装',
     agentNotInstalled: '未安装（运行：uncage agent install）',
-    agentNone: '没有后台服务（前台运行的代理）',
+    agentNone: '没有后台服务（守护进程在前台运行）',
     online: '在线',
     offline: '离线',
     revoked: '已撤销',
@@ -88,18 +89,18 @@ const STRINGS = {
     machine: '电脑 ID',
     since: '连接时间',
     unknown: '未知',
-    offered: '提供的智能体',
+    offered: '提供的 coding agent',
     activity: '最近活动',
     noActivity: '暂无活动。',
     disconnect: '断开连接',
     disconnecting: '正在断开…',
     confirmDisconnect: '断开与 {name}（{domain}）的连接？\n\n这会在该网站上撤销这台电脑，并删除本机保存的令牌。本地会话数据和工作区会保留。',
     empty: '还没有连接任何网站。使用 uncage setup <url> 连接一个。',
-    runtimesHeading: '这台电脑上的智能体',
-    runtimesLead: '这台电脑向所有已连接网站提供的编码智能体。',
+    runtimesHeading: '这台电脑上的 coding agent',
+    runtimesLead: '这台电脑向所有已连接网站提供的 coding agent。',
     enable: '启用',
     disable: '停用',
-    confirmEnable: '启用 {name}？\n\n每次代理启动时 Uncage 都会运行它。通过 npx/uvx 分发的智能体会被下载并运行。',
+    confirmEnable: '启用 {name}？\n\n每次守护进程启动时 Uncage 都会运行它。通过 npx/uvx 分发的 agent 会被下载并运行。',
     builtin: '内置',
     enabled: '已启用',
     disabled: '已停用',
@@ -125,23 +126,24 @@ const STRINGS = {
     runtime_disabled: '已停用 {name}。',
     runs: 'Uncage 将运行：{runs}',
     downloads: '它将从 {source} 下载。',
-    restart_restarted: '后台代理已重启。',
-    restart_failed: '无法重启后台代理。',
+    restart_restarted: '守护进程已重启。',
+    restart_failed: '无法重启守护进程。',
     restart_not_installed: '请重启 "uncage agent" 以应用更改。',
     restart_none: '请重启 "uncage agent" 以应用更改。',
     err_not_found: '这个网站（已）不在连接列表中。',
     err_not_revoked: '网站返回了 HTTP 401，但不是来自 Uncage（前面有代理？）。没有撤销任何东西，网站仍保持连接；请重试，或在网站的电脑列表中移除这台电脑。',
     err_revoke_failed: '无法断开连接：{message}',
-    err_unknown_agent: '未知的 ACP 智能体。',
-    err_builtin: '内置智能体无法在这里启用或停用。',
+    err_unknown_agent: '未知的 ACP agent。',
+    err_builtin: '内置 agent 无法在这里启用或停用。',
     err_bad_request: '无法识别该请求。',
     loadError: '刷新失败（{detail}），正在重试。',
     closed: '控制台已停止。运行 uncage dashboard 重新打开。',
+    expired: '这个链接已经用过了（只能用一次）。运行 uncage dashboard 获取新链接。',
   },
   ja: {
     title: 'Uncage ダッシュボード',
     heading: '接続済みのサイト',
-    lead: 'このコンピューターが接続しているサイトと、そこで行われたこと。このページを開けるのはあなただけです。30 分間操作がないと閉じます。',
+    lead: 'このコンピュータが接続しているサイトと、そこで行われたこと。このページを開けるのはあなただけです。30 分間操作がないと閉じます。',
     agent: 'バックグラウンドエージェント',
     agentRunning: '実行中',
     agentStopped: '停止中',
@@ -161,10 +163,10 @@ const STRINGS = {
     noActivity: 'アクティビティはまだありません。',
     disconnect: '接続を解除',
     disconnecting: '解除しています…',
-    confirmDisconnect: '{name}（{domain}）との接続を解除しますか？\n\nサイト上でこのコンピューターを取り消し、ここに保存されたトークンを削除します。ローカルのセッションデータとワークスペースは残ります。',
+    confirmDisconnect: '{name}（{domain}）との接続を解除しますか？\n\nサイト上でこのコンピュータを取り消し、ここに保存されたトークンを削除します。ローカルのセッションデータとワークスペースは残ります。',
     empty: '接続済みのサイトはありません。uncage setup <url> で接続できます。',
-    runtimesHeading: 'このコンピューターのエージェント',
-    runtimesLead: 'このコンピューターが接続済みのすべてのサイトに提供するコーディングエージェント。',
+    runtimesHeading: 'このコンピュータのエージェント',
+    runtimesLead: 'このコンピュータが接続済みのすべてのサイトに提供するコーディングエージェント。',
     enable: '有効にする',
     disable: '無効にする',
     confirmEnable: '{name} を有効にしますか？\n\nエージェントが起動するたびに Uncage がこれを実行します。npx/uvx で配布されるエージェントはダウンロードして実行されます。',
@@ -184,10 +186,10 @@ const STRINGS = {
     ok: '成功',
     failed: '失敗',
     disconnected: '{name}（{domain}）との接続を解除しました。',
-    revoke_revoked: 'サイト上でこのコンピューターを取り消しました。',
-    revoke_already_revoked: 'サイトはこのコンピューターをもう認識していませんでした（取り消し済み）。',
-    revoke_unreachable: 'サイトに接続できませんでした。サイトのマシン一覧からもこのコンピューターを削除してください。',
-    revoke_http_error: 'サイトがエラーを返しました。サイトのマシン一覧からもこのコンピューターを削除してください。',
+    revoke_revoked: 'サイト上でこのコンピュータを取り消しました。',
+    revoke_already_revoked: 'サイトはこのコンピュータをもう認識していませんでした（取り消し済み）。',
+    revoke_unreachable: 'サイトに接続できませんでした。サイトのマシン一覧からもこのコンピュータを削除してください。',
+    revoke_http_error: 'サイトがエラーを返しました。サイトのマシン一覧からもこのコンピュータを削除してください。',
     revoke_skipped: 'すでに取り消されていました。',
     runtime_enabled: '{name} を有効にしました。',
     runtime_disabled: '{name} を無効にしました。',
@@ -198,13 +200,14 @@ const STRINGS = {
     restart_not_installed: '変更を反映するには "uncage agent" を再起動してください。',
     restart_none: '変更を反映するには "uncage agent" を再起動してください。',
     err_not_found: 'そのサイトは（もう）接続されていません。',
-    err_not_revoked: 'サイトは HTTP 401 を返しましたが、Uncage からではありません（前段にプロキシがある？）。何も取り消されておらず、サイトは接続されたままです。再試行するか、サイトのマシン一覧からこのコンピューターを削除してください。',
+    err_not_revoked: 'サイトは HTTP 401 を返しましたが、Uncage からではありません（前段にプロキシがある？）。何も取り消されておらず、サイトは接続されたままです。再試行するか、サイトのマシン一覧からこのコンピュータを削除してください。',
     err_revoke_failed: '接続を解除できませんでした: {message}',
     err_unknown_agent: '不明な ACP エージェントです。',
     err_builtin: '組み込みエージェントはここでは有効・無効にできません。',
     err_bad_request: 'リクエストを理解できませんでした。',
     loadError: '更新できませんでした（{detail}）。再試行しています。',
     closed: 'ダッシュボードは停止しました。uncage dashboard で再度開けます。',
+    expired: 'このリンクは使用済みです（1 回だけ有効）。uncage dashboard で新しいリンクを開いてください。',
   },
 } satisfies Record<DialogLocale, Record<string, string>>;
 
@@ -264,14 +267,17 @@ tr:first-child td{border-top:0}
 `;
 
 /**
- * The page script: renders `/api/sites` with DOM APIs (text only, never HTML), refreshes it, and
- * posts actions with the session cookie. Says goodbye when the tab closes so the server can exit.
+ * The page script: trades the link's one-time token (URL fragment) for the API token (kept in
+ * sessionStorage, so a reload keeps working), renders `/api/sites` with DOM APIs (text only, never
+ * HTML), refreshes it, and posts actions with the API token. Says goodbye when the tab closes so
+ * the server can exit.
  */
 const SCRIPT = `
 const CONFIG = JSON.parse(document.getElementById('config').textContent);
 const T = CONFIG.strings;
-/** The session's header token: only this page's own script can read it. */
-const AUTH = { 'x-uncage-dashboard': CONFIG.apiToken };
+const KEY = 'uncage-dashboard-api';
+/** The API token header, once the session is set up. */
+let AUTH = null;
 const LANG = document.documentElement.lang;
 const $ = (s) => document.querySelector(s);
 const el = (tag, attrs, ...kids) => {
@@ -405,14 +411,39 @@ async function load() {
     $('#notice').hidden = true;
   }
 }
-const timer = setInterval(() => { if (!busy && !stopped && document.visibilityState === 'visible') void load(); }, 5000);
-// Tell the server the page is gone (keepalive outlives the page; sendBeacon cannot send the header).
-addEventListener('pagehide', () => { void fetch('/api/bye', { method: 'POST', headers: AUTH, keepalive: true }).catch(() => undefined); });
-void load();
+let timer;
+
+/**
+ * The session: the link's \`#t=\` token (never sent to the server by the browser) is traded once for
+ * the API token and dropped from the address bar; a reload finds the API token in sessionStorage.
+ */
+async function session() {
+  const m = /^#t=([A-Za-z0-9_-]+)$/.exec(location.hash);
+  if (m) {
+    history.replaceState(null, '', '/');
+    const res = await fetch('/api/session', { method: 'POST', headers: { 'x-uncage-link': m[1] } }).catch(() => null);
+    if (res && res.ok) sessionStorage.setItem(KEY, (await res.json()).apiToken);
+  }
+  const t = sessionStorage.getItem(KEY);
+  return t ? { 'x-uncage-dashboard': t } : null;
+}
+
+(async () => {
+  AUTH = await session();
+  if (!AUTH) {
+    stopped = true;
+    notice(T.expired, true);
+    return;
+  }
+  timer = setInterval(() => { if (!busy && !stopped && document.visibilityState === 'visible') void load(); }, 5000);
+  // Tell the server the page is gone (keepalive outlives the page; sendBeacon cannot send the header).
+  addEventListener('pagehide', () => { void fetch('/api/bye', { method: 'POST', headers: AUTH, keepalive: true }).catch(() => undefined); });
+  void load();
+})();
 `;
 
-/** The dashboard page: static markup, strings as JSON, the script under the request's CSP nonce. */
-export function dashboardPage(locale: DialogLocale, nonce: string, apiToken: string): string {
+/** The dashboard page: static markup, strings as JSON, the script under the request's CSP nonce. No secrets. */
+export function dashboardPage(locale: DialogLocale, nonce: string): string {
   const t = STRINGS[locale];
   return `<!doctype html>
 <html lang="${HTML_LANG[locale]}">
@@ -436,7 +467,7 @@ export function dashboardPage(locale: DialogLocale, nonce: string, apiToken: str
 <h2>${esc(t.policy)}</h2>
 <section class="card" id="policy" aria-label="${esc(t.policy)}"></section>
 </main>
-<script type="application/json" id="config">${scriptJson({ strings: t, apiToken })}</script>
+<script type="application/json" id="config">${scriptJson({ strings: t })}</script>
 <script nonce="${nonce}">${SCRIPT}</script>
 </body>
 </html>`;
