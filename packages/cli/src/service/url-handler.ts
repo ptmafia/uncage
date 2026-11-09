@@ -1,5 +1,5 @@
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { posix } from 'node:path';
+import { isAbsolute, posix } from 'node:path';
 import type { ExecFn } from '@uncage/agent';
 import { findCommand as defaultFindCommand, systemTool } from '@uncage/protocol/node';
 import type { ServiceSpec } from './types.js';
@@ -156,7 +156,8 @@ async function unregisterMac(d: UrlHandlerDeps): Promise<{ removed: boolean }> {
 
 const xdgDir = (env: NodeJS.ProcessEnv, name: 'XDG_DATA_HOME' | 'XDG_CONFIG_HOME', fallback: string): string => {
   const v = env[name];
-  return v && posix.isAbsolute(v) ? v : fallback;
+  // Absolute for the filesystem this runs on (a `C:/…` folder in tests on a Windows host).
+  return v && (posix.isAbsolute(v) || isAbsolute(v)) ? v : fallback;
 };
 const desktopPath = (home: string, env: NodeJS.ProcessEnv): string =>
   posix.join(xdgDir(env, 'XDG_DATA_HOME', posix.join(home, '.local', 'share')), 'applications', DESKTOP_FILE);
@@ -208,8 +209,10 @@ async function unregisterLinux(d: UrlHandlerDeps, scheme: string, env: NodeJS.Pr
   const text = await readFile(list, 'utf8').catch(() => null);
   if (text !== null) {
     const ours = `x-scheme-handler/${scheme}=${DESKTOP_FILE}`;
-    const kept = text.split('\n').filter((l) => l.trim() !== ours);
-    if (kept.length !== text.split('\n').length) await writeFile(list, kept.join('\n'));
+    // Line endings are kept as found (trim() also ignores a \r).
+    const all = text.split('\n');
+    const kept = all.filter((l) => l.trim() !== ours);
+    if (kept.length !== all.length) await writeFile(list, kept.join('\n'));
   }
   return { removed: had };
 }

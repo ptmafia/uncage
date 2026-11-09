@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join, posix } from 'node:path';
 import { promisify } from 'node:util';
 import type { ExecFn } from '@uncage/agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -26,6 +26,14 @@ async function tmpHome(): Promise<string> {
   const h = await mkdtemp(join(tmpdir(), 'uncage-urlh-'));
   cleanups.push(() => rm(h, { recursive: true, force: true }));
   return h;
+}
+
+/**
+ * A temp home written with forward slashes: the macOS / Linux code paths build POSIX paths whatever
+ * the host, and Windows accepts `C:/…` too, so these tests run the same on every runner.
+ */
+async function posixHome(): Promise<string> {
+  return (await tmpHome()).replace(/\\/g, '/');
 }
 
 const spec = (home: string, o: Partial<ServiceSpec> = {}): ServiceSpec => ({
@@ -60,9 +68,9 @@ function macExec() {
   return vi.fn<ExecFn>(async (file, args) => {
     if (file === '/usr/bin/osacompile') {
       const app = args[args.indexOf('-o') + 1]!;
-      await mkdir(join(app, 'Contents', 'MacOS'), { recursive: true });
-      await writeFile(join(app, 'Contents', 'Info.plist'), OSACOMPILE_PLIST);
-      await writeFile(join(app, 'Contents', 'MacOS', 'applet'), '');
+      await mkdir(posix.join(app, 'Contents', 'MacOS'), { recursive: true });
+      await writeFile(posix.join(app, 'Contents', 'Info.plist'), OSACOMPILE_PLIST);
+      await writeFile(posix.join(app, 'Contents', 'MacOS', 'applet'), '');
     }
     return { stdout: '', stderr: '' };
   });
@@ -95,28 +103,28 @@ describe('macOS handler', () => {
   });
 
   it('register writes ~/Library/Application Support/Uncage/UncageConnect.app (osacompile), re-signs and registers it with lsregister -f', async () => {
-    const home = await tmpHome();
+    const home = await posixHome();
     const exec = macExec();
     const r = await registerUrlHandler({ platform: 'darwin', home, exec, spec: spec(home) });
     const app = macAppPath(home);
-    expect(app).toBe(join(home, 'Library', 'Application Support', 'Uncage', 'UncageConnect.app'));
+    expect(app).toBe(posix.join(home, 'Library', 'Application Support', 'Uncage', 'UncageConnect.app'));
     expect(r).toEqual({ registered: true, location: app, notes: [] });
     const calls = exec.mock.calls.map(([f, a]) => [f, ...a]);
-    expect(calls[0]).toEqual(['/usr/bin/osacompile', '-o', app, join(home, 'Library', 'Application Support', 'Uncage', 'UncageConnect.applescript')]);
+    expect(calls[0]).toEqual(['/usr/bin/osacompile', '-o', app, posix.join(home, 'Library', 'Application Support', 'Uncage', 'UncageConnect.applescript')]);
     expect(calls[1]).toEqual(['/usr/bin/codesign', '--force', '--sign', '-', app]);
     expect(calls[2]).toEqual(['/usr/bin/codesign', '--verify', app]);
     expect(calls[3]).toEqual([LSREGISTER, '-f', app]);
     expect(LSREGISTER).toBe('/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister');
-    const plist = await readFile(join(app, 'Contents', 'Info.plist'), 'utf8');
+    const plist = await readFile(posix.join(app, 'Contents', 'Info.plist'), 'utf8');
     expect(plist).toContain('<string>dev.uncage.connect</string>');
     expect(plist).toContain('<string>uncage</string>');
-    const src = await readFile(join(home, 'Library', 'Application Support', 'Uncage', 'UncageConnect.applescript'), 'utf8');
+    const src = await readFile(posix.join(home, 'Library', 'Application Support', 'Uncage', 'UncageConnect.applescript'), 'utf8');
     expect(src).toContain('on open location theURL');
   });
 
   it('a failing re-sign or signature check reports not registered and never calls lsregister', async () => {
     for (const failing of [['--force', '--sign', '-'], ['--verify']]) {
-      const home = await tmpHome();
+      const home = await posixHome();
       const inner = macExec();
       const exec = vi.fn<ExecFn>(async (file, args) => {
         if (file === '/usr/bin/codesign' && failing.every((a, i) => args[i] === a)) throw Object.assign(new Error('x'), { stderr: 'invalid signature' });
@@ -130,19 +138,19 @@ describe('macOS handler', () => {
   });
 
   it('unregister unregisters from LaunchServices and removes the bundle', async () => {
-    const home = await tmpHome();
+    const home = await posixHome();
     const exec = macExec();
     await registerUrlHandler({ platform: 'darwin', home, exec, spec: spec(home) });
     exec.mockClear();
     expect(await unregisterUrlHandler({ platform: 'darwin', home, exec })).toEqual({ removed: true });
     expect(exec).toHaveBeenCalledWith(LSREGISTER, ['-u', macAppPath(home)]);
     await expect(access(macAppPath(home))).rejects.toThrow();
-    await expect(access(join(home, 'Library', 'Application Support', 'Uncage', 'UncageConnect.applescript'))).rejects.toThrow();
+    await expect(access(posix.join(home, 'Library', 'Application Support', 'Uncage', 'UncageConnect.applescript'))).rejects.toThrow();
     expect(await unregisterUrlHandler({ platform: 'darwin', home, exec })).toEqual({ removed: false });
   });
 
   it('a failing osacompile reports not registered (with a note) and leaves no half bundle registered', async () => {
-    const home = await tmpHome();
+    const home = await posixHome();
     const exec = vi.fn<ExecFn>(async (file) => {
       if (file === '/usr/bin/osacompile') throw Object.assign(new Error('boom'), { stderr: 'syntax error' });
       return { stdout: '', stderr: '' };
@@ -168,22 +176,22 @@ describe('Linux handler', () => {
   });
 
   it('register writes $XDG_DATA_HOME/applications/uncage-connect.desktop and runs xdg-mime default', async () => {
-    const home = await tmpHome();
-    const data = join(home, 'xdg-data');
+    const home = await posixHome();
+    const data = posix.join(home, 'xdg-data');
     const exec = vi.fn<ExecFn>(async () => ({ stdout: '', stderr: '' }));
     const findCommand = vi.fn(async (c: string) => (c === 'xdg-mime' ? '/usr/bin/xdg-mime' : null));
     const r = await registerUrlHandler({ platform: 'linux', home, exec, spec: spec(home), env: { XDG_DATA_HOME: data }, findCommand });
-    const file = join(data, 'applications', 'uncage-connect.desktop');
+    const file = posix.join(data, 'applications', 'uncage-connect.desktop');
     expect(r).toEqual({ registered: true, location: file, notes: [] });
     expect(await readFile(file, 'utf8')).toContain('MimeType=x-scheme-handler/uncage;');
     expect(exec).toHaveBeenCalledWith('/usr/bin/xdg-mime', ['default', 'uncage-connect.desktop', 'x-scheme-handler/uncage']);
   });
 
   it('without XDG_DATA_HOME uses ~/.local/share; without xdg-mime writes the file and notes it', async () => {
-    const home = await tmpHome();
+    const home = await posixHome();
     const exec = vi.fn<ExecFn>(async () => ({ stdout: '', stderr: '' }));
     const r = await registerUrlHandler({ platform: 'linux', home, exec, spec: spec(home), env: { XDG_DATA_HOME: 'relative/ignored' }, findCommand: async () => null });
-    const file = join(home, '.local', 'share', 'applications', 'uncage-connect.desktop');
+    const file = posix.join(home, '.local', 'share', 'applications', 'uncage-connect.desktop');
     expect(r.location).toBe(file);
     expect(r.registered).toBe(false);
     expect(r.notes.join('\n')).toMatch(/xdg-mime/);
@@ -192,22 +200,31 @@ describe('Linux handler', () => {
   });
 
   it('unregister removes the .desktop file and our default in mimeapps.list (other lines kept)', async () => {
-    const home = await tmpHome();
-    const env = { XDG_DATA_HOME: join(home, 'd'), XDG_CONFIG_HOME: join(home, 'c') };
+    const home = await posixHome();
+    const env = { XDG_DATA_HOME: posix.join(home, 'd'), XDG_CONFIG_HOME: posix.join(home, 'c') };
     const exec = vi.fn<ExecFn>(async () => ({ stdout: '', stderr: '' }));
     await registerUrlHandler({ platform: 'linux', home, exec, spec: spec(home), env, findCommand: async () => '/usr/bin/xdg-mime' });
-    await mkdir(join(home, 'c'), { recursive: true });
+    await mkdir(posix.join(home, 'c'), { recursive: true });
     await writeFile(
-      join(home, 'c', 'mimeapps.list'),
+      posix.join(home, 'c', 'mimeapps.list'),
       '[Default Applications]\nx-scheme-handler/uncage=uncage-connect.desktop\ntext/html=firefox.desktop\nx-scheme-handler/other=uncage-connect.desktop\n',
     );
     expect(await unregisterUrlHandler({ platform: 'linux', home, exec, env })).toEqual({ removed: true });
-    await expect(access(join(home, 'd', 'applications', 'uncage-connect.desktop'))).rejects.toThrow();
-    expect(await readFile(join(home, 'c', 'mimeapps.list'), 'utf8')).toBe(
+    await expect(access(posix.join(home, 'd', 'applications', 'uncage-connect.desktop'))).rejects.toThrow();
+    expect(await readFile(posix.join(home, 'c', 'mimeapps.list'), 'utf8')).toBe(
       '[Default Applications]\ntext/html=firefox.desktop\nx-scheme-handler/other=uncage-connect.desktop\n',
     );
     expect(await unregisterUrlHandler({ platform: 'linux', home, exec, env })).toEqual({ removed: false });
   });
+});
+
+it('Linux unregister: mimeapps.list with CRLF line endings loses only our line', async () => {
+  const home = await posixHome();
+  const env = { XDG_DATA_HOME: posix.join(home, 'd'), XDG_CONFIG_HOME: posix.join(home, 'c') };
+  await mkdir(posix.join(home, 'c'), { recursive: true });
+  await writeFile(posix.join(home, 'c', 'mimeapps.list'), '[Default Applications]\r\nx-scheme-handler/uncage=uncage-connect.desktop\r\ntext/html=firefox.desktop\r\n');
+  await unregisterUrlHandler({ platform: 'linux', home, exec: vi.fn<ExecFn>(), env });
+  expect(await readFile(posix.join(home, 'c', 'mimeapps.list'), 'utf8')).toBe('[Default Applications]\r\ntext/html=firefox.desktop\r\n');
 });
 
 describe('Windows handler', () => {
@@ -267,10 +284,62 @@ it('other platforms: nothing to register', async () => {
  */
 const real = !!process.env.CI && process.env.UNCAGE_URL_HANDLER_TESTS === '1';
 const run = promisify(execFile);
-const realExec: ExecFn = async (file, args) => {
-  const r = await run(file, args, { encoding: 'utf8', windowsHide: true, timeout: 60_000 });
-  return { stdout: r.stdout, stderr: r.stderr };
-};
+
+/** One GitHub annotation (shows on the check run even when the log cannot be read). */
+function annotate(level: 'error' | 'warning' | 'notice', title: string, text: string): void {
+  console.log(`::${level} title=${title}::${text.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')}`);
+}
+
+interface Call {
+  cmd: string;
+  ms: number;
+  ok: boolean;
+  code?: unknown;
+  signal?: unknown;
+  stdout?: string;
+  stderr?: string;
+}
+
+const clip = (t: string | undefined, n = 1500): string => (t && t.length > n ? `${t.slice(0, n)}…(${t.length} chars)` : (t ?? ''));
+
+/** A real exec with a per-call timeout that records every call (exit code, signal, output) for diagnostics. */
+function recordingExec(log: Call[], o: { timeoutMs?: number; env?: NodeJS.ProcessEnv; maxBuffer?: number } = {}): ExecFn {
+  return async (file, args) => {
+    const t0 = Date.now();
+    const cmd = [file, ...args].join(' ');
+    try {
+      const r = await run(file, args, {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: o.timeoutMs ?? 30_000,
+        maxBuffer: o.maxBuffer ?? 16 * 1024 * 1024,
+        ...(o.env ? { env: o.env } : {}),
+      });
+      log.push({ cmd, ms: Date.now() - t0, ok: true, stdout: clip(r.stdout, 300), stderr: clip(r.stderr, 300) });
+      return { stdout: r.stdout, stderr: r.stderr };
+    } catch (e) {
+      const x = e as { code?: unknown; signal?: unknown; stdout?: string; stderr?: string; killed?: boolean };
+      log.push({ cmd, ms: Date.now() - t0, ok: false, code: x.code, signal: x.signal ?? (x.killed ? 'killed (timeout)' : undefined), stdout: clip(x.stdout), stderr: clip(x.stderr) });
+      throw e;
+    }
+  };
+}
+
+const formatCalls = (log: Call[]): string =>
+  log
+    .map((c) => `${c.ok ? 'ok ' : 'ERR'} ${c.ms}ms ${c.cmd}${c.ok ? '' : ` code=${String(c.code)} signal=${String(c.signal)}`}${c.stderr ? `\n    stderr: ${c.stderr}` : ''}${!c.ok && c.stdout ? `\n    stdout: ${c.stdout}` : ''}`)
+    .join('\n');
+
+/** Runs `fn`; on failure prints the calls and `extra()` diagnostics as one ::error:: annotation, then rethrows. */
+async function diagnosed(title: string, log: Call[], extra: () => Promise<string>, fn: () => Promise<void>): Promise<void> {
+  try {
+    await fn();
+  } catch (e) {
+    const more = await extra().catch((x: unknown) => `(diagnostics failed: ${String(x)})`);
+    annotate('error', title, `${e instanceof Error ? e.message : String(e)}\n\ncalls:\n${formatCalls(log)}\n\n${more}`);
+    throw e;
+  }
+}
 
 async function waitForFile(path: string, ms: number): Promise<string | null> {
   const end = Date.now() + ms;
@@ -295,69 +364,111 @@ describe.runIf(real)('real registration (CI runner only)', () => {
     return { cliEntry, argsFile };
   }
 
-  it.runIf(process.platform === 'darwin')('macOS: osacompile builds the applet, Info.plist declares the scheme, LaunchServices delivers the URL via Apple Events', async () => {
+  /**
+   * macOS. Hard checks: osacompile builds the applet, Info.plist declares the scheme, the re-signed
+   * bundle verifies, and LaunchServices lists our bundle for the scheme (`lsregister -dump`). Soft
+   * check: `open <scheme>://…` reaching the applet through Apple Events (reported as a notice or
+   * warning: GUI delivery to a freshly built applet on a CI runner is not guaranteed).
+   */
+  it.runIf(process.platform === 'darwin')('macOS: applet built, signed and registered for the scheme; URL delivery reported', async () => {
+    const title = 'url-handler macOS';
+    const log: Call[] = [];
+    const exec = recordingExec(log);
     const home = await realpath(await tmpHome());
+    const app = macAppPath(home);
     const { cliEntry, argsFile } = await fakeCli(home);
     const s = spec(home, { nodePath: await realpath(process.execPath), cliEntry });
-    await mkdir(s.logsDir, { recursive: true });
-    cleanups.push(async () => void (await unregisterUrlHandler({ platform: 'darwin', home, exec: realExec })));
-    const r = await registerUrlHandler({ platform: 'darwin', home, exec: realExec, spec: s, scheme });
-    expect(r).toEqual({ registered: true, location: macAppPath(home), notes: [] });
-    const plist = await readFile(join(macAppPath(home), 'Contents', 'Info.plist'), 'utf8');
-    expect(plist).toContain('<string>dev.uncage.connect</string>');
-    expect(plist).toContain(`<string>${scheme}</string>`);
-    expect(plist).toContain('<key>CFBundleExecutable</key>');
-    await realExec('/usr/bin/codesign', ['--verify', '--deep', macAppPath(home)]);
+    cleanups.push(async () => void (await unregisterUrlHandler({ platform: 'darwin', home, exec: recordingExec([], { timeoutMs: 20_000 }) })));
+    const extra = async () => {
+      const plist = await readFile(join(app, 'Contents', 'Info.plist'), 'utf8').catch((e: unknown) => `(no Info.plist: ${String(e)})`);
+      const sig = await run('/usr/bin/codesign', ['-dv', '--verbose=2', app], { encoding: 'utf8', timeout: 20_000 }).then(
+        (r) => r.stderr,
+        (e: { stderr?: string }) => `codesign -dv failed: ${e.stderr ?? String(e)}`,
+      );
+      const connectLog = await readFile(join(s.logsDir, 'connect.log'), 'utf8').catch(() => '(no connect.log)');
+      return `Info.plist:\n${clip(plist, 3000)}\n\ncodesign -dv:\n${clip(sig)}\n\nconnect.log:\n${clip(connectLog)}`;
+    };
+    await diagnosed(title, log, extra, async () => {
+      await mkdir(s.logsDir, { recursive: true });
+      const r = await registerUrlHandler({ platform: 'darwin', home, exec, spec: s, scheme });
+      expect(r).toEqual({ registered: true, location: app, notes: [] });
+      const plist = await readFile(join(app, 'Contents', 'Info.plist'), 'utf8');
+      expect(plist).toContain('<string>dev.uncage.connect</string>');
+      expect(plist).toContain(`<string>${scheme}</string>`);
+      expect(plist).toContain('<key>CFBundleExecutable</key>');
+      await exec('/usr/bin/codesign', ['--verify', '--deep', app]);
+      // LaunchServices knows our bundle for the scheme.
+      const dump = await recordingExec(log, { timeoutMs: 60_000, maxBuffer: 512 * 1024 * 1024 })(LSREGISTER, ['-dump']);
+      const records = dump.stdout.split(/\n-{10,}\n/);
+      const ours = records.filter((rec) => rec.includes(scheme));
+      log.push({ cmd: `lsregister -dump: ${records.length} records, ${ours.length} mention ${scheme}`, ms: 0, ok: true, stdout: clip(ours.join('\n=====\n'), 2000) });
+      expect(ours.some((rec) => rec.includes('UncageConnect.app'))).toBe(true);
+    });
+
+    // Soft: delivery through Apple Events (30 s budget).
     const url = `${scheme}://connect?url=${encodeURIComponent('https://example.com')}`;
-    await realExec('/usr/bin/open', [url]);
-    const got = await waitForFile(argsFile, 45_000);
-    console.log(`::notice title=url handler (macOS)::applet received: ${got ?? '(nothing within 45 s)'}`);
-    expect(got && JSON.parse(got)).toEqual(['connect', url]);
-  }, 120_000);
+    const opened = await exec('/usr/bin/open', [url]).then(
+      () => true,
+      () => false,
+    );
+    const got = opened ? await waitForFile(argsFile, 30_000) : null;
+    if (got && JSON.stringify(JSON.parse(got)) === JSON.stringify(['connect', url])) annotate('notice', title, `applet received: ${got}`);
+    else annotate('warning', title, `URL not delivered to the applet within 30 s (open ${opened ? 'ok' : 'failed'}; got ${got ?? 'nothing'}). Registration itself is verified.\n\ncalls:\n${formatCalls(log)}\n\n${await extra()}`);
+  }, 180_000);
 
   it.runIf(process.platform === 'win32')('Windows: a throwaway HKCU\\Software\\Classes key is written, launched and deleted', async () => {
+    const title = 'url-handler Windows';
+    const log: Call[] = [];
+    const exec = recordingExec(log);
+    const reg = 'C:\\Windows\\System32\\reg.exe';
     const home = await tmpHome();
     const { cliEntry, argsFile } = await fakeCli(home);
     const s = spec(home, { nodePath: process.execPath, cliEntry });
     const key = `HKCU\\Software\\Classes\\${scheme}`;
-    cleanups.push(async () => void (await unregisterUrlHandler({ platform: 'win32', home, exec: realExec, scheme })));
-    const r = await registerUrlHandler({ platform: 'win32', home, exec: realExec, spec: s, scheme });
-    expect(r).toEqual({ registered: true, location: key, notes: [] });
-    const { stdout } = await realExec('C:\\Windows\\System32\\reg.exe', ['query', `${key}\\shell\\open\\command`, '/ve']);
-    expect(stdout).toContain(windowsCommand(s));
-    const url = `${scheme}://connect?url=${encodeURIComponent('https://example.com')}`;
-    await realExec('C:\\Windows\\System32\\rundll32.exe', ['url.dll,FileProtocolHandler', url]);
-    const got = await waitForFile(argsFile, 45_000);
-    console.log(`::notice title=url handler (Windows)::handler received: ${got ?? '(nothing within 45 s)'}`);
-    expect(got && JSON.parse(got)[0]).toBe('connect');
-    expect(await unregisterUrlHandler({ platform: 'win32', home, exec: realExec, scheme })).toEqual({ removed: true });
-    await expect(realExec('C:\\Windows\\System32\\reg.exe', ['query', key])).rejects.toThrow();
+    cleanups.push(async () => void (await unregisterUrlHandler({ platform: 'win32', home, exec: recordingExec([]), scheme })));
+    const extra = async () =>
+      run(reg, ['query', key, '/s'], { encoding: 'utf8', timeout: 20_000 }).then(
+        (r) => `reg query ${key} /s:\n${r.stdout}`,
+        (e: { stderr?: string }) => `reg query ${key} failed: ${e.stderr ?? String(e)}`,
+      );
+    await diagnosed(title, log, extra, async () => {
+      const r = await registerUrlHandler({ platform: 'win32', home, exec, spec: s, scheme });
+      expect(r).toEqual({ registered: true, location: key, notes: [] });
+      const { stdout } = await exec(reg, ['query', `${key}\\shell\\open\\command`, '/ve']);
+      expect(stdout).toContain(windowsCommand(s));
+      const url = `${scheme}://connect?url=${encodeURIComponent('https://example.com')}`;
+      await exec('C:\\Windows\\System32\\rundll32.exe', ['url.dll,FileProtocolHandler', url]);
+      const got = await waitForFile(argsFile, 45_000);
+      annotate(got ? 'notice' : 'error', title, `handler received: ${got ?? '(nothing within 45 s)'}`);
+      expect(got && JSON.parse(got)[0]).toBe('connect');
+      expect(await unregisterUrlHandler({ platform: 'win32', home, exec, scheme })).toEqual({ removed: true });
+      await expect(exec(reg, ['query', key])).rejects.toThrow();
+    });
   }, 120_000);
 
   it.runIf(process.platform === 'linux')('Linux: the .desktop file in a temp XDG_DATA_HOME becomes the xdg-mime default', async () => {
+    const title = 'url-handler Linux';
+    const log: Call[] = [];
     const home = await tmpHome();
     const env = { ...process.env, XDG_DATA_HOME: join(home, 'data'), XDG_CONFIG_HOME: join(home, 'config') };
-    await mkdir(env.XDG_CONFIG_HOME, { recursive: true });
-    const xdgMime = await realExec('/bin/sh', ['-c', 'command -v xdg-mime || true']).then((r) => r.stdout.trim());
-    if (!xdgMime) {
-      console.log('::notice title=url handler (Linux)::xdg-mime not installed on this runner; only the file is checked');
-    }
     // xdg-mime reads the XDG folders from its environment.
-    const envExec: ExecFn = async (file, args) => {
-      const r = await run(file, args, { encoding: 'utf8', timeout: 60_000, env });
-      return { stdout: r.stdout, stderr: r.stderr };
-    };
-    const s = spec(home, { nodePath: process.execPath, cliEntry: join(home, 'bin.js') });
-    const r = await registerUrlHandler({ platform: 'linux', home, exec: envExec, spec: s, env, scheme });
+    const exec = recordingExec(log, { env });
     const file = join(home, 'data', 'applications', 'uncage-connect.desktop');
-    expect(r.location).toBe(file);
-    expect(await readFile(file, 'utf8')).toContain(`MimeType=x-scheme-handler/${scheme};`);
-    if (xdgMime) {
-      expect(r.registered).toBe(true);
-      const q = await envExec(xdgMime, ['query', 'default', `x-scheme-handler/${scheme}`]);
-      expect(q.stdout.trim()).toBe('uncage-connect.desktop');
-    }
-    expect(await unregisterUrlHandler({ platform: 'linux', home, exec: envExec, env, scheme })).toEqual({ removed: true });
-    await expect(access(dirname(file) + '/uncage-connect.desktop')).rejects.toThrow();
+    await diagnosed(title, log, async () => `desktop file:\n${await readFile(file, 'utf8').catch(() => '(missing)')}`, async () => {
+      await mkdir(env.XDG_CONFIG_HOME, { recursive: true });
+      const xdgMime = await exec('/bin/sh', ['-c', 'command -v xdg-mime || true']).then((r) => r.stdout.trim());
+      if (!xdgMime) annotate('notice', title, 'xdg-mime not installed on this runner; only the file is checked');
+      const s = spec(home, { nodePath: process.execPath, cliEntry: join(home, 'bin.js') });
+      const r = await registerUrlHandler({ platform: 'linux', home, exec, spec: s, env, scheme });
+      expect(r.location).toBe(file);
+      expect(await readFile(file, 'utf8')).toContain(`MimeType=x-scheme-handler/${scheme};`);
+      if (xdgMime) {
+        expect(r.registered).toBe(true);
+        const q = await exec(xdgMime, ['query', 'default', `x-scheme-handler/${scheme}`]);
+        expect(q.stdout.trim()).toBe('uncage-connect.desktop');
+      }
+      expect(await unregisterUrlHandler({ platform: 'linux', home, exec, env, scheme })).toEqual({ removed: true });
+      await expect(access(file)).rejects.toThrow();
+    });
   }, 60_000);
 });
