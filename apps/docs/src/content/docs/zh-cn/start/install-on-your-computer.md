@@ -142,6 +142,10 @@ npm uninstall -g @uncage/cli
 
 需要的话，再删除 `%USERPROFILE%\.uncage` 和 `%USERPROFILE%\Uncage`。脚本加入用户 `Path` 的目录，可以在 **设置 → 系统 → 系统信息 → 高级系统设置 → 环境变量** 中删除。
 
+## 另一个网站：一键连接
+
+`uncage setup` 安装好后台守护进程之后，还会为你的用户注册一个 `uncage://` 链接处理程序（macOS 上是一个小应用，Linux 上是 `.desktop` 文件，Windows 上是 `HKCU` 注册表项；不需要管理员权限）。之后任何其他 Uncage 网站都可以提供**一键连接**：链接会在你的电脑上弹出对话框，写明网站的域名并对相似域名发出警告，只有你点击“连接”之后，常规审批才会开始。不用终端，也不用再安装一次。你也可以自己运行 `uncage connect https://other.site`，而 `uncage dashboard` 会列出并可断开每个网站。[详情](/docs/zh-cn/guides/one-click-connect/)。`uncage agent uninstall` 会移除这个处理程序。
+
 ## 参数
 
 在 macOS 和 Linux 上，把参数放在 `bash -s --` 之后：

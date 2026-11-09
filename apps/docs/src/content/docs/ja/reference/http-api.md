@@ -10,21 +10,21 @@ description: ハブのブラウザAPI、デバイスエンドポイント、イ�
 | | Connected モードのハブ | Local モードのデーモン |
 | --- | --- | --- |
 | ベース | `<publicUrl><basePath>`（デフォルトは`/api/uncage`） | `http://127.0.0.1:4783/v1`。`/api/uncage`のプロキシ経由でアクセスします |
-| 認証 | `getUser(req)`を介したサイトのCookie | `Authorization: Bearer <token>`。プロキシが付与します |
+| 認証 | `getUser(req)`を介した、サイトのCookieまたはあなたが発行するBearerトークン | `Authorization: Bearer <token>`。プロキシが付与します |
 | 追加分 | `/machines`、デバイスエンドポイント、`install.sh` / `install.ps1`、`/maintenance`、エージェントのトランスポート | なし |
 
 セッション、実行、イベント、承認のルートは、どちらでもリクエストとレスポンスの形が同じです。そのため、同じクライアントがどちらに対しても動作します。`/api/uncage`を指定すれば、ハブともプロキシともやり取りできます。
 
 ## ブラウザAPI
 
-以下のルートはすべて、サインイン中のユーザーが必要です（いなければ`401 unauthorized`）。他のユーザーのリソースは、存在しない場合と同じく`404`を返します。別のオリジンからのGET以外のリクエストは`403 forbidden_origin`になります。
+以下のルートはすべて、サインイン中のユーザーが必要です（いなければ`401 unauthorized`）。他のユーザーのリソースは、存在しない場合と同じく`404`を返します。別のオリジンからのGET以外のリクエストは`403 forbidden_origin`になります。`Origin`ヘッダーのないリクエスト（ネイティブアプリ）と、[`trustedOrigins`](/docs/ja/guides/mount-the-hub/)からのリクエストは通ります。
 
 | メソッドとパス | ボディ / クエリ | 応答 |
 | --- | --- | --- |
 | `GET /health` | | `{ ok: true, protocol: "1.0", version }` |
 | `GET /runtimes` | `?machineId=`（任意） | そのコンピュータの`RuntimeInfo[]`。指定がなければ、最初のオンラインのコンピュータのもの |
 | `GET /machines` | | `MachineInfo[]`：`{ id, name, os, agentVersion, runtimes, online, lastSeenAt, agentOutdated, transport }`。最後に確認された時刻が新しい順。`agentOutdated`：エージェントが`minAgentVersion`より古い（「Agent update needed」を表示します）。`transport`：`'ws'`、`'http'`、オフラインの間は`null` |
-| `GET /machines/install` | | `{ install, setup, windows }`：表示するコマンド（`curl … install.sh \| bash`、`uncage setup <url>`、`irm … install.ps1 \| iex`） |
+| `GET /machines/install` | | `{ install, setup, windows, connectUrl }`：表示するコマンド（`curl … install.sh \| bash`、`uncage setup <url>`、`irm … install.ps1 \| iex`）と、`uncage://connect?url=<エンコード済みのsetup URL>`。すでにUncageが動いているコンピュータ向けの[ワンクリック接続リンク](/docs/ja/guides/one-click-connect/)です |
 | `DELETE /machines/:id` | | `{ ok: true }`。コンピュータを取り消します |
 | `GET /sessions` | | `Session[]`。それぞれに`machineId`が付き、古い順 |
 | `POST /sessions` | `{ runtime, title?, machineId? }` | `201 Session`。`machineId`がない場合は、最後に確認されたオンラインのコンピュータ。`workspace`は無視されます |
@@ -37,10 +37,16 @@ description: ハブのブラウザAPI、デバイスエンドポイント、イ�
 | `GET /runs?active=1` | | `ActiveRunInfo[]`：ユーザーのセッションで進行中の実行 |
 | `GET /runs/:id` | | `Run` |
 | `POST /runs/:id/cancel` | | `202` |
+| `GET /device/lookup` | `?code=` | 保留中のコードの`{ name?, os?, expiresAt, repairsMachine }`。不明、またはもう保留中でない場合は`null`。結果と失敗コードのレート制限は`hub.lookupDevice`と同じです |
+| `POST /device/decision` | `{ code, approve }`（`Content-Type: application/json`） | `{ result: "ok" \| "not_found" \| "expired" }`。承認すると、そのコンピュータがサインイン中のユーザーに結び付きます |
 | `GET /approvals?sessionId=` | | そのセッションの保留中の`ApprovalRequest[]` |
 | `POST /approvals/:id/decision` | `{ decision: "allow" \| "deny", scope: "once" \| "session", reason? }` +ヘッダー`Idempotency-Key` | 更新された`ApprovalRequest`。2回目に異なる判定を送ると`409` |
 
 Local モードのデーモンには、`/machines*`を除く同じルートが`/v1`配下にあり、`POST /v1/sessions`では`workspace`（許可されたルートの内側）を受け付けます。
+
+### アプリ向けのデバイス承認
+
+`GET /device/lookup`と`POST /device/decision`を使うと、アプリや拡張機能が自前のページなしでコンピュータを承認できます（ウェブサイトは、`hub.lookupDevice` / `approveDevice`を使う[`/device`ページ](/docs/ja/guides/auth-and-device-approval/)をこれまでどおり使います。どちらも使えます）。サインイン中のユーザーが必要で、これらの呼び出しと失敗コードの制限を共有します。10分間に不明なコードが10回あると、`429 rate_limited`（`details.retryAfterSec`）を返します。照会もクロスサイト保護の対象なので、別のサイトがユーザーの試行回数を消費することはできません。判定はJSONでなければならず、それ以外の`Content-Type`は`415 invalid_request`になります。クロスサイトのフォームは、プリフライトなしにJSONを送れないためです。`@uncage/client`には`lookupDevice(code)`と`decideDevice(code, approve)`が、`@uncage/react`には`useDeviceApproval(code)`があります。
 
 ### Server-Sent Events
 

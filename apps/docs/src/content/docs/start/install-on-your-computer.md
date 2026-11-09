@@ -142,6 +142,10 @@ npm uninstall -g @uncage/cli
 
 Then remove `%USERPROFILE%\.uncage` and `%USERPROFILE%\Uncage` if you want. Folders the script added to your user `Path` can be removed in **Settings → System → About → Advanced system settings → Environment Variables**.
 
+## Another site: one click
+
+Once `uncage setup` has installed the background agent, it also registers an `uncage://` link handler for your user (a small app on macOS, a `.desktop` file on Linux, a `HKCU` registry key on Windows; no admin rights). Any other Uncage site can then offer **Connect in one click**: the link opens a dialog on your computer that names the site’s domain and warns about look-alikes, and only after you press Connect does the usual approval start. No terminal and no second install. You can also run `uncage connect https://other.site` yourself, and `uncage dashboard` lists and disconnects every site. [Details](/docs/guides/one-click-connect/). `uncage agent uninstall` removes the handler.
+
 ## Flags
 
 Pass flags after `bash -s --` on macOS and Linux:

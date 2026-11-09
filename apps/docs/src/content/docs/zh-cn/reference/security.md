@@ -61,6 +61,32 @@ description: Connected 模式（传输、机器令牌、设备登录、用户之
 - 网站做的一切都记录在 `~/.uncage/sites/<site id>/activity.log` 里（经过脱敏）。
 - `install.sh` 内容固定；它只从 npm 安装 `@uncage/cli`，不做其他任何事。
 
+## 一键连接
+
+任何网页都能触发 `uncage://connect?url=…`，所以它绝不会悄悄连接。完整模型见[一个 agent，所有网站](/docs/zh-cn/guides/one-click-connect/)；简而言之：
+
+- **钓鱼风险。** 恶意网页可能让电脑与攻击者的网站配对；攻击者在那里已登录，于是受害者的电脑会被绑定到攻击者的账号。
+- **原生确认。** `uncage connect` 会在浏览器之外弹出对话框，显示网站的可注册域名和完整地址，默认选“取消”；没有对话框也没有终端时就拒绝。警告包括：国际化字符（显示 punycode）、纯 IP、特定页面、首次连接，以及与已连接域名相似。
+- **严格的链接。** 只接受 `https://`（或回环地址上的 `http`），不能有凭据、查询或片段，最多 2048 个字符，只有一个 `url` 参数；同一时间只问一个问题。确认之后，审批页和应答的网站必须与已确认的 origin 一致。
+- **设备流程不变。** 用户仍然要在网站的 `/device` 页面批准验证码。
+- **没有注册表。** Uncage 不为任何网站背书；对话框展示的是事实，不是结论。
+- **处理程序的范围。** 只按用户注册（macOS 上位于 `~/Library/Application Support` 的应用、`~/.local/share/applications` 里的 `.desktop` 文件、Windows 上的 `HKCU`），不需要管理员权限，`uncage agent uninstall` 会移除它。
+
+### 本地 dashboard
+
+`uncage dashboard` 绑定 `127.0.0.1` 的随机端口。每个请求都需要 `Host` 头为 `127.0.0.1:<端口>`（DNS rebinding 会得到 `403`）、没有外部 `Origin`，并带有 32 字节的密钥：先在链接里出现一次，之后是 `HttpOnly`、`SameSite=Strict` 的 cookie。状态变更都是来自页面自身 origin 的 POST。没有 CORS 头，带 `X-Frame-Options: DENY` 和 `Cache-Control: no-store`。页面关闭或空闲 30 分钟后它就会关闭。没有密钥的其他本地进程或网页会得到 `403`；而能读取你文件的进程本来就能读取 `~/.uncage/agent.yaml`。
+
+## 应用与扩展
+
+### 应用 Bearer 令牌
+
+- 原生应用发送 `Authorization: Bearer <token>`，不带 `Origin`；hub 在每个浏览器 API 路由上都让没有 origin 的请求通过跨站防护，因为只有浏览器才会在跨站请求里带上 cookie，而浏览器总会发送 `Origin`。带外部 `Origin` 的请求，即使有有效的 cookie 也会被拒绝。
+- 令牌值多少由你的 `getUser` 决定：签发会过期、可吊销的令牌，存放在钥匙串里，Bearer 头无效时不要退回到 cookie（[应用认证](/docs/zh-cn/guides/authenticate-apps/)）。
+- 应用从不持有机器令牌，也从不直接与电脑通信。
+- `trustedOrigins`（给扩展用）是你自己掌控的精确 origin，由 `createHub` 校验：不能有通配符、路径、`file:` 或 `null`，纯 `http` 只限回环地址。受信任的 origin 可以携带用户的 cookie 发出会修改状态的请求。
+- `POST /device/decision` 只接受 `application/json`，`GET /device/lookup` 处于跨站防护和失败验证码限流之内。
+- 推送令牌保存在你的数据库里，绝不在 hub 里。`onAttention` 每个事件最多触发一次，并跳过早于 10 分钟的事件（[推送通知](/docs/zh-cn/guides/push-notifications/)）。
+
 ## ACP agent
 
 [其他 ACP agent](/docs/zh-cn/guides/use-any-acp-agent/)作为本地进程运行在用户的电脑上，使用它们自己的登录。用户受到这些规则的保护：
@@ -87,5 +113,6 @@ Uncage 服务只绑定回环地址，要求使用 `~/.uncage/token`（权限 600
 - [ ] 工具错误信息可以安全地展示给用户；详细信息写进你的日志。
 - [ ] 发布、发送、付款或删除类的工具使用 `requiresConfirmation: true`。
 - [ ] 从电脑拉取的文件被当作不可信内容（在沙箱里提供，必要时扫描）。
+- [ ] 如果你发布应用或扩展：Bearer 令牌会过期且可吊销，`trustedOrigins` 只列出你自己掌控的精确 origin，也不要指望用户确认并非他们发起的一键连接。
 - [ ] 在代理后面为限流配置了客户端 IP。
 - [ ] 使用你自己的 Postgres 连接池或 Redis 客户端时，已挂上 `'error'` 监听器。

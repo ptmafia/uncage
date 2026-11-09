@@ -37,6 +37,12 @@ Uncageは、Claude Code（およびCodex）を、あなた自身のウェブUI�
 - 停止、添付ファイル、モデル・Effort・パーミッションモードの選択、リロードしても残る履歴。
 - サイトストレージを有効にすれば、ユーザーのコンピュータの電源が切れていても、会話はサイト上で読めます。
 
+## さらなる入口
+
+- **React Nativeアプリ**は、`@uncage/client`と`@uncage/react`をそのまま使えます。ストリーミング、承認、写真、バックグラウンドからの復帰、スマートフォンでのコンピュータの承認に対応します。
+- **ブラウザ拡張機能**は、サイドパネルで`<AgentChat>`をハブに対して動かし、`trustedOrigins`を使います。
+- **1つのエージェントで、すべてのサイトへ：** ユーザーはエージェントを1回インストールするだけで、Uncageを組み込んだどのサイトにもワンクリックで接続できます。
+
 ## ウェブサイト側が得られるもの
 
 - **サイトツール**。`defineTool`（名前、zodスキーマ、ハンドラー）で機能を宣言します。Claude CodeからはMCPツールとして見えます。ハンドラーは**あなたのバックエンドで、サインイン中のユーザーとして**実行され、実行（Run）のワークスペースからファイルを取得できます（`ctx.files.pull`）。
@@ -56,6 +62,8 @@ Uncageは、Claude Code（およびCodex）を、あなた自身のウェブUI�
 
 - **ウェブサイトを構築する場合**：[仕組み](/docs/ja/start/how-it-works/)を読んでから、[Connected モード クイックスタート](/docs/ja/start/quickstart-connected/)を進めてください（約15分）。
 - **エージェントをアプリと同じマシンで動かす場合**：[Local モード クイックスタート](/docs/ja/start/quickstart-local/)は5分で終わります。
+- **モバイルアプリやブラウザ拡張機能を作る場合**：[React Nativeアプリ](/docs/ja/guides/react-native/)と[ブラウザ拡張機能](/docs/ja/guides/browser-extension/)は、同じハブへのさらなる入口で、[アプリの認証](/docs/ja/guides/authenticate-apps/)と[プッシュ通知](/docs/ja/guides/push-notifications/)も用意されています。
+- **すでにコンピュータでUncageを使っている場合**：ほかのUncageサイトには、身元確認とローカルダッシュボード付きで[ワンクリック](/docs/ja/guides/one-click-connect/)で接続できます。
 - **コーディングエージェントを使う場合**：[Uncageスキル](/docs/skills/uncage/SKILL.md)または[`llms.txt`](/docs/llms.txt)を渡してください。どのページもURLに`.md`を付ければプレーンなMarkdownで取得できます。[コーディングエージェント向け](/docs/ja/start/for-coding-agents/)を参照してください。
 
 :::note[ステータス]

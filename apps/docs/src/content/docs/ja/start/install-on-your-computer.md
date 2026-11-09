@@ -142,6 +142,10 @@ npm uninstall -g @uncage/cli
 
 必要なら`%USERPROFILE%\.uncage`と`%USERPROFILE%\Uncage`も削除してください。スクリプトがユーザーの`Path`に追加したフォルダは、**設定 → システム → バージョン情報 → システムの詳細設定 → 環境変数**で削除できます。
 
+## 別のサイト：ワンクリック
+
+`uncage setup`がバックグラウンドのエージェントをインストールすると、あなたのユーザー用に`uncage://`リンクハンドラーも登録されます（macOSでは小さなアプリ、Linuxでは`.desktop`ファイル、Windowsでは`HKCU`のレジストリキー。管理者権限は不要です）。以後、ほかのUncageサイトは**ワンクリックで接続**を提供できます。リンクを開くとコンピュータ上にダイアログが出て、サイトのドメインを示し、紛らわしいドメインを警告します。接続を押して初めて、通常の承認が始まります。ターミナルも、2回目のインストールも不要です。`uncage connect https://other.site`を自分で実行することもでき、`uncage dashboard`ですべてのサイトの一覧表示と切断ができます。[詳細](/docs/ja/guides/one-click-connect/)。`uncage agent uninstall`でハンドラーは削除されます。
+
 ## フラグ
 
 macOSとLinuxでは、フラグを`bash -s --`の後に付けます。

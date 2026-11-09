@@ -1,6 +1,6 @@
 ---
 title: CLIリファレンス
-description: Connected モード（setup、agent install / uninstall / status、sites、runtimes、activity）とLocal モード（serve、doctor）のすべてのuncageコマンドとフラグ、uncage --version、1行で実行できるインストーラー、およびそれらが読み取る環境変数。
+description: Connected モード（setup、connect、dashboard、agent install / uninstall / status、sites、runtimes、activity）とLocal モード（serve、doctor）のすべてのuncageコマンドとフラグ、uncage --version、1行で実行できるインストーラー、およびそれらが読み取る環境変数。
 ---
 
 `@uncage/cli`をインストールすると`uncage`コマンドが使えるようになります。エンドユーザーはサイトの1行で実行できるインストーラーか、`npm i -g @uncage/cli`で入手し、Local モードのアプリは`npx uncage …`で使います。どのコマンドにも`--help`があります。
@@ -27,22 +27,40 @@ node v22.18.0 (/Users/ada/.local/share/fnm/node-versions/v22.18.0/installation/b
 ### `uncage setup <url>`
 
 ```text
-uncage setup <url> [--no-daemon] [--no-browser]
+uncage setup <url> [--no-daemon] [--no-browser] [--no-qr]
 ```
 
 このコンピュータをウェブサイトに接続します。`<url>`はサイトが表示するもので、サイトのオリジン（例：`https://app.example.com`）です。パスのないURLには`/api/uncage`が追加されます（別のベースパスにあるハブは完全なURLを表示し、それがそのまま使われます）。スキームのないURLには`https://`が付きます。
 
-1. デバイスコードを要求し、リンクとコードを表示します。
+1. デバイスコードを要求し、リンクとコードを表示します。ターミナルでは、リンクをQRコードとしても表示します（スマートフォンでスキャンすると、承認ページや[アプリ](/docs/ja/guides/react-native/)が開きます）。
 2. ブラウザでリンクを開きます（`open`）。サインイン中のユーザーがそこで承認します。
 3. 承認を待ち、サイトとマシントークンを`~/.uncage/agent.yaml`（モード0600）に保存します。
 4. `uncage agent install`と同様に、このユーザーのバックグラウンドのエージェントをインストールし、起動（または再起動）します。macOSではlaunchd（`~/Library/LaunchAgents/dev.uncage.agent.plist`）、Linuxではsystemdのユーザーサービス、Windowsではタスク スケジューラのタスクを使います。サービスマネージャーがない環境では、`uncage agent`をフォアグラウンドで実行する方法を表示します。
+5. 他のUncageサイトをワンクリックで接続できるよう、`uncage://`リンクハンドラーを登録します（[`uncage connect`](#uncage-connect)）。登録に失敗してもsetupは失敗しません。
 
 | フラグ | |
 | --- | --- |
 | `--no-daemon` | バックグラウンドのエージェントをインストール・起動しません。`uncage agent`を自分で実行してください。 |
 | `--no-browser` | ブラウザを開かず、リンクとコードを表示するだけにします（ブラウザのないコンピュータ向け。リンクは別のデバイスで開きます）。 |
+| `--no-qr` | QRコードを表示しません（出力がターミナルでない場合も表示されません）。 |
 
 平文の`http://`を受け付けるのは、`localhost`、`127.0.0.1`、`[::1]`の場合だけです。
+
+### `uncage connect`
+
+```text
+uncage connect <url | uncage://connect?url=…> [--no-browser] [--no-qr]
+```
+
+`uncage://`リンクが実行するコマンドで、手動でも使えます。リンクを解析し（httpsのみ、ループバックでは`http`。資格情報、クエリ、フラグメントは不可。最大2048文字）、サイトの登録可能ドメイン、完全なURL、警告（国際化文字、IPアドレスそのもの、特定のページ、初回の接続、接続済みサイトに似ている）を表示する**確認ダイアログ**を出し、**接続**が押されて初めて通常の承認を実行し、サイトを保存して、バックグラウンドのエージェントを再起動します。ダイアログツールがなければターミナルで尋ね、どちらもなければ拒否します。終了コードは、`0`が接続済み、`1`がキャンセルまたは拒否、`2`がリンクの不正です。詳細と脅威モデル：[1つのエージェントで、すべてのサイトへ](/docs/ja/guides/one-click-connect/)。
+
+### `uncage dashboard`
+
+```text
+uncage dashboard [--no-browser]
+```
+
+ローカルのページ（`127.0.0.1`、ランダムなポート、リンクに使い捨ての秘密を含む）を開き、接続済みのすべてのサイトについて、名前とドメイン、マシンID、状態、ランタイム、直近のアクティビティを表示します。サイトの切断（`uncage sites remove`と同様）と、ACPエージェントのオン／オフ（`uncage runtimes`と同様）ができます。ページを閉じるか、30分間操作がないと停止します。`--no-browser`はブラウザを開かずにリンクを表示します。
 
 ### `uncage agent`
 
@@ -58,8 +76,8 @@ uncage agent status [--json]       # installed? running? which Node.js?
 | フラグ / サブコマンド | |
 | --- | --- |
 | `--log-file <path>` | ログをstderrではなくこのファイルに追記します。ログファイルのサイズは起動のたびに上限内に抑えられます。 |
-| `install` | ユーザー単位のバックグラウンドサービスをインストールして起動します。サービスは**このコマンドを実行しているNode.jsに固定されます**（バージョンマネージャーのシムではなく、実際のパス）。macOSではlaunchd、Linuxではsystemdのユーザーサービス、Windowsではタスク スケジューラのタスク（現在のユーザー、最小権限。タスクを作成できない場合はレジストリのRunエントリ）を使います。管理者権限は不要です。そのNode.jsを変更または削除した後は、もう一度実行してください。`UNCAGE_HOME`が設定されている間は拒否されます。 |
-| `uninstall` | サービスを停止して削除します。`~/.uncage/agent.yaml`とデータは残ります。 |
+| `install` | ユーザー単位のバックグラウンドサービスをインストールして起動します。サービスは**このコマンドを実行しているNode.jsに固定されます**（バージョンマネージャーのシムではなく、実際のパス）。macOSではlaunchd、Linuxではsystemdのユーザーサービス、Windowsではタスク スケジューラのタスク（現在のユーザー、最小権限。タスクを作成できない場合はレジストリのRunエントリ）を使います。管理者権限は不要です。そのNode.jsを変更または削除した後は、もう一度実行してください。`UNCAGE_HOME`が設定されている間は拒否されます。あわせて`uncage://`リンクハンドラーも登録します（macOS：`~/Library/Application Support/Uncage/UncageConnect.app`、Linux：`~/.local/share/applications/uncage-connect.desktop`、Windows：`HKCU\Software\Classes\uncage`）。 |
+| `uninstall` | サービスとリンクハンドラーを停止して削除します。`~/.uncage/agent.yaml`とデータは残ります。 |
 | `status` | サービスの種類、インストール済みか、実行中か、定義ファイル、固定されたNode.js（とそれがまだ存在するか）、CLIのエントリ、ログのフォルダ（`~/.uncage/logs`）を表示します。`--json`を付けると同じ内容をJSONで出力します。 |
 | `--supervise` | 内部用：Windowsのタスク スケジューラのタスクは`uncage agent --supervise`を実行し、クラッシュや自己アップグレードの後にエージェントを再起動します（タスク スケジューラはこれを行わないためです）。macOSとLinuxでは不要です。 |
 

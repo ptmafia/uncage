@@ -1,6 +1,6 @@
 ---
 title: CLI 参考
-description: uncage 的所有命令和参数，包括 Connected 模式（setup、agent install / uninstall / status、sites、runtimes、activity）和 Local 模式（serve、doctor）、uncage --version、一键安装脚本，以及它们读取的环境变量。
+description: uncage 的所有命令和参数，包括 Connected 模式（setup、connect、dashboard、agent install / uninstall / status、sites、runtimes、activity）和 Local 模式（serve、doctor）、uncage --version、一键安装脚本，以及它们读取的环境变量。
 ---
 
 `@uncage/cli` 提供 `uncage` 命令。终端用户通过你网站的一键安装脚本获得它，或者用 `npm i -g @uncage/cli` 安装；Local 模式的应用通过 `npx uncage …` 使用它。每个命令都支持 `--help`。
@@ -27,22 +27,40 @@ node v22.18.0 (/Users/ada/.local/share/fnm/node-versions/v22.18.0/installation/b
 ### `uncage setup <url>`
 
 ```text
-uncage setup <url> [--no-daemon] [--no-browser]
+uncage setup <url> [--no-daemon] [--no-browser] [--no-qr]
 ```
 
 把这台电脑连接到一个网站。`<url>` 就是你网站上显示的地址：网站的源，例如 `https://app.example.com`。没有路径的 URL 会自动补上 `/api/uncage`（挂在其他基础路径上的 hub 会显示完整 URL，按原样使用）；没有协议的 URL 会补上 `https://`。
 
-1. 申请一个设备码，并打印链接和验证码。
+1. 申请一个设备码，并打印链接和验证码；在终端里还会把链接打印成二维码（用手机扫描，可打开审批页或[你的应用](/docs/zh-cn/guides/react-native/)）。
 2. 在浏览器里打开链接（`open`），由已登录用户批准。
 3. 等待批准，然后把网站和机器令牌保存到 `~/.uncage/agent.yaml`（权限 0600）。
 4. 为当前用户安装并（重新）启动后台守护进程，效果与 `uncage agent install` 相同：macOS 上是 launchd（`~/Library/LaunchAgents/dev.uncage.agent.plist`），Linux 上是 systemd 用户服务，Windows 上是计划任务。如果没有服务管理器，它会打印如何在前台运行 `uncage agent`。
+5. 注册 `uncage://` 链接处理程序，让其他 Uncage 网站可以一键连接（[`uncage connect`](#uncage-connect)）。这一步失败不会让 setup 失败。
 
 | 参数 | |
 | --- | --- |
 | `--no-daemon` | 不安装也不启动后台守护进程；你自己运行 `uncage agent`。 |
 | `--no-browser` | 不打开浏览器，只打印链接和验证码（适用于没有浏览器的电脑：在另一台设备上打开链接）。 |
+| `--no-qr` | 不打印二维码（输出不是终端时也会跳过）。 |
 
 纯 `http://` 只对 `localhost`、`127.0.0.1` 和 `[::1]` 有效。
+
+### `uncage connect`
+
+```text
+uncage connect <url | uncage://connect?url=…> [--no-browser] [--no-qr]
+```
+
+`uncage://` 链接运行的就是它；也可以手动使用。它会解析链接（仅限 https，或回环地址上的 `http`；不能带凭据、查询或片段；最多 2048 个字符），显示一个**确认对话框**，内容包括网站的可注册域名、完整地址和警告（国际化字符、纯 IP、特定页面、首次连接、与已连接网站相似），只有点击**连接**之后才会进行常规审批、保存网站并重启后台守护进程。没有对话框工具时在终端里询问；两者都没有就拒绝。退出码 `0` 已连接，`1` 取消或被拒绝，`2` 链接无效。详情和威胁模型：[一个 agent，所有网站](/docs/zh-cn/guides/one-click-connect/)。
+
+### `uncage dashboard`
+
+```text
+uncage dashboard [--no-browser]
+```
+
+打开一个本地页面（`127.0.0.1`，随机端口，链接里带一次性密钥），列出每个已连接的网站：名称和域名、machine id、状态、运行时和最近的活动。它可以断开一个网站（与 `uncage sites remove` 相同），也可以开启或关闭 ACP agent（与 `uncage runtimes` 相同）。页面关闭或 30 分钟没有操作后停止。`--no-browser` 只打印链接，不打开浏览器。
 
 ### `uncage agent`
 
@@ -58,8 +76,8 @@ uncage agent status [--json]       # installed? running? which Node.js?
 | 参数 / 子命令 | |
 | --- | --- |
 | `--log-file <path>` | 把日志追加到这个文件，而不是 stderr。每次启动时都会限制日志文件的大小。 |
-| `install` | 安装并启动按用户运行的后台服务，**固定使用运行这条命令的 Node.js**（它的真实路径，而不是版本管理器的 shim）：macOS 上是 launchd，Linux 上是 systemd 用户服务，Windows 上是计划任务（当前用户、最低权限；无法创建计划任务时改用注册表的 Run 项）。不需要管理员权限。更换或删除那个 Node.js 之后，请重新运行它。设置了 `UNCAGE_HOME` 时会拒绝执行。 |
-| `uninstall` | 停止并删除服务。`~/.uncage/agent.yaml` 和数据会保留。 |
+| `install` | 安装并启动按用户运行的后台服务，**固定使用运行这条命令的 Node.js**（它的真实路径，而不是版本管理器的 shim）：macOS 上是 launchd，Linux 上是 systemd 用户服务，Windows 上是计划任务（当前用户、最低权限；无法创建计划任务时改用注册表的 Run 项）。不需要管理员权限。更换或删除那个 Node.js 之后，请重新运行它。设置了 `UNCAGE_HOME` 时会拒绝执行。它还会注册 `uncage://` 链接处理程序（macOS：`~/Library/Application Support/Uncage/UncageConnect.app`；Linux：`~/.local/share/applications/uncage-connect.desktop`；Windows：`HKCU\Software\Classes\uncage`）。 |
+| `uninstall` | 停止并删除服务和链接处理程序。`~/.uncage/agent.yaml` 和数据会保留。 |
 | `status` | 服务类型、是否已安装并在运行、服务定义文件、固定使用的 Node.js（以及它是否还存在）、CLI 入口和日志目录（`~/.uncage/logs`）。`--json` 以 JSON 输出同样的内容。 |
 | `--supervise` | 内部使用：Windows 计划任务运行的是 `uncage agent --supervise`，它会在守护进程崩溃或自我升级后将其重启（任务计划程序本身不会这样做）。macOS 和 Linux 上不需要。 |
 
