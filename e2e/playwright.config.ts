@@ -7,7 +7,7 @@ export const PORTS = { daemon: 4793, control: 4794, defaultChat: 3100, headlessC
 export const LIVE_PORTS = { daemon: 4795, control: 4796, app: 3102, headlessApp: 3103, bypassDaemon: 4798, bypassApp: 3105 } as const;
 
 /** Connected Mode (e2e/connected): the connected-demo website, started by the specs themselves. */
-export const CONNECTED_PORTS = { mock: 3210, multinode: 3220, live: 3230, faas: 3240, acpLive: 3250, faasLive: 3260, cloudflareLive: 3270, container: 3280 } as const;
+export const CONNECTED_PORTS = { mock: 3210, multinode: 3220, live: 3230, faas: 3240, acpLive: 3250, faasLive: 3260, cloudflareLive: 3270, container: 3280, extension: 3290 } as const;
 
 const live = process.env.UNCAGE_LIVE === '1';
 const exampleEnv = (daemonPort: number) => ({ UNCAGE_URL: `http://127.0.0.1:${daemonPort}`, UNCAGE_TOKEN: 'test-token' });
@@ -75,6 +75,14 @@ export default defineConfig<ExampleOptions>({
       name: 'connected-faas-mock',
       testDir: './connected',
       testMatch: 'faas.spec.ts',
+    },
+    {
+      // examples/connected-extension: the unpacked MV3 side panel against the mock connected stack
+      // (the demo with TRUSTED_ORIGINS for the extension's fixed id). Needs a Chromium that still
+      // honours --load-extension (not branded Chrome 137+): the spec skips itself, with the reason.
+      name: 'extension-mock',
+      testDir: './connected',
+      testMatch: 'extension.spec.ts',
     },
     {
       // Connected Mode with REAL Claude Code (`uncage setup` + `uncage agent`). UNCAGE_LIVE=1 only.

@@ -51,6 +51,8 @@ export async function createDemoHub(o: { mode: DemoMode; env?: Record<string, st
     // The website keeps a replica of every conversation: history stays visible with the machine off.
     sessionStorage: 'site',
     site: { name: 'Uncage Connected Demo' },
+    // `TRUSTED_ORIGINS=chrome-extension://<id>,…`: extensions (or other apps) allowed past the cross-site guard.
+    ...trustedOrigins(env),
     // Per-IP rate limits behind a proxy: see clientIpResolver.
     ...withClientIp(clientIpResolver(env)),
   };
@@ -77,6 +79,11 @@ export async function createDemoHub(o: { mode: DemoMode; env?: Record<string, st
       if (url) await endSharedPool(url); // …which ends here, once
     },
   };
+}
+
+function trustedOrigins(env: Record<string, string | undefined>) {
+  const list = (env.TRUSTED_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  return list.length > 0 ? { trustedOrigins: list } : {};
 }
 
 function withClientIp(clientIp: ((req: Request) => string | undefined) | undefined) {

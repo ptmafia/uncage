@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Uncage Connected Extension",
+  "version": "0.0.0",
+  "description": "Side panel that drives your local coding agent through an Uncage hub",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0rKA6cavPGBd5/KJkANiQFc81nXpL8729QX7i8byIhv8CwRM4RtZgMMXBz9PjfH7QgU3rbzs44iBSuNEv6Lm4aKPDv+cxEznyXBJf4bfaMWZg8SprNo6IIul51YO9UBZ30oAbfcc1vjw40gkOlopLW6Xyr9VXMydVi0eYY7jsd4gUfL7lhWfayshI4IBTeogYewm074uL7CLV2rsrucY85dOe0/FKH9KvbKj3qZ19kWd6TerztETeCfJZoBdVYa7fp4dO7oRHz+Bn+v2yqE43djtyHM6ad0vaAfw+msDdcXlgG139baP2BKf7F8YSntRekt92BHmyeHt9rSvuUrORwIDAQAB",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "__HUB_ORIGIN__/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Open Uncage"
+  },
+  "side_panel": {
+    "default_path": "panel.html"
+  }
+}
