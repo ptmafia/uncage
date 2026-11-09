@@ -142,6 +142,14 @@ export async function runRuntimes(o: {
   return 0;
 }
 
+/** What a toggle did: the agent's name and runtime id; on enable, the command consented to and where it downloads from. */
+export interface ToggleResult {
+  label: string;
+  runtimeId: string;
+  runs?: string;
+  download?: 'npm' | 'PyPI';
+}
+
 /**
  * `uncage runtimes enable|disable <id>`: records consent (or refusal) in `runtimes.acp` of
  * agent.yaml. Accepts a registry id (`claude-acp`), a preset id (`claude`) or a runtime id
@@ -156,7 +164,7 @@ export async function toggleRuntime(o: {
   registry?: AcpRegistry;
   /** Whether the agent is installed (defaults to PATH). */
   which?: Which;
-}): Promise<void> {
+}): Promise<ToggleResult> {
   const registry = o.registry ?? bundledRegistry();
   const which = o.which ?? createWhich();
   const name = acpName(o.id.trim().toLowerCase());
@@ -172,20 +180,26 @@ export async function toggleRuntime(o: {
 
   // Exactly what is consented to: the installed command, else the npx/uvx package, with args and env.
   let consent: AcpConsent | undefined;
+  let runs: string | undefined;
+  let source: 'npm' | 'PyPI' | undefined;
   if (o.enable) {
     const local = agent ? localCommand(agent, hostPlatform()) : undefined;
     const installed = local ? await which(local.cmd) : null;
     const download = agent ? downloadConsent(agent) : undefined;
     if (local && installed) {
       consent = localConsent(local);
-      o.out(`Uncage will run ${clean([installed, ...local.args].join(' '))} whenever the agent starts. ${undo}`);
+      runs = clean([installed, ...local.args].join(' '));
+      o.out(`Uncage will run ${runs} whenever the agent starts. ${undo}`);
     } else if (download) {
       consent = download;
       const from = download.runner === 'npx' ? 'npm' : 'PyPI';
+      runs = describeConsent(download);
+      source = from;
       o.out(`Uncage will download and run ${download.package} from ${from} now and whenever the agent starts. ${undo}`);
       o.out(`  Command: ${describeConsent(download)}`);
     } else if (local) {
       consent = localConsent(local);
+      runs = describeConsent(consent);
       o.out(`Uncage will run ${describeConsent(consent)} once it is installed. ${undo}`);
     } else {
       o.out(`Uncage will run ${agent?.name ?? preset?.displayName ?? ref} once it is installed. ${undo}`);
@@ -203,4 +217,5 @@ export async function toggleRuntime(o: {
   );
   const label = agent?.name ?? preset?.displayName ?? ref;
   o.out(`✓ ${o.enable ? 'Enabled' : 'Disabled'} ${label} (${registryRuntimeId(ref)}).`);
+  return { label, runtimeId: registryRuntimeId(ref), ...(runs ? { runs } : {}), ...(source ? { download: source } : {}) };
 }

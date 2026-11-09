@@ -4,7 +4,7 @@ import { acpCacheDir } from '../acp.js';
 import { toggleRuntime } from '../runtimes-cmd.js';
 import type { AgentService, ServiceKind } from '../service/index.js';
 import { registrableDomain } from '../site-identity.js';
-import { removeSite } from '../sites.js';
+import { NotRevokedError, removeSite, type RevokeOutcome } from '../sites.js';
 
 /** How many activity entries each site shows (newest first). */
 export const ACTIVITY_LIMIT = 20;
@@ -66,15 +66,27 @@ export interface DashboardData {
   sites: SiteView[];
 }
 
-/** A client error (unknown id, refused change): answered with this HTTP status and message. */
+/** Why an action was refused: the page translates the code; `message` is the English detail. */
+export type ActionErrorCode = 'not_found' | 'not_revoked' | 'revoke_failed' | 'unknown_agent' | 'builtin' | 'bad_request';
+
+/** A client error (unknown id, refused change): answered with this HTTP status, code and message. */
 export class ActionError extends Error {
   constructor(
     readonly status: number,
+    readonly code: ActionErrorCode,
     message: string,
   ) {
     super(message);
   }
 }
+
+/** Whether the background agent was restarted after a change. */
+export type RestartOutcome = 'restarted' | 'not_installed' | 'failed' | 'none';
+
+/** Every action's result: a code (with parameters) the page translates, plus the CLI's English lines. */
+export type ActionResult =
+  | { code: 'disconnected'; name: string; domain: string; revoke: RevokeOutcome; restart: RestartOutcome; messages: string[] }
+  | { code: 'runtime_enabled' | 'runtime_disabled'; name: string; runs?: string; download?: 'npm' | 'PyPI'; restart: RestartOutcome; messages: string[] };
 
 async function agentView(service: AgentService | null): Promise<AgentView> {
   if (!service) return { kind: 'none', installed: false, running: null };
@@ -163,41 +175,47 @@ export async function dashboardData(d: DashboardDeps): Promise<DashboardData> {
 }
 
 /** Restarts the background agent so it picks up a change (like the CLI commands do). */
-async function restart(d: DashboardDeps, messages: string[]): Promise<void> {
-  if (!d.service) return;
-  const restarted = await d.service.restart().catch((e: unknown) => {
+async function restart(d: DashboardDeps, messages: string[]): Promise<RestartOutcome> {
+  if (!d.service) return 'none';
+  try {
+    if (!(await d.service.restart())) return 'not_installed';
+    messages.push('✓ Background agent restarted.');
+    return 'restarted';
+  } catch (e) {
     messages.push(`! Could not restart the background agent: ${e instanceof Error ? e.message : String(e)}`);
-    return false;
-  });
-  if (restarted) messages.push('✓ Background agent restarted.');
+    return 'failed';
+  }
 }
 
 /**
  * `POST /api/sites/:id/disconnect`: exactly `uncage sites remove <id>` (revoke on the hub with the
  * machine's own token, remove from agent.yaml; a proxy's 401 keeps the token), then restarts the agent.
  */
-export async function disconnectSite(d: DashboardDeps, id: string): Promise<{ messages: string[] }> {
+export async function disconnectSite(d: DashboardDeps, id: string): Promise<ActionResult> {
   const config = await loadAgentConfig(d.home);
-  if (!config.sites.some((s) => s.id === id)) throw new ActionError(404, `No connected website "${id}".`);
+  const site = config.sites.find((s) => s.id === id);
+  if (!site) throw new ActionError(404, 'not_found', `No connected website "${id}".`);
   const messages: string[] = [];
+  let revoke: RevokeOutcome;
   try {
-    await removeSite({ home: d.home, id, fetch: d.fetch, out: (l) => messages.push(l) });
+    revoke = await removeSite({ home: d.home, id, fetch: d.fetch, out: (l) => messages.push(l) });
   } catch (e) {
-    throw new ActionError(502, e instanceof Error ? e.message : String(e));
+    throw new ActionError(502, e instanceof NotRevokedError ? 'not_revoked' : 'revoke_failed', e instanceof Error ? e.message : String(e));
   }
-  await restart(d, messages);
-  return { messages };
+  const restarted = await restart(d, messages);
+  return { code: 'disconnected', name: site.name, domain: registrableDomain(new URL(site.url).hostname), revoke, restart: restarted, messages };
 }
 
 /**
  * `POST /api/runtimes/:id/enable|disable`: exactly `uncage runtimes enable|disable <id>` (consent
  * bound to the command or npx/uvx package; unknown agents refused), then restarts the agent.
  */
-export async function setRuntime(d: DashboardDeps, id: string, enable: boolean): Promise<{ messages: string[] }> {
-  if (id === 'claude' || id === 'codex') throw new ActionError(400, `${id} is built in; it is not an ACP agent.`);
+export async function setRuntime(d: DashboardDeps, id: string, enable: boolean): Promise<ActionResult> {
+  if (id === 'claude' || id === 'codex') throw new ActionError(400, 'builtin', `${id} is built in; it is not an ACP agent.`);
   const messages: string[] = [];
+  let r: Awaited<ReturnType<typeof toggleRuntime>>;
   try {
-    await toggleRuntime({
+    r = await toggleRuntime({
       home: d.home,
       id,
       enable,
@@ -206,8 +224,16 @@ export async function setRuntime(d: DashboardDeps, id: string, enable: boolean):
       ...(d.which ? { which: d.which } : {}),
     });
   } catch (e) {
-    throw new ActionError(400, e instanceof Error ? e.message : String(e));
+    const message = e instanceof Error ? e.message : String(e);
+    throw new ActionError(400, /^Unknown ACP agent/.test(message) ? 'unknown_agent' : 'bad_request', message);
   }
-  await restart(d, messages);
-  return { messages };
+  const restarted = await restart(d, messages);
+  return {
+    code: enable ? 'runtime_enabled' : 'runtime_disabled',
+    name: r.label,
+    ...(r.runs ? { runs: r.runs } : {}),
+    ...(r.download ? { download: r.download } : {}),
+    restart: restarted,
+    messages,
+  };
 }

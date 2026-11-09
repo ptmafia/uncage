@@ -107,12 +107,15 @@ async function dashboard(home: string, extra: Partial<Parameters<typeof startDas
   const u = new URL(d.url);
   const token = u.searchParams.get('t')!;
   const self = `${u.protocol}//${u.host}`;
-  /** The cookie the first visit sets. */
-  const login = async (): Promise<string> => {
+  /** The first visit: the session cookie it sets, and the per-session API header token from the page. */
+  const login = async (): Promise<{ cookie: string; api: string; h: Record<string, string> }> => {
     const r = await raw(d.url, { headers: { host: u.host } });
     expect(r.status).toBe(303);
-    const set = String(r.headers['set-cookie']);
-    return set.split(';')[0]!;
+    const cookie = String(r.headers['set-cookie']).split(';')[0]!;
+    const page = await raw(`${self}/`, { headers: { host: u.host, cookie } });
+    const api = /"apiToken":"([A-Za-z0-9_-]+)"/.exec(page.body)?.[1] ?? '';
+    expect(api).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    return { cookie, api, h: { host: u.host, cookie, 'x-uncage-dashboard': api } };
   };
   return { d, u, token, self, host: u.host, login, exec };
 }
@@ -120,7 +123,7 @@ async function dashboard(home: string, extra: Partial<Parameters<typeof startDas
 describe('uncage dashboard', () => {
   it('403 without token, with wrong Host (rebinding), from another origin', async () => {
     const home = await tmpHome();
-    const { d, u, token, self, host, login } = await dashboard(home);
+    const { d, u, token, self, host } = await dashboard(home);
     expect(u.hostname).toBe('127.0.0.1');
     expect(u.port).not.toBe('');
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 bytes, base64url
@@ -135,17 +138,23 @@ describe('uncage dashboard', () => {
     expect((await raw(d.url, { headers: { host: 'evil.com' } })).status).toBe(403);
     expect((await raw(d.url, { headers: { host: `localhost:${u.port}` } })).status).toBe(403);
 
-    // The first visit trades the token for an HttpOnly SameSite=Strict cookie and drops it from the URL.
+    // The first visit trades the token for an HttpOnly SameSite=Strict session cookie (a separate
+    // secret) and drops it from the URL.
     const first = await raw(d.url, { headers: { host } });
     expect(first.status).toBe(303);
     expect(first.headers.location).toBe('/');
     const setCookie = String(first.headers['set-cookie']);
     expect(setCookie).toMatch(/HttpOnly/i);
     expect(setCookie).toMatch(/SameSite=Strict/i);
+    expect(setCookie).not.toContain(token);
     expect(first.headers['referrer-policy']).toBe('no-referrer');
-    const cookie = await login();
+    const cookie = setCookie.split(';')[0]!;
+    // One-time: the link (in shell history, the browser's argv) no longer opens anything.
+    expect((await raw(d.url, { headers: { host } })).status).toBe(403);
+    // The token itself is never a session.
+    expect((await raw(`${self}/`, { headers: { host, cookie: `${cookie.split('=')[0]}=${token}` } })).status).toBe(403);
 
-    // With the cookie: the page and the API work, with no CORS headers and a strict CSP.
+    // With the cookie: the page works, with no CORS headers and a strict CSP.
     const page = await raw(`${self}/`, { headers: { host, cookie } });
     expect(page.status).toBe(200);
     expect(page.headers['access-control-allow-origin']).toBeUndefined();
@@ -155,30 +164,43 @@ describe('uncage dashboard', () => {
     expect(nonce).toBeTruthy();
     expect(page.body).toContain(`<script nonce="${nonce}">`);
     expect(page.body).not.toContain(token);
-    const api = await raw(`${self}/api/sites`, { headers: { host, cookie } });
-    expect(api.status).toBe(200);
-    expect(api.headers['access-control-allow-origin']).toBeUndefined();
+    const api = /"apiToken":"([A-Za-z0-9_-]+)"/.exec(page.body)?.[1] ?? '';
+    expect(api).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(cookie).not.toContain(api);
+    const h = { host, cookie, 'x-uncage-dashboard': api };
 
-    // The cookie does not help a rebinding page or another origin.
-    expect((await raw(`${self}/api/sites`, { headers: { host: `evil.com:${u.port}`, cookie } })).status).toBe(403);
-    expect((await raw(`${self}/api/sites`, { headers: { host, cookie, origin: 'http://evil.com' } })).status).toBe(403);
-    expect((await raw(`${self}/api/sites`, { headers: { host, cookie, origin: `http://localhost:${u.port}` } })).status).toBe(403);
+    // The API also needs the per-session header token (a cookie harvested by another
+    // 127.0.0.1 server, cookies ignore ports, is not enough).
+    expect((await raw(`${self}/api/sites`, { headers: { host, cookie } })).status).toBe(403);
+    expect((await raw(`${self}/api/sites`, { headers: { ...h, 'x-uncage-dashboard': 'C'.repeat(43) } })).status).toBe(403);
+    expect((await raw(`${self}/api/sites`, { headers: { host, 'x-uncage-dashboard': api } })).status).toBe(403);
+    const ok = await raw(`${self}/api/sites`, { headers: h });
+    expect(ok.status).toBe(200);
+    expect(ok.headers['access-control-allow-origin']).toBeUndefined();
+
+    // Neither helps a rebinding page or another origin.
+    expect((await raw(`${self}/api/sites`, { headers: { ...h, host: `evil.com:${u.port}` } })).status).toBe(403);
+    expect((await raw(`${self}/api/sites`, { headers: { ...h, origin: 'http://evil.com' } })).status).toBe(403);
+    expect((await raw(`${self}/api/sites`, { headers: { ...h, origin: `http://localhost:${u.port}` } })).status).toBe(403);
     // A preflight gets nothing.
     const pre = await raw(`${self}/api/sites`, { method: 'OPTIONS', headers: { host, origin: 'http://evil.com', 'access-control-request-method': 'POST' } });
     expect(pre.status).toBe(403);
     expect(pre.headers['access-control-allow-origin']).toBeUndefined();
 
-    // POSTs need the cookie AND the dashboard's own Origin.
-    const post = (headers: Record<string, string>) => raw(`${self}/api/runtimes/gemini/disable`, { method: 'POST', headers: { host, ...headers } });
-    expect((await post({ origin: self })).status).toBe(403); // no cookie
-    expect((await post({ cookie })).status).toBe(403); // no Origin
-    expect((await post({ cookie, origin: 'http://evil.com' })).status).toBe(403);
-    expect((await post({ cookie: `${cookie.split('=')[0]}=${'B'.repeat(43)}`, origin: self })).status).toBe(403);
-    expect((await post({ cookie, origin: 'null' })).status).toBe(403);
-    // The token in the URL is not accepted for POSTs.
+    // POSTs need the cookie, the header token AND the dashboard's own Origin.
+    const post = (headers: Record<string, string>) => raw(`${self}/api/runtimes/gemini/disable`, { method: 'POST', headers });
+    expect((await post({ host, 'x-uncage-dashboard': api, origin: self })).status).toBe(403); // no cookie
+    expect((await post({ host, cookie, origin: self })).status).toBe(403); // no header token
+    expect((await post(h)).status).toBe(403); // no Origin
+    expect((await post({ ...h, origin: 'http://evil.com' })).status).toBe(403);
+    expect((await post({ ...h, cookie: `${cookie.split('=')[0]}=${'B'.repeat(43)}`, origin: self })).status).toBe(403);
+    expect((await post({ ...h, origin: 'null' })).status).toBe(403);
     expect((await raw(`${self}/api/runtimes/gemini/disable?t=${token}`, { method: 'POST', headers: { host, origin: self } })).status).toBe(403);
     expect((await loadAgentConfig(home)).runtimes?.acp.disable).toEqual([]);
-    expect((await post({ cookie, origin: self })).status).toBe(200);
+    expect((await post({ ...h, origin: self })).status).toBe(200);
+    // A malformed escape in the path is a bad request, not a server error.
+    expect((await raw(`${self}/api/sites/%E0%A4%A/disconnect`, { method: 'POST', headers: { ...h, origin: self } })).status).toBe(400);
+    expect((await raw(`${self}/api/runtimes/%ZZ/enable`, { method: 'POST', headers: { ...h, origin: self } })).status).toBe(400);
   });
 
   it('lists sites with domain and status', async () => {
@@ -191,9 +213,9 @@ describe('uncage dashboard', () => {
     for (let i = 0; i < 25; i++) await log.append({ kind: 'command', name: 'session.start', ok: true, detail: { prompt: 'secret prompt text' } });
     await log.flush();
 
-    const { self, host, login } = await dashboard(home);
-    const cookie = await login();
-    const r = await raw(`${self}/api/sites`, { headers: { host, cookie } });
+    const { self, login } = await dashboard(home);
+    const { h } = await login();
+    const r = await raw(`${self}/api/sites`, { headers: h });
     expect(r.status).toBe(200);
     const body = JSON.parse(r.body) as {
       agent: { kind: string; running: boolean | null };
@@ -225,9 +247,9 @@ describe('uncage dashboard', () => {
     ]);
     const log = new ActivityLog(home, 'a.example');
     await log.append({ kind: 'connected', name: 'http' });
-    const { self, host, login } = await dashboard(home, { service: fakeService(false) });
-    const cookie = await login();
-    const body = JSON.parse((await raw(`${self}/api/sites`, { headers: { host, cookie } })).body) as { sites: Array<{ state: string }> };
+    const { self, login } = await dashboard(home, { service: fakeService(false) });
+    const { h } = await login();
+    const body = JSON.parse((await raw(`${self}/api/sites`, { headers: h })).body) as { sites: Array<{ state: string }> };
     expect(body.sites.map((s) => s.state)).toEqual(['offline', 'revoked']);
   });
 
@@ -237,15 +259,17 @@ describe('uncage dashboard', () => {
     const site = await pair(hub, origin, home);
     expect(await machines('alice')).toHaveLength(1);
     const service = fakeService();
-    const { self, host, login } = await dashboard(home, { service });
-    const cookie = await login();
+    const { self, login } = await dashboard(home, { service });
+    const { h } = await login();
 
-    const missing = await raw(`${self}/api/sites/nope.example/disconnect`, { method: 'POST', headers: { host, cookie, origin: self } });
+    const missing = await raw(`${self}/api/sites/nope.example/disconnect`, { method: 'POST', headers: { ...h, origin: self } });
     expect(missing.status).toBe(404);
 
-    const r = await raw(`${self}/api/sites/${encodeURIComponent(site.id)}/disconnect`, { method: 'POST', headers: { host, cookie, origin: self } });
+    const r = await raw(`${self}/api/sites/${encodeURIComponent(site.id)}/disconnect`, { method: 'POST', headers: { ...h, origin: self } });
     expect(r.status).toBe(200);
+    expect(JSON.parse(r.body)).toMatchObject({ code: 'disconnected', name: site.name, domain: '127.0.0.1', revoke: 'revoked', restart: 'restarted' });
     expect((JSON.parse(r.body) as { messages: string[] }).messages.join('\n')).toMatch(/Revoked this machine/);
+    expect(JSON.parse(missing.body)).toMatchObject({ error: { code: 'not_found' } });
     expect(await machines('alice')).toEqual([]);
     expect((await loadAgentConfig(home)).sites).toEqual([]);
     expect(service.restarts).toBe(1);
@@ -256,11 +280,12 @@ describe('uncage dashboard', () => {
     await updateAgentSites(home, () => [{ id: 'p.example', name: 'P', url: 'https://p.example/api/uncage', machineId: 'm', token: 't' }]);
     const proxy = (async () => new Response('<html>gate</html>', { status: 401 })) as typeof fetch;
     const service = fakeService();
-    const { self, host, login } = await dashboard(home, { service, fetch: proxy });
-    const cookie = await login();
-    const r = await raw(`${self}/api/sites/p.example/disconnect`, { method: 'POST', headers: { host, cookie, origin: self } });
+    const { self, login } = await dashboard(home, { service, fetch: proxy });
+    const { h } = await login();
+    const r = await raw(`${self}/api/sites/p.example/disconnect`, { method: 'POST', headers: { ...h, origin: self } });
     expect(r.status).toBe(502);
     expect(r.body).toMatch(/not from Uncage/);
+    expect(JSON.parse(r.body)).toMatchObject({ error: { code: 'not_revoked' } });
     expect((await loadAgentConfig(home)).sites).toHaveLength(1);
     expect(service.restarts).toBe(0);
   });
@@ -268,34 +293,40 @@ describe('uncage dashboard', () => {
   it('runtime toggle respects consent rules', async () => {
     const home = await tmpHome();
     const service = fakeService();
-    const { self, host, login } = await dashboard(home, { service, which: async () => null });
-    const cookie = await login();
-    const post = (path: string) => raw(`${self}${path}`, { method: 'POST', headers: { host, cookie, origin: self } });
+    const { self, login } = await dashboard(home, { service, which: async () => null });
+    const { h } = await login();
+    const post = (path: string) => raw(`${self}${path}`, { method: 'POST', headers: { ...h, origin: self } });
 
     // Enabling an npx agent records a consent bound to that package (what will run is reported).
     const en = await post('/api/runtimes/gemini/enable');
     expect(en.status).toBe(200);
     expect((JSON.parse(en.body) as { messages: string[] }).messages.join('\n')).toMatch(/download and run @google\/gemini-cli from npm/);
+    expect(JSON.parse(en.body)).toMatchObject({ code: 'runtime_enabled', name: 'Gemini CLI', download: 'npm', runs: expect.stringContaining('@google/gemini-cli'), restart: 'restarted' });
     expect((await loadAgentConfig(home)).runtimes?.acp).toMatchObject({
       enable: ['gemini'],
       consented: { gemini: { runner: 'npx', package: '@google/gemini-cli', args: ['--acp'] } },
       disable: [],
     });
-    let list = JSON.parse((await raw(`${self}/api/sites`, { headers: { host, cookie } })).body) as { runtimes: Array<{ id: string; state: string }> };
+    let list = JSON.parse((await raw(`${self}/api/sites`, { headers: h })).body) as { runtimes: Array<{ id: string; state: string }> };
     expect(list.runtimes.find((x) => x.id === 'gemini')?.state).toBe('enabled');
 
     // Unknown agents are refused and nothing is written.
     const bad = await post('/api/runtimes/no-such-agent/enable');
     expect(bad.status).toBe(400);
     expect(bad.body).toMatch(/Unknown ACP agent/);
+    expect(JSON.parse(bad.body)).toMatchObject({ error: { code: 'unknown_agent' } });
     // Built-in runtimes are not ACP agents: not toggled here.
-    expect((await post('/api/runtimes/claude/disable')).status).toBe(400);
+    const builtin = await post('/api/runtimes/claude/disable');
+    expect(builtin.status).toBe(400);
+    expect(JSON.parse(builtin.body)).toMatchObject({ error: { code: 'builtin' } });
     expect((await post('/api/runtimes/gemini/explode')).status).toBe(404);
 
     // Disabling drops the consent and blocks it.
-    expect((await post('/api/runtimes/acp-gemini/disable')).status).toBe(200);
+    const dis = await post('/api/runtimes/acp-gemini/disable');
+    expect(dis.status).toBe(200);
+    expect(JSON.parse(dis.body)).toMatchObject({ code: 'runtime_disabled' });
     expect((await loadAgentConfig(home)).runtimes?.acp).toMatchObject({ enable: [], consented: {}, disable: ['gemini'] });
-    list = JSON.parse((await raw(`${self}/api/sites`, { headers: { host, cookie } })).body) as { runtimes: Array<{ id: string; state: string }> };
+    list = JSON.parse((await raw(`${self}/api/sites`, { headers: h })).body) as { runtimes: Array<{ id: string; state: string }> };
     expect(list.runtimes.find((x) => x.id === 'gemini')?.state).toBe('disabled');
     expect(service.restarts).toBe(2);
   });
@@ -315,9 +346,9 @@ describe('uncage dashboard', () => {
     cleanups.push(() => d.close());
     await expect(Promise.race([d.closed.then(() => 'closed'), new Promise((r) => setTimeout(() => r('timeout'), 2000))])).resolves.toBe('closed');
 
-    const { self, host, login, d: d2 } = await dashboard(home, { service: null, graceMs: 50 });
-    const cookie = await login();
-    expect((await raw(`${self}/api/bye`, { method: 'POST', headers: { host, cookie, origin: self } })).status).toBe(204);
+    const { self, login, d: d2 } = await dashboard(home, { service: null, graceMs: 50 });
+    const { h } = await login();
+    expect((await raw(`${self}/api/bye`, { method: 'POST', headers: { ...h, origin: self } })).status).toBe(204);
     await expect(Promise.race([d2.closed.then(() => 'closed'), new Promise((r) => setTimeout(() => r('timeout'), 2000))])).resolves.toBe('closed');
   });
 
@@ -325,12 +356,16 @@ describe('uncage dashboard', () => {
     const home = await tmpHome();
     for (const [locale, lang, text] of [
       ['zh', 'zh-CN', '已连接的网站'],
+      ['zh', 'zh-CN', '已在网站上撤销这台电脑'],
+      ['zh', 'zh-CN', '"failed":"失败"'],
       ['ja', 'ja', '接続済みのサイト'],
+      ['ja', 'ja', 'サイト上でこのコンピューターを取り消しました'],
+      ['ja', 'ja', '"failed":"失敗"'],
       ['en', 'en', 'Connected websites'],
     ] as const) {
-      const { self, host, login } = await dashboard(home, { service: null, locale });
-      const cookie = await login();
-      const page = await raw(`${self}/`, { headers: { host, cookie } });
+      const { self, login } = await dashboard(home, { service: null, locale });
+      const { h } = await login();
+      const page = await raw(`${self}/`, { headers: h });
       expect(page.body).toContain(`<html lang="${lang}">`);
       expect(page.body).toContain(text);
     }

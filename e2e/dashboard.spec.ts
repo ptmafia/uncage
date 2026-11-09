@@ -77,6 +77,21 @@ test('dashboard shows the connected test site and disconnects it', async ({ page
   await expect(card.locator('ol.activity li').first()).toContainText(/connected (ws|http)/);
   await expect(tab.getByRole('region', { name: 'Agents on this computer' })).toContainText('Gemini CLI (ACP)');
   await expect(tab.getByRole('region', { name: 'Local policy' })).toContainText('Not allowed');
+  // The link works once: opening it again (another browser, a leaked shell history) gets nothing.
+  expect((await page.request.get(link!, { maxRedirects: 0, failOnStatusCode: false })).status()).toBe(403);
+
+  // A transient server error is shown, and the page keeps refreshing (it is not "stopped").
+  expect(problems).toEqual([]);
+  let failOnce = true;
+  await tab.route('**/api/sites', async (route) => {
+    if (!failOnce) return route.continue();
+    failOnce = false;
+    await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: { code: 'internal', message: 'boom' } }) });
+  });
+  await expect(tab.locator('#notice')).toContainText('Could not refresh (boom)', { timeout: 15_000 });
+  await expect(tab.locator('#notice')).toBeHidden({ timeout: 15_000 });
+  await tab.unroute('**/api/sites');
+  problems.length = 0; // the 500 above is logged by Chrome on purpose
   await tab.screenshot({ path: testInfo.outputPath('dashboard.png'), fullPage: true });
   await tab.screenshot({ path: stack.resultPath('dashboard.png'), fullPage: true });
 
@@ -86,7 +101,7 @@ test('dashboard shows the connected test site and disconnects it', async ({ page
     void d.accept();
   });
   await card.getByRole('button', { name: 'Disconnect' }).click();
-  await expect(tab.locator('#notice')).toContainText('Revoked this machine');
+  await expect(tab.locator('#notice')).toContainText('Revoked this computer on the website.');
   await expect(card).toHaveCount(0);
   await expect(tab.getByText('No connected websites.')).toBeVisible();
   expect(readFileSync(join(home, '.uncage/agent.yaml'), 'utf8')).not.toContain(siteId!);

@@ -45,6 +45,29 @@ const STRINGS = {
     anyMode: 'Any',
     policyHint: 'Change it in ~/.uncage/agent.yaml (localPolicy). Websites can never change it.',
     error: 'Something went wrong',
+    ok: 'ok',
+    failed: 'failed',
+    disconnected: '{name} ({domain}) disconnected.',
+    revoke_revoked: 'Revoked this computer on the website.',
+    revoke_already_revoked: 'The website no longer knew this computer (already revoked).',
+    revoke_unreachable: 'Could not reach the website; also remove this computer from its machine list.',
+    revoke_http_error: 'The website answered with an error; also remove this computer from its machine list.',
+    revoke_skipped: 'It had already been revoked.',
+    runtime_enabled: '{name} enabled.',
+    runtime_disabled: '{name} disabled.',
+    runs: 'Uncage will run: {runs}',
+    downloads: 'It is downloaded from {source}.',
+    restart_restarted: 'Background agent restarted.',
+    restart_failed: 'Could not restart the background agent.',
+    restart_not_installed: 'Restart "uncage agent" to apply the change.',
+    restart_none: 'Restart "uncage agent" to apply the change.',
+    err_not_found: 'That website is not connected (any more).',
+    err_not_revoked: 'The website answered HTTP 401, but not from Uncage (a proxy in front of it?). Nothing was revoked and the website stays connected; try again, or remove this computer from its machine list.',
+    err_revoke_failed: 'Could not disconnect: {message}',
+    err_unknown_agent: 'Unknown ACP agent.',
+    err_builtin: 'Built-in agents cannot be turned on or off here.',
+    err_bad_request: 'The request was not understood.',
+    loadError: 'Could not refresh ({detail}); trying again.',
     closed: 'The dashboard has stopped. Run uncage dashboard to open it again.',
   },
   zh: {
@@ -90,6 +113,29 @@ const STRINGS = {
     anyMode: '任意',
     policyHint: '在 ~/.uncage/agent.yaml（localPolicy）中修改。网站永远无法修改它。',
     error: '出错了',
+    ok: '成功',
+    failed: '失败',
+    disconnected: '已断开与 {name}（{domain}）的连接。',
+    revoke_revoked: '已在网站上撤销这台电脑。',
+    revoke_already_revoked: '该网站已不再识别这台电脑（之前已撤销）。',
+    revoke_unreachable: '无法连接该网站；请同时在网站的电脑列表中移除这台电脑。',
+    revoke_http_error: '网站返回了错误；请同时在网站的电脑列表中移除这台电脑。',
+    revoke_skipped: '它此前已被撤销。',
+    runtime_enabled: '已启用 {name}。',
+    runtime_disabled: '已停用 {name}。',
+    runs: 'Uncage 将运行：{runs}',
+    downloads: '它将从 {source} 下载。',
+    restart_restarted: '后台代理已重启。',
+    restart_failed: '无法重启后台代理。',
+    restart_not_installed: '请重启 "uncage agent" 以应用更改。',
+    restart_none: '请重启 "uncage agent" 以应用更改。',
+    err_not_found: '这个网站（已）不在连接列表中。',
+    err_not_revoked: '网站返回了 HTTP 401，但不是来自 Uncage（前面有代理？）。没有撤销任何东西，网站仍保持连接；请重试，或在网站的电脑列表中移除这台电脑。',
+    err_revoke_failed: '无法断开连接：{message}',
+    err_unknown_agent: '未知的 ACP 智能体。',
+    err_builtin: '内置智能体无法在这里启用或停用。',
+    err_bad_request: '无法识别该请求。',
+    loadError: '刷新失败（{detail}），正在重试。',
     closed: '控制台已停止。运行 uncage dashboard 重新打开。',
   },
   ja: {
@@ -135,6 +181,29 @@ const STRINGS = {
     anyMode: 'すべて',
     policyHint: '~/.uncage/agent.yaml（localPolicy）で変更します。サイトから変更されることはありません。',
     error: 'エラーが発生しました',
+    ok: '成功',
+    failed: '失敗',
+    disconnected: '{name}（{domain}）との接続を解除しました。',
+    revoke_revoked: 'サイト上でこのコンピューターを取り消しました。',
+    revoke_already_revoked: 'サイトはこのコンピューターをもう認識していませんでした（取り消し済み）。',
+    revoke_unreachable: 'サイトに接続できませんでした。サイトのマシン一覧からもこのコンピューターを削除してください。',
+    revoke_http_error: 'サイトがエラーを返しました。サイトのマシン一覧からもこのコンピューターを削除してください。',
+    revoke_skipped: 'すでに取り消されていました。',
+    runtime_enabled: '{name} を有効にしました。',
+    runtime_disabled: '{name} を無効にしました。',
+    runs: 'Uncage が実行するコマンド: {runs}',
+    downloads: '{source} からダウンロードされます。',
+    restart_restarted: 'バックグラウンドエージェントを再起動しました。',
+    restart_failed: 'バックグラウンドエージェントを再起動できませんでした。',
+    restart_not_installed: '変更を反映するには "uncage agent" を再起動してください。',
+    restart_none: '変更を反映するには "uncage agent" を再起動してください。',
+    err_not_found: 'そのサイトは（もう）接続されていません。',
+    err_not_revoked: 'サイトは HTTP 401 を返しましたが、Uncage からではありません（前段にプロキシがある？）。何も取り消されておらず、サイトは接続されたままです。再試行するか、サイトのマシン一覧からこのコンピューターを削除してください。',
+    err_revoke_failed: '接続を解除できませんでした: {message}',
+    err_unknown_agent: '不明な ACP エージェントです。',
+    err_builtin: '組み込みエージェントはここでは有効・無効にできません。',
+    err_bad_request: 'リクエストを理解できませんでした。',
+    loadError: '更新できませんでした（{detail}）。再試行しています。',
     closed: 'ダッシュボードは停止しました。uncage dashboard で再度開けます。',
   },
 } satisfies Record<DialogLocale, Record<string, string>>;
@@ -199,7 +268,10 @@ tr:first-child td{border-top:0}
  * posts actions with the session cookie. Says goodbye when the tab closes so the server can exit.
  */
 const SCRIPT = `
-const T = JSON.parse(document.getElementById('strings').textContent);
+const CONFIG = JSON.parse(document.getElementById('config').textContent);
+const T = CONFIG.strings;
+/** The session's header token: only this page's own script can read it. */
+const AUTH = { 'x-uncage-dashboard': CONFIG.apiToken };
 const LANG = document.documentElement.lang;
 const $ = (s) => document.querySelector(s);
 const el = (tag, attrs, ...kids) => {
@@ -221,11 +293,31 @@ function notice(lines, isErr) {
   n.hidden = false;
 }
 
+/** A failed action, in the page's language (the English detail only when there is no translation). */
+function errorText(body, status) {
+  const e = body && body.error;
+  if (e && T['err_' + e.code]) return fill(T['err_' + e.code], { message: e.message || '' });
+  return (e && e.message) || T.error + ' (HTTP ' + status + ')';
+}
+
 async function post(path) {
-  const res = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  const res = await fetch(path, { method: 'POST', headers: { ...AUTH, 'content-type': 'application/json' }, body: '{}' });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((body.error && body.error.message) || T.error + ' (HTTP ' + res.status + ')');
+  if (!res.ok) throw new Error(errorText(body, res.status));
   return body;
+}
+
+/** An action's result, in the page's language. */
+function resultLines(r) {
+  const lines = [];
+  if (r.code === 'disconnected') lines.push(fill(T.disconnected, r), T['revoke_' + r.revoke] || '');
+  else {
+    lines.push(fill(T[r.code] || '', r));
+    if (r.runs) lines.push(fill(T.runs, r));
+    if (r.download) lines.push(fill(T.downloads, { source: r.download }));
+  }
+  if (T['restart_' + r.restart]) lines.push(T['restart_' + r.restart]);
+  return lines.filter(Boolean);
 }
 
 function agentLine(a) {
@@ -235,7 +327,7 @@ function agentLine(a) {
 }
 
 function activityLine(e) {
-  const status = e.ok === undefined ? '' : e.ok ? ' ok' : ' failed' + (e.code ? ' (' + e.code + ')' : '');
+  const status = e.ok === undefined ? '' : e.ok ? ' ' + T.ok : ' ' + T.failed + (e.code ? ' (' + e.code + ')' : '');
   const detail = e.detail === undefined ? '' : ' ' + JSON.stringify(e.detail);
   return el('li', { class: e.ok === false ? 'fail' : '' }, when(e.at) + '  ' + e.kind + (e.name ? ' ' + e.name : '') + status + detail);
 }
@@ -246,7 +338,7 @@ function siteCard(s, runtimes) {
   const btn = el('button', { class: 'danger', type: 'button', onclick: async () => {
     if (!confirm(fill(T.confirmDisconnect, { name: s.name, domain: s.domain }))) return;
     btn.disabled = true; btn.textContent = T.disconnecting; busy = true;
-    try { notice((await post('/api/sites/' + encodeURIComponent(s.id) + '/disconnect')).messages); }
+    try { notice(resultLines(await post('/api/sites/' + encodeURIComponent(s.id) + '/disconnect'))); }
     catch (e) { notice(e.message, true); }
     finally { busy = false; await load(); }
   } }, T.disconnect);
@@ -267,7 +359,7 @@ function runtimeRow(r) {
     const next = r.state === 'disabled' ? 'enable' : 'disable';
     if (next === 'enable' && !confirm(fill(T.confirmEnable, { name: r.name }))) return;
     btn.disabled = true; busy = true;
-    try { notice((await post('/api/runtimes/' + encodeURIComponent(r.id) + '/' + next)).messages); }
+    try { notice(resultLines(await post('/api/runtimes/' + encodeURIComponent(r.id) + '/' + next))); }
     catch (e) { notice(e.message, true); }
     finally { busy = false; await load(); }
   } }, r.state === 'disabled' ? T.enable : T.disable) : null;
@@ -285,23 +377,42 @@ function render(d) {
     el('dt', {}, T.modes), el('dd', {}, modes && modes.length ? modes.join(', ') : T.anyMode)), el('p', { class: 'muted' }, T.policyHint));
 }
 
+let stopped = false;
+let loadFailed = false;
+/** Refreshes the page. Only a network error (the server is gone) or 403 (session over) stops polling. */
 async function load() {
+  let res;
   try {
-    const res = await fetch('/api/sites');
-    if (!res.ok) throw new Error(T.error + ' (HTTP ' + res.status + ')');
-    render(await res.json());
-  } catch (e) {
-    notice(T.closed, true);
+    res = await fetch('/api/sites', { headers: AUTH });
+  } catch {
+    res = null;
+  }
+  if (!res || res.status === 403) {
+    stopped = true;
     clearInterval(timer);
+    notice(T.closed, true);
+    return;
+  }
+  if (!res.ok) {
+    loadFailed = true;
+    const body = await res.json().catch(() => ({}));
+    notice(fill(T.loadError, { detail: (body.error && body.error.message) || 'HTTP ' + res.status }), true);
+    return;
+  }
+  render(await res.json());
+  if (loadFailed) {
+    loadFailed = false;
+    $('#notice').hidden = true;
   }
 }
-const timer = setInterval(() => { if (!busy && document.visibilityState === 'visible') void load(); }, 5000);
-addEventListener('pagehide', () => navigator.sendBeacon('/api/bye'));
+const timer = setInterval(() => { if (!busy && !stopped && document.visibilityState === 'visible') void load(); }, 5000);
+// Tell the server the page is gone (keepalive outlives the page; sendBeacon cannot send the header).
+addEventListener('pagehide', () => { void fetch('/api/bye', { method: 'POST', headers: AUTH, keepalive: true }).catch(() => undefined); });
 void load();
 `;
 
 /** The dashboard page: static markup, strings as JSON, the script under the request's CSP nonce. */
-export function dashboardPage(locale: DialogLocale, nonce: string): string {
+export function dashboardPage(locale: DialogLocale, nonce: string, apiToken: string): string {
   const t = STRINGS[locale];
   return `<!doctype html>
 <html lang="${HTML_LANG[locale]}">
@@ -325,7 +436,7 @@ export function dashboardPage(locale: DialogLocale, nonce: string): string {
 <h2>${esc(t.policy)}</h2>
 <section class="card" id="policy" aria-label="${esc(t.policy)}"></section>
 </main>
-<script type="application/json" id="strings">${scriptJson(t)}</script>
+<script type="application/json" id="config">${scriptJson({ strings: t, apiToken })}</script>
 <script nonce="${nonce}">${SCRIPT}</script>
 </body>
 </html>`;
