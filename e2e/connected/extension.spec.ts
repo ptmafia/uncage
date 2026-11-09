@@ -30,7 +30,8 @@ const extDir = join(repo, 'examples/connected-extension');
 const stack = new Stack('extension');
 test.afterAll(() => stack.cleanup());
 
-test('side panel lists the signed-in user\'s computer and runs a session through the hub', async (_fixtures, testInfo) => {
+// eslint-disable-next-line no-empty-pattern -- Playwright requires a destructuring pattern for the fixtures argument.
+test('side panel lists the signed-in user\'s computer and runs a session through the hub', async ({}, testInfo) => {
   test.setTimeout(180_000);
   const url = `http://localhost:${CONNECTED_PORTS.extension}`;
 
