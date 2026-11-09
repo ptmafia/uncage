@@ -20,8 +20,17 @@ export interface HubOptions {
   publicUrl: string;
   /** Where `fetch` is mounted. Defaults to `/api/uncage`. */
   basePath?: string;
-  /** Website auth: the signed-in user for a browser request, or `null`. */
+  /**
+   * Website auth: the signed-in user for a browser request, or `null`. Native apps send their own
+   * credentials (e.g. `Authorization: Bearer …`) and no `Origin`; `getUser` reads whichever it trusts.
+   */
   getUser(req: Request): Promise<HubUser | null>;
+  /**
+   * Extra origins allowed past the cross-site guard on state-changing requests, e.g. your browser
+   * extension `chrome-extension://<id>`. Only origins you control: exact `scheme://host[:port]`
+   * strings (no wildcards, paths, credentials or trailing slash), checked by `createHub`.
+   */
+  trustedOrigins?: string[];
   /**
    * Required. `pgliteHubStore({ dataDir })` from `@uncage/hub/node` for a single Node process;
    * `postgresHubStore` (or `sqlHubStore` on any SQL client) for several nodes or serverless

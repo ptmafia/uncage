@@ -106,6 +106,30 @@ function siteDefaults(url: URL): { id: string; name: string } {
   return { id, name: url.hostname };
 }
 
+/**
+ * `trustedOrigins` entries must be exact origins as browsers send them in `Origin`:
+ * `scheme://host[:port]`, lowercase, no default port, no wildcard, path, query, credentials or
+ * trailing slash.
+ */
+function assertTrustedOrigins(list: readonly string[]): ReadonlySet<string> {
+  for (const o of list) {
+    const fail = (why: string) => new Error(`createHub: trustedOrigins entry "${o}" ${why}; use an exact origin such as chrome-extension://<id> or https://app.example.com`);
+    if (typeof o !== 'string' || o.includes('*')) throw fail('must not contain wildcards');
+    const m = /^([a-z][a-z0-9+.-]*):\/\/([a-z0-9.-]+|\[[0-9a-f:.]+\])(?::(\d{1,5}))?$/.exec(o);
+    if (!m) throw fail('is not an origin (scheme://host[:port], lowercase, no path)');
+    if (m[1] === 'http' || m[1] === 'https') {
+      let canonical: string;
+      try {
+        canonical = new URL(o).origin;
+      } catch {
+        throw fail('is not a valid URL');
+      }
+      if (canonical !== o) throw fail(`is not in canonical form (browsers send "${canonical}")`);
+    }
+  }
+  return new Set(list);
+}
+
 export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   let publicUrl: URL;
   try {
@@ -121,6 +145,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   if (compareVersions(minAgentVersion, '0.0.0') < 0) throw new Error(`createHub: invalid minAgentVersion "${minAgentVersion}"`);
   const range = assertVersionRange(o.cliVersionRange ?? defaultCliRange(HUB_VERSION));
   const installExtension = assertInstallExtension(o.installScript);
+  const trustedOrigins = assertTrustedOrigins(o.trustedOrigins ?? []);
   const sessionStorage = o.sessionStorage ?? 'machine';
   const attachmentRetentionDays = o.attachmentRetentionDays ?? DEFAULT_ATTACHMENT_RETENTION_DAYS;
   if (!(attachmentRetentionDays > 0)) throw new Error(`createHub: attachmentRetentionDays must be > 0 (got ${attachmentRetentionDays})`);
@@ -408,7 +433,8 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     skills,
     sessionStorage,
     publicOrigin: origin,
-    install: { install: `curl -fsSL ${hubUrl}/install.sh | bash`, setup: `uncage setup ${setupUrl}`, windows: `irm ${hubUrl}/install.ps1 | iex` },
+    trustedOrigins,
+    install: { install: `curl -fsSL ${hubUrl}/install.sh | bash`, setup: `uncage setup ${setupUrl}`, windows: `irm ${hubUrl}/install.ps1 | iex`, connectUrl: `uncage://connect?url=${encodeURIComponent(setupUrl)}` },
     installScripts,
     maintenance: { secret: o.maintenance?.secret, run: () => upkeep.runNow() },
     version: HUB_VERSION,
