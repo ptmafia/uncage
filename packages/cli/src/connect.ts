@@ -1,4 +1,6 @@
-import { loadAgentConfig, normalizeHubUrl, type ExecFn } from '@uncage/agent';
+import { mkdir, open, rm, stat } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { agentConfigPath, loadAgentConfig, normalizeHubUrl, type ExecFn } from '@uncage/agent';
 import { confirmConnect, type ConfirmDeps } from './confirm-dialog.js';
 import { agentService, type AgentService } from './service/index.js';
 import { pairSite, type PairDeps } from './setup.js';
@@ -73,6 +75,31 @@ export function parseConnectLink(raw: string): { url: string } | { error: string
   return checkSiteUrl(link.searchParams.get('url') ?? '');
 }
 
+/** A lock older than this is left over from a crashed run and is taken over. */
+export const LOCK_STALE_MS = 2 * 60_000;
+
+/** Creates `path` exclusively (taking over a stale one); null when another run holds it. */
+async function takeLock(path: string): Promise<{ release(): Promise<void> } | null> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fh = await open(path, 'wx', 0o600);
+      await fh.writeFile(`${process.pid} ${new Date().toISOString()}\n`);
+      await fh.close();
+      return { release: () => rm(path, { force: true }) };
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      const age = await stat(path).then(
+        (st) => Date.now() - st.mtimeMs,
+        () => Infinity,
+      );
+      if (age < LOCK_STALE_MS) return null;
+      await rm(path, { force: true });
+    }
+  }
+  return null;
+}
+
 export interface ConnectDeps {
   /** The link or URL given on the command line. */
   link: string;
@@ -112,12 +139,34 @@ export async function runConnect(d: ConnectDeps): Promise<0 | 1 | 2> {
   const env = d.env ?? process.env;
   const isTTY = d.isTTY ?? process.stdout.isTTY === true;
   const config = await loadAgentConfig(d.home);
-  const known = [...new Set(config.sites.map((s) => registrableDomain(new URL(s.url).hostname)))];
+  const known = [
+    ...new Set(
+      config.sites.flatMap((s) => {
+        try {
+          const host = new URL(s.url).hostname;
+          return host ? [registrableDomain(host)] : [];
+        } catch {
+          return []; // a malformed entry in agent.yaml is skipped, not fatal
+        }
+      }),
+    ),
+  ];
   const identity = siteIdentity(parsed.url, known);
   const confirm =
     d.confirm ??
     ((i: SiteIdentity) => confirmConnect(i, { platform, exec: d.exec, isTTY, env, out: d.out, ...(d.prompt ? { prompt: d.prompt } : {}) }));
-  const yes = await confirm(identity).catch(() => false);
+  // One question at a time: a page firing links repeatedly cannot stack dialogs.
+  const lock = await takeLock(join(dirname(agentConfigPath(d.home)), 'connect.lock'));
+  if (!lock) {
+    d.out('Not connected: another "uncage connect" is already asking on this computer.');
+    return 1;
+  }
+  let yes: boolean;
+  try {
+    yes = await confirm(identity).catch(() => false);
+  } finally {
+    await lock.release();
+  }
   if (!yes) {
     d.out(`Not connected to ${identity.registrableDomain} (cancelled).`);
     return 1;
@@ -130,7 +179,7 @@ export async function runConnect(d: ConnectDeps): Promise<0 | 1 | 2> {
     out: d.out,
     platform,
     isTTY,
-    expectOrigin: identity.origin,
+    expectUrl: parsed.url,
     ...(d.noBrowser ? { noBrowser: true } : {}),
     ...(d.noQr ? { noQr: true } : {}),
     ...(d.machine ? { machine: d.machine } : {}),

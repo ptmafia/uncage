@@ -1,13 +1,16 @@
 import { isIP } from 'node:net';
 import { domainToUnicode } from 'node:url';
+import { DEFAULT_HUB_PATH } from '@uncage/agent';
 import { getDomain, getDomainWithoutSuffix } from 'tldts';
 
-export type IdentityWarning = 'idn' | 'ip' | 'first_time' | 'lookalike';
+export type IdentityWarning = 'idn' | 'ip' | 'path' | 'first_time' | 'lookalike';
 
 /** Who a site is, as shown in the connect confirmation. */
 export interface SiteIdentity {
   /** `https://app.example.com` (punycode host, port when not the default). */
   origin: string;
+  /** The full hub URL that will be paired with (`https://app.example.com/api/uncage`): shown in the dialog. */
+  url: string;
   /** The domain its owner registered (`example.com`), from the Public Suffix List; the host itself for IPs / localhost. */
   registrableDomain: string;
   /** The host as the URL parser normalizes it: punycode for IDN, dotted decimal for IPv4. */
@@ -126,7 +129,8 @@ export function editDistance(a: string, b: string): number {
 
 /**
  * The identity of the site at `url` and what should make the user look twice: an IDN (punycode)
- * host, a raw IP, a registrable domain this computer never connected to (`known` = the registrable
+ * host, a raw IP, a path other than the root or the default `/api/uncage` (on a shared origin a
+ * path can belong to someone else than the domain's owner), a registrable domain this computer never connected to (`known` = the registrable
  * domains of the sites in agent.yaml), and one that looks like a known one (same confusable
  * skeleton, or edit distance ≤ 2, on the registrable label).
  */
@@ -138,6 +142,8 @@ export function siteIdentity(url: string, known: string[]): SiteIdentity {
   const warnings: IdentityWarning[] = [];
   if (!ip && host.split('.').some((l) => l.startsWith('xn--'))) warnings.push('idn');
   if (ip) warnings.push('ip');
+  const path = u.pathname.replace(/\/+$/, '');
+  if (path !== '' && path !== DEFAULT_HUB_PATH) warnings.push('path');
   const knownSet = new Set(known.map((k) => k.toLowerCase()));
   let lookalikeOf: string | undefined;
   if (!knownSet.has(domain)) {
@@ -153,5 +159,5 @@ export function siteIdentity(url: string, known: string[]): SiteIdentity {
       if (lookalikeOf) warnings.push('lookalike');
     }
   }
-  return { origin: u.origin, registrableDomain: domain, displayHost: host, warnings, ...(lookalikeOf ? { lookalikeOf } : {}) };
+  return { origin: u.origin, url: `${u.origin}${path}`, registrableDomain: domain, displayHost: host, warnings, ...(lookalikeOf ? { lookalikeOf } : {}) };
 }

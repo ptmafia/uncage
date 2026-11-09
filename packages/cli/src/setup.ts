@@ -67,8 +67,11 @@ export function transportLine(kinds: TransportKind[]): string {
 
 /** What pairing needs (the device flow and saving the site), shared by `setup` and `connect`. */
 export type PairDeps = Pick<SetupDeps, 'url' | 'home' | 'fetch' | 'exec' | 'out' | 'noBrowser' | 'noQr' | 'isTTY' | 'platform' | 'machine' | 'sleep'> & {
-  /** The origin the user confirmed (`connect`): a hub answering with another site URL is refused, nothing saved. */
-  expectOrigin?: string;
+  /**
+   * The hub URL the user confirmed (`connect`): an approval page on another origin is refused before
+   * anything is printed or opened, and a hub answering with another site URL is refused, nothing saved.
+   */
+  expectUrl?: string;
 };
 
 /**
@@ -85,6 +88,9 @@ export async function pairSite(d: PairDeps): Promise<AgentSite> {
   const os = d.machine?.os ?? `${process.platform} ${release()}`;
 
   const code = await requestDeviceCode(d.fetch, hubUrl, { name, os, machineKey });
+  if (d.expectUrl !== undefined && new URL(code.verificationUri).origin !== new URL(d.expectUrl).origin) {
+    throw new Error(`The website's approval page is not on ${new URL(d.expectUrl).origin} (the site you confirmed). Not connected.`);
+  }
   d.out(`To connect this computer, open:\n\n  ${code.verificationUri}\n\nand confirm the code:  ${code.userCode}\n`);
   if ((d.isTTY ?? process.stdout.isTTY === true) && !d.noQr) {
     d.out(`Or scan this with your phone:\n\n${renderQr(code.verificationUri)}\n`);
@@ -97,8 +103,8 @@ export async function pairSite(d: PairDeps): Promise<AgentSite> {
   const grant = await pollDeviceToken({ fetch: d.fetch, hubUrl, code, ...(d.sleep ? { sleep: d.sleep } : {}) });
   // Re-check the URL the hub hands back (a hub can only point us at https, or loopback in dev).
   const siteUrl = normalizeHubUrl(grant.site.url);
-  if (d.expectOrigin !== undefined && new URL(siteUrl).origin !== d.expectOrigin) {
-    throw new Error(`The website answered as ${new URL(siteUrl).origin}, not ${d.expectOrigin} (the site you confirmed). Not connected.`);
+  if (d.expectUrl !== undefined && siteUrl !== d.expectUrl) {
+    throw new Error(`The website answered as ${siteUrl}, not ${d.expectUrl} (the site you confirmed). Not connected.`);
   }
 
   const site: AgentSite = {

@@ -61,11 +61,12 @@ const asq = (s: string): string => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
 
 /**
  * The applet: `on open location` runs `<node> <cli> connect <url>` (URL shell-quoted by AppleScript's
- * `quoted form of`) in the background with the service PATH, logging to `connect.log`.
+ * `quoted form of`) in the background with the service PATH, logging to `connect.log` (its folder
+ * created first).
  */
 export function appleScriptSource(spec: ServiceSpec): string {
   assertNoLineBreaks(spec);
-  const cmd = `PATH=${shq(spec.env.PATH)} ${shq(spec.nodePath)} ${shq(spec.cliEntry)} connect `;
+  const cmd = `/bin/mkdir -p ${shq(spec.logsDir)}; PATH=${shq(spec.env.PATH)} ${shq(spec.nodePath)} ${shq(spec.cliEntry)} connect `;
   const tail = ` >> ${shq(posix.join(spec.logsDir, 'connect.log'))} 2>&1 &`;
   return [
     'on open location theURL',
@@ -119,15 +120,20 @@ async function registerMac(d: UrlHandlerDeps, spec: ServiceSpec, scheme: string)
     await rm(app, { recursive: true, force: true });
     return { registered: false, location: '', notes: [`Could not build the uncage:// link handler (osacompile): ${errText(e)}`] };
   }
-  const notes: string[] = [];
-  // Info.plist changed after osacompile signed the applet: sign it again (ad hoc).
-  await d.exec('/usr/bin/codesign', ['--force', '--sign', '-', app]).catch((e: unknown) => notes.push(`Could not re-sign the link handler: ${errText(e)}`));
+  // Info.plist changed after osacompile signed the applet: sign it again (ad hoc) and check it, since
+  // an applet with a broken signature does not launch on Apple silicon.
+  try {
+    await d.exec('/usr/bin/codesign', ['--force', '--sign', '-', app]);
+    await d.exec('/usr/bin/codesign', ['--verify', app]);
+  } catch (e) {
+    return { registered: false, location: app, notes: [`Could not sign the uncage:// link handler (codesign): ${errText(e)}`] };
+  }
   try {
     await d.exec(LSREGISTER, ['-f', app]);
   } catch (e) {
-    return { registered: false, location: app, notes: [...notes, `Could not register the uncage:// link handler with LaunchServices: ${errText(e)}`] };
+    return { registered: false, location: app, notes: [`Could not register the uncage:// link handler with LaunchServices: ${errText(e)}`] };
   }
-  return { registered: true, location: app, notes };
+  return { registered: true, location: app, notes: [] };
 }
 
 async function exists(p: string): Promise<boolean> {

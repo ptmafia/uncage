@@ -4,10 +4,28 @@ import { editDistance, registrableDomain, siteIdentity, skeleton } from './site-
 describe('siteIdentity', () => {
   it('shows the registrable domain (Public Suffix List, private suffixes included) and the origin', () => {
     const i = siteIdentity('https://app.example.com/api/uncage', ['example.com']);
-    expect(i).toEqual({ origin: 'https://app.example.com', registrableDomain: 'example.com', displayHost: 'app.example.com', warnings: [] });
+    expect(i).toEqual({
+      origin: 'https://app.example.com',
+      url: 'https://app.example.com/api/uncage',
+      registrableDomain: 'example.com',
+      displayHost: 'app.example.com',
+      warnings: [],
+    });
     expect(siteIdentity('https://shop.a.b.co.uk/x', []).registrableDomain).toBe('b.co.uk');
     // vercel.app is a private public suffix: each project is its own registrable domain.
     expect(siteIdentity('https://evil.vercel.app', ['good.vercel.app']).registrableDomain).toBe('evil.vercel.app');
+  });
+
+  it('flags a path other than the default hub path (a tenant page on a shared origin), with the full URL', () => {
+    const i = siteIdentity('https://script.google.com/macros/s/AKfycbAttacker/exec', ['google.com']);
+    expect(i.url).toBe('https://script.google.com/macros/s/AKfycbAttacker/exec');
+    expect(i.registrableDomain).toBe('google.com');
+    expect(i.warnings).toEqual(['path']);
+    expect(siteIdentity('https://app.example.com/hub', []).warnings).toEqual(['path', 'first_time']);
+    // The root and the default /api/uncage are the site's own hub: no path warning.
+    expect(siteIdentity('https://app.example.com/', []).warnings).toEqual(['first_time']);
+    expect(siteIdentity('https://app.example.com/api/uncage', []).warnings).toEqual(['first_time']);
+    expect(siteIdentity('https://app.example.com/api/uncage/', []).url).toBe('https://app.example.com/api/uncage');
   });
 
   it('flags a domain never connected before', () => {

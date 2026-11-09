@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -100,7 +100,110 @@ const fakeService = (restarted: boolean) => {
 };
 const fastSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.min(ms, 50)));
 
+/** A scripted hub: `/device/code` and `/device/token` answers (anything else 404). */
+function fakeHub(o: { verificationUri: string; siteUrl: string }) {
+  return vi.fn<typeof fetch>(async (input) => {
+    const url = String(input);
+    const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
+    if (url.endsWith('/device/code')) return json({ deviceCode: 'd', userCode: 'ABCD-EFGH', verificationUri: o.verificationUri, intervalSec: 0, expiresInSec: 60 });
+    if (url.endsWith('/device/token')) {
+      return json({ status: 'ok', machineId: 'm1', machineToken: 'tok', site: { id: 's1', name: 'Site', url: o.siteUrl }, transports: [{ kind: 'http', url: `${o.siteUrl}/agent` }] });
+    }
+    return new Response('{}', { status: 404 });
+  });
+}
+
+describe('uncage connect: the confirmed hub URL is the one paired with', () => {
+  const hubUrl = 'https://script.google.com/macros/s/AKfycbX/exec';
+
+  it('a script.google.com/macros/... link shows the full URL with a path warning', async () => {
+    const confirm = vi.fn<(i: SiteIdentity) => Promise<boolean>>(async () => false);
+    expect(await runConnect({ link: link(hubUrl), home: await tmpHome(), fetch: vi.fn<typeof fetch>(), exec: vi.fn<ExecFn>(), out: () => undefined, confirm })).toBe(1);
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ url: hubUrl, registrableDomain: 'google.com', warnings: ['path', 'first_time'] }));
+  });
+
+  it('pairs with exactly that URL and saves it', async () => {
+    const home = await tmpHome();
+    const fetchSpy = fakeHub({ verificationUri: 'https://script.google.com/macros/s/AKfycbX/exec/device?code=ABCD-EFGH', siteUrl: hubUrl });
+    const code = await runConnect({ link: link(hubUrl), home, fetch: fetchSpy, exec: vi.fn<ExecFn>(async () => ({ stdout: '', stderr: '' })), out: () => undefined, confirm: async () => true, service: null, noBrowser: true, sleep: fastSleep });
+    expect(code).toBe(0);
+    expect(fetchSpy.mock.calls[0]![0]).toBe(`${hubUrl}/device/code`);
+    expect((await loadAgentConfig(home)).sites.map((s) => s.url)).toEqual([hubUrl]);
+  });
+
+  it('refuses (nothing saved) when the hub answers with another hub URL on the same origin', async () => {
+    const home = await tmpHome();
+    const fetchSpy = fakeHub({ verificationUri: 'https://script.google.com/device?code=ABCD-EFGH', siteUrl: 'https://script.google.com/macros/s/OTHER/exec' });
+    await expect(
+      runConnect({ link: link(hubUrl), home, fetch: fetchSpy, exec: vi.fn<ExecFn>(), out: () => undefined, confirm: async () => true, service: null, noBrowser: true, sleep: fastSleep }),
+    ).rejects.toThrow(/not .*you confirmed/i);
+    expect((await loadAgentConfig(home)).sites).toEqual([]);
+  });
+
+  it('refuses before opening anything when the approval page is on another origin', async () => {
+    const home = await tmpHome();
+    const exec = vi.fn<ExecFn>(async () => ({ stdout: '', stderr: '' }));
+    const fetchSpy = fakeHub({ verificationUri: 'https://evil.example/device?code=ABCD-EFGH', siteUrl: 'https://example.com/api/uncage' });
+    const lines: string[] = [];
+    await expect(
+      runConnect({ link: link('https://example.com'), home, fetch: fetchSpy, exec, out: (l) => lines.push(l), confirm: async () => true, service: null, sleep: fastSleep }),
+    ).rejects.toThrow(/approval page/i);
+    expect(exec).not.toHaveBeenCalled(); // no browser opened on evil.example
+    expect(lines.join('\n')).not.toContain('evil.example');
+    expect(fetchSpy.mock.calls.map((c) => String(c[0]))).toEqual(['https://example.com/api/uncage/device/code']); // never polled
+  });
+});
+
+describe('uncage connect: one at a time', () => {
+  it('a second connect exits 1 while one is asking; the lock is released afterwards', async () => {
+    const home = await tmpHome();
+    let release!: (v: boolean) => void;
+    const first = runConnect({
+      link: link('https://example.com'),
+      home,
+      fetch: vi.fn<typeof fetch>(),
+      exec: vi.fn<ExecFn>(),
+      out: () => undefined,
+      confirm: () => new Promise<boolean>((r) => (release = r)),
+    });
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    const confirm2 = vi.fn(async () => true);
+    const lines: string[] = [];
+    expect(await runConnect({ link: link('https://example.com'), home, fetch: vi.fn<typeof fetch>(), exec: vi.fn<ExecFn>(), out: (l) => lines.push(l), confirm: confirm2 })).toBe(1);
+    expect(confirm2).not.toHaveBeenCalled();
+    expect(lines.join('\n')).toMatch(/already asking/i);
+    release(false);
+    expect(await first).toBe(1);
+    const confirm3 = vi.fn(async () => false);
+    expect(await runConnect({ link: link('https://example.com'), home, fetch: vi.fn<typeof fetch>(), exec: vi.fn<ExecFn>(), out: () => undefined, confirm: confirm3 })).toBe(1);
+    expect(confirm3).toHaveBeenCalledTimes(1); // lock released
+  });
+
+  it('a lock older than 2 minutes is stale and taken over', async () => {
+    const home = await tmpHome();
+    await mkdir(join(home, '.uncage'), { recursive: true });
+    const lock = join(home, '.uncage', 'connect.lock');
+    await writeFile(lock, '12345');
+    const old = new Date(Date.now() - 3 * 60_000);
+    await utimes(lock, old, old);
+    const confirm = vi.fn(async () => false);
+    await runConnect({ link: link('https://example.com'), home, fetch: vi.fn<typeof fetch>(), exec: vi.fn<ExecFn>(), out: () => undefined, confirm });
+    expect(confirm).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('uncage connect', () => {
+  it('skips odd site URLs in agent.yaml (no host) instead of crashing or matching everything', async () => {
+    const home = await tmpHome();
+    await updateAgentSites(home, () => [
+      { id: 's0', name: 'Broken', url: 'mailto:someone', machineId: 'm0', token: 't', machineKey: 'k'.repeat(43) },
+      { id: 's1', name: 'Example', url: 'https://example.com/api/uncage', machineId: 'm1', token: 't', machineKey: 'k'.repeat(43) },
+    ]);
+    const confirm = vi.fn<(i: SiteIdentity) => Promise<boolean>>(async () => false);
+    expect(await runConnect({ link: link('https://example.com'), home, fetch: vi.fn<typeof fetch>(), exec: vi.fn<ExecFn>(), out: () => undefined, confirm })).toBe(1);
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ warnings: [] }));
+  });
+
   it('exits 2 on a bad link without asking or fetching', async () => {
     const fetchSpy = vi.fn<typeof fetch>();
     const confirm = vi.fn(async () => true);

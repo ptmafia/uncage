@@ -31,11 +31,12 @@ const COPY: Record<DialogLocale, Copy> = {
   en: {
     title: 'Connect this computer?',
     body: (i) =>
-      `Connect this computer to ${i.registrableDomain}?\n${i.origin}\nIt will be able to start coding-agent sessions on this computer when you use that site.`,
+      `Connect this computer to ${i.registrableDomain}?\n${i.url}\nIt will be able to start coding-agent sessions on this computer when you use that site.`,
     warning: (w, i) =>
       ({
         idn: `Warning: the address uses international characters (${i.displayHost}). Make sure it is the site you expect.`,
         ip: `Warning: this site is a bare IP address (${i.displayHost}), not a domain name.`,
+        path: `This link points to a specific page on ${i.registrableDomain}: ${i.url}. Only continue if you started this from that site.`,
         first_time: `This computer has never connected to ${i.registrableDomain} before.`,
         lookalike: `Warning: ${i.registrableDomain} looks like ${i.lookalikeOf ?? 'a site'} you already connected. It may be an imitation.`,
       })[w],
@@ -46,11 +47,12 @@ const COPY: Record<DialogLocale, Copy> = {
   },
   zh: {
     title: '连接这台电脑？',
-    body: (i) => `要将这台电脑连接到 ${i.registrableDomain} 吗？\n${i.origin}\n连接后，你在该网站上使用时，它可以在这台电脑上启动 coding agent 会话。`,
+    body: (i) => `要将这台电脑连接到 ${i.registrableDomain} 吗？\n${i.url}\n连接后，你在该网站上使用时，它可以在这台电脑上启动 coding agent 会话。`,
     warning: (w, i) =>
       ({
         idn: `警告：该地址包含国际化字符（${i.displayHost}），请确认这是你要连接的网站。`,
         ip: `警告：该网站是一个 IP 地址（${i.displayHost}），而不是域名。`,
+        path: `该链接指向 ${i.registrableDomain} 上的一个特定页面：${i.url}。只有当你是从该网站发起的连接时才继续。`,
         first_time: `这台电脑以前从未连接过 ${i.registrableDomain}。`,
         lookalike: `警告：${i.registrableDomain} 与你已连接的 ${i.lookalikeOf ?? '网站'} 很像，可能是仿冒网站。`,
       })[w],
@@ -62,11 +64,12 @@ const COPY: Record<DialogLocale, Copy> = {
   ja: {
     title: 'このコンピュータを接続しますか？',
     body: (i) =>
-      `このコンピュータを ${i.registrableDomain} に接続しますか？\n${i.origin}\n接続すると、そのサイトを使うときに、このコンピュータでコーディングエージェントのセッションを開始できるようになります。`,
+      `このコンピュータを ${i.registrableDomain} に接続しますか？\n${i.url}\n接続すると、そのサイトを使うときに、このコンピュータでコーディングエージェントのセッションを開始できるようになります。`,
     warning: (w, i) =>
       ({
         idn: `警告：このアドレスには国際化文字が含まれています（${i.displayHost}）。目的のサイトか確認してください。`,
         ip: `警告：このサイトはドメイン名ではなく IP アドレス（${i.displayHost}）です。`,
+        path: `このリンクは ${i.registrableDomain} 上の特定のページを指しています：${i.url}。そのサイトから操作を始めた場合のみ続行してください。`,
         first_time: `このコンピュータは ${i.registrableDomain} に接続したことがありません。`,
         lookalike: `警告：${i.registrableDomain} は接続済みの ${i.lookalikeOf ?? 'サイト'} に似ています。なりすましの可能性があります。`,
       })[w],
@@ -122,22 +125,22 @@ function powershellScript(title: string, body: string): string {
   ].join('\n');
 }
 
-/**
- * Asks the person at this computer whether to connect to the site, with its registrable domain,
- * origin and warnings. Native dialog first (macOS osascript, Windows MessageBox, Linux zenity /
- * kdialog with a display), else the terminal, else false. Cancel is the default everywhere; any
- * error, timeout or unexpected answer is a no.
- */
-export async function confirmConnect(i: SiteIdentity, d: ConfirmDeps): Promise<boolean> {
-  const env = d.env ?? process.env;
-  const t = confirmText(i, d.locale ?? detectLocale(env));
-  const out = d.out ?? (() => undefined);
-  const no = (): false => false;
+type Answer = 'yes' | 'no' | 'error';
 
+const exitCode = (e: unknown): number | undefined => {
+  const c = (e as { code?: unknown }).code;
+  return typeof c === 'number' ? c : undefined;
+};
+const stderrOf = (e: unknown): string => String((e as { stderr?: unknown }).stderr ?? '').trim();
+
+/** The native dialog's answer; `null` when this platform has no dialog tool here. */
+async function nativeDialog(t: ReturnType<typeof confirmText>, d: ConfirmDeps, env: NodeJS.ProcessEnv): Promise<{ answer: Answer; detail?: string } | null> {
   if (d.platform === 'darwin') {
-    return d
-      .exec('/usr/bin/osascript', [...OSASCRIPT.flatMap((l) => ['-e', l]), '--', t.body, t.title, t.cancel, t.connect])
-      .then(({ stdout }) => stdout.split(/[,\n]/).some((part) => part.trim() === `button returned:${t.connect}`), no);
+    return d.exec('/usr/bin/osascript', [...OSASCRIPT.flatMap((l) => ['-e', l]), '--', t.body, t.title, t.cancel, t.connect]).then(
+      ({ stdout }) => ({ answer: stdout.split(/[,\n]/).some((part) => part.trim() === `button returned:${t.connect}`) ? 'yes' : 'no' }),
+      // Cancel / Esc is AppleScript error -128; anything else means the dialog was never shown.
+      (e: unknown) => (/-128\b/.test(stderrOf(e)) ? { answer: 'no' } : { answer: 'error', detail: stderrOf(e) || String(e) }),
+    );
   }
   if (d.platform === 'win32') {
     const script = powershellScript(t.title, `${t.body}\n\n${t.pressOk}`);
@@ -150,36 +153,57 @@ export async function confirmConnect(i: SiteIdentity, d: ConfirmDeps): Promise<b
         '-EncodedCommand',
         Buffer.from(script, 'utf16le').toString('base64'),
       ])
-      .then(({ stdout }) => stdout.trim() === 'connect', no);
+      .then(
+        ({ stdout }) => ({ answer: stdout.trim() === 'connect' ? 'yes' : stdout.trim() === 'cancel' ? 'no' : 'error', detail: stdout.trim() }),
+        (e: unknown) => ({ answer: 'error', detail: stderrOf(e) || String(e) }),
+      );
   }
   if (d.platform === 'linux' && (env.DISPLAY || env.WAYLAND_DISPLAY)) {
     const find = d.findCommand ?? ((c: string) => defaultFindCommand(c, { platform: d.platform, env }));
+    // zenity: 0 OK, 1 Cancel, 5 timeout. kdialog: 0 Continue, 1 / 2 No / Cancel. Anything else: not shown.
+    const run = (file: string, args: string[], noCodes: number[]) =>
+      d.exec(file, args).then(
+        (): { answer: Answer } => ({ answer: 'yes' }),
+        (e: unknown): { answer: Answer; detail?: string } => {
+          const c = exitCode(e);
+          return c !== undefined && noCodes.includes(c) ? { answer: 'no' } : { answer: 'error', detail: stderrOf(e) || String(e) };
+        },
+      );
     const zenity = await find('zenity');
     if (zenity) {
-      const args = [
-        '--question',
-        `--title=${t.title}`,
-        `--text=${t.body}`,
-        `--ok-label=${t.connect}`,
-        `--cancel-label=${t.cancel}`,
-        '--default-cancel',
-        '--no-markup',
-        '--icon-name=dialog-warning',
-        '--width=440',
-      ];
-      return d.exec(zenity, args).then(() => true, no);
+      return run(
+        zenity,
+        ['--question', `--title=${t.title}`, `--text=${t.body}`, `--ok-label=${t.connect}`, `--cancel-label=${t.cancel}`, '--default-cancel', '--no-markup', '--width=440'],
+        [1, 5],
+      );
     }
     const kdialog = await find('kdialog');
-    if (kdialog) {
-      // warningyesno: "No" (Cancel) is the default button.
-      return d.exec(kdialog, ['--title', t.title, '--warningyesno', t.body, '--yes-label', t.connect, '--no-label', t.cancel]).then(() => true, no);
-    }
+    // warningcontinuecancel: Cancel is the default button.
+    if (kdialog) return run(kdialog, ['--title', t.title, '--warningcontinuecancel', t.body, '--continue-label', t.connect, '--cancel-label', t.cancel], [1, 2]);
   }
+  return null;
+}
+
+/**
+ * Asks the person at this computer whether to connect to the site, with its registrable domain,
+ * full hub URL and warnings. Native dialog first (macOS osascript, Windows MessageBox, Linux zenity /
+ * kdialog with a display); Cancel is the default everywhere and stays a no. When no dialog tool
+ * exists, or the dialog could not be shown (no GUI session, stale DISPLAY), the terminal asks if
+ * there is one; otherwise false with an explanation.
+ */
+export async function confirmConnect(i: SiteIdentity, d: ConfirmDeps): Promise<boolean> {
+  const env = d.env ?? process.env;
+  const t = confirmText(i, d.locale ?? detectLocale(env));
+  const out = d.out ?? (() => undefined);
+  const native = await nativeDialog(t, d, env);
+  if (native?.answer === 'yes') return true;
+  if (native?.answer === 'no') return false;
+  if (native?.answer === 'error') out(`The confirmation dialog could not be shown (${native.detail?.split('\n')[0] ?? 'unknown error'}).`);
   if (d.isTTY && d.prompt) {
     out(`${t.title}\n\n${t.body}\n`);
     const answer = (await d.prompt(t.question).catch(() => '')).trim();
     return /^y(es)?$/i.test(answer);
   }
-  out('Could not ask for confirmation on this computer (no dialog tool and no terminal), so it was not connected. Run "uncage connect <url>" in a terminal.');
+  out('Could not ask for confirmation on this computer (no dialog and no terminal), so it was not connected. Run "uncage connect <url>" in a terminal.');
   return false;
 }

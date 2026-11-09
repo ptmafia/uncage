@@ -74,7 +74,10 @@ describe('macOS handler', () => {
     expect(src).toMatch(/^on open location theURL$/m);
     expect(src).toContain('quoted form of theURL');
     expect(src).toContain(`'/opt/node 22/bin/node' '/usr/local/lib/node_modules/@uncage/cli/dist/bin.js' connect `);
+    // The logs folder is created first (M7), then the command runs in the background.
+    expect(src).toContain(`/bin/mkdir -p '/Users/me/.uncage/logs'; `);
     expect(src).toContain(`>> '/Users/me/.uncage/logs/connect.log' 2>&1 &`);
+    expect(src.indexOf('/bin/mkdir')).toBeLessThan(src.indexOf('connect.log'));
     expect(src).toMatch(/^on run$/m);
     // A path with quotes is escaped for the shell, then for the AppleScript string.
     const odd = appleScriptSource(spec('/Users/me', { nodePath: `/opt/it's "n"\\node` }));
@@ -101,13 +104,29 @@ describe('macOS handler', () => {
     const calls = exec.mock.calls.map(([f, a]) => [f, ...a]);
     expect(calls[0]).toEqual(['/usr/bin/osacompile', '-o', app, join(home, 'Library', 'Application Support', 'Uncage', 'UncageConnect.applescript')]);
     expect(calls[1]).toEqual(['/usr/bin/codesign', '--force', '--sign', '-', app]);
-    expect(calls[2]).toEqual([LSREGISTER, '-f', app]);
+    expect(calls[2]).toEqual(['/usr/bin/codesign', '--verify', app]);
+    expect(calls[3]).toEqual([LSREGISTER, '-f', app]);
     expect(LSREGISTER).toBe('/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister');
     const plist = await readFile(join(app, 'Contents', 'Info.plist'), 'utf8');
     expect(plist).toContain('<string>dev.uncage.connect</string>');
     expect(plist).toContain('<string>uncage</string>');
     const src = await readFile(join(home, 'Library', 'Application Support', 'Uncage', 'UncageConnect.applescript'), 'utf8');
     expect(src).toContain('on open location theURL');
+  });
+
+  it('a failing re-sign or signature check reports not registered and never calls lsregister', async () => {
+    for (const failing of [['--force', '--sign', '-'], ['--verify']]) {
+      const home = await tmpHome();
+      const inner = macExec();
+      const exec = vi.fn<ExecFn>(async (file, args) => {
+        if (file === '/usr/bin/codesign' && failing.every((a, i) => args[i] === a)) throw Object.assign(new Error('x'), { stderr: 'invalid signature' });
+        return inner(file, args);
+      });
+      const r = await registerUrlHandler({ platform: 'darwin', home, exec, spec: spec(home) });
+      expect(r.registered).toBe(false);
+      expect(r.notes.join('\n')).toContain('invalid signature');
+      expect(exec).not.toHaveBeenCalledWith(LSREGISTER, expect.anything());
+    }
   });
 
   it('unregister unregisters from LaunchServices and removes the bundle', async () => {
