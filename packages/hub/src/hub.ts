@@ -106,6 +106,10 @@ function siteDefaults(url: URL): { id: string; name: string } {
   return { id, name: url.hostname };
 }
 
+/** Origins a website or extension can actually send; never file:, data:, javascript:, blob:… */
+const TRUSTED_ORIGIN_SCHEMES = new Set(['https', 'http', 'chrome-extension', 'moz-extension', 'safari-web-extension']);
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
 /**
  * `trustedOrigins` entries must be exact origins as browsers send them in `Origin`:
  * `scheme://host[:port]`, lowercase, no default port, no wildcard, path, query, credentials or
@@ -117,6 +121,9 @@ function assertTrustedOrigins(list: readonly string[]): ReadonlySet<string> {
     if (typeof o !== 'string' || o.includes('*')) throw fail('must not contain wildcards');
     const m = /^([a-z][a-z0-9+.-]*):\/\/([a-z0-9.-]+|\[[0-9a-f:.]+\])(?::(\d{1,5}))?$/.exec(o);
     if (!m) throw fail('is not an origin (scheme://host[:port], lowercase, no path)');
+    const [, scheme, host] = m;
+    if (!TRUSTED_ORIGIN_SCHEMES.has(scheme!)) throw fail(`has an unsupported scheme (allowed: ${[...TRUSTED_ORIGIN_SCHEMES].join(', ')})`);
+    if (scheme === 'http' && !LOOPBACK_HOSTS.has(host!)) throw fail('uses plain http on a non-loopback host (only localhost, 127.0.0.1 and [::1])');
     if (m[1] === 'http' || m[1] === 'https') {
       let canonical: string;
       try {

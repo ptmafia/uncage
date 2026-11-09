@@ -581,7 +581,13 @@ export function browserApi(ctx: ApiContext) {
     return json(await ctx.device.lookup(code, user));
   }, { guardReads: true });
 
-  add('POST', '/device/decision', async ({ req, user }) => {
+  add('POST', '/device/decision', async ({ req, user, requestId }) => {
+    // JSON only: a cross-site form or `no-cors` fetch cannot send it without a CORS preflight.
+    const mime = (req.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
+    if (mime !== 'application/json') {
+      const err = new UncageError('invalid_request', { message: 'The request body must be JSON.', hint: 'Send Content-Type: application/json.' });
+      return json({ error: err.toBody(requestId) }, 415);
+    }
     const { code, approve } = parse(DeviceDecisionBodySchema, await readJson(req, ctx.bodyTimeoutMs));
     return json({ result: await (approve ? ctx.device.approve(code, user) : ctx.device.deny(code, user)) });
   });

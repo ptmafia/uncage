@@ -65,13 +65,28 @@ describe('apps and extensions on the browser API', () => {
     expect(((await refused.json()) as { error: { code: string } }).error.code).toBe('forbidden_origin');
     expect((await fetch(`${t.api}/sessions`, jsonInit('POST', { runtime: 'fake' }, evil))).status).toBe(403);
     expect((await decide(t, { code: code2.userCode, approve: true }, { cookie: 'u=alice', 'sec-fetch-site': 'cross-site' })).status).toBe(403);
+    // Opaque origins (sandboxed iframes, data: URLs) send `Origin: null`.
+    expect((await decide(t, { code: code2.userCode, approve: true }, { cookie: 'u=alice', origin: 'null' })).status).toBe(403);
+    // A form or `no-cors` fetch cannot send JSON without a preflight: the decision insists on it.
+    for (const type of ['text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data; boundary=x', 'application/jsonx']) {
+      const r = await fetch(`${t.api}/device/decision`, {
+        method: 'POST',
+        headers: { ...bearer('alice'), 'content-type': type },
+        body: JSON.stringify({ code: code2.userCode, approve: true }),
+      });
+      expect(r.status, type).toBe(415);
+      expect(((await r.json()) as { error: { code: string } }).error.code).toBe('invalid_request');
+    }
+    expect((await fetch(`${t.api}/device/decision`, { method: 'POST', headers: bearer('alice'), body: JSON.stringify({ code: code2.userCode, approve: true }) })).status).toBe(415);
+    expect((await decide(t, { code: code2.userCode, approve: true }, { ...bearer('alice'), 'content-type': 'Application/JSON; charset=utf-8' })).status).toBe(200);
+    const code3 = await newCode(t);
     // A cross-site page cannot spend the user's failed-code budget through the lookup either.
     expect((await lookup(t, 'ZZZZ-ZZZZ', { cookie: 'u=alice', 'sec-fetch-site': 'cross-site' })).status).toBe(403);
     expect((await lookup(t, 'ZZZZ-ZZZZ', evil)).status).toBe(403);
-    // The code refused above is still pending.
-    expect(await (await lookup(t, code2.userCode)).json()).toMatchObject({ name: 'MacBook' });
+    // A code never touched by a refused request is still pending.
+    expect(await (await lookup(t, code3.userCode)).json()).toMatchObject({ name: 'MacBook' });
     // Same-site website request still works.
-    expect((await decide(t, { code: code2.userCode, approve: false }, { cookie: 'u=alice', origin: t.origin })).status).toBe(200);
+    expect((await decide(t, { code: code3.userCode, approve: false }, { cookie: 'u=alice', origin: t.origin })).status).toBe(200);
     // Not signed in.
     expect((await lookup(t, code2.userCode, {})).status).toBe(401);
     expect((await decide(t, { code: code2.userCode, approve: true }, {})).status).toBe(401);
@@ -117,10 +132,19 @@ describe('apps and extensions on the browser API', () => {
         '',
         'HTTPS://App.Example.com',
         'https://app.example.com:443',
+        'file://host',
+        'data://x',
+        'javascript://x',
+        'blob://x',
+        'ftp://app.example.com',
+        'ws://app.example.com',
+        'http://app.example.com',
+        'http://192.168.1.10:8081',
+        'http://localhost.evil.com',
       ]) {
         await expect(make([bad]), bad).rejects.toThrow(/trustedOrigins/);
       }
-      const hub = await make(['chrome-extension://abcdefghijklmnopabcdefghijklmnop', 'https://app.example.com', 'http://localhost:8081', 'moz-extension://0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0']);
+      const hub = await make(['chrome-extension://abcdefghijklmnopabcdefghijklmnop', 'https://app.example.com', 'http://localhost:8081', 'http://127.0.0.1:19006', 'http://[::1]:3000', 'http://localhost', 'moz-extension://0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0']);
       await hub.close();
     } finally {
       await store.close();

@@ -28,7 +28,8 @@ export interface HubOptions {
   /**
    * Extra origins allowed past the cross-site guard on state-changing requests, e.g. your browser
    * extension `chrome-extension://<id>`. Only origins you control: exact `scheme://host[:port]`
-   * strings (no wildcards, paths, credentials or trailing slash), checked by `createHub`.
+   * strings (no wildcards, paths, credentials or trailing slash); https, browser-extension schemes,
+   * or plain http on localhost / 127.0.0.1 / [::1] only. Checked by `createHub`.
    */
   trustedOrigins?: string[];
   /**
