@@ -78,7 +78,13 @@ export function utf8Decoder(): StreamDecoder {
 export async function* parseSSE(stream: ReadableStream<Uint8Array>, signal?: AbortSignal): AsyncIterable<SSEFrame> {
   const reader = stream.getReader();
   const decoder: StreamDecoder = typeof TextDecoder === 'function' ? new TextDecoder('utf-8') : utf8Decoder();
-  const onAbort = () => void reader.cancel().catch(() => undefined);
+  // Pending reads are raced with the abort too: a polyfilled stream may not settle them on cancel().
+  let release!: () => void;
+  const aborted = new Promise<{ done: true; value?: undefined }>((r) => (release = () => r({ done: true })));
+  const onAbort = () => {
+    release();
+    void reader.cancel().catch(() => undefined);
+  };
   if (signal?.aborted) onAbort();
   signal?.addEventListener('abort', onAbort, { once: true });
   let buffer = '';
@@ -122,7 +128,9 @@ export async function* parseSSE(stream: ReadableStream<Uint8Array>, signal?: Abo
 
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const read = reader.read();
+      read.catch(() => undefined); // may settle (or fail) after the abort won the race
+      const { done, value } = await Promise.race([read, aborted]);
       if (signal?.aborted) return;
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
@@ -133,7 +141,11 @@ export async function* parseSSE(stream: ReadableStream<Uint8Array>, signal?: Abo
     // An unterminated final frame is discarded, per the SSE spec.
   } finally {
     signal?.removeEventListener('abort', onAbort);
-    await reader.cancel().catch(() => undefined);
-    reader.releaseLock();
+    if (!signal?.aborted) await reader.cancel().catch(() => undefined);
+    try {
+      reader.releaseLock();
+    } catch {
+      // a read still pending on a stream that ignored cancel()
+    }
   }
 }

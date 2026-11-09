@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createUncageClient, parseSSE, type RNFile } from './index.js';
+import { createUncageClient, parseSSE, UncageClientError, type RNFile } from './index.js';
 
 /**
  * A simulated React Native (Hermes + expo/fetch) environment: no `location`, `localStorage`,
@@ -282,5 +282,169 @@ describe('parseSSE without TextDecoder', () => {
     const frames = [];
     for await (const f of parseSSE(s)) frames.push(f);
     expect(frames).toEqual([{ data: 'a�b�' }]);
+  });
+});
+
+describe('review fixes', () => {
+  it('a stream response that arrives after reconnect() aborted it has its body cancelled', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let resolveLate!: (r: Response) => void;
+    let lateCancelled = false;
+    const late = new ReadableStream<Uint8Array>({
+      cancel() {
+        lateCancelled = true;
+      },
+    });
+    const fetch = vi
+      .fn<F>()
+      .mockImplementationOnce(() => new Promise<Response>((r) => (resolveLate = r)))
+      .mockImplementation(async () => sse(liveStream([frame(1)], { hang: true })));
+    const client = createUncageClient({ fetch });
+    const unsub = client.subscribe('ses_1', { after: 0, onEvent: () => undefined });
+    await vi.advanceTimersByTimeAsync(0);
+    client.reconnect();
+    await vi.advanceTimersByTimeAsync(0);
+    resolveLate(sse(late));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(lateCancelled).toBe(true);
+    unsub();
+  });
+
+  it('reconnect() is not held up by a stream whose pending read ignores cancel()', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let sentFirst = false;
+    // A polyfilled body: read() delivers one frame, then never settles, even after cancel().
+    const stubborn = {
+      getReader: () => ({
+        read: () => {
+          if (sentFirst) return new Promise<never>(() => undefined);
+          sentFirst = true;
+          return Promise.resolve({ done: false, value: new TextEncoder().encode(frame(1)) });
+        },
+        cancel: () => Promise.resolve(),
+        releaseLock: () => {
+          throw new TypeError('pending read');
+        },
+      }),
+    } as unknown as ReadableStream<Uint8Array>;
+    const fetch = vi
+      .fn<F>()
+      .mockImplementationOnce(async () => ({ ok: true, status: 200, body: stubborn }) as unknown as Response)
+      .mockImplementation(async () => sse(liveStream([frame(1), frame(2)], { hang: true })));
+    const client = createUncageClient({ fetch });
+    const events: number[] = [];
+    const unsub = client.subscribe('ses_1', { after: 0, onEvent: (e) => events.push(e.sequence) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(events).toEqual([1]);
+    client.reconnect();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[1]![0]).toBe('/api/uncage/sessions/ses_1/events?after=1');
+    expect(events).toEqual([1, 2]);
+    unsub();
+  });
+
+  it('a terminal stream error leaves no abort listeners behind', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const listeners = new Map<EventTarget, Set<unknown>>();
+    const add = EventTarget.prototype.addEventListener;
+    const remove = EventTarget.prototype.removeEventListener;
+    vi.spyOn(AbortSignal.prototype, 'addEventListener').mockImplementation(function (this: AbortSignal, type, fn, o) {
+      if (type === 'abort') {
+        if (!listeners.has(this)) listeners.set(this, new Set());
+        listeners.get(this)!.add(fn);
+      }
+      add.call(this, type, fn, o);
+    });
+    vi.spyOn(AbortSignal.prototype, 'removeEventListener').mockImplementation(function (this: AbortSignal, type, fn, o) {
+      if (type === 'abort') listeners.get(this)?.delete(fn);
+      remove.call(this, type, fn, o);
+    });
+    const body = { code: 'event_replay_unavailable', message: 'gone', retryable: false };
+    const fetch = vi.fn<F>(async () => sse(liveStream([`event: error\ndata: ${JSON.stringify(body)}\n\n`])));
+    const errors: string[] = [];
+    createUncageClient({ fetch }).subscribe('ses_1', { after: 5, onEvent: () => undefined, onError: (e) => errors.push(e.code) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(errors).toEqual(['event_replay_unavailable']);
+    const left = [...listeners.values()].reduce((n, s) => n + s.size, 0);
+    expect(left).toBe(0);
+  });
+
+  it('a throwing async headers() rejects requests with a typed UncageClientError', async () => {
+    const fetch = vi.fn<F>(async () => json([]));
+    const client = createUncageClient({
+      fetch,
+      headers: async () => {
+        throw new Error('refresh token expired');
+      },
+    });
+    for (const call of [() => client.listSessions(), () => client.uploadAttachment('ses_1', new File(['x'], 'a.md'))]) {
+      const err = await call().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(UncageClientError);
+      expect(err).toMatchObject({
+        code: 'unauthorized',
+        status: 0,
+        retryable: true,
+        message: 'refresh token expired',
+        details: { reason: 'headers' },
+      });
+    }
+    expect(fetch).not.toHaveBeenCalled();
+    // An UncageClientError thrown by headers() passes through unchanged.
+    const own = new UncageClientError({ code: 'rate_limited', message: 'slow', retryable: true }, 429);
+    const err = await createUncageClient({ fetch, headers: () => Promise.reject(own) })
+      .listSessions()
+      .catch((e: unknown) => e);
+    expect(err).toBe(own);
+  });
+
+  it('a throwing headers() on a stream is reported through onError (once per failure streak) and retried', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let calls = 0;
+    const headers = async () => {
+      if (++calls <= 3) throw new Error('refresh failed');
+      return { authorization: 'Bearer ok' };
+    };
+    const fetch = vi.fn<F>(async () => sse(liveStream([frame(1)], { hang: true })));
+    const errors: UncageClientError[] = [];
+    const states: string[] = [];
+    const events: number[] = [];
+    const unsub = createUncageClient({ fetch, headers }).subscribe('ses_1', {
+      after: 0,
+      onEvent: (e) => events.push(e.sequence),
+      onState: (s) => states.push(s),
+      onError: (e) => errors.push(e),
+    });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ code: 'unauthorized', details: { reason: 'headers' } });
+    expect(states).toEqual(['connecting', 'reconnecting', 'live']);
+    expect(events).toEqual([1]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    unsub();
+  });
+
+  it('an RN upload aborted while the file is being read never starts the upload', async () => {
+    const ctl = new AbortController();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<F>(async () => {
+        const r = new Response(new Blob([new Uint8Array([1])]));
+        // Abort lands after the response arrived, while the body is read.
+        const blob = r.blob.bind(r);
+        (r as { blob: () => Promise<Blob> }).blob = async () => {
+          const b = await blob();
+          ctl.abort();
+          return b;
+        };
+        return r;
+      }),
+    );
+    const fetch = vi.fn<F>(async () => json({}, 201));
+    const err = await createUncageClient({ fetch })
+      .uploadAttachment('ses_1', { uri: 'file:///a.jpg', name: 'a.jpg', type: 'image/jpeg' }, { signal: ctl.signal })
+      .catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: 'AbortError' });
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

@@ -132,13 +132,27 @@ const sleep = (ms: number, signal: AbortSignal) =>
     }
   });
 
-const untilAborted = <T>(p: Promise<T>, signal: AbortSignal): Promise<T> =>
-  new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(new Error('aborted'));
+/**
+ * `p` raced with `signal`: a fetch that ignores its signal must not hold anything up. A response
+ * that still arrives after the abort has its body cancelled so its connection is released.
+ */
+const untilAborted = (p: Promise<Response>, signal: AbortSignal): Promise<Response> =>
+  new Promise<Response>((resolve, reject) => {
+    const onAbort = () => {
+      reject(new Error('aborted'));
+      p.then(
+        (r) => void r.body?.cancel().catch(() => undefined),
+        () => undefined,
+      );
+    };
     if (signal.aborted) return onAbort();
     signal.addEventListener('abort', onAbort, { once: true });
     p.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
   });
+
+/** The abort reason of `signal` (`AbortSignal.throwIfAborted` is missing on some React Native versions). */
+const abortReason = (signal: AbortSignal): unknown =>
+  (signal.reason as unknown) ?? Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
 
 const IMAGE_MIME_BY_EXT: Record<string, string> = {
   png: 'image/png',
@@ -189,6 +203,20 @@ const networkError = (err: unknown): UncageClientError =>
     0,
   );
 
+/** `headers()` threw (e.g. a failed token refresh) → `unauthorized` tagged `headers`; an `UncageClientError` passes through. */
+const headersError = (err: unknown): UncageClientError =>
+  err instanceof UncageClientError
+    ? err
+    : new UncageClientError(
+        {
+          code: 'unauthorized',
+          message: err instanceof Error ? err.message : String(err),
+          retryable: true,
+          details: { reason: ERROR_REASONS.headers },
+        },
+        0,
+      );
+
 const isRNFile = (f: unknown): f is RNFile =>
   typeof f === 'object' && f !== null && typeof (f as { uri?: unknown }).uri === 'string' &&
   !(typeof Blob !== 'undefined' && f instanceof Blob);
@@ -217,7 +245,13 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
       throw networkError(err);
     }
   };
-  const extraHeaders = async (): Promise<Record<string, string>> => (await o.headers?.()) ?? {};
+  const extraHeaders = async (): Promise<Record<string, string>> => {
+    try {
+      return (await o.headers?.()) ?? {};
+    } catch (err) {
+      throw headersError(err);
+    }
+  };
   /** Restart hooks of the open subscriptions (`reconnect()`). */
   const live = new Set<() => void>();
 
@@ -255,6 +289,7 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
       }
       if (!read.ok && read.status !== 0) throw await toError(read);
       body = await read.blob();
+      if (opts.signal?.aborted) throw abortReason(opts.signal);
       type ||= body.type;
     }
     const init: RequestInit = {
@@ -289,8 +324,11 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
       kicked = true;
       attempt$?.abort();
     };
+    const forget = () => live.delete(kick);
     live.add(kick);
-    signal.addEventListener('abort', () => live.delete(kick), { once: true });
+    signal.addEventListener('abort', forget, { once: true });
+    /** A `headers()` failure was reported through `onError` since the stream was last live. */
+    let headersReported = false;
     const setState = (s: ConnectionState) => {
       if (s === state || signal.aborted) return;
       state = s;
@@ -309,16 +347,24 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
       }
     };
     const terminal = (err: UncageClientError) => {
-      live.delete(kick);
+      forget();
+      signal.removeEventListener('abort', forget);
       setState('offline');
       guard(() => h.onError?.(err));
     };
 
+    let stop: (() => void) | undefined;
     const run = async () => {
+      try {
+        await loop();
+      } finally {
+        if (stop) signal.removeEventListener('abort', stop);
+      }
+    };
+    const loop = async () => {
       setState('connecting');
       let attempt = 0;
       let failingSince: number | undefined;
-      let stop: (() => void) | undefined;
       while (!signal.aborted) {
         if (stop) signal.removeEventListener('abort', stop);
         const ctl = new AbortController();
@@ -328,10 +374,20 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
         signal.addEventListener('abort', stop, { once: true });
         const attemptSignal = ctl.signal;
         try {
-          const headers: Record<string, string> = { accept: 'text/event-stream', ...(await extraHeaders()) };
+          let extra: Record<string, string>;
+          try {
+            extra = await extraHeaders();
+          } catch (err) {
+            // Surfaced once per failure streak (a UI can ask the user to sign in again), then retried.
+            if (!headersReported && !signal.aborted) {
+              headersReported = true;
+              guard(() => h.onError?.(err as UncageClientError));
+            }
+            throw err;
+          }
+          const headers: Record<string, string> = { accept: 'text/event-stream', ...extra };
           if (attemptSignal.aborted) throw new Error('restarted');
           if (lastEventId) headers['last-event-id'] = lastEventId;
-          // Raced with the abort: a fetch that ignores its signal must not hold up reconnect().
           const res = await untilAborted(
             doFetch(`${baseUrl}/sessions/${enc(sessionId)}/events?after=${lastSequence}`, { headers, signal: attemptSignal }),
             attemptSignal,
@@ -348,6 +404,7 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
           if (!res.body) throw new Error('empty response body');
           setState('live');
           failingSince = undefined;
+          headersReported = false;
           const opened = Date.now();
           let delivered = false;
           let rotated = false;
