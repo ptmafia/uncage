@@ -394,6 +394,9 @@ describe('subscribe', () => {
 
   it('a gap the server still has after one resume is accepted (no reconnect loop)', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    // Pin the jitter: resume ≈ 496 ms, then the reconnect backoff after the stream ends ≈ 622 ms, so
+    // exactly two fetches fall inside the window (with small random draws a third one could too).
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.99);
     const fetch = vi
       .fn<F>()
       .mockResolvedValueOnce(sseResponse([frame(1), frame(3)]))
@@ -403,6 +406,7 @@ describe('subscribe', () => {
     const unsub = createUncageClient({ fetch }).subscribe('ses_1', { after: 0, onEvent: (e) => seen.push(e.sequence) });
     await vi.advanceTimersByTimeAsync(510);
     unsub();
+    random.mockRestore();
     expect(seen).toEqual([1, 3, 4]);
     expect(fetch).toHaveBeenCalledTimes(2);
   });
