@@ -58,6 +58,29 @@ creates a hub per request on a per-request pool. Complete files and checklists p
 Every `Session` the browser API returns (create, list, snapshot, settings, and `session.*` events)
 carries `machineId`, the computer it runs on, so UIs can show that computer's status.
 
+## Apps, extensions and notifications
+
+- **Native apps and browser extensions** use the same browser API. Native apps send their own
+  credentials (e.g. `Authorization: Bearer …`) and no `Origin`; `getUser` reads whichever it trusts
+  ([Authenticate apps](https://uncage-dev.vercel.app/docs/guides/authenticate-apps/)).
+- **`trustedOrigins`**: extra exact origins allowed past the cross-site guard, e.g. your extension's
+  `chrome-extension://<id>` ([Browser extensions](https://uncage-dev.vercel.app/docs/guides/browser-extension/)). Invalid entries
+  make `createHub` throw. It is not CORS: the hub sends no `Access-Control-*` headers and does not
+  answer preflight, so a trusted `https://` website origin only works if your framework adds CORS.
+- **Device approval from an app**: `GET <base>/device/lookup?code=` (the pending computer, or
+  `null`) and `POST <base>/device/decision` `{ code, approve }` → `{ result: 'ok' | 'not_found' |
+  'expired' }` (JSON only). Both go through `getUser` and the cross-site guard.
+- **One-click connect**: `GET <base>/machines/install` includes `connectUrl`
+  (`uncage://connect?url=<setup url>`; [One-click connect](https://uncage-dev.vercel.app/docs/guides/one-click-connect/)).
+- **`onAttention(e, ctx)`**: called once per approval requested, run completed or run failed (deduped
+  across nodes through the store, never blocks ingest, events older than 10 minutes skipped).
+  `expoPushNotifier({ tokensFor, accessToken?, message?, onInvalidToken? })` is a ready handler
+  that sends Expo push notifications; `defaultPushMessage` is its default text. **What leaves your
+  hub**: the session title and the approval's title (often the shell command or file) go to Expo,
+  then Apple or Google, and show on the lock screen (cut to 180 characters). Pass `message` for
+  generic text, e.g. `() => ({ title: 'Approval needed', body: 'Open the app to review.' })`
+  ([Push notifications](https://uncage-dev.vercel.app/docs/guides/push-notifications/)).
+
 ## Site tools
 
 `defineTool` declares a website capability that the agent sees as an MCP tool. The machine gets
