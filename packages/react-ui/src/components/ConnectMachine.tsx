@@ -38,6 +38,12 @@ function detectOs(nav: { platform?: string; userAgentData?: { platform?: string 
   return /^win/i.test(p) ? 'windows' : 'unix';
 }
 
+/** A phone or tablet: an `uncage://` link there would open nothing useful. */
+function detectMobile(nav: { userAgent?: string; platform?: string; userAgentData?: { mobile?: boolean; platform?: string } } | undefined = globalThis.navigator): boolean {
+  if (nav?.userAgentData?.mobile) return true;
+  return /iPhone|iPad|iPod|Android/i.test(`${nav?.userAgent ?? ''} ${nav?.platform ?? ''} ${nav?.userAgentData?.platform ?? ''}`);
+}
+
 /**
  * "Connect your computer": the one command to run on the computer (the site's checking installer:
  * `install.sh` on macOS / Linux, `install.ps1` on Windows, in OS tabs that start on the detected OS),
@@ -56,8 +62,10 @@ export function ConnectMachine({ variant = 'dialog', onClose, onConnected, class
   // After mount, not in the initializer: the server render (and hydration) must match, and Node has a
   // `navigator` of its own, which describes the server. A layout effect, so the browser never paints
   // the default tab first.
+  const [mobile, setMobile] = useState(false);
   useIsomorphicLayoutEffect(() => {
     setTab(detectOs());
+    setMobile(detectMobile());
   }, []);
   const [installFailed, setInstallFailed] = useState<typeof error>();
   const [joined, setJoined] = useState<MachineInfo>();
@@ -225,6 +233,14 @@ export function ConnectMachine({ variant = 'dialog', onClose, onConnected, class
               )}
             </div>
             <p className="uc-connect-note">{t.connectOneCommandNote}</p>
+            {install?.connectUrl && !mobile && (
+              <p className="uc-connect-oneclick">
+                <a className="uc-connect-oneclick-link" href={install.connectUrl}>
+                  {t.connectOneClick}
+                </a>
+                <span className="uc-connect-note">{t.connectOneClickHint}</span>
+              </p>
+            )}
             {install && (
               <div className="uc-connect-alt">
                 <p className="uc-connect-note">{t.connectAlreadyInstalled}</p>

@@ -1,4 +1,4 @@
-import { UncageClientError, type SubscribeHandlers, type UncageClient } from '@uncage/client';
+import { UncageClientError, type InstallInfo, type SubscribeHandlers, type UncageClient } from '@uncage/client';
 import type {
   ActiveRunInfo,
   ApprovalRequest,
@@ -201,7 +201,7 @@ export function fakeClient(
       if (m === undefined) throw clientError('not_found', 404, 'No route for GET /v1/machines.');
       return typeof m === 'function' ? m() : m;
     }),
-    installInfo: vi.fn(async (): Promise<{ install: string; setup: string; windows: string | null }> => INSTALL),
+    installInfo: vi.fn(async (): Promise<InstallInfo> => INSTALL),
     revokeMachine: vi.fn(async (): Promise<void> => undefined),
     lookupDevice: vi.fn(async () => null),
     decideDevice: vi.fn(async (): Promise<'ok' | 'not_found' | 'expired'> => 'ok'),

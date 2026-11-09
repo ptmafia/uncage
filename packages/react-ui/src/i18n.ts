@@ -175,6 +175,8 @@ const en = {
   connectOneCommandNote:
     'It checks the computer and asks before installing anything it needs (Node.js 22, the Uncage CLI). Then it opens a browser to sign in and keeps the agent running in the background.',
   connectAlreadyInstalled: 'Already have the CLI?',
+  connectOneClick: 'Already use Uncage on this computer? Connect in one click',
+  connectOneClickHint: 'Your browser will ask to open Uncage.',
   osTabs: 'Operating system',
   osUnix: 'macOS / Linux',
   osWindows: 'Windows',
@@ -393,6 +395,8 @@ const zhCN: Strings = {
   connectOneCommand: '在你的电脑上运行这条命令',
   connectOneCommandNote: '它会先检查这台电脑，安装所需的东西（Node.js 22、Uncage CLI）之前都会先征求你的同意；然后打开浏览器登录，并在后台保持守护进程运行。',
   connectAlreadyInstalled: '已经装好 CLI？',
+  connectOneClick: '这台电脑已在使用 Uncage？一键连接',
+  connectOneClickHint: '浏览器会询问是否打开 Uncage。',
   osTabs: '操作系统',
   osUnix: 'macOS / Linux',
   osWindows: 'Windows',
