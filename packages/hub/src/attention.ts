@@ -25,6 +25,8 @@ export type OnAttention = (e: AttentionEvent, ctx: { waitUntil(p: Promise<unknow
 export const ATTENTION_DEDUPE_TTL_SEC = 86_400;
 /** Events older than this (an agent backfilling after a reconnect) never notify. */
 export const ATTENTION_STALE_MS = 10 * 60_000;
+/** The "computer clock is behind" warning repeats at most this often per machine (per node). */
+export const ATTENTION_SKEW_WARN_MS = 3_600_000;
 /** Per-node dedupe keys kept when the store has no `claimOnce`. */
 export const ATTENTION_LRU_MAX = 10_000;
 
@@ -48,6 +50,8 @@ export function attentionDispatcher(d: {
 }) {
   const now = d.now ?? Date.now;
   const seen = new Map<string, true>();
+  /** Machine id → when its clock-skew warning was last logged. */
+  const skewWarned = new Map<string, number>();
   const pending = new Set<Promise<unknown>>();
 
   async function claim(key: string): Promise<boolean> {
@@ -88,7 +92,9 @@ export function attentionDispatcher(d: {
         answered.add(e.payload.approval.id);
       }
     }
-    const cutoff = now() - ATTENTION_STALE_MS;
+    const nowMs = now();
+    const cutoff = nowMs - ATTENTION_STALE_MS;
+    let skipped = false;
     for (const e of events) {
       if (e.type === 'session.created' || e.type === 'session.updated') {
         title = e.payload.session.title;
@@ -98,7 +104,10 @@ export function attentionDispatcher(d: {
       const kind = KIND[e.type];
       if (!kind) continue;
       const t = Date.parse(e.occurredAt);
-      if (!(t >= cutoff)) continue;
+      if (!(t >= cutoff)) {
+        skipped = true;
+        continue;
+      }
       let approval: AttentionEvent['approval'];
       if (e.type === 'approval.requested') {
         const a = e.payload.approval;
@@ -121,7 +130,23 @@ export function attentionDispatcher(d: {
         },
       });
     }
+    if (skipped) warnIfSkewed(machine, events, nowMs);
     return out;
+  }
+
+  /**
+   * Stale events were skipped. A real backfill almost always ends with recent events; a batch
+   * whose newest event is already stale points to the computer's clock being behind (then nothing
+   * from it would ever notify). Logged once per machine per hour.
+   */
+  function warnIfSkewed(machine: MachineRecord, events: UncageEvent[], nowMs: number): void {
+    const newest = Math.max(...events.map((e) => Date.parse(e.occurredAt)).filter((t) => Number.isFinite(t)));
+    if (!(newest < nowMs - ATTENTION_STALE_MS)) return;
+    const last = skewWarned.get(machine.id);
+    if (last !== undefined && nowMs - last < ATTENTION_SKEW_WARN_MS) return;
+    if (skewWarned.size >= ATTENTION_LRU_MAX) skewWarned.clear();
+    skewWarned.set(machine.id, nowMs);
+    d.logger.warn({ machineId: machine.id, skewMs: nowMs - newest }, 'onAttention: events skipped as stale; check the computer clock');
   }
 
   return {

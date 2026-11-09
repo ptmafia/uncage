@@ -215,11 +215,11 @@ ALTER TABLE uncage_hub_machines ADD outdated_at text
     // One-time claims across instances (onAttention dedupe), kept until they expire (maintenance).
     id: 9,
     sql: `
-CREATE TABLE uncage_claims (
+CREATE TABLE uncage_hub_claims (
   key text PRIMARY KEY,
-  expires_at timestamptz NOT NULL
+  expires_at text NOT NULL
 );
-CREATE INDEX uncage_claims_expires_idx ON uncage_claims (expires_at)
+CREATE INDEX uncage_hub_claims_expires_idx ON uncage_hub_claims (expires_at)
 `,
   },
 ];
@@ -914,15 +914,15 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
       const expiresAt = new Date(Date.parse(o.now) + o.ttlSec * 1000).toISOString();
       // A live claim keeps the row (no update, no row back); an expired one is taken over.
       const { rows } = await db.query(
-        `INSERT INTO uncage_claims AS c (key, expires_at) VALUES ($1, $2::timestamptz)
+        `INSERT INTO uncage_hub_claims AS c (key, expires_at) VALUES ($1, $2)
          ON CONFLICT (key) DO UPDATE SET expires_at = EXCLUDED.expires_at
-         WHERE c.expires_at <= $3::timestamptz
+         WHERE c.expires_at <= $3
          RETURNING key`,
         [key, expiresAt, o.now],
       );
       return rows.length > 0;
     },
-    pruneClaims: (now) => prune('uncage_claims', 'expires_at < $1::timestamptz', [now]),
+    pruneClaims: (now) => prune('uncage_hub_claims', 'expires_at < $1', [now]),
 
     close,
   };

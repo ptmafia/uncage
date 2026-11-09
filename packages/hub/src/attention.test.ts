@@ -141,11 +141,14 @@ describe('onAttention', () => {
     const ev = [...sessionEvents(sid), makeEvent(sid, 2, 'run.completed', { runId: 'run_1', durationMs: 1 }, 'run_1')];
     a.sendEvents(sid, ev);
     a.sendEvents(sid, ev);
-    a.sendEvents(sid, [makeEvent(sid, 3, 'run.completed', { runId: 'run_2', durationMs: 1 }, 'run_2')]);
+    const run2Event = at(makeEvent(sid, 3, 'run.completed', { runId: 'run_2', durationMs: 1 }, 'run_2'), new Date(Date.now() + 1).toISOString());
+    a.sendEvents(sid, [run2Event]);
     await until(() => r.seen.length === 2);
     await sleep(100);
-    expect(r.seen.map((s) => s.e.at)).toEqual([ev[1]!.occurredAt, expect.any(String)]);
+    const run2 = r.seen.find((x) => x.e.at !== ev[1]!.occurredAt);
+    expect(r.seen.map((x) => x.e.at).sort()).toEqual([ev[1]!.occurredAt, run2Event.occurredAt].sort());
     expect(r.seen).toHaveLength(2);
+    expect(run2?.e).toMatchObject({ kind: 'run_completed', at: run2Event.occurredAt });
   });
 
   it('skips events older than 10 minutes and already-resolved approvals', async () => {
@@ -195,6 +198,47 @@ describe('onAttention', () => {
     await until(() => r2.seen.length === 1);
     await sleep(100);
     expect(r2.seen.map((x) => x.e.kind)).toEqual(['run_completed']);
+  });
+
+  it('warns (once per machine) when a whole batch is stale: the computer clock is probably behind', async () => {
+    const warns: Array<[Record<string, unknown>, string | undefined]> = [];
+    const logger = { warn: (o: unknown, m?: string) => void warns.push([o as Record<string, unknown>, m]), error: () => undefined };
+    const r = recorder();
+    const { a, machineId } = await setup({ onAttention: r.onAttention, logger });
+    const sid = 'ses_skew';
+    const skewed = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+    // Real backfill: old events, but the batch ends with a recent one: no warning.
+    a.sendEvents(sid, [
+      at(makeEvent(sid, 1, 'run.completed', { runId: 'run_0', durationMs: 1 }, 'run_0'), skewed(60)),
+      makeEvent(sid, 2, 'message.started', { messageId: 'm0', role: 'assistant' }, 'run_1'),
+    ]);
+    // A clock 30 min behind: even the newest event looks stale.
+    a.sendEvents(sid, [at(makeEvent(sid, 3, 'run.completed', { runId: 'run_1', durationMs: 1 }, 'run_1'), skewed(30))]);
+    a.sendEvents(sid, [at(makeEvent(sid, 4, 'run.failed', { runId: 'run_2', error: { code: 'internal_error', message: 'x', retryable: false } }, 'run_2'), skewed(30))]);
+    await until(() => warns.some(([, m]) => m?.includes('check the computer clock')));
+    await sleep(100);
+    const skew = warns.filter(([, m]) => m?.includes('check the computer clock'));
+    expect(skew).toHaveLength(1);
+    expect(skew[0]![0]).toMatchObject({ machineId });
+    expect(skew[0]![0].skewMs as number).toBeGreaterThan(29 * 60_000);
+    expect(r.seen).toHaveLength(0);
+  });
+
+  it('site mode: a failing resource index after the append still notifies', async () => {
+    const errors: unknown[] = [];
+    const r = recorder();
+    const { t, a, fm } = await setup({ sessionStorage: 'site', onAttention: r.onAttention, logger: { warn: () => undefined, error: (o: unknown) => void errors.push(o) } });
+    const s = (await (await t.as('alice', '/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runtime: 'fake' }) })).json()) as Session;
+    const put = t.store.putResource.bind(t.store);
+    t.store.putResource = async (id, kind, sessionId) => {
+      if (id === 'apr_idx') throw new Error('index down');
+      return put(id, kind, sessionId);
+    };
+    a.sendEvents(s.id, [fm.sessions.get(s.id)!.events[0]!, fm.append(s.id, 'approval.requested', { approval: approval(s.id, 'apr_idx') }, 'run_1')]);
+    await until(() => r.seen.length === 1);
+    expect(r.seen[0]!.e.approval?.id).toBe('apr_idx');
+    expect((await t.store.getSession(s.id))?.lastSequence).toBe(2);
+    await until(() => errors.length > 0);
   });
 
   it('a throwing onAttention never breaks ingest', async () => {

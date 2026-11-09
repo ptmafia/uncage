@@ -17,7 +17,11 @@ export interface ExpoPushNotifierOptions {
   onInvalidToken?(token: string): void | Promise<void>;
   /** Defaults to `EXPO_PUSH_ENDPOINT`. */
   endpoint?: string;
+  /** A request to Expo still unanswered after this is aborted (the call rejects). Default 15 000 ms. */
+  timeoutMs?: number;
 }
+
+const DEFAULT_TIMEOUT_MS = 15_000;
 
 /** The default messages (English; pass `message` to localize). */
 export function defaultPushMessage(e: AttentionEvent): { title: string; body: string } {
@@ -39,11 +43,14 @@ type Ticket = { status: 'ok'; id?: string } | { status: 'error'; message?: strin
  * An `onAttention` handler that sends Expo push notifications to the user's devices: one message
  * per token, in requests of at most 100, with `data: { sessionId, approvalId?, kind }` for the app
  * to open the right screen. Tokens Expo reports as `DeviceNotRegistered` go to `onInvalidToken`.
- * A failed request rejects (the hub logs it). Uses only `fetch` (any platform).
+ * Rejects (the hub logs it) when a request fails or times out (`timeoutMs`), when `onInvalidToken`
+ * throws, or when Expo refused messages for another reason (e.g. `InvalidCredentials`: error codes
+ * and counts only, never tokens). Uses only `fetch` (any platform).
  */
 export function expoPushNotifier(o: ExpoPushNotifierOptions): OnAttention {
   const message = o.message ?? defaultPushMessage;
   const endpoint = o.endpoint ?? EXPO_PUSH_ENDPOINT;
+  const timeoutMs = o.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   return async (e) => {
     const m = message(e);
     if (!m) return;
@@ -54,30 +61,49 @@ export function expoPushNotifier(o: ExpoPushNotifierOptions): OnAttention {
     const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json' };
     if (o.accessToken) headers.authorization = `Bearer ${o.accessToken}`;
 
-    const send = async (batch: string[]): Promise<string[]> => {
+    const send = async (batch: string[]): Promise<{ invalid: string[]; errors: string[] }> => {
       const res = await doFetch(endpoint, {
         method: 'POST',
         headers,
         body: JSON.stringify(batch.map((to) => ({ to, title: m.title, body: m.body, data, sound: 'default' }))),
+        signal: AbortSignal.timeout(timeoutMs),
       });
-      if (!res.ok) throw new Error(`Expo push request failed: ${res.status} ${(await res.text().catch(() => '')).slice(0, 200)}`);
+      if (!res.ok) {
+        // Status and error codes only: Expo's error bodies can echo push tokens, and this gets logged.
+        const body = (await res.json().catch(() => null)) as { errors?: Array<{ code?: unknown }> } | null;
+        const codes = (body?.errors ?? []).map((e) => e.code).filter((c): c is string => typeof c === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(c));
+        throw new Error(`Expo push request failed: HTTP ${res.status}${codes.length ? ` (${codes.join(', ')})` : ''}`);
+      }
       const tickets = ((await res.json()) as { data?: Ticket[] }).data ?? [];
       const invalid: string[] = [];
+      const errors: string[] = [];
       tickets.forEach((t, i) => {
-        if (t.status === 'error' && t.details?.error === 'DeviceNotRegistered') {
+        if (t.status !== 'error') return;
+        if (t.details?.error === 'DeviceNotRegistered') {
           const token = t.details.expoPushToken ?? batch[i];
           if (token) invalid.push(token);
+        } else {
+          const code = t.details?.error;
+          errors.push(typeof code === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(code) ? code : 'unknown');
         }
       });
-      return invalid;
+      return { invalid, errors };
     };
 
     const batches: string[][] = [];
     for (let i = 0; i < tokens.length; i += BATCH) batches.push(tokens.slice(i, i + BATCH));
     const results = await Promise.allSettled(batches.map(send));
-    const invalid = results.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
-    if (o.onInvalidToken) for (const t of invalid) await o.onInvalidToken(t);
-    const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
-    if (failed) throw failed.reason;
+    const ok = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+    const failures: unknown[] = results.flatMap((r) => (r.status === 'rejected' ? [r.reason] : []));
+    if (o.onInvalidToken) {
+      const reported = await Promise.allSettled(ok.flatMap((r) => r.invalid).map(async (t) => o.onInvalidToken!(t)));
+      for (const r of reported) if (r.status === 'rejected') failures.push(r.reason);
+    }
+    if (failures.length > 0) throw failures[0];
+    const counts = new Map<string, number>();
+    for (const code of ok.flatMap((r) => r.errors)) counts.set(code, (counts.get(code) ?? 0) + 1);
+    if (counts.size > 0) {
+      throw new Error(`Expo push tickets failed: ${[...counts].map(([c, n]) => `${c} ×${n}`).join(', ')}`);
+    }
   };
 }

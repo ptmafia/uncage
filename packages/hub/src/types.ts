@@ -141,8 +141,11 @@ export interface HubOptions {
    * agent resends it and however many hub nodes see it (deduped through `store.claimOnce`, kept a
    * day; a custom store without it gets per-node in-memory dedupe, best effort). Not fired for
    * events older than 10 minutes (an agent backfilling after a reconnect) nor, in `'site'` mode,
-   * for an approval the stored snapshot already shows answered. Never blocks or fails ingest:
-   * errors (thrown or rejected) go to `logger.error`. When `hub.fetch` got `info.waitUntil` the
+   * for an approval the stored snapshot already shows answered. "Older" compares the event's time
+   * from the computer's clock with this hub's clock: keep both within a few minutes (NTP); a
+   * computer whose clock is over 10 minutes behind never notifies (the hub logs a warning, at most
+   * hourly per machine). Never blocks or fails ingest: errors (thrown or rejected) go to
+   * `logger.error`. Delivery is at most once: if your handler fails, the event is not retried. When `hub.fetch` got `info.waitUntil` the
    * call runs under it, and `ctx.waitUntil` hands further work to the same request context.
    */
   onAttention?: OnAttention;

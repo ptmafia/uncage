@@ -325,6 +325,9 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
       const patch = indexPatch(rec, accepted);
       if (Object.keys(patch).length > 0) await store.updateSession(rec.id, patch);
     }
+    // Right after the events were accepted (site mode: stored; a resend would be dropped as a
+    // duplicate, so nothing below may skip it). Never awaited.
+    attention.fire(machine, rec, accepted, waitUntil);
 
     for (const e of accepted) {
       if (e.type === 'run.started') await store.putResource(e.payload.run.id, 'run', rec.id);
@@ -332,8 +335,6 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
         await store.putResource(e.payload.approval.id, 'approval', rec.id);
       }
     }
-    // After the events were accepted (site mode: stored), never awaited.
-    attention.fire(machine, rec, accepted, waitUntil);
     return accepted;
   }
 

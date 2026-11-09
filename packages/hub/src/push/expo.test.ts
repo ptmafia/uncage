@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { until } from '../test-utils.js';
 import type { AttentionEvent } from '../attention.js';
 import { EXPO_PUSH_ENDPOINT, expoPushNotifier } from './expo.js';
 
@@ -15,6 +16,8 @@ const event = (over: Partial<AttentionEvent> = {}): AttentionEvent => ({
   ...over,
 });
 const ctx = { waitUntil: () => undefined };
+/** The handler's result as a promise (its type allows a plain `void`). */
+const settle = (r: void | Promise<void>): Promise<void> => Promise.resolve(r);
 
 type Msg = { to: string; title: string; body: string; data: Record<string, unknown> };
 
@@ -74,11 +77,66 @@ describe('expoPushNotifier', () => {
           : { status: 'ok', id: 'x' },
     );
     const invalid: string[] = [];
-    await expoPushNotifier({ tokensFor: async () => tokens(3), fetch: expo.fetch, onInvalidToken: (t) => void invalid.push(t) })(event(), ctx);
+    // Other ticket errors (bad credentials, too big, rate) reject with codes and counts, never tokens.
+    const err = await settle(expoPushNotifier({ tokensFor: async () => tokens(3), fetch: expo.fetch, onInvalidToken: (t) => void invalid.push(t) })(event(), ctx)).then(
+      () => null,
+      (e: Error) => e,
+    );
     expect(invalid).toEqual([dead]);
-    // A failing request is reported (the hub logs it), not swallowed.
-    const failing = (async () => new Response('nope', { status: 500 })) as unknown as typeof fetch;
-    await expect(expoPushNotifier({ tokensFor: async () => tokens(1), fetch: failing })(event(), ctx)).rejects.toThrow(/500/);
+    expect(err?.message).toMatch(/MessageTooBig ×1/);
+    expect(err?.message).not.toMatch(/ExponentPushToken/);
+    // A failing request is reported (the hub logs it), not swallowed: status and error codes only,
+    // never the body (Expo's errors can echo tokens).
+    const failing = (async () =>
+      new Response(JSON.stringify({ errors: [{ code: 'PUSH_TOO_MANY_EXPERIENCE_IDS', message: 'ExponentPushToken[t0] belongs to @a/b', details: { '@a/b': ['ExponentPushToken[t0]'] } }] }), {
+        status: 400,
+      })) as unknown as typeof fetch;
+    const failed = await settle(expoPushNotifier({ tokensFor: async () => tokens(1), fetch: failing })(event(), ctx)).then(
+      () => null,
+      (e: Error) => e,
+    );
+    expect(failed?.message).toMatch(/400/);
+    expect(failed?.message).toMatch(/PUSH_TOO_MANY_EXPERIENCE_IDS/);
+    expect(failed?.message).not.toMatch(/ExponentPushToken/);
+    const plain500 = (async () => new Response('<html>ExponentPushToken[t0]</html>', { status: 500 })) as unknown as typeof fetch;
+    const failed500 = await settle(expoPushNotifier({ tokensFor: async () => tokens(1), fetch: plain500 })(event(), ctx)).then(
+      () => null,
+      (e: Error) => e,
+    );
+    expect(failed500?.message).toMatch(/500/);
+    expect(failed500?.message).not.toMatch(/ExponentPushToken/);
+  });
+
+  it('a throwing onInvalidToken does not hide the other invalid tokens', async () => {
+    const expo = fakeExpo((to) => ({ status: 'error', message: 'gone', details: { error: 'DeviceNotRegistered', expoPushToken: to } }));
+    const seen: string[] = [];
+    const notify = expoPushNotifier({
+      tokensFor: async () => tokens(3),
+      fetch: expo.fetch,
+      onInvalidToken: (t) => {
+        seen.push(t);
+        if (t === 'ExponentPushToken[t0]') throw new Error('db down');
+      },
+    });
+    await expect(notify(event(), ctx)).rejects.toThrow(/db down/);
+    expect(seen).toEqual(tokens(3));
+  });
+
+  it('times out a request that never answers (default 15 s)', async () => {
+    const signals: AbortSignal[] = [];
+    const hanging = ((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_res, rej) => {
+        const signal = init!.signal!;
+        signals.push(signal);
+        signal.addEventListener('abort', () => rej(signal.reason as Error));
+      })) as unknown as typeof fetch;
+    const started = Date.now();
+    await expect(expoPushNotifier({ tokensFor: async () => tokens(1), fetch: hanging, timeoutMs: 50 })(event(), ctx)).rejects.toThrow(/timed out|timeout|abort/i);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    // The default also passes a signal.
+    void settle(expoPushNotifier({ tokensFor: async () => tokens(1), fetch: hanging })(event(), ctx)).catch(() => undefined);
+    await until(() => signals.length === 2);
+    expect(signals[1]!.aborted).toBe(false);
   });
 
   it('message() null skips', async () => {
