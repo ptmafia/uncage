@@ -1,6 +1,6 @@
 /**
- * Wires lib/uncage.ts and lib/push.ts to the real platform: SecureStore, `expo/fetch`, React
- * Native's fetch, expo-notifications. `AuthProvider` holds the sign-in and the hub client.
+ * Wires lib/uncage.ts and lib/push.ts to the real platform: SecureStore, `expo/fetch`, the global
+ * fetch, expo-notifications. `AuthProvider` holds the sign-in and the hub client.
  */
 import type { UncageClient } from '@uncage/client';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
@@ -32,8 +32,9 @@ export const secureStore: KeyValueStore = {
   deleteItemAsync: (k) => SecureStore.deleteItemAsync(k),
 };
 
-// React Native's own fetch (uploads, JSON). `expo/fetch` is typed slightly differently from the
-// DOM's fetch but has the same call shape; it is used for the event stream only.
+// The global fetch (uploads, JSON): expo/fetch in SDK 58+ (React Native's fetch with
+// EXPO_PUBLIC_USE_RN_FETCH=1). The event stream always uses expo/fetch explicitly, which is typed
+// slightly differently from the DOM's fetch but has the same call shape.
 const plainFetch: typeof fetch = (input, init) => globalThis.fetch(input, init);
 const streamFetch = expoFetch as unknown as typeof fetch;
 

@@ -16,7 +16,7 @@ Status: type-checked, unit-tested (`lib/`) and bundled for Android and iOS (`exp
 | What | Where |
 | --- | --- |
 | Sign-in | `POST <site>/api/app/token` with `{ "username": "…" }` returns `{ token, user, expiresAt }` (connected-demo's demo-only sign-in, no password; the public demo ignores the name and creates a guest). The token is stored with expo-secure-store and renewed within 7 days of expiry. |
-| Hub API | `createUncageClient({ baseUrl: '<site>/api/uncage', fetch, headers: async () => ({ authorization: 'Bearer …' }) })`. Event streams go through `expo/fetch`, which can read a streaming body. Other requests, uploads included, go through React Native's fetch (`lib/uncage.ts`). The app sends no `Origin`, so the hub accepts the bearer request. |
+| Hub API | `createUncageClient({ baseUrl: '<site>/api/uncage', fetch, headers: async () => ({ authorization: 'Bearer …' }) })`. Event streams go through `expo/fetch`, which can read a streaming body. Other requests, uploads included, use the global fetch, which in Expo SDK 58+ is expo/fetch too (React Native's fetch if you set `EXPO_PUBLIC_USE_RN_FETCH=1`; `lib/uncage.ts` keeps the stream on expo/fetch either way). Picked photos arrive as `file://` copies in the app's cache, which expo/fetch reads; it does not read `content://` URIs, so copy those to a file first. The app sends no `Origin`, so the hub accepts the bearer request. |
 | Push | `POST <site>/api/app/push-token` `{ token }` after sign-in (on every launch), `DELETE` on sign-out (`lib/push.ts`). |
 | App links | `/.well-known/assetlinks.json` and `/.well-known/apple-app-site-association`, served by connected-demo from its env (below). |
 
@@ -38,27 +38,33 @@ Read when Expo starts or EAS builds (`app.config.ts`):
 
 ## 1. Expo Go (free, no build)
 
-Expo Go covers chat, computers, approvals, pickers, photos and resume. It has no push notifications (Expo Go has no remote push on Android since SDK 53, and the app turns push off there) and no app links. To approve a computer in Expo Go, use **Approve a computer** and type the code.
+Expo Go covers chat, computers, approvals, pickers, photos and resume. It has no push notifications (Expo Go has no remote push on Android since SDK 53, and the app turns push off there) and no app links.
+
+The same connected-demo server is reached two ways:
+- **The Mac** (website and agent) uses `http://localhost:3200`. The agent accepts plain http only for localhost; anywhere else it needs https. So `PUBLIC_URL` stays at its default, and `uncage setup` is given the localhost URL.
+- **The phone** uses the Mac's LAN IP (`EXPO_PUBLIC_HUB_URL=http://<LAN IP>:3200`). That works because the app signs in with a bearer token and sends no `Origin`, so the site does not care which host name it used.
+
+Because of this, the QR code and link from `uncage setup` point at `localhost`, which the phone cannot open. In Expo Go, approve the computer by typing the code under **Approve a computer** in the app.
 
 1. Install **Expo Go** on the phone (Play Store / App Store). The phone and the Mac must be on the same Wi-Fi.
 2. Find the Mac's LAN IP: `ipconfig getifaddr en0` (e.g. `192.168.1.20`).
-3. Start connected-demo so the phone can reach it, from the repository root:
+3. Start connected-demo listening on all interfaces, from the repository root. `HOST=0.0.0.0` makes it reachable from the phone. Leave `PUBLIC_URL` unset (default `http://localhost:3200`).
 
    ```sh
    pnpm install && pnpm build
    cd examples/connected-demo
-   HOST=0.0.0.0 PUBLIC_URL=http://192.168.1.20:3200 pnpm dev
+   HOST=0.0.0.0 pnpm dev
    ```
 
-4. Connect the computer that will run the agent (the Mac itself is fine) as the website explains: open `http://192.168.1.20:3200`, sign in, and run the `uncage setup` command it shows. To try the app's approval screen, sign in to the app first (step 6), then type the code `uncage setup` prints into **Approve a computer**.
-5. Start the app:
+4. Start the app, then scan the QR code in the terminal: with the Camera app on iOS, or from inside Expo Go on Android.
 
    ```sh
    cd examples/connected-expo
    EXPO_PUBLIC_HUB_URL=http://192.168.1.20:3200 pnpm start
    ```
 
-6. Scan the QR code in the terminal: with the Camera app on iOS, or from inside Expo Go on Android. Sign in with the same username as on the website.
+5. Sign in to the app with a username, e.g. `alice`. Sign in to the website on the Mac (`http://localhost:3200`) with the **same** username, so both see the same computers and chats.
+6. Connect the Mac: run `uncage setup http://localhost:3200` (the website shows the install and setup commands). It prints a code like `ABCD-EFGH`. In the app, tap **Approve a computer**, type the code and tap **Approve**. Alternatively, open the link it prints in the Mac's browser and approve it there. The computer then appears in the app; tap **New chat**.
 
 ## 2. Android development build (free: EAS free tier + Firebase)
 
@@ -94,7 +100,7 @@ Expo Go on iOS covers everything in section 1. A development build with push and
 pnpm --filter connected-expo typecheck
 pnpm --filter connected-expo lint
 pnpm --filter connected-expo test    # lib/: headers, SecureStore persistence, push registration, links, photos
-pnpm --filter connected-expo build   # expo export for Android and iOS into dist/ (no device needed)
+pnpm --filter connected-expo bundle:check   # expo export for Android and iOS into dist/ (no device needed; CI runs it on Node 22)
 ```
 
 In this pnpm monorepo, `metro.config.js` adds the workspace node_modules and makes `react`, `react-dom` and `react-native` resolve from this app only. React Native needs exactly its renderer's React version, and `@uncage/react` would otherwise load its own copy. The repository's `node-linker` stays as it is.

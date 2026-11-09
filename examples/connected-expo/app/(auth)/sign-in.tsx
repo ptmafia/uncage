@@ -4,7 +4,7 @@
  * own authentication and returns its own token here.
  */
 import { useState, type JSX } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
+import { KeyboardAvoidingView, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
 import { Banner, Button, Card } from '../../components/ui';
 import { useAuth } from '../../lib/app';
 import { useTheme } from '../../lib/theme';
@@ -35,7 +35,7 @@ export default function SignIn(): JSX.Element {
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <Text style={[styles.title, { color: t.text }]}>Your agent, in your pocket</Text>
         <Text style={[styles.lead, { color: t.muted }]}>

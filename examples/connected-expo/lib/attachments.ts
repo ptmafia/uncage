@@ -1,8 +1,9 @@
 /**
  * Photos from expo-image-picker into the composer. `useAttachments().add()` (from @uncage/react)
- * validates and uploads `Blob & { name }` like a browser `File`: the picked `file://` / `content://`
- * URI is read into a Blob with React Native's fetch, then named. The upload is a plain `Blob`
- * body through React Native's fetch (lib/uncage.ts routes only event streams to `expo/fetch`).
+ * validates and uploads `Blob & { name }` like a browser `File`. The picker copies the photo into
+ * the app's cache and hands over a `file://` URI; the global fetch (expo/fetch in SDK 58+) reads it
+ * into a Blob, which is then named. expo/fetch does not read `content://` URIs: copy such files to
+ * a file first. The upload sends the Blob as the request body.
  */
 
 /** The fields of an `ImagePickerAsset` used here. */
@@ -33,10 +34,10 @@ export function pickedFileName(asset: PickedAsset, index = 0, now: number = Date
 }
 
 /** Reads a picked asset into a named Blob for `useAttachments().add()`. */
-export async function assetToFile(asset: PickedAsset, fetchImpl: typeof fetch, index = 0): Promise<File> {
+export async function assetToFile(asset: PickedAsset, fetchImpl: typeof fetch, index = 0): Promise<Blob & { name: string }> {
   const res = await fetchImpl(asset.uri);
   const blob = await res.blob();
   Object.defineProperty(blob, 'name', { value: pickedFileName(asset, index), enumerable: true });
-  // The store needs only `name`, `size` and `type`; a named Blob is what React Native has as a File.
-  return blob as File;
+  // The store needs only `name`, `size` and `type`: React Native has no File, a named Blob does.
+  return blob as Blob & { name: string };
 }

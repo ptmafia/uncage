@@ -571,6 +571,33 @@ describe('composer: settings and attachments', () => {
     }
   });
 
+  it('an image is still added and uploaded when URL.createObjectURL throws (React Native on Android), without a preview', async () => {
+    vi.stubGlobal('URL', Object.assign(class extends URL {}, {
+      createObjectURL: () => {
+        throw new Error('Cannot create URL for blob!');
+      },
+      revokeObjectURL: () => {
+        throw new Error('should not be called');
+      },
+    }));
+    try {
+      const { f } = composerClient();
+      const store = createUncageStore(f.client);
+      await store.actions.selectSession('ses_1');
+      // A named Blob, as a React Native app passes (no File there).
+      const blob = Object.assign(new Blob([new Uint8Array(3)], { type: 'image/jpeg' }), { name: 'photo.jpg' });
+      store.actions.addAttachments([blob]);
+      const [item] = store.getState().attachments.items;
+      expect(item).toMatchObject({ name: 'photo.jpg', kind: 'image', size: 3 });
+      expect(item!.previewUrl).toBeUndefined();
+      expect(f.client.uploadAttachment).toHaveBeenCalledWith('ses_1', blob, expect.anything());
+      expect(() => store.actions.removeAttachment(item!.localId)).not.toThrow();
+      expect(store.getState().attachments.items).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('commitDraft retry reuses the session it created when applying settings failed', async () => {
     const { f } = composerClient();
     const store = createUncageStore(f.client);

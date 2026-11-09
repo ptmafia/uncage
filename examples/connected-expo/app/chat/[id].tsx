@@ -21,6 +21,7 @@ import {
   type ToolView,
 } from '@uncage/react';
 import * as ImagePicker from 'expo-image-picker';
+import { useHeaderHeight } from 'expo-router/react-navigation';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import {
@@ -312,6 +313,7 @@ export default function Chat(): JSX.Element {
   const { timeline, messages, tools } = useMessages();
   const { error, dismiss } = useUncageError();
   const listRef = useRef<FlatList<TimelineItem>>(null);
+  const headerHeight = useHeaderHeight();
 
   useEffect(() => {
     if (id && store.getState().activeSessionId !== id) void store.actions.selectSession(id);
@@ -322,7 +324,9 @@ export default function Chat(): JSX.Element {
   const ready = activeId === id && session?.id === id;
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}>
+    // "padding" on Android too: with edge-to-edge (app.json; enforced on Android 15+) the window no
+    // longer resizes for the keyboard. The header height offsets the padding.
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={headerHeight}>
       <Stack.Screen options={{ title: session?.id === id ? session.title || 'Chat' : 'Chat' }} />
       {error && <Banner kind="error" text={error.message} action={{ title: 'Dismiss', onPress: dismiss }} />}
       {ready && connection !== 'live' && (

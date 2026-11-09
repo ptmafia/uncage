@@ -5,7 +5,7 @@
  */
 import { useDeviceApproval } from '@uncage/react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState, type JSX } from 'react';
+import { useEffect, useState, type JSX } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Banner, Button, Card } from '../components/ui';
 import { takePendingDeviceCode, useAuth } from '../lib/app';
@@ -85,7 +85,9 @@ function EnterCode({ onCode }: { onCode(code: string): void }): JSX.Element {
 export default function DeviceScreen(): JSX.Element {
   const params = useLocalSearchParams<{ code?: string }>();
   // Opened directly: drop the copy +native-intent kept for the signed-out case.
-  useState(() => takePendingDeviceCode());
+  useEffect(() => {
+    takePendingDeviceCode();
+  }, []);
   const [typed, setTyped] = useState<string | undefined>();
   const code = sanitizeDeviceCode(params.code) ?? typed;
   return code ? <Approval key={code} code={code} /> : <EnterCode onCode={setTyped} />;

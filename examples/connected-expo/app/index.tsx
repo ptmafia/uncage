@@ -155,8 +155,8 @@ export default function Home(): JSX.Element {
               <Card style={{ marginHorizontal: 12 }}>
                 <Text style={{ color: t.text, fontWeight: '600', marginBottom: 6 }}>Connect a computer</Text>
                 <Text style={{ color: t.muted, fontSize: 13, marginBottom: 8 }}>
-                  On your computer, install the Uncage agent and run this. It prints a QR code: scan it with your phone to approve the
-                  computer here.
+                  On your computer, install the Uncage agent and run this. Then approve the computer: scan the QR code it prints, or tap
+                  Approve a computer below and type its code.
                 </Text>
                 <Text selectable style={[styles.code, { color: t.text, backgroundColor: t.bg, borderColor: t.border }]}>
                   {setupCommand}

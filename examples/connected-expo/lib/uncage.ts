@@ -8,8 +8,9 @@
  *   `Authorization: Bearer <token>` (async `headers` of `createUncageClient`). A site of your own
  *   issues the token from its own sign-in and checks it in the hub's `getUser`.
  * - Session persistence: a `usePersistSession` storage adapter over SecureStore, one key per user.
- * - Fetch: event streams need a streaming body reader (`expo/fetch`); everything else, uploads
- *   included, goes through React Native's own fetch (it sends `Blob` bodies everywhere).
+ * - Fetch: event streams need a streaming body reader (`expo/fetch`). Other requests use the global
+ *   fetch, which in Expo SDK 58+ is also expo/fetch (or React Native's fetch with
+ *   `EXPO_PUBLIC_USE_RN_FETCH=1`); `routedFetch` keeps the stream on expo/fetch either way.
  */
 import { createUncageClient, type UncageClient } from '@uncage/client';
 import type { PersistSessionStorage } from '@uncage/react';
@@ -192,7 +193,8 @@ export const isEventStream = (init?: RequestInit): boolean =>
 
 /**
  * One `fetch` for the client: event streams through `streamFetch` (`expo/fetch`, whose body is a
- * `ReadableStream`), every other request through `plainFetch` (React Native's fetch).
+ * `ReadableStream`), every other request through `plainFetch` (the global fetch: expo/fetch in
+ * SDK 58+, React Native's fetch when an app opts out with `EXPO_PUBLIC_USE_RN_FETCH=1`).
  */
 export function routedFetch(streamFetch: typeof fetch, plainFetch: typeof fetch): typeof fetch {
   return ((input: RequestInfo | URL, init?: RequestInit) =>

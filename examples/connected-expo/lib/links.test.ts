@@ -46,3 +46,15 @@ describe('picked photos', () => {
     expect(file.type).toBe('image/jpeg');
   });
 });
+
+describe('app.config cleartext hosts', () => {
+  it('allows plain http only for loopback, private LAN and .local hosts', async () => {
+    const { isPrivateHost } = await import('../app.config');
+    for (const h of ['localhost', '127.0.0.1', '10.0.0.5', '172.16.1.1', '172.31.255.1', '192.168.1.20', '169.254.1.1', 'mac.local', '[::1]', '[fd12::1]']) {
+      expect(isPrivateHost(h), h).toBe(true);
+    }
+    for (const h of ['example.com', '8.8.8.8', '172.32.0.1', '192.169.0.1', 'local.example.com', '[2001:db8::1]']) {
+      expect(isPrivateHost(h), h).toBe(false);
+    }
+  });
+});

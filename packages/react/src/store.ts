@@ -79,7 +79,7 @@ export interface UncageStore {
      * capabilities) and uploads accepted ones to the active session, or queues them in a draft.
      * Refused files are listed in `attachments.rejected`.
      */
-    addAttachments(files: File[]): void;
+    addAttachments(files: (Blob & { name: string })[]): void;
     removeAttachment(localId: string): void;
     clearAttachments(): void;
     /** Fetches active runs across all sessions into `activeRuns` (errors are ignored). */
@@ -267,7 +267,7 @@ export function createUncageStore(client: UncageClient): UncageStore {
 
   // ---- attachments -------------------------------------------------------------------------
   /** Files not yet uploaded, and in-flight uploads, keyed by localId. */
-  const files = new Map<string, File>();
+  const files = new Map<string, Blob & { name: string }>();
   const uploads = new Map<string, { controller: AbortController; done: Promise<void> }>();
   let localSeq = 0;
 
@@ -286,7 +286,13 @@ export function createUncageStore(client: UncageClient): UncageStore {
       uploads.get(item.localId)?.controller.abort();
       uploads.delete(item.localId);
       files.delete(item.localId);
-      if (item.previewUrl !== undefined) URL.revokeObjectURL(item.previewUrl);
+      if (item.previewUrl !== undefined) {
+        try {
+          URL.revokeObjectURL(item.previewUrl);
+        } catch {
+          // nothing to revoke
+        }
+      }
     }
   };
 
@@ -860,15 +866,23 @@ export function createUncageStore(client: UncageClient): UncageStore {
         }
         const localId = `local_${++localSeq}`;
         const canPreview = check.kind === 'image' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function';
-        files.set(localId, file);
+        let previewUrl: string | undefined;
+        if (canPreview) {
+          try {
+            previewUrl = URL.createObjectURL(file);
+          } catch {
+            // No blob URLs here (e.g. React Native on Android without a BlobProvider): no preview.
+          }
+        }
         items.push({
           localId,
           name: file.name,
           size: file.size,
           kind: check.kind,
-          ...(canPreview ? { previewUrl: URL.createObjectURL(file) } : {}),
+          ...(previewUrl !== undefined ? { previewUrl } : {}),
           status: 'uploading',
         });
+        files.set(localId, file);
         added.push(localId);
       }
       set({ attachments: { ...(sessionId !== undefined ? { sessionId } : {}), items, rejected } });

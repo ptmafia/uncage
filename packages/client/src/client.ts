@@ -276,8 +276,9 @@ export function createUncageClient(o: UncageClientOptions = {}): UncageClient {
     let body: Blob = file as Blob;
     let type = isRNFile(file) ? file.type : (file as Blob).type;
     if (isRNFile(file)) {
-      // React Native's built-in fetch reads local file:// / content:// URIs (the app's streaming
-      // fetch, e.g. expo/fetch, may not), so the file is read with the global one.
+      // The local file is read with the global fetch: in Expo SDK 58+ that is expo/fetch (or RN's
+      // fetch with EXPO_PUBLIC_USE_RN_FETCH=1). expo/fetch reads file:// but not content:// URIs,
+      // so copy content:// files to a file first (expo-image-picker already hands over file://).
       const readInit: RequestInit = {};
       if (opts.signal) readInit.signal = opts.signal;
       let read: Response;

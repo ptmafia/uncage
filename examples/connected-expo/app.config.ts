@@ -23,10 +23,23 @@ function hubUrl(): URL | undefined {
   if (!raw) return undefined;
   try {
     const url = new URL(raw);
-    return url.protocol === 'http:' || url.protocol === 'https:' ? url : undefined;
+    if (url.protocol === 'http:' || url.protocol === 'https:') return url;
   } catch {
-    return undefined;
+    // reported below
   }
+  console.warn(`EXPO_PUBLIC_HUB_URL is not an http(s) URL: ${raw}. The app will show "No website configured".`);
+  return undefined;
+}
+
+/** Loopback, private LAN (RFC 1918, link-local, IPv6 ULA) or `.local` hosts: where plain http is acceptable. */
+export function isPrivateHost(hostname: string): boolean {
+  const h = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (h === 'localhost' || h.endsWith('.local') || h === '::1') return true;
+  if (/^f[cd][0-9a-f]{2}:/.test(h) || /^fe80:/.test(h)) return true;
+  const ip = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (!ip) return false;
+  const [a, b] = [Number(ip[1]), Number(ip[2])];
+  return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
 }
 
 export default ({ config }: ConfigContext): ExpoConfig => {
@@ -40,8 +53,12 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     process.env.GOOGLE_SERVICES_JSON?.trim() || (existsSync('./google-services.json') ? './google-services.json' : undefined);
 
   const plugins: ExpoConfig['plugins'] = [...(config.plugins ?? [])];
-  // A plain-http site (a laptop on the LAN) needs cleartext traffic in a development build.
-  if (url && !https) plugins.push(['expo-build-properties', { android: { usesCleartextTraffic: true } }]);
+  // A plain-http site on the LAN (the Mac running connected-demo) needs cleartext traffic in a
+  // development build. Public http hosts do not get it: use https there.
+  if (url && !https) {
+    if (isPrivateHost(url.hostname)) plugins.push(['expo-build-properties', { android: { usesCleartextTraffic: true } }]);
+    else console.warn(`EXPO_PUBLIC_HUB_URL uses plain http on a public host (${url.hostname}); Android builds will refuse it. Use https.`);
+  }
 
   return {
     ...config,
@@ -66,7 +83,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
               {
                 action: 'VIEW',
                 autoVerify: true,
-                data: [{ scheme: 'https', host: url.hostname, pathPrefix: '/device' }],
+                data: [{ scheme: 'https', host: url.hostname, path: '/device' }],
                 category: ['BROWSABLE', 'DEFAULT'],
               },
             ],

@@ -29,6 +29,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - name: Expo bundle check (connected-expo, Android + iOS)
+        if: matrix.node == 22
+        run: pnpm --filter connected-expo bundle:check
       - run: pnpm typecheck
       - run: pnpm lint
       # One package at a time on CI: every package's tests boot PGlite (WASM) and/or jsdom, and

@@ -203,7 +203,7 @@ export function useSessionSettings(): {
  */
 export function useAttachments(): {
   items: DraftAttachment[];
-  add(files: File[]): void;
+  add(files: (Blob & { name: string })[]): void;
   remove(localId: string): void;
   clear(): void;
   ready: boolean;
