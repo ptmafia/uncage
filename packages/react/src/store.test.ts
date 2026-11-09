@@ -330,8 +330,8 @@ function composerClient() {
   let n = 0;
   f.client.runtimes.mockResolvedValue([{ id: 'fake', displayName: 'Fake', status: 'available', capabilities: caps }]);
   f.client.createSession.mockResolvedValue(session({ capabilities: caps }));
-  f.client.uploadAttachment.mockImplementation(async (sessionId: string, file: Blob & { name: string }) =>
-    uploaded(sessionId, file, ++n),
+  f.client.uploadAttachment.mockImplementation(async (sessionId: string, file) =>
+    uploaded(sessionId, file as Blob & { name: string }, ++n),
   );
   f.client.updateSettings.mockImplementation(async (_id: string, patch: Partial<SessionSettings>) =>
     session({ capabilities: caps, settings: { permissionMode: 'default', ...patch } }),
@@ -544,7 +544,7 @@ describe('composer: settings and attachments', () => {
       const { f } = composerClient();
       const signals: AbortSignal[] = [];
       f.client.uploadAttachment.mockImplementation(
-        (_s: string, _f: Blob, o?: { signal?: AbortSignal }) => (signals.push(o!.signal!), new Promise<never>(() => {})),
+        (_s: string, _f: unknown, o?: { signal?: AbortSignal }) => (signals.push(o!.signal!), new Promise<never>(() => {})),
       );
       const store = createUncageStore(f.client);
       await store.actions.selectSession('ses_1');

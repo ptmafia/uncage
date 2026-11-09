@@ -203,6 +203,9 @@ export function fakeClient(
     }),
     installInfo: vi.fn(async (): Promise<{ install: string; setup: string; windows: string | null }> => INSTALL),
     revokeMachine: vi.fn(async (): Promise<void> => undefined),
+    lookupDevice: vi.fn(async () => null),
+    decideDevice: vi.fn(async (): Promise<'ok' | 'not_found' | 'expired'> => 'ok'),
+    reconnect: vi.fn(() => undefined),
     subscribe: vi.fn((sessionId: string, h: SubscribeHandlers) => {
       const sub = { ...h, sessionId, closed: false };
       subs.push(sub);
