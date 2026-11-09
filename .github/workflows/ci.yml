@@ -68,6 +68,9 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     env:
       UNCAGE_SERVICE_TESTS: ${{ matrix.os != 'macos-latest' && '1' || '' }}
+      # The real uncage:// link handler (src/service/url-handler.test.ts) on each runner: a throwaway
+      # scheme, a temp home / XDG folders / HKCU key, removed again. Never on a developer machine.
+      UNCAGE_URL_HANDLER_TESTS: '1'
     steps:
       # Keep LF in the checkout: the installers and fixtures are compared byte for byte.
       - if: runner.os == 'Windows'
@@ -101,7 +104,7 @@ jobs:
           XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user show-environment > /dev/null && echo "user systemd ready" || echo "no user systemd (the real service test will skip)"
       - name: Agent tests
         run: pnpm --filter @uncage/agent exec vitest run --reporter=default --reporter=github-actions
-      - name: CLI tests (services, doctor, setup; the real service on Windows and Ubuntu)
+      - name: CLI tests (services, doctor, setup; the real service on Windows and Ubuntu; the real uncage:// handler on all three)
         run: pnpm --filter @uncage/cli exec vitest run --reporter=verbose --reporter=github-actions --silent=false
       - name: Runtime tests (Windows not-found mapping, resolved executables)
         run: pnpm --filter @uncage/runtime-claude --filter @uncage/runtime-codex test

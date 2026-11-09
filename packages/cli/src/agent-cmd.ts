@@ -12,8 +12,10 @@ Usage:
                                      (foreground; --log-file appends the logs to a file instead of stderr).
   uncage agent install               Install and start the background agent for this user, pinned to the
                                      Node running this command (launchd on macOS, a systemd user service on
-                                     Linux, a scheduled task on Windows). Run it again after changing Node.
-  uncage agent uninstall             Stop and remove the background agent. Config and data stay.
+                                     Linux, a scheduled task on Windows) and the uncage:// link handler
+                                     ("uncage connect"). Run it again after changing Node.
+  uncage agent uninstall             Stop and remove the background agent and the uncage:// link handler.
+                                     Config and data stay.
   uncage agent status [--json]       Is it installed and running, and which Node does it use.
 
 "uncage setup <url>" installs the background agent; run "uncage agent" by hand for debugging
