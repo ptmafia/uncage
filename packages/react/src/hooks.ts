@@ -1,4 +1,5 @@
-import type { ConnectionState, CreateSessionRequest, InstallInfo, UncageClientError } from '@uncage/client';
+import { UncageClientError } from '@uncage/client';
+import type { ConnectionState, CreateSessionRequest, DeviceLookup, InstallInfo } from '@uncage/client';
 import type {
   ActiveRunInfo,
   ApprovalRequest,
@@ -9,7 +10,7 @@ import type {
   Session,
   SessionSettings,
 } from '@uncage/protocol';
-import { useContext, useEffect, useMemo, useSyncExternalStore } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { UncageStoreContext } from './provider.js';
 import {
   ACTIVE_RUN_STATES,
@@ -305,37 +306,61 @@ export function useAttachmentUrl(attachmentId: string): string {
   return useMemo(() => store.attachmentUrl(attachmentId), [store, attachmentId]);
 }
 
+/**
+ * A storage adapter (AsyncStorage, SecureStore, MMKV, …) for apps without `window.location`
+ * or `localStorage` (React Native).
+ */
+export type PersistSessionStorage = {
+  get(): string | undefined | null | Promise<string | undefined | null>;
+  set(id: string | undefined): void | Promise<void>;
+};
+
 /** Where the open session is remembered across reloads (see `usePersistSession`). */
-export type PersistSessionMode = 'url' | 'localStorage' | false;
+export type PersistSessionMode = 'url' | 'localStorage' | false | PersistSessionStorage;
 
 /** The `?session=` query parameter (`'url'`) and the storage key (`'localStorage'`). */
 export const PERSIST_SESSION_PARAM = 'session';
 export const PERSIST_SESSION_STORAGE_KEY = 'uncage:session';
 
-function readPersisted(mode: PersistSessionMode): string | undefined {
-  if (mode === false || typeof window === 'undefined') return undefined;
+const hasWindow = (): boolean => typeof window !== 'undefined' && window !== null;
+
+async function readPersisted(mode: PersistSessionMode): Promise<string | undefined> {
+  if (mode === false) return undefined;
   try {
+    if (typeof mode === 'object') return (await mode.get()) || undefined;
+    if (!hasWindow()) return undefined;
     const id =
       mode === 'url'
-        ? new URLSearchParams(window.location.search).get(PERSIST_SESSION_PARAM)
-        : window.localStorage.getItem(PERSIST_SESSION_STORAGE_KEY);
+        ? window.location
+          ? new URLSearchParams(window.location.search).get(PERSIST_SESSION_PARAM)
+          : null
+        : window.localStorage
+          ? window.localStorage.getItem(PERSIST_SESSION_STORAGE_KEY)
+          : null;
     return id || undefined;
   } catch {
-    return undefined; // storage disabled (privacy mode, sandboxed iframe)
+    return undefined; // storage disabled (privacy mode, sandboxed iframe) or failing adapter
   }
 }
 
 function writePersisted(mode: PersistSessionMode, id: string | undefined): void {
-  if (mode === false || typeof window === 'undefined') return;
+  if (mode === false) return;
   try {
+    if (typeof mode === 'object') {
+      void Promise.resolve(mode.set(id)).catch(() => undefined);
+      return;
+    }
+    if (!hasWindow()) return;
     if (mode === 'url') {
+      if (!window.location || !window.history) return;
       const url = new URL(window.location.href);
       if ((url.searchParams.get(PERSIST_SESSION_PARAM) ?? undefined) === id) return;
       if (id === undefined) url.searchParams.delete(PERSIST_SESSION_PARAM);
       else url.searchParams.set(PERSIST_SESSION_PARAM, id);
       // replaceState keeps the router's state object (Next.js stores its tree there).
       window.history.replaceState(window.history.state, '', url);
-    } else if (id === undefined) window.localStorage.removeItem(PERSIST_SESSION_STORAGE_KEY);
+    } else if (!window.localStorage) return;
+    else if (id === undefined) window.localStorage.removeItem(PERSIST_SESSION_STORAGE_KEY);
     else window.localStorage.setItem(PERSIST_SESSION_STORAGE_KEY, id);
   } catch {
     // storage disabled: nothing to remember
@@ -355,18 +380,23 @@ export function usePersistSession(mode: PersistSessionMode = 'url'): void {
   const draftOpen = useStoreSelector((s) => s.draft.open);
 
   useEffect(() => {
-    const id = readPersisted(mode);
-    if (id === undefined || store.getState().activeSessionId !== undefined) return;
-    void store.actions.selectSession(id).then(() => {
-      const s = store.getState();
-      // Still this selection and it did not open: the restore failed (selectSession records why).
-      if (s.activeSessionId !== id || s.active !== undefined || s.lastError === undefined) return;
-      // Forget it and start fresh. A deleted session (or one from another server) is not worth an
-      // error; anything else (daemon down, …) stays visible in lastError.
-      if (s.lastError.code === 'not_found') store.actions.dismissError();
-      writePersisted(mode, undefined);
-      store.actions.openDraft();
+    let cancelled = false;
+    void readPersisted(mode).then((id) => {
+      if (cancelled || id === undefined || store.getState().activeSessionId !== undefined) return;
+      void store.actions.selectSession(id).then(() => {
+        const s = store.getState();
+        // Still this selection and it did not open: the restore failed (selectSession records why).
+        if (s.activeSessionId !== id || s.active !== undefined || s.lastError === undefined) return;
+        // Forget it and start fresh. A deleted session (or one from another server) is not worth an
+        // error; anything else (daemon down, …) stays visible in lastError.
+        if (s.lastError.code === 'not_found') store.actions.dismissError();
+        writePersisted(mode, undefined);
+        store.actions.openDraft();
+      });
     });
+    return () => {
+      cancelled = true;
+    };
   }, [store, mode]);
 
   useEffect(() => {
@@ -374,4 +404,83 @@ export function usePersistSession(mode: PersistSessionMode = 'url'): void {
     if (draftOpen) writePersisted(mode, undefined);
     else if (activeSessionId !== undefined) writePersisted(mode, activeSessionId);
   }, [mode, draftOpen, activeSessionId]);
+}
+
+export type DeviceApprovalState =
+  | 'loading'
+  | 'idle'
+  | 'approving'
+  | 'denying'
+  | 'approved'
+  | 'denied'
+  | 'not_found'
+  | 'expired';
+
+const toApprovalError = (err: unknown): { code: string; message: string } =>
+  err instanceof UncageClientError
+    ? { code: err.code, message: err.message }
+    : { code: 'internal_error', message: err instanceof Error ? err.message : String(err) };
+
+/**
+ * Headless device approval (connected mode): looks the code up, then approves or denies it.
+ * `not_found` / `expired` mean the code is unknown or too old; other failures (e.g. `rate_limited`)
+ * leave `state` as it was and set `error`.
+ */
+export function useDeviceApproval(code: string): {
+  lookup: DeviceLookup | null;
+  state: DeviceApprovalState;
+  error?: { code: string; message: string };
+  approve(): Promise<void>;
+  deny(): Promise<void>;
+} {
+  const { client } = useUncageStore();
+  const [lookup, setLookup] = useState<DeviceLookup | null>(null);
+  const [state, setState] = useState<DeviceApprovalState>('loading');
+  const [error, setError] = useState<{ code: string; message: string } | undefined>();
+
+  useEffect(() => {
+    let cancelled = false;
+    setLookup(null);
+    setError(undefined);
+    setState('loading');
+    client.lookupDevice(code).then(
+      (found) => {
+        if (cancelled) return;
+        setLookup(found);
+        setState(found === null ? 'not_found' : 'idle');
+      },
+      (err: unknown) => {
+        if (cancelled) return;
+        setError(toApprovalError(err));
+        setState('idle');
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [client, code]);
+
+  const decide = useCallback(
+    async (approve: boolean): Promise<void> => {
+      setError(undefined);
+      setState(approve ? 'approving' : 'denying');
+      try {
+        const out = await client.decideDevice(code, approve);
+        setState(out === 'ok' ? (approve ? 'approved' : 'denied') : out);
+      } catch (err) {
+        setError(toApprovalError(err));
+        setState('idle');
+      }
+    },
+    [client, code],
+  );
+  const approve = useCallback(() => decide(true), [decide]);
+  const deny = useCallback(() => decide(false), [decide]);
+  return { lookup, state, ...(error ? { error } : {}), approve, deny };
+}
+
+/** Returns a function that restarts the event stream now (wire it to `AppState` 'active' in React Native). */
+export function useReconnect(): () => void {
+  const { client } = useUncageStore();
+  return useCallback(() => client.reconnect(), [client]);
 }

@@ -112,6 +112,8 @@ export interface UncageStore {
     /** Disconnects one of the user's computers. Resolves `false` (and records `lastError`) on failure. */
     revokeMachine(id: string): Promise<boolean>;
   };
+  /** The client this store drives (for headless hooks that call it directly). */
+  readonly client: UncageClient;
   /** URL of an attachment's content (`client.attachmentUrl`). */
   attachmentUrl(attachmentId: string): string;
   /**
@@ -975,6 +977,7 @@ export function createUncageStore(client: UncageClient): UncageStore {
       dropAttachments();
       if (Object.keys(state.pendingDecisions).length > 0) set({ pendingDecisions: {} });
     },
+    client,
     attachmentUrl: (id) => client.attachmentUrl(id),
     getState: () => state,
     subscribe(fn) {
