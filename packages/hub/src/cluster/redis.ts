@@ -54,7 +54,7 @@ export function redisCluster(
   const pub: Promise<RedisLike> =
     'client' in o
       ? Promise.resolve(o.client)
-      : import('ioredis').then(
+      : import(/* webpackIgnore: true */ 'ioredis').then(
           (m) => {
             const Redis = ((m as unknown as { default?: unknown }).default ?? (m as unknown as { Redis: unknown }).Redis) as new (url: string) => RedisLike;
             const client = new Redis(o.url);
