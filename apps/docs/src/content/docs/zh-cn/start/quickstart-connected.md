@@ -185,6 +185,13 @@ if (dev) {
   });
 }
 
+server.on('error', (err: NodeJS.ErrnoException) => {
+  // Exit (and release ./.uncage-hub) instead of lingering when the port is taken.
+  if (err.code === 'EADDRINUSE') console.error(`Port ${port} is in use: set PORT (and PUBLIC_URL).`);
+  else console.error(err);
+  process.exit(1);
+});
+
 server.listen(port, () => console.log(`ready on http://localhost:${port}`));
 ```
 
