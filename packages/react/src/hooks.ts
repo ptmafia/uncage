@@ -10,7 +10,7 @@ import type {
   Session,
   SessionSettings,
 } from '@uncage/protocol';
-import { useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { UncageStoreContext } from './provider.js';
 import {
   ACTIVE_RUN_STATES,
@@ -378,11 +378,17 @@ export function usePersistSession(mode: PersistSessionMode = 'url'): void {
   const store = useUncageStore();
   const activeSessionId = useStoreSelector((s) => s.activeSessionId);
   const draftOpen = useStoreSelector((s) => s.draft.open);
+  // Writes wait for the first (possibly async) read, so they never clobber the stored id.
+  const [restored, setRestored] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    setRestored(false);
     void readPersisted(mode).then((id) => {
-      if (cancelled || id === undefined || store.getState().activeSessionId !== undefined) return;
+      if (cancelled) return;
+      setRestored(true);
+      const now = store.getState();
+      if (id === undefined || now.activeSessionId !== undefined || now.draft.open) return;
       void store.actions.selectSession(id).then(() => {
         const s = store.getState();
         // Still this selection and it did not open: the restore failed (selectSession records why).
@@ -401,9 +407,10 @@ export function usePersistSession(mode: PersistSessionMode = 'url'): void {
 
   useEffect(() => {
     // Before anything is open (first render, restore in flight) there is nothing to write.
+    if (!restored) return;
     if (draftOpen) writePersisted(mode, undefined);
     else if (activeSessionId !== undefined) writePersisted(mode, activeSessionId);
-  }, [mode, draftOpen, activeSessionId]);
+  }, [mode, restored, draftOpen, activeSessionId]);
 }
 
 export type DeviceApprovalState =
@@ -414,7 +421,8 @@ export type DeviceApprovalState =
   | 'approved'
   | 'denied'
   | 'not_found'
-  | 'expired';
+  | 'expired'
+  | 'error';
 
 const toApprovalError = (err: unknown): { code: string; message: string } =>
   err instanceof UncageClientError
@@ -424,7 +432,9 @@ const toApprovalError = (err: unknown): { code: string; message: string } =>
 /**
  * Headless device approval (connected mode): looks the code up, then approves or denies it.
  * `not_found` / `expired` mean the code is unknown or too old; other failures (e.g. `rate_limited`)
- * leave `state` as it was and set `error`.
+ * leave `state` as it was and set `error`. A failed lookup (e.g. `rate_limited`) gives state `'error'`
+ * with `error` set (`approve` / `deny` do nothing); a failed decision returns to `'idle'` so it can be retried.
+ * `approve` / `deny` only act from `'idle'` (no double submit).
  */
 export function useDeviceApproval(code: string): {
   lookup: DeviceLookup | null;
@@ -437,9 +447,13 @@ export function useDeviceApproval(code: string): {
   const [lookup, setLookup] = useState<DeviceLookup | null>(null);
   const [state, setState] = useState<DeviceApprovalState>('loading');
   const [error, setError] = useState<{ code: string; message: string } | undefined>();
+  const inFlight = useRef(false);
+  const generation = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
+    const gen = ++generation.current;
+    inFlight.current = false;
     setLookup(null);
     setError(undefined);
     setState('loading');
@@ -452,27 +466,35 @@ export function useDeviceApproval(code: string): {
       (err: unknown) => {
         if (cancelled) return;
         setError(toApprovalError(err));
-        setState('idle');
+        setState('error');
       },
     );
     return () => {
       cancelled = true;
+      if (generation.current === gen) generation.current++;
     };
   }, [client, code]);
 
   const decide = useCallback(
     async (approve: boolean): Promise<void> => {
+      if (inFlight.current || state !== 'idle') return;
+      inFlight.current = true;
+      const gen = generation.current;
       setError(undefined);
       setState(approve ? 'approving' : 'denying');
       try {
         const out = await client.decideDevice(code, approve);
+        if (gen !== generation.current) return; // code changed or unmounted meanwhile
         setState(out === 'ok' ? (approve ? 'approved' : 'denied') : out);
       } catch (err) {
+        if (gen !== generation.current) return;
         setError(toApprovalError(err));
         setState('idle');
+      } finally {
+        if (gen === generation.current) inFlight.current = false;
       }
     },
-    [client, code],
+    [client, code, state],
   );
   const approve = useCallback(() => decide(true), [decide]);
   const deny = useCallback(() => decide(false), [decide]);
