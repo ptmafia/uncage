@@ -211,6 +211,17 @@ ALTER TABLE uncage_hub_machines ADD outdated_at text
     id: 8,
     sql: `CREATE INDEX uncage_hub_tool_calls_result_idx ON uncage_hub_tool_calls (finished_at) WHERE result IS NOT NULL`,
   },
+  {
+    // One-time claims across instances (onAttention dedupe), kept until they expire (maintenance).
+    id: 9,
+    sql: `
+CREATE TABLE uncage_hub_claims (
+  key text PRIMARY KEY,
+  expires_at text NOT NULL
+);
+CREATE INDEX uncage_hub_claims_expires_idx ON uncage_hub_claims (expires_at)
+`,
+  },
 ];
 
 /** Postgres `unique_violation` (PGlite reports the same SQLSTATE). */
@@ -394,6 +405,21 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
   const one = async <R, T>(sql: string, params: unknown[], map: (r: R) => T): Promise<T | null> => {
     const { rows } = await db.query<R>(sql, params);
     return rows[0] ? map(rows[0]) : null;
+  };
+
+  /** Batched DELETE (short statements, no long-held locks on a big backlog); resolves the count. */
+  const prune = async (table: string, where: string, params: unknown[]): Promise<number> => {
+    let total = 0;
+    for (;;) {
+      const { rows } = await db.query<{ n: number }>(
+        `WITH d AS (DELETE FROM ${table} WHERE ctid IN (SELECT ctid FROM ${table} WHERE ${where} LIMIT ${PRUNE_BATCH}) RETURNING 1)
+         SELECT count(*)::int AS n FROM d`,
+        params,
+      );
+      const n = Number(rows[0]?.n ?? 0);
+      total += n;
+      if (n < PRUNE_BATCH) return total;
+    }
   };
 
   return {
@@ -876,20 +902,6 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
       return rows.length > 0;
     },
     async pruneTransport(o) {
-      // Batched (short statements, no long-held locks on a big backlog); only counts come back.
-      const prune = async (table: string, where: string, params: unknown[]): Promise<number> => {
-        let total = 0;
-        for (;;) {
-          const { rows } = await db.query<{ n: number }>(
-            `WITH d AS (DELETE FROM ${table} WHERE ctid IN (SELECT ctid FROM ${table} WHERE ${where} LIMIT ${PRUNE_BATCH}) RETURNING 1)
-             SELECT count(*)::int AS n FROM d`,
-            params,
-          );
-          const n = Number(rows[0]?.n ?? 0);
-          total += n;
-          if (n < PRUNE_BATCH) return total;
-        }
-      };
       const [outbox, inbox, rateLimits, deviceCodes] = await Promise.all([
         prune('uncage_hub_outbox', 'expires_at < $1', [o.now]),
         prune('uncage_hub_inbox', `updated_at < $1 AND (state = 'done' OR lease_until < $2)`, [o.inboxBefore, o.now]),
@@ -898,6 +910,19 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
       ]);
       return { outbox, inbox, rateLimits, deviceCodes };
     },
+    async claimOnce(key, o) {
+      const expiresAt = new Date(Date.parse(o.now) + o.ttlSec * 1000).toISOString();
+      // A live claim keeps the row (no update, no row back); an expired one is taken over.
+      const { rows } = await db.query(
+        `INSERT INTO uncage_hub_claims AS c (key, expires_at) VALUES ($1, $2)
+         ON CONFLICT (key) DO UPDATE SET expires_at = EXCLUDED.expires_at
+         WHERE c.expires_at <= $3
+         RETURNING key`,
+        [key, expiresAt, o.now],
+      );
+      return rows.length > 0;
+    },
+    pruneClaims: (now) => prune('uncage_hub_claims', 'expires_at < $1', [now]),
 
     close,
   };

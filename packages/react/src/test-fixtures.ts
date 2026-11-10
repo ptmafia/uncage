@@ -144,6 +144,9 @@ export function fakeClient(snap: () => SessionSnapshot = () => snapshot(), opts:
       windows: 'irm https://site.test/api/uncage/install.ps1 | iex',
     })),
     revokeMachine: vi.fn<UncageClient['revokeMachine']>(async () => undefined),
+    lookupDevice: vi.fn<UncageClient['lookupDevice']>(async () => null),
+    decideDevice: vi.fn<UncageClient['decideDevice']>(async () => 'ok'),
+    reconnect: vi.fn<UncageClient['reconnect']>(() => undefined),
     subscribe: vi.fn((sessionId: string, h: SubscribeHandlers) => {
       const sub = { ...h, sessionId, closed: false };
       subs.push(sub);

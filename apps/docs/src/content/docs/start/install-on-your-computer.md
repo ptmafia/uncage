@@ -5,6 +5,8 @@ description: The one command a website shows to connect your computer, on macOS,
 
 A website built with Uncage shows one command to connect your computer. The command checks the computer and asks `[Y/n]` before each thing it installs: Node.js 22 (with your own version manager when you have one), then the Uncage CLI. It lists the coding agents it finds and then offers to run `uncage setup` for that website, which opens the browser so you can approve the computer. It never uses `sudo` or admin rights, and it never changes your default Node.js unless you say yes.
 
+One-click connect to more sites needs `@uncage/cli` 0.4 or newer. If you installed 0.3, run `npm i -g @uncage/cli@latest` and then `uncage agent install` (or `uncage setup`) again: that is the only place the `uncage://` handler is registered.
+
 The examples use `https://your.site`; copy the command the website shows, which has its own address.
 
 ## macOS
@@ -141,6 +143,10 @@ npm uninstall -g @uncage/cli
 ```
 
 Then remove `%USERPROFILE%\.uncage` and `%USERPROFILE%\Uncage` if you want. Folders the script added to your user `Path` can be removed in **Settings → System → About → Advanced system settings → Environment Variables**.
+
+## Another site: one click
+
+Once `uncage setup` has installed the background agent, it also registers an `uncage://` link handler for your user (a small app on macOS, a `.desktop` file on Linux, a `HKCU` registry key on Windows; no admin rights). Any other Uncage site can then offer **Connect in one click**: the link opens a dialog on your computer that names the site’s domain and warns about look-alikes, and only after you press Connect does the usual approval start. No terminal and no second install. You can also run `uncage connect https://other.site` yourself, and `uncage dashboard` lists and disconnects every site. [Details](/docs/guides/one-click-connect/). `uncage agent uninstall` removes the handler. Run `uncage agent uninstall` before `npm uninstall -g @uncage/cli`: it removes the handler, and removing the CLI first leaves a dead one behind.
 
 ## Flags
 

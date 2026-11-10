@@ -198,7 +198,9 @@ Add `.uncage-hub/` to `.gitignore`, and keep that folder on a persistent disk in
 | Option | Default | What it does |
 | --- | --- | --- |
 | `publicUrl` | (required) | Your website’s public origin, for example `https://app.example.com`. Used for the install and setup commands, the `/device` link, the transport URLs and the CSRF origin check. Must be `https://` (plain `http://` only for `localhost`, `127.0.0.1`, `[::1]`). |
-| `getUser(req)` | (required) | Your auth: `{ id, name? }` for a signed-in browser request, else `null`. |
+| `getUser(req)` | (required) | Your auth: `{ id, name? }` for a signed-in browser request or app (`Authorization: Bearer …`, [guide](/docs/guides/authenticate-apps/)), else `null`. |
+| `trustedOrigins` | `[]` | Extra exact origins allowed past the cross-site guard, such as `chrome-extension://<id>` ([guide](/docs/guides/browser-extension/)). No wildcards or paths; https, extension schemes, or `http` on localhost only. Only origins you control. Native apps need none: they send no `Origin`. It adds no CORS headers: the hub does not answer preflights, so a trusted `https` origin only helps where your own framework adds CORS; extensions with host permissions bypass CORS. |
+| `onAttention(event, ctx)` | none | Called when an approval is requested or a run completes or fails, to send a push notification. At most once per event, never for events older than 10 minutes. `expoPushNotifier` is a ready handler. [Guide](/docs/guides/push-notifications/) |
 | `store` | (required) | `HubStore`. `pgliteHubStore({ dataDir })` from `@uncage/hub/node` for one Node process; `postgresHubStore({ connectionString } \| { pool })` for several nodes and FaaS. The hub never closes it. |
 | `cluster` | `memoryCluster()` | `ClusterAdapter`. `redisCluster` or `postgresCluster` for several nodes and FaaS. [Guide](/docs/guides/multi-node/) |
 | `basePath` | `/api/uncage` | Where the hub is mounted. If you change it, pass the same path to `UncageProvider` as `baseUrl`. |

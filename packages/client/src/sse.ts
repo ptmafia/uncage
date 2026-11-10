@@ -4,10 +4,98 @@ export interface SSEFrame {
   data: string;
 }
 
-/** Parses a text/event-stream body. Decodes with `stream: true` so multi-byte characters split across chunks stay intact. */
-export async function* parseSSE(stream: ReadableStream<Uint8Array>): AsyncIterable<SSEFrame> {
+interface StreamDecoder {
+  decode(input?: Uint8Array, options?: { stream?: boolean }): string;
+}
+
+/**
+ * A streaming UTF-8 decoder for runtimes without `TextDecoder` (older Hermes / React Native).
+ * Same output as `TextDecoder('utf-8')`: a character split across chunks waits for the rest, and
+ * each maximal invalid subpart becomes one U+FFFD.
+ */
+export function utf8Decoder(): StreamDecoder {
+  let pending: number[] = [];
+  return {
+    decode(input, options) {
+      const bytes = pending.concat(Array.from(input ?? []));
+      pending = [];
+      const units: number[] = [];
+      let out = '';
+      const flush = () => {
+        out += String.fromCharCode(...units);
+        units.length = 0;
+      };
+      let i = 0;
+      while (i < bytes.length) {
+        const b = bytes[i]!;
+        if (b < 0x80) {
+          units.push(b);
+          i++;
+        } else {
+          const need = b >= 0xc2 && b <= 0xdf ? 1 : b >= 0xe0 && b <= 0xef ? 2 : b >= 0xf0 && b <= 0xf4 ? 3 : -1;
+          if (need < 0) {
+            units.push(0xfffd);
+            i++;
+          } else {
+            // Bounds of the first continuation byte exclude overlongs, surrogates and > U+10FFFF.
+            const lo = b === 0xe0 ? 0xa0 : b === 0xf0 ? 0x90 : 0x80;
+            const hi = b === 0xed ? 0x9f : b === 0xf4 ? 0x8f : 0xbf;
+            let cp = b & (need === 1 ? 0x1f : need === 2 ? 0x0f : 0x07);
+            let j = 1;
+            for (; j <= need && i + j < bytes.length; j++) {
+              const c = bytes[i + j]!;
+              if (c < (j === 1 ? lo : 0x80) || c > (j === 1 ? hi : 0xbf)) break;
+              cp = (cp << 6) | (c & 0x3f);
+            }
+            if (j > need) {
+              if (cp > 0xffff) {
+                cp -= 0x10000;
+                units.push(0xd800 + (cp >> 10), 0xdc00 + (cp & 0x3ff));
+              } else units.push(cp);
+              i += j;
+            } else if (i + j >= bytes.length && options?.stream) {
+              pending = bytes.slice(i);
+              break;
+            } else {
+              units.push(0xfffd);
+              i += j;
+            }
+          }
+        }
+        if (units.length >= 4096) flush();
+      }
+      flush();
+      return out;
+    },
+  };
+}
+
+/**
+ * Parses a text/event-stream body. Decodes with `stream: true` so multi-byte characters split
+ * across chunks stay intact. Aborting `signal` cancels the body, even when the fetch that made it
+ * ignores aborts (a stream torn down while a mobile app was in the background never ends otherwise).
+ */
+export function parseSSE(stream: ReadableStream<Uint8Array>, signal?: AbortSignal): AsyncIterable<SSEFrame> {
+  return readSSE(stream, signal);
+}
+
+/** `parseSSE`, plus `onChunk` called whenever bytes arrive (heartbeat comments included). @internal */
+export async function* readSSE(
+  stream: ReadableStream<Uint8Array>,
+  signal?: AbortSignal,
+  onChunk?: () => void,
+): AsyncIterable<SSEFrame> {
   const reader = stream.getReader();
-  const decoder = new TextDecoder('utf-8');
+  const decoder: StreamDecoder = typeof TextDecoder === 'function' ? new TextDecoder('utf-8') : utf8Decoder();
+  // Pending reads are raced with the abort too: a polyfilled stream may not settle them on cancel().
+  let release!: () => void;
+  const aborted = new Promise<{ done: true; value?: undefined }>((r) => (release = () => r({ done: true })));
+  const onAbort = () => {
+    release();
+    void reader.cancel().catch(() => undefined);
+  };
+  if (signal?.aborted) onAbort();
+  signal?.addEventListener('abort', onAbort, { once: true });
   let buffer = '';
   let id: string | undefined;
   let event: string | undefined;
@@ -49,8 +137,12 @@ export async function* parseSSE(stream: ReadableStream<Uint8Array>): AsyncIterab
 
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const read = reader.read();
+      read.catch(() => undefined); // may settle (or fail) after the abort won the race
+      const { done, value } = await Promise.race([read, aborted]);
+      if (signal?.aborted) return;
       if (done) break;
+      onChunk?.();
       buffer += decoder.decode(value, { stream: true });
       yield* drain(false);
     }
@@ -58,7 +150,12 @@ export async function* parseSSE(stream: ReadableStream<Uint8Array>): AsyncIterab
     yield* drain(true);
     // An unterminated final frame is discarded, per the SSE spec.
   } finally {
-    await reader.cancel().catch(() => undefined);
-    reader.releaseLock();
+    signal?.removeEventListener('abort', onAbort);
+    if (!signal?.aborted) await reader.cancel().catch(() => undefined);
+    try {
+      reader.releaseLock();
+    } catch {
+      // a read still pending on a stream that ignored cancel()
+    }
   }
 }

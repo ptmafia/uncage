@@ -23,7 +23,7 @@ export interface TrustPoint {
   body: string;
 }
 
-type Eight<T> = [T, T, T, T, T, T, T, T];
+type Eleven<T> = [T, T, T, T, T, T, T, T, T, T, T];
 type Four<T> = [T, T, T, T];
 type Three<T> = [T, T, T];
 type Two<T> = [T, T];
@@ -112,8 +112,8 @@ export interface Dict {
     availableLabel: string;
     soonLabel: string;
     soonBadge: string;
-    /** Six cards in a 3×2 grid, then a two-column row: “Any ACP agent” and “macOS, Windows and Linux”. */
-    available: Eight<Feature>;
+    /** Six cards in a 3×2 grid, a two-card row (“Any ACP agent”, “macOS, Windows and Linux”), then three more: mobile apps, browser extensions, one agent for every site. */
+    available: Eleven<Feature>;
     soon: Two<Feature>;
   };
   code: {

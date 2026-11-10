@@ -1,4 +1,5 @@
 import type { SkillSpec, TransportKind } from '@uncage/protocol';
+import type { OnAttention } from './attention.js';
 import type { ClusterAdapter } from './cluster/cluster.js';
 import type { InstallScriptExtension } from './install/render.js';
 import type { HubLogger, MachineHub } from './machines.js';
@@ -20,8 +21,24 @@ export interface HubOptions {
   publicUrl: string;
   /** Where `fetch` is mounted. Defaults to `/api/uncage`. */
   basePath?: string;
-  /** Website auth: the signed-in user for a browser request, or `null`. */
+  /**
+   * Website auth: the signed-in user for a browser request, or `null`. Native apps send their own
+   * credentials (e.g. `Authorization: Bearer …`) and no `Origin`; `getUser` reads whichever it trusts.
+   */
   getUser(req: Request): Promise<HubUser | null>;
+  /**
+   * Extra origins allowed past the cross-site guard on state-changing requests, e.g. your browser
+   * extension `chrome-extension://<id>`. Only origins you control: exact `scheme://host[:port]`
+   * strings (no wildcards, paths, credentials or trailing slash); https, browser-extension schemes,
+   * or plain http on localhost / 127.0.0.1 / [::1] only. Checked by `createHub`.
+   *
+   * This is not CORS: the hub sends no `Access-Control-*` headers and does not answer preflight
+   * requests. It is meant for browser extensions (with host permissions they are not subject to
+   * CORS) and native apps (which send no `Origin` and pass anyway). Listing another website's
+   * `https://` origin only helps if your framework adds the CORS headers itself; otherwise the
+   * browser blocks its JSON requests even though the hub would accept them.
+   */
+  trustedOrigins?: string[];
   /**
    * Required. `pgliteHubStore({ dataDir })` from `@uncage/hub/node` for a single Node process;
    * `postgresHubStore` (or `sqlHubStore` on any SQL client) for several nodes or serverless
@@ -123,6 +140,22 @@ export interface HubOptions {
    * `[uncage]`). Pass your own (pino and most loggers fit) or `{ warn() {}, error() {} }` to silence it.
    */
   logger?: HubLogger;
+  /**
+   * Called when a user's computer needs them or finished something: an approval was requested, a
+   * run completed or failed (e.g. to send a push notification; `expoPushNotifier` is one). Fired
+   * once per event after the hub accepted it, in both `sessionStorage` modes, however often the
+   * agent resends it and however many hub nodes see it (deduped through `store.claimOnce`, kept a
+   * day; a custom store without it gets per-node in-memory dedupe, best effort). Not fired for
+   * events older than 10 minutes (an agent backfilling after a reconnect) nor, in `'site'` mode,
+   * for an approval the stored snapshot already shows answered. "Older" compares the event's time
+   * from the computer's clock with this hub's clock: keep both within a few minutes (NTP); a
+   * computer whose clock is over 10 minutes behind never notifies (the hub logs a warning, at most
+   * hourly per machine). Never blocks or fails ingest: errors (thrown or rejected) go to
+   * `logger.error`. Delivery is at most once: if your handler fails, the event is not retried.
+   * When `hub.fetch` got `info.waitUntil` the call runs under it, and `ctx.waitUntil` hands further
+   * work to the same request context.
+   */
+  onAttention?: OnAttention;
   /** SSE comment heartbeat for browser event streams. Defaults to 15 000 ms. */
   sseHeartbeatMs?: number;
   /** How long a browser request waits for the machine. Defaults to 30 000 ms. */
@@ -202,7 +235,8 @@ export interface HubOptions {
    * Retention: unbound run manifests (startRun never answered) 1 h, bound ones 7 days; hub copies
    * of attachments `attachmentRetentionDays` (30); finished upstream-dedupe (inbox) rows 24 h
    * (beyond any agent resend window); outbox items when they expire; rate-limit windows once older
-   * than the longest window (`userCodeWindowMs`, at least 60 s); device codes an hour after expiry.
+   * than the longest window (`userCodeWindowMs`, at least 60 s); device codes an hour after expiry;
+   * `onAttention` dedupe claims once expired (a day).
    */
   maintenance?: {
     /** Default 60 000 ms. */

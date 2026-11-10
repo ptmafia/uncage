@@ -312,5 +312,15 @@ export interface HubStore {
    */
   pruneTransport(o: { now: string; inboxBefore: string; rateLimitBeforeMs: number }): Promise<{ outbox: number; inbox: number; rateLimits: number; deviceCodes: number }>;
 
+  /**
+   * Claims `key` once across every instance: resolves `true` for the first caller, `false` while
+   * that claim lasts (`ttlSec` from `now`); once it expired the key can be claimed again. Used to
+   * deliver `onAttention` once per event however many nodes or agent resends see it. Optional: a
+   * store without it gets per-node in-memory dedupe (best effort).
+   */
+  claimOnce?(key: string, o: { ttlSec: number; now: string }): Promise<boolean>;
+  /** Retention for `claimOnce`: drops claims that expired before `now`; resolves how many. */
+  pruneClaims?(now: string): Promise<number>;
+
   close(): Promise<void>;
 }

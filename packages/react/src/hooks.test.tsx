@@ -144,7 +144,7 @@ describe('composer hooks', () => {
   it('useAttachments exposes items, ready and rejections; useAttachmentUrl uses the client', async () => {
     const f = fakeClient();
     let release!: () => void;
-    f.client.uploadAttachment.mockImplementation(async (sessionId: string, file: Blob & { name: string }) => {
+    f.client.uploadAttachment.mockImplementation(async (sessionId: string, file: { name: string }) => {
       await new Promise<void>((r) => (release = r));
       return { id: 'att_1', sessionId, name: file.name, mime: 'text/plain', size: 1, kind: 'file' as const, sha256: '', createdAt: '' };
     });

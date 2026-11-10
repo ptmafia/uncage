@@ -1,6 +1,6 @@
 ---
 title: CLI reference
-description: Every uncage command and flag, for Connected Mode (setup, agent install / uninstall / status, sites, runtimes, activity) and Local Mode (serve, doctor), uncage --version, the one-command installers, and the environment variables they read.
+description: Every uncage command and flag, for Connected Mode (setup, connect, dashboard, agent install / uninstall / status, sites, runtimes, activity) and Local Mode (serve, doctor), uncage --version, the one-command installers, and the environment variables they read.
 ---
 
 `@uncage/cli` installs the `uncage` command. End users get it from your site’s one-command installer, or with `npm i -g @uncage/cli`; Local Mode apps use it with `npx uncage …`. Every command has `--help`.
@@ -27,22 +27,40 @@ The first line is the CLI version; the second is the Node.js running it, with it
 ### `uncage setup <url>`
 
 ```text
-uncage setup <url> [--no-daemon] [--no-browser]
+uncage setup <url> [--no-daemon] [--no-browser] [--no-qr]
 ```
 
 Connects this computer to a website. `<url>` is what your site shows: its origin, for example `https://app.example.com`. A URL with no path gets `/api/uncage` added (a hub on another base path shows its full URL, which is used as is); a URL with no scheme gets `https://`.
 
-1. Requests a device code and prints the link and the code.
+1. Requests a device code and prints the link and the code, and, in a terminal, the link as a QR code (scan it with a phone to open the approval page or [your app](/docs/guides/react-native/#4-approving-a-computer-from-the-phone)).
 2. Opens the link in the browser (`open`), where the signed-in user approves.
 3. Waits for approval, then saves the site and the machine token to `~/.uncage/agent.yaml` (mode 0600).
 4. Installs and (re)starts the background agent for this user, like `uncage agent install`: launchd on macOS (`~/Library/LaunchAgents/dev.uncage.agent.plist`), a systemd user service on Linux, a scheduled task on Windows. Where there is no service manager, it prints how to run `uncage agent` in the foreground.
+5. Registers the `uncage://` link handler so other Uncage sites connect in one click ([`uncage connect`](#uncage-connect)). A failure here never fails setup.
 
 | Flag | |
 | --- | --- |
 | `--no-daemon` | Do not install or start the background agent; run `uncage agent` yourself. |
 | `--no-browser` | Do not open a browser; only print the link and the code (for a computer without a browser: open the link on another device). |
+| `--no-qr` | Do not print the QR code (it is also skipped when the output is not a terminal). |
 
 Plain `http://` is accepted only for `localhost`, `127.0.0.1` and `[::1]`.
+
+### `uncage connect`
+
+```text
+uncage connect <url | uncage://connect?url=…> [--no-browser] [--no-qr]
+```
+
+What `uncage://` links run; also usable by hand. It parses the link (https only, or `http` on loopback; no credentials, query or fragment; at most 2048 characters), shows a **confirmation dialog** with the site’s registrable domain, full URL and warnings (international characters, bare IP, a specific page, first connection, look-alike of a connected site), and only after **Connect** runs the usual approval, saves the site and restarts the background agent. Without a dialog tool it asks in the terminal; without either it refuses. Exit code `0` connected, `1` cancelled or refused, `2` bad link. Details and threat model: [One agent, every site](/docs/guides/one-click-connect/).
+
+### `uncage dashboard`
+
+```text
+uncage dashboard [--no-browser]
+```
+
+Opens a local page (`127.0.0.1`, random port, one-time secret in the link) with every connected site: name and domain, machine id, status, runtimes and recent activity. It can disconnect a site (like `uncage sites remove`) and turn ACP agents on or off (like `uncage runtimes`). It stops when the page is closed or after 30 minutes idle. `--no-browser` prints the link instead of opening it.
 
 ### `uncage agent`
 
@@ -58,8 +76,8 @@ uncage agent status [--json]       # installed? running? which Node.js?
 | Flag / subcommand | |
 | --- | --- |
 | `--log-file <path>` | Append the logs to this file instead of stderr. Log files are capped at every start. |
-| `install` | Installs and starts the per-user background service, **pinned to the Node.js running this command** (its real path, not a version-manager shim): launchd on macOS, a systemd user service on Linux, a scheduled task (current user, least privilege; a registry Run entry if the task cannot be created) on Windows. No admin rights. Run it again after you change or remove that Node.js. Refused while `UNCAGE_HOME` is set. |
-| `uninstall` | Stops and removes the service. `~/.uncage/agent.yaml` and the data stay. |
+| `install` | Installs and starts the per-user background service **pinned to the Node.js running this command** (its real path, not a version-manager shim): launchd on macOS, a systemd user service on Linux, a scheduled task (current user, least privilege; a registry Run entry if the task cannot be created) on Windows. No admin rights. Run it again after you change or remove that Node.js. Refused while `UNCAGE_HOME` is set. It also registers the `uncage://` link handler (macOS: `~/Library/Application Support/Uncage/UncageConnect.app`; Linux: `~/.local/share/applications/uncage-connect.desktop`; Windows: `HKCU\Software\Classes\uncage`). |
+| `uninstall` | Stops and removes the service and the link handler. `~/.uncage/agent.yaml` and the data stay. |
 | `status` | The service kind, whether it is installed and running, its definition file, the pinned Node.js (and whether it still exists), the CLI entry and the logs folder (`~/.uncage/logs`). `--json` prints the same as JSON. |
 | `--supervise` | Internal: the Windows scheduled task runs `uncage agent --supervise`, which restarts the agent after a crash or a self-upgrade (Task Scheduler does not). Not needed on macOS and Linux. |
 

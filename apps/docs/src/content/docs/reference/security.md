@@ -61,6 +61,32 @@ Protocol version `2`. The agent always connects **out**, so users need no open p
 - Everything a website does is in `~/.uncage/sites/<site id>/activity.log` (redacted).
 - `install.sh` has fixed content; it installs `@uncage/cli` from npm and nothing else.
 
+## One-click connect
+
+`uncage://connect?url=…` can be fired by any web page, so it never connects silently. The full model is in [One agent, every site](/docs/guides/one-click-connect/#threat-model); in short:
+
+- **Phishing risk.** A hostile page could ask a computer to pair with the attacker’s site, where the attacker is signed in, and so bind the victim’s computer to the attacker’s account.
+- **Native confirmation.** `uncage connect` shows a dialog outside the browser with the site’s registrable domain and full URL, defaulting to Cancel; without a dialog or a terminal it refuses. Warnings: international characters (punycode shown), bare IP, a specific page, first connection, and look-alikes of connected domains.
+- **Strict links.** Only `https://` (or loopback `http`), no credentials, query or fragment, at most 2048 characters, one `url` parameter; one question at a time. After the confirmation the approval page and the answering site must match the confirmed origin.
+- **Against a hostile site the device flow adds nothing.** The site controls its own `/device` page; the native confirmation is the only gate, and it warns that whoever runs the site can start coding-agent sessions on this computer at any time (within your local policy).
+- **No registry.** Uncage does not vouch for any site; the dialog shows facts, not a verdict.
+- **Handler scope.** Registered per user only (macOS app in `~/Library/Application Support`, a `.desktop` file in `~/.local/share/applications`, `HKCU` on Windows), no admin rights, removed by `uncage agent uninstall`.
+
+### The local dashboard
+
+`uncage dashboard` binds `127.0.0.1` on a random port. Each request needs the `Host` header `127.0.0.1:<port>` (DNS rebinding gets `403`), no foreign `Origin`, and a 32-byte token that appears once in the link’s fragment and is traded for an API token kept in `sessionStorage` (no cookie), sent in a header. State changes are POSTs from the page’s own origin. No CORS headers, `X-Frame-Options: DENY`, `Cache-Control: no-store`. It closes with the page or after 30 minutes idle. Another local process or web page without the secret gets `403`; a process that can read your files can read `~/.uncage/agent.yaml` anyway.
+
+## Apps and extensions
+
+### App bearer tokens
+
+- A native app sends `Authorization: Bearer <token>` and no `Origin`; the hub lets origin-less requests through the cross-site guard on every browser-API route, because only browsers attach cookies to cross-site requests and browsers always send `Origin`. A request with a foreign `Origin` is refused even with a valid cookie.
+- Your `getUser` decides what a token is worth: issue expiring, revocable tokens, keep them in the keychain, and do not fall back to a cookie when a bearer header is invalid ([authenticate apps](/docs/guides/authenticate-apps/)).
+- The app never holds a machine token and never talks to a computer directly.
+- `trustedOrigins` (for extensions) are exact origins you control, validated by `createHub`: no wildcards, paths, `file:` or `null`, plain `http` on loopback only. A trusted origin may make state-changing requests with the user’s cookies. It does not add CORS headers: this is for extensions and native shells, not for other web origins.
+- `POST /device/decision` accepts only `application/json`, and `GET /device/lookup` is behind the cross-site guard and the failed-code limit.
+- Push tokens live in your database, never in the hub. `onAttention` fires at most once per event and skips events older than 10 minutes ([push notifications](/docs/guides/push-notifications/)).
+
 ## ACP agents
 
 [Other ACP agents](/docs/guides/use-any-acp-agent/) run as local processes on the user’s computer, with their own login. What protects the user:
@@ -87,5 +113,6 @@ The daemon binds to loopback only, requires a bearer token from `~/.uncage/token
 - [ ] Tool errors are user-safe; details go to your logs.
 - [ ] Tools that publish, send, pay or delete use `requiresConfirmation: true`.
 - [ ] Files pulled from computers are treated as untrusted (served sandboxed, scanned if needed).
+- [ ] If you ship an app or extension: bearer tokens expire and are revocable, `trustedOrigins` lists only exact origins you control, and you do not expect users to confirm a one-click connection they did not start.
 - [ ] The client IP is configured for rate limits behind your proxy.
 - [ ] With your own Postgres pool or Redis client, `'error'` listeners are attached.

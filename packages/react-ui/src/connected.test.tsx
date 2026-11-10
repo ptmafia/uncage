@@ -137,6 +137,61 @@ describe('connected mode: no computer yet', () => {
     }
   });
 
+  it('ConnectMachine links installInfo.connectUrl for one-click connect on every desktop OS tab', async () => {
+    const connectUrl = 'uncage://connect?url=https%3A%2F%2Fsite.test%2Fapi%2Funcage';
+    const f = fakeClient({ machines: [] });
+    f.client.installInfo.mockResolvedValue({ ...INSTALL, connectUrl });
+    renderChat(f);
+    const region = await screen.findByRole('region', { name: 'Connect your computer' });
+    for (const tab of ['macOS / Linux', 'Windows']) {
+      fireEvent.click(await within(region).findByRole('tab', { name: tab }));
+      const link = await within(region).findByRole('link', { name: 'Already use Uncage on this computer? Connect in one click' });
+      expect(link.getAttribute('href')).toBe(connectUrl);
+      expect(region.textContent).toContain('Your browser will ask to open Uncage.');
+    }
+  });
+
+  it('hides one-click connect when connectUrl is absent or on a mobile user agent', async () => {
+    const connectUrl = 'uncage://connect?url=https%3A%2F%2Fsite.test%2Fapi%2Funcage';
+    const f = fakeClient({ machines: [] });
+    renderChat(f);
+    let region = await screen.findByRole('region', { name: 'Connect your computer' });
+    await within(region).findByText(INSTALL.install);
+    expect(within(region).queryByRole('link', { name: /Connect in one click/ })).toBeNull();
+    cleanup();
+
+    for (const ua of [
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
+      'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Mobile',
+    ]) {
+      const spy = vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(ua);
+      const g = fakeClient({ machines: [] });
+      g.client.installInfo.mockResolvedValue({ ...INSTALL, connectUrl });
+      renderChat(g);
+      region = await screen.findByRole('region', { name: 'Connect your computer' });
+      await within(region).findByText(INSTALL.install);
+      expect(within(region).queryByRole('link', { name: /Connect in one click/ })).toBeNull();
+      cleanup();
+      spy.mockRestore();
+    }
+  });
+
+  it('only links connectUrl values that use the uncage://connect? scheme', async () => {
+    for (const bad of ['javascript:alert(1)', 'https://evil.test/connect?x=1', 'uncage://other?x=1']) {
+      const f = fakeClient({ machines: [] });
+      f.client.installInfo.mockResolvedValue({ ...INSTALL, connectUrl: bad });
+      renderChat(f);
+      const region = await screen.findByRole('region', { name: 'Connect your computer' });
+      await within(region).findByText(INSTALL.install);
+      expect(within(region).queryByRole('link', { name: /Connect in one click/ })).toBeNull();
+      cleanup();
+    }
+    const f = fakeClient({ machines: [] });
+    f.client.installInfo.mockResolvedValue({ ...INSTALL, connectUrl: 'UNCAGE://connect?url=x' });
+    renderChat(f);
+    expect(await screen.findByRole('link', { name: /Connect in one click/ })).toBeTruthy();
+  });
+
   it('Windows tab says the site offers no Windows command when the hub has none', async () => {
     const f = fakeClient({ machines: [] });
     f.client.installInfo.mockResolvedValue({ ...INSTALL, windows: null });

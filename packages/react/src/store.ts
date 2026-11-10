@@ -1,4 +1,11 @@
-import { UncageClientError, uploadContentType, type CreateSessionRequest, type UncageClient } from '@uncage/client';
+import {
+  ERROR_REASONS,
+  UncageClientError,
+  uploadContentType,
+  type CreateSessionRequest,
+  type RNFile,
+  type UncageClient,
+} from '@uncage/client';
 import {
   ATTACHMENT_LIMITS,
   classifyAttachment,
@@ -77,9 +84,10 @@ export interface UncageStore {
     /**
      * Validates files client-side (same rules as the server, using the target runtime's
      * capabilities) and uploads accepted ones to the active session, or queues them in a draft.
-     * Refused files are listed in `attachments.rejected`.
+     * Refused files are listed in `attachments.rejected`. Takes browser `File`s or, in React Native,
+     * picked file references (`{ uri, name, type, size? }`, see {@link AttachmentFile}).
      */
-    addAttachments(files: File[]): void;
+    addAttachments(files: AttachmentFile[]): void;
     removeAttachment(localId: string): void;
     clearAttachments(): void;
     /** Fetches active runs across all sessions into `activeRuns` (errors are ignored). */
@@ -112,6 +120,8 @@ export interface UncageStore {
     /** Disconnects one of the user's computers. Resolves `false` (and records `lastError`) on failure. */
     revokeMachine(id: string): Promise<boolean>;
   };
+  /** The client this store drives (for headless hooks that call it directly). */
+  readonly client: UncageClient;
   /** URL of an attachment's content (`client.attachmentUrl`). */
   attachmentUrl(attachmentId: string): string;
   /**
@@ -129,6 +139,9 @@ const toClientError = (err: unknown): UncageClientError =>
         { code: 'internal_error', message: err instanceof Error ? err.message : String(err), retryable: true },
         0,
       );
+
+const isHeadersError = (err: UncageClientError | undefined): boolean =>
+  err?.code === 'unauthorized' && err.details?.reason === ERROR_REASONS.headers;
 
 const clientError = (
   code: UncageClientError['code'],
@@ -156,7 +169,7 @@ const EMPTY_ATTACHMENTS: AttachmentsState = { items: [], rejected: [] };
  * images). Without capabilities only the global limits apply.
  */
 export function checkAttachment(
-  file: Blob & { name: string },
+  file: { name: string; type: string; size?: number },
   caps?: RuntimeCapabilities['attachments'],
 ): { kind: 'image' | 'file' } | { reason: 'type' | 'size' } {
   const kind = classifyAttachment(displayFileName(file.name), uploadContentType(file));
@@ -166,8 +179,20 @@ export function checkAttachment(
     caps && caps.maxBytes > 0 ? Math.min(caps.maxBytes, ATTACHMENT_LIMITS.maxBytes) : ATTACHMENT_LIMITS.maxBytes;
   const imageMax = caps?.maxImageBytes;
   const max = kind === 'image' && imageMax !== undefined && imageMax > 0 && imageMax < generalMax ? imageMax : generalMax;
-  return file.size > max ? { reason: 'size' } : { kind };
+  return file.size !== undefined && file.size > max ? { reason: 'size' } : { kind };
 }
+
+/**
+ * A file to attach: a browser `File` (`Blob & { name }`), or in React Native a picked file reference
+ * (e.g. an expo-image-picker / expo-document-picker asset mapped to `{ uri, name, type, size }`).
+ * The reference is uploaded through `client.uploadAttachment`, which reads `uri` with the global
+ * `fetch` (`file://` works; copy `content://` URIs to a file first). Without `size` the client-side
+ * size check is skipped (the server still enforces it); an image's `uri` is its preview.
+ */
+export type AttachmentFile = (Blob & { name: string }) | (RNFile & { size?: number });
+
+const isFileRef = (f: AttachmentFile): f is RNFile & { size?: number } =>
+  typeof (f as { uri?: unknown }).uri === 'string' && !(typeof Blob !== 'undefined' && f instanceof Blob);
 
 /** Mirrors core `mergeSettings` (the policy is already reflected in `permissionModes`). */
 function checkSettings(patch: Partial<SessionSettings>, caps: RuntimeCapabilities | undefined): UncageClientError | undefined {
@@ -265,7 +290,7 @@ export function createUncageStore(client: UncageClient): UncageStore {
 
   // ---- attachments -------------------------------------------------------------------------
   /** Files not yet uploaded, and in-flight uploads, keyed by localId. */
-  const files = new Map<string, File>();
+  const files = new Map<string, AttachmentFile>();
   const uploads = new Map<string, { controller: AbortController; done: Promise<void> }>();
   let localSeq = 0;
 
@@ -284,7 +309,13 @@ export function createUncageStore(client: UncageClient): UncageStore {
       uploads.get(item.localId)?.controller.abort();
       uploads.delete(item.localId);
       files.delete(item.localId);
-      if (item.previewUrl !== undefined) URL.revokeObjectURL(item.previewUrl);
+      if (item.previewUrl?.startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(item.previewUrl);
+        } catch {
+          // nothing to revoke
+        }
+      }
     }
   };
 
@@ -524,7 +555,12 @@ export function createUncageStore(client: UncageClient): UncageStore {
         if (gen === generation && e.type === 'session.updated') set({ sessions: rememberSession(e.payload.session) });
         if (gen === generation && isRunLifecycle(e)) runsChanged();
       },
-      onState: (connection) => updateActive(gen, (s) => (s.connection === connection ? s : { ...s, connection })),
+      onState: (connection) => {
+        updateActive(gen, (s) => (s.connection === connection ? s : { ...s, connection }));
+        // A failed headers() (token refresh) is reported while the stream keeps retrying: once the
+        // stream is live again it no longer applies.
+        if (connection === 'live' && gen === generation && isHeadersError(state.lastError)) set({ lastError: undefined });
+      },
       onError: (err) => {
         if (gen !== generation) return;
         if (err.code !== 'event_replay_unavailable') return fail(err);
@@ -857,16 +893,26 @@ export function createUncageStore(client: UncageClient): UncageStore {
           continue;
         }
         const localId = `local_${++localSeq}`;
-        const canPreview = check.kind === 'image' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function';
-        files.set(localId, file);
+        const ref = isFileRef(file) ? file : undefined;
+        const canPreview =
+          !ref && check.kind === 'image' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function';
+        let previewUrl: string | undefined = ref && check.kind === 'image' ? ref.uri : undefined;
+        if (canPreview) {
+          try {
+            previewUrl = URL.createObjectURL(file as Blob);
+          } catch {
+            // No blob URLs here (e.g. React Native on Android without a BlobProvider): no preview.
+          }
+        }
         items.push({
           localId,
           name: file.name,
-          size: file.size,
+          size: file.size ?? 0,
           kind: check.kind,
-          ...(canPreview ? { previewUrl: URL.createObjectURL(file) } : {}),
+          ...(previewUrl !== undefined ? { previewUrl } : {}),
           status: 'uploading',
         });
+        files.set(localId, file);
         added.push(localId);
       }
       set({ attachments: { ...(sessionId !== undefined ? { sessionId } : {}), items, rejected } });
@@ -975,6 +1021,7 @@ export function createUncageStore(client: UncageClient): UncageStore {
       dropAttachments();
       if (Object.keys(state.pendingDecisions).length > 0) set({ pendingDecisions: {} });
     },
+    client,
     attachmentUrl: (id) => client.attachmentUrl(id),
     getState: () => state,
     subscribe(fn) {

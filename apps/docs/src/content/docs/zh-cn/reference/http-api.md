@@ -10,21 +10,21 @@ description: hub 浏览器 API、设备端点、安装脚本、维护端点以�
 | | Connected 模式的 hub | Local 模式的 Uncage 服务 |
 | --- | --- | --- |
 | 基础地址 | `<publicUrl><basePath>`（默认 `/api/uncage`） | `http://127.0.0.1:4783/v1`，通过你在 `/api/uncage` 的代理访问 |
-| 认证 | 你的 cookie，经由 `getUser(req)` | `Authorization: Bearer <token>`，由代理添加 |
+| 认证 | 你的 cookie 或你签发的 Bearer 令牌，经由 `getUser(req)` | `Authorization: Bearer <token>`，由代理添加 |
 | 额外内容 | `/machines`、设备端点、`install.sh` / `install.ps1`、`/maintenance`、守护进程的传输方式 | 无 |
 
 会话、运行、事件和审批路由在两者中的请求和响应形状相同。所以同一个客户端两边都能用：把它指向 `/api/uncage`，它就会和 hub 或代理通信。
 
 ## 浏览器 API
 
-下面所有路由都需要已登录用户（否则返回 `401 unauthorized`）。其他用户的资源返回 `404`，和不存在的资源一样。来自其他源的非 GET 请求得到 `403 forbidden_origin`。
+下面所有路由都需要已登录用户（否则返回 `401 unauthorized`）。其他用户的资源返回 `404`，和不存在的资源一样。来自其他源的非 GET 请求得到 `403 forbidden_origin`；不带 `Origin` 头的请求（原生应用）和来自 [`trustedOrigins`](/docs/zh-cn/guides/mount-the-hub/)的请求会放行。
 
 | 方法和路径 | 请求体 / 查询参数 | 响应 |
 | --- | --- | --- |
 | `GET /health` | | `{ ok: true, protocol: "1.0", version }` |
 | `GET /runtimes` | `?machineId=`（可选） | 那台电脑的 `RuntimeInfo[]`，不指定时为第一台在线电脑的 |
 | `GET /machines` | | `MachineInfo[]`：`{ id, name, os, agentVersion, runtimes, online, lastSeenAt, agentOutdated, transport }`，最近在线的排在最前。`agentOutdated`：守护进程版本低于 `minAgentVersion`（应显示“需要更新守护进程”）。`transport`：`'ws'`、`'http'`，离线时为 `null` |
-| `GET /machines/install` | | `{ install, setup, windows }`：要展示的命令（`curl … install.sh \| bash`、`uncage setup <url>`、`irm … install.ps1 \| iex`） |
+| `GET /machines/install` | | `{ install, setup, windows, connectUrl }`：要展示的命令（`curl … install.sh \| bash`、`uncage setup <url>`、`irm … install.ps1 \| iex`），以及 `uncage://connect?url=<编码后的 setup 网址>`，即给已经运行 Uncage 的电脑用的[一键连接链接](/docs/zh-cn/guides/one-click-connect/) |
 | `DELETE /machines/:id` | | `{ ok: true }`。吊销这台电脑 |
 | `GET /sessions` | | `Session[]`，每个都带 `machineId`，最早的排在最前 |
 | `POST /sessions` | `{ runtime, title?, machineId? }` | `201 Session`。不传 `machineId` 时使用最近在线的电脑。`workspace` 会被忽略 |
@@ -37,10 +37,16 @@ description: hub 浏览器 API、设备端点、安装脚本、维护端点以�
 | `GET /runs?active=1` | | `ActiveRunInfo[]`：该用户各会话中正在进行的运行 |
 | `GET /runs/:id` | | `Run` |
 | `POST /runs/:id/cancel` | | `202` |
+| `GET /device/lookup` | `?code=` | 待处理验证码的 `{ name?, os?, expiresAt, repairsMachine }`，验证码未知或已不在待处理状态时为 `null`。结果和失败验证码的限流与 `hub.lookupDevice` 相同 |
+| `POST /device/decision` | `{ code, approve }`（`Content-Type: application/json`） | `{ result: "ok" \| "not_found" \| "expired" }`。批准会把那台电脑绑定到已登录用户 |
 | `GET /approvals?sessionId=` | | 该会话待处理的 `ApprovalRequest[]` |
 | `POST /approvals/:id/decision` | `{ decision: "allow" \| "deny", scope: "once" \| "session", reason? }` + 请求头 `Idempotency-Key` | 更新后的 `ApprovalRequest`。第二个不同的决定会得到 `409` |
 
 Local 模式的 Uncage 服务在 `/v1` 下有同样的路由，但没有 `/machines*`，并且在 `POST /v1/sessions` 里接受 `workspace`（必须位于允许的根目录之内）。
+
+### 应用的设备审批
+
+`GET /device/lookup` 和 `POST /device/decision` 让应用或扩展无需自己的页面就能批准一台电脑（网站继续使用带 `hub.lookupDevice` / `approveDevice` 的 [`/device` 页面](/docs/zh-cn/guides/auth-and-device-approval/)；两种方式都可用）。它们需要已登录用户，并与那些调用共用失败验证码的限制：10 分钟内 10 次未知验证码之后，返回 `429 rate_limited`（`details.retryAfterSec`）。查询也在跨站防护之内，所以其他网站无法消耗用户的尝试次数。决定请求必须是 JSON：其他 `Content-Type` 会得到 `415 invalid_request`，因为跨站表单无法在不经过预检的情况下发送 JSON。`@uncage/client` 有 `lookupDevice(code)` 和 `decideDevice(code, approve)`，`@uncage/react` 有 `useDeviceApproval(code)`。
 
 ### Server-sent events
 

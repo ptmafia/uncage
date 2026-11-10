@@ -77,6 +77,14 @@ Copy the exact files from https://uncage-dev.vercel.app/docs/start/quickstart-co
 type-checked in CI. Other servers (Express, Fastify, Hono, node:http):
 https://uncage-dev.vercel.app/docs/guides/mount-the-hub.md
 
+Beyond the website itself (each page is also markdown, add `.md`):
+
+- React Native / Expo apps: https://uncage-dev.vercel.app/docs/guides/react-native.md
+- App sign-in (bearer tokens, no cookie): https://uncage-dev.vercel.app/docs/guides/authenticate-apps.md
+- Push notifications (`onAttention`, `expoPushNotifier`): https://uncage-dev.vercel.app/docs/guides/push-notifications.md
+- Browser extensions (`trustedOrigins`, exact origins only; adds no CORS): https://uncage-dev.vercel.app/docs/guides/browser-extension.md
+- One agent, every site (`uncage://` one-click connect, `ConnectMachine`): https://uncage-dev.vercel.app/docs/guides/one-click-connect.md
+
 ## 3. Local Mode steps (Next.js App Router)
 
 1. `npm i @uncage/server @uncage/react-ui @uncage/cli`

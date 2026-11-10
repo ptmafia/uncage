@@ -8,6 +8,8 @@
  */
 export { createHub, DEFAULT_HEARTBEAT, HUB_VERSION } from './hub.js';
 export type { Hub, HubOptions, HubUser } from './types.js';
+export type { AttentionEvent, OnAttention } from './attention.js';
+export { defaultPushMessage, EXPO_PUSH_ENDPOINT, expoPushNotifier, type ExpoPushNotifierOptions } from './push/expo.js';
 export type { HubLogger } from './machines.js';
 export { fetchOnce, toNextHandlers, type CreatedHub, type RouteHandler } from './fetch-adapters.js';
 export type { MaintenanceReport } from './maintenance.js';

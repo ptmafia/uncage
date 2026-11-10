@@ -19,9 +19,8 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { attachWebSocket, toNodeHandler } from '@uncage/hub/node';
 import next from 'next';
-import { assetStore } from './lib/assets.ts';
 import { isPublicDemo, publicUrl } from './lib/config.ts';
-import { createDemoHub, PUBLIC_ASSET_MAX_AGE_MS } from './lib/hub.ts';
+import { createDemoHub, housekeeping } from './lib/hub.ts';
 import { publishHub } from './lib/hub-registry.ts';
 
 const dev = process.env.NODE_ENV !== 'production';
@@ -59,17 +58,17 @@ if (dev) {
   });
 }
 
-if (isPublicDemo()) {
-  // Guests' pages are throwaway: drop anything older than a day, now and hourly.
-  const sweep = (): void => {
-    assetStore()
-      .purgeOlderThan(PUBLIC_ASSET_MAX_AGE_MS)
-      .then((n) => console.log(`purged ${n} expired asset(s)`))
-      .catch((err: unknown) => console.error('asset purge failed', err));
-  };
-  sweep();
-  setInterval(sweep, 3600_000).unref();
-}
+// Now and hourly: push tokens unseen for 30 days; in public mode, guests' pages older than a day (lib/hub.ts).
+const sweep = (): void => {
+  housekeeping()
+    .then((n) => {
+      if (isPublicDemo()) console.log(`purged ${n.assets} expired asset(s)`);
+      if (n.pushTokens > 0) console.log(`purged ${n.pushTokens} stale push token(s)`);
+    })
+    .catch((err: unknown) => console.error('housekeeping failed', err));
+};
+sweep();
+setInterval(sweep, 3600_000).unref();
 
 server.listen(port, host, () => {
   console.log(`ready ${publicUrl()} (listening on http://${host}:${port}, ${dev ? 'dev' : 'production'})`);

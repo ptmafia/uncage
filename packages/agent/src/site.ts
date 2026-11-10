@@ -472,7 +472,8 @@ export class SiteAgent {
     this.state = 'connected';
     this.acksOnConn = false;
     this.log.info({ site: this.site.id, transport: link.kind }, 'connected');
-    void this.activity.append({ kind: 'connected' });
+    // `name`: the transport (`ws` / `http`), shown by `uncage dashboard`.
+    void this.activity.append({ kind: 'connected', name: link.kind });
     for (const rep of this.reps.values()) {
       rep.sentHigh = rep.delivered;
       rep.outstanding = [];

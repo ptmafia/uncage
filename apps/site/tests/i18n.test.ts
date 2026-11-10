@@ -101,7 +101,7 @@ describe('features', () => {
   it('every locale has the ACP feature card', () => {
     const [en, zh, ja] = (['en', 'zh', 'ja'] as const).map((l) => getDict(l));
     for (const d of [en!, zh!, ja!]) {
-      expect(d.features.available).toHaveLength(8);
+      expect(d.features.available).toHaveLength(11);
       expect(d.features.available[6].title).toMatch(/ACP/);
       expect(d.features.available[7].title).toMatch(/macOS.*Windows.*Linux/);
     }
@@ -117,7 +117,7 @@ describe('features', () => {
   it('every locale says one command, one approval and lists Windows and Linux as available', () => {
     const [en, zh, ja] = [getDict('en'), getDict('zh'), getDict('ja')];
     for (const d of [en, zh, ja]) {
-      expect(d.features.available).toHaveLength(8);
+      expect(d.features.available).toHaveLength(11);
       expect(d.features.soon).toHaveLength(2);
       expect(JSON.stringify(d.features.soon)).not.toMatch(/Windows|Linux/);
       expect(JSON.stringify(d.how.steps[0])).not.toMatch(/Two commands|两条命令|コマンドを2つ/);

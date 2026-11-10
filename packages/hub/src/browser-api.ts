@@ -47,6 +47,9 @@ export const SINGLE_FRAME_ATTACHMENT_BYTES = Math.floor(((MAX_FRAME_BYTES - 16 *
 const MAX_JSON_BODY = 1024 * 1024;
 const MAX_IDEMPOTENCY_KEY = 256;
 const JSON_EVENTS_LIMIT = 1000;
+/** Longest user code accepted from an app (`ABCD-EFGH` plus spacing). */
+const MAX_USER_CODE_INPUT = 32;
+const DeviceDecisionBodySchema = z.object({ code: z.string().min(1).max(MAX_USER_CODE_INPUT), approve: z.boolean() });
 
 export interface ApiContext {
   store: HubStore;
@@ -59,9 +62,11 @@ export interface ApiContext {
   skills: Map<string, SkillSpec>;
   sessionStorage: 'machine' | 'site';
   publicOrigin: string;
+  /** `HubOptions.trustedOrigins` (validated): origins allowed past the cross-site guard. */
+  trustedOrigins: ReadonlySet<string>;
   /** Agents older than this are reported as `agentOutdated` in `MachineInfo`. */
   minAgentVersion: string;
-  install: { install: string; setup: string; windows: string };
+  install: { install: string; setup: string; windows: string; connectUrl: string };
   /** Rendered installers (`install.sh` for macOS / Linux, `install.ps1` for Windows). */
   installScripts: { sh: string; ps1: string };
   /** `secret` set: `GET|POST /maintenance` with `Authorization: Bearer <secret>` runs maintenance. */
@@ -84,6 +89,8 @@ interface Route {
   keys: string[];
   /** Public routes skip `getUser` (machine-side device endpoints, the installer). */
   public?: boolean;
+  /** The cross-site guard applies to GET too (the request has a cost, e.g. failed-code budget). */
+  guardReads?: boolean;
   run(c: Call): Promise<Response>;
 }
 interface Call {
@@ -285,7 +292,7 @@ export function browserApi(ctx: ApiContext) {
   }
 
   const routes: Route[] = [];
-  const add = (method: string, path: string, run: Route['run'], opts: { public?: boolean } = {}) => {
+  const add = (method: string, path: string, run: Route['run'], opts: { public?: boolean; guardReads?: boolean } = {}) => {
     const keys: string[] = [];
     const pattern = new RegExp(
       `^${path.replace(/:(\w+)/g, (_m, k: string) => {
@@ -565,6 +572,26 @@ export function browserApi(ctx: ApiContext) {
     return json(await machines.command(rec.machineId, 'decide', { approvalId: params.id!, decision, idempotencyKey: key }));
   });
 
+  // Device approval for apps that cannot host the website's own approve page (native apps,
+  // extensions); same result and failed-code rate limit as `hub.lookupDevice` / `approveDevice`.
+  // The lookup is guarded like a write: a cross-site page must not spend the user's guess budget.
+  add('GET', '/device/lookup', async ({ url, user }) => {
+    const code = url.searchParams.get('code');
+    if (!code || code.length > MAX_USER_CODE_INPUT) throw new UncageError('invalid_request', { message: `code is required (at most ${MAX_USER_CODE_INPUT} characters).` });
+    return json(await ctx.device.lookup(code, user));
+  }, { guardReads: true });
+
+  add('POST', '/device/decision', async ({ req, user, requestId }) => {
+    // JSON only: a cross-site form or `no-cors` fetch cannot send it without a CORS preflight.
+    const mime = (req.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
+    if (mime !== 'application/json') {
+      const err = new UncageError('invalid_request', { message: 'The request body must be JSON.', hint: 'Send Content-Type: application/json.' });
+      return json({ error: err.toBody(requestId) }, 415);
+    }
+    const { code, approve } = parse(DeviceDecisionBodySchema, await readJson(req, ctx.bodyTimeoutMs));
+    return json({ result: await (approve ? ctx.device.approve(code, user) : ctx.device.deny(code, user)) });
+  });
+
   async function revokeMachine(machineId: string, user: HubUser): Promise<void> {
     await ownedMachine(user, machineId);
     await store.deleteMachine(machineId);
@@ -572,10 +599,12 @@ export function browserApi(ctx: ApiContext) {
   }
 
   /** Browser requests that change state must come from the website itself (cookie-auth CSRF guard). */
-  function crossSite(req: Request): boolean {
-    if (req.method === 'GET' || req.method === 'HEAD') return false;
-    if (req.headers.get('sec-fetch-site') === 'cross-site') return true;
+  function crossSite(req: Request, guardReads = false): boolean {
+    if (!guardReads && (req.method === 'GET' || req.method === 'HEAD')) return false;
     const origin = req.headers.get('origin');
+    // Before Sec-Fetch-Site: an extension's requests may be marked cross-site.
+    if (origin !== null && ctx.trustedOrigins.has(origin)) return false;
+    if (req.headers.get('sec-fetch-site') === 'cross-site') return true;
     if (origin === null) return false;
     if (origin === ctx.publicOrigin) return false;
     const host = req.headers.get('host');
@@ -611,7 +640,7 @@ export function browserApi(ctx: ApiContext) {
             hint: 'Sign in to the website and retry.',
           });
         }
-        if (crossSite(req)) throw new UncageError('forbidden_origin', { message: 'Cross-site request refused.' });
+        if (crossSite(req, r.guardReads)) throw new UncageError('forbidden_origin', { message: 'Cross-site request refused.' });
         user = u;
       }
       return r.run({ req, url, params, user, requestId, clientKey });

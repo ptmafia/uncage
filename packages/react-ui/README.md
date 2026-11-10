@@ -48,7 +48,7 @@ Then `npm run dev` and open http://localhost:3000. `npx uncage doctor` checks yo
 When `UncageProvider`'s `baseUrl` is an [`@uncage/hub`](https://www.npmjs.com/package/@uncage/hub) (it serves `/machines`), `<AgentChat>` switches on its own:
 
 - the header shows the computer the conversation runs on (online dot, name) with a picker and "Connect another computer…";
-- with no computer yet, the empty state is `<ConnectMachine>`: the install command, `uncage setup <url>`, copy buttons and a live "Waiting for your computer…" → "Connected: <name>" (it polls every 3 s while shown);
+- with no computer yet, the empty state is `<ConnectMachine>`: the install command, `uncage setup <url>`, copy buttons, an "Already use Uncage on this computer? Connect in one click" link (the hub's `uncage://connect` URL; hidden on mobile; see [One-click connect](https://uncage-dev.vercel.app/docs/guides/one-click-connect/)) and a live "Waiting for your computer…" → "Connected: <name>" (it polls every 3 s while shown);
 - while the computer is offline the composer is disabled: "Your computer is offline. Waiting for it to reconnect…" with the hint `uncage agent`.
 
 Against a local daemon (`uncage serve`, no `/machines`) nothing changes.

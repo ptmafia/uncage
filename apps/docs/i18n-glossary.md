@@ -55,3 +55,14 @@ Rules for translators:
 | background service | 后台服务 | バックグラウンドサービス | How the agent runs per user: launchd (macOS), a systemd user service (Linux), a scheduled task (Windows). |
 | scheduled task | 计划任务 | タスク スケジューラのタスク | The Windows Task Scheduler task `UncageAgent`. |
 | lingering | 驻留（linger） | linger（常駐） | systemd: `loginctl enable-linger` keeps a user's services running after logout. |
+| one-click connect | 一键连接 | ワンクリック接続 | `uncage://connect?url=…` and `uncage connect`. |
+| link handler | 链接处理程序 | リンクハンドラー | The OS registration for `uncage://` links. |
+| site identity check | 网站身份检查 | サイトの身元確認 | The warnings in the connect confirmation (IDN, IP, first time, look-alike). |
+| registrable domain | 可注册域名 | 登録可能ドメイン | `example.com` of `app.example.com`, from the Public Suffix List. |
+| native confirmation | 原生确认框 | ネイティブ確認 | The dialog of the operating system, not a web page. |
+| dashboard | dashboard（保持英文） | ダッシュボード | `uncage dashboard`, the local page. |
+| bearer token | Bearer 令牌 | Bearerトークン | How apps authenticate (`Authorization: Bearer …`). |
+| trusted origin | 受信任的 origin | 信頼されたオリジン | `trustedOrigins`; exact origins only. |
+| push notification | 推送通知 | プッシュ通知 | `onAttention`, `expoPushNotifier`. |
+| browser extension | 浏览器扩展 | ブラウザ拡張機能 | `examples/connected-extension`. |
+| app link / universal link | 应用链接（App Links / universal links） | アプリリンク（App Links / ユニバーサルリンク） | Android App Links and iOS universal links. |

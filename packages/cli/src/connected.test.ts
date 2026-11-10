@@ -9,7 +9,8 @@ import { attachWebSocket, pgliteHubStore, toNodeHandler } from '@uncage/hub/node
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { showActivity } from './activity-cmd.js';
 import { launchctlInstallCommands, launchdPlist, launchdService, plistPath, type ServiceSpec } from './service/index.js';
-import { runSetup } from './setup.js';
+import { macAppPath } from './service/url-handler.js';
+import { installAgentService, runSetup } from './setup.js';
 import { formatSites, listSites, removeSite } from './sites.js';
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -121,10 +122,12 @@ describe('uncage setup', () => {
       spec: macSpec(home),
       sleep: fastSleep,
     });
-    expect(exec.mock.calls).toEqual([
+    expect(exec.mock.calls.slice(0, 2)).toEqual([
       ['launchctl', ['bootout', 'gui/501/dev.uncage.agent']],
       ['launchctl', ['bootstrap', 'gui/501', plistPath(home)]],
     ]);
+    // Then the uncage:// link handler, built inside the (temp) home: never the real one.
+    expect(exec.mock.calls[2]).toEqual(['/usr/bin/osacompile', ['-o', macAppPath(home), expect.stringContaining(home)]]);
     const plist = await readFile(plistPath(home), 'utf8');
     expect(plist).toContain('<string>/usr/local/lib/node_modules/@uncage/cli/dist/bin.js</string>');
     expect(plist).toContain('<string>agent</string>');
@@ -186,6 +189,30 @@ describe('uncage setup', () => {
 
   it('refuses plain http to a non-local website', async () => {
     await expect(runSetup({ url: 'http://example.com', home: await tmpHome(), fetch, exec: okExec(), out: () => undefined })).rejects.toThrow(/https/);
+  });
+});
+
+describe('installAgentService and the uncage:// link handler', () => {
+  it('registers the handler with the pinned spec after the service; a failure is a note, never a failed install', async () => {
+    const home = await tmpHome();
+    const service = launchdService({ platform: 'darwin', home, env: {}, exec: okExec(), uid: 501 });
+    const spec = macSpec(home);
+    const lines: string[] = [];
+    const urlHandler = vi.fn(async () => ({ registered: true, location: '/x/UncageConnect.app', notes: [] }));
+    await installAgentService({ home, exec: okExec(), out: (l) => lines.push(l), platform: 'darwin', service, spec, urlHandler });
+    expect(urlHandler).toHaveBeenCalledWith(spec);
+    expect(lines.join('\n')).toContain('uncage:// links connect new websites in one click (/x/UncageConnect.app)');
+
+    const failing = vi.fn(async () => {
+      throw new Error('lsregister exploded');
+    });
+    const out2: string[] = [];
+    await expect(installAgentService({ home, exec: okExec(), out: (l) => out2.push(l), platform: 'darwin', service, spec, urlHandler: failing })).resolves.toMatchObject({ kind: 'launchd' });
+    expect(out2.join('\n')).toContain('! lsregister exploded');
+
+    const exec = okExec();
+    await installAgentService({ home, exec, out: () => undefined, platform: 'darwin', service, spec, urlHandler: false });
+    expect(exec).not.toHaveBeenCalled();
   });
 });
 

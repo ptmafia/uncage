@@ -37,6 +37,12 @@ It has two modes. Both use the same protocol, the same React hooks and the same 
 - Stop, attachments, model, effort and permission-mode pickers, and history that survives a reload.
 - With site storage on, the conversation stays readable on your site even when their computer is off.
 
+## More entry points
+
+- **React Native apps** use `@uncage/client` and `@uncage/react` unchanged: streaming, approvals, photos, resume after background, approve a computer from a phone.
+- **Browser extensions** run `<AgentChat>` in a side panel against your hub, with `trustedOrigins`.
+- **One agent, every site:** a user installs the agent once, and every site that embeds Uncage connects in one click.
+
 ## What you get as the website
 
 - **Site tools.** Declare a capability with `defineTool` (a name, a zod schema, a handler). Claude Code sees it as an MCP tool. The handler runs **in your backend, as the signed-in user**, and can pull files from the run’s workspace (`ctx.files.pull`).
@@ -56,8 +62,10 @@ See [the trust model](/docs/concepts/trust-model/) for the full list.
 
 - **Building a website?** Read [How it works](/docs/start/how-it-works/), then do the [Connected Mode quickstart](/docs/start/quickstart-connected/) (about 15 minutes).
 - **The agent runs on the same machine as your app?** The [Local Mode quickstart](/docs/start/quickstart-local/) takes 5 minutes.
+- **Building a mobile app or a browser extension?** [React Native apps](/docs/guides/react-native/) and [browser extensions](/docs/guides/browser-extension/) are more entry points to the same hub, with [app sign-in](/docs/guides/authenticate-apps/) and [push notifications](/docs/guides/push-notifications/).
+- **Already use Uncage on your computer?** Other Uncage sites connect in [one click](/docs/guides/one-click-connect/), with an identity check and a local dashboard.
 - **Using a coding agent?** Give it [the Uncage skill](/docs/skills/uncage/SKILL.md) or [`llms.txt`](/docs/llms.txt). Every page is also available as plain markdown: add `.md` to its URL. See [For coding agents](/docs/start/for-coding-agents/).
 
 :::note[Status]
-Connected Mode is part of Uncage 0.3 (`@uncage/hub`, `@uncage/agent`, and the `uncage setup` / `uncage agent` commands in `@uncage/cli`). The agent side runs on **macOS, Linux and Windows** as a per-user background service, with Node.js 22 or newer (the installer sets it up). macOS is verified on a real device; Linux and Windows are CI verified, awaiting real-device confirmation. Claude Code is verified live; Codex is implemented but has not been run against a real binary, and it does not support site tools yet. Details: [compatibility](https://github.com/ptmafia/uncage/blob/main/docs/compatibility.md).
+Connected Mode is part of Uncage 0.4 (`@uncage/hub`, `@uncage/agent`, and the `uncage setup` / `uncage agent` commands in `@uncage/cli`). The agent side runs on **macOS, Linux and Windows** as a per-user background service, with Node.js 22 or newer (the installer sets it up). macOS is verified on a real device; Linux and Windows are CI verified, awaiting real-device confirmation. Claude Code is verified live; Codex is implemented but has not been run against a real binary, and it does not support site tools yet. Details: [compatibility](https://github.com/ptmafia/uncage/blob/main/docs/compatibility.md).
 :::

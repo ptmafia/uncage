@@ -7,8 +7,8 @@ interface Props {
 }
 
 const t = getDict(Astro.props.locale).features;
-const availableIcons: IconName[] = ['zap', 'wrench', 'book', 'database', 'layout', 'cloud', 'plug', 'monitor'];
-const soonIcons: IconName[] = ['terminal', 'phone'];
+const availableIcons: IconName[] = ['zap', 'wrench', 'book', 'database', 'layout', 'cloud', 'plug', 'monitor', 'phone', 'globe', 'nodes'];
+const soonIcons: IconName[] = ['terminal', 'chat'];
 ---
 
 <section class="section" id="features" aria-labelledby="features-title">
@@ -21,7 +21,7 @@ const soonIcons: IconName[] = ['terminal', 'phone'];
     <ul class="grid now" role="list">
       {
         t.available.map((f, i) => (
-          <li class:list={['feat', { wide: i >= 6 }]}>
+          <li class:list={['feat', { wide: i === 6 || i === 7 }]}>
             <span class="ic">
               <Icon name={availableIcons[i]!} size={20} />
             </span>
@@ -113,7 +113,7 @@ const soonIcons: IconName[] = ['terminal', 'phone'];
     padding: 28px;
     transition: background-color 0.2s ease;
   }
-  /* The 7th and 8th cards (any ACP agent; macOS, Windows and Linux) share a row under the 3×2 grid. */
+  /* The 7th and 8th cards (any ACP agent; macOS, Windows and Linux) share a row under the 3×2 grid; the last three (mobile, extensions, one agent) fill one row of three. */
   .now .wide {
     grid-column: span 3;
   }
@@ -173,7 +173,7 @@ const soonIcons: IconName[] = ['terminal', 'phone'];
     border-radius: 999px;
     padding: 2px 9px;
   }
-  /* Tablet: two columns, so 6 + 2 cards fill four full rows (no empty cell). */
+  /* Tablet: two columns; the last (11th) card spans both, so every row is full. */
   @media (max-width: 860px) {
     .now {
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -182,11 +182,18 @@ const soonIcons: IconName[] = ['terminal', 'phone'];
     .now .wide {
       grid-column: span 1;
     }
+    /* 11 cards: the last one takes the whole row, so no cell stays empty. */
+    .now .feat:last-child {
+      grid-column: span 2;
+    }
   }
   @media (max-width: 560px) {
     .now,
     .later {
       grid-template-columns: minmax(0, 1fr);
+    }
+    .now .feat:last-child {
+      grid-column: span 1;
     }
     .feat {
       padding: 22px;

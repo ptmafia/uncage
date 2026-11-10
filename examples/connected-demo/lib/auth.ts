@@ -6,6 +6,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { verifyAppToken } from './app-token.ts';
 import { dataDir } from './config.ts';
 import { demoMode, MIN_SECRET_BYTES, requireFaasEnv, type DemoMode } from './mode.ts';
 
@@ -93,8 +94,24 @@ export function readCookie(header: string | null | undefined, name: string = SES
   return undefined;
 }
 
-/** The signed-in user of a Fetch `Request` (what the hub's `getUser` needs). */
-export function userFromRequest(req: Request): { id: string; name: string } | null {
-  const name = verifyUser(readCookie(req.headers.get('cookie')));
+/**
+ * The token of an `Authorization: Bearer <token>` header: undefined without one or with another
+ * scheme (e.g. HTTP basic auth in front of a staging deploy), `''` for a malformed Bearer header.
+ */
+export function bearerToken(req: Request): string | undefined {
+  const header = req.headers.get('authorization')?.trim();
+  if (!header || !/^Bearer(?:\s|$)/i.test(header)) return undefined;
+  const m = /^Bearer\s+(\S+)$/i.exec(header);
+  return m ? m[1] : '';
+}
+
+/**
+ * The signed-in user of a Fetch `Request` (what the hub's `getUser` needs): the app's
+ * `Authorization: Bearer <app token>` (lib/app-token.ts) when the header is present — a bad or
+ * expired one is refused, never answered from a cookie sent alongside — else the sign-in cookie.
+ */
+export function userFromRequest(req: Request, key: Buffer = secret()): { id: string; name: string } | null {
+  const bearer = bearerToken(req);
+  const name = bearer !== undefined ? verifyAppToken(bearer, { key }) : verifyUser(readCookie(req.headers.get('cookie')), key);
   return name ? { id: name, name } : null;
 }

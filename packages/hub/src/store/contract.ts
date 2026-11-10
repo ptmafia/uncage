@@ -492,4 +492,24 @@ export function hubStoreContract(make: () => Promise<{ store: HubStore; cleanup?
       expect(await store.claimInbox('m1', ['done_old', 'leased'], { leaseUntil: t(9_999), now: t(20) })).toEqual({ done_old: 'new', leased: 'busy' });
     }),
   );
+  it(
+    'claimOnce returns true once per key until expiry; pruneClaims drops expired claims',
+    withStore(async (store) => {
+      const claimOnce = store.claimOnce!.bind(store);
+      expect(await claimOnce('ses_1:5:run_completed', { ttlSec: 60, now: t(0) })).toBe(true);
+      expect(await claimOnce('ses_1:5:run_completed', { ttlSec: 60, now: t(1) })).toBe(false);
+      expect(await claimOnce('ses_1:5:run_completed', { ttlSec: 60, now: t(59) })).toBe(false);
+      expect(await claimOnce('ses_1:6:run_completed', { ttlSec: 60, now: t(1) })).toBe(true);
+      // Two nodes racing for one key: exactly one wins.
+      const race = await Promise.all(Array.from({ length: 5 }, () => claimOnce('race', { ttlSec: 60, now: t(2) })));
+      expect(race.filter(Boolean)).toHaveLength(1);
+      // Past expiry the key can be claimed again (once).
+      expect(await claimOnce('ses_1:5:run_completed', { ttlSec: 60, now: t(61) })).toBe(true);
+      expect(await claimOnce('ses_1:5:run_completed', { ttlSec: 60, now: t(62) })).toBe(false);
+      // Expired claims go; live ones stay.
+      expect(await store.pruneClaims!(t(63))).toBe(2); // ses_1:6 and race expired at t(61) / t(62)
+      expect(await claimOnce('ses_1:5:run_completed', { ttlSec: 60, now: t(63) })).toBe(false);
+      expect(await claimOnce('race', { ttlSec: 60, now: t(63) })).toBe(true);
+    }),
+  );
 }

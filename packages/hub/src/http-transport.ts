@@ -405,7 +405,7 @@ export function httpTransport(ctx: HttpTransportContext) {
       /** Applies the message and records it; never rejects (false: the claim was given back). */
       const apply = async (): Promise<boolean> => {
         try {
-          await machines.handleUpstream(link, m.msg);
+          await machines.handleUpstream(link, m.msg, waitUntil);
           await store.completeInbox(machine.id, [m.id], iso(Date.now()));
           return true;
         } catch (err) {

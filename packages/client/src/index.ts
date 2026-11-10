@@ -2,7 +2,10 @@ export { createUncageClient, STREAM_RECONNECT_EVENT, uploadContentType } from '.
 export type {
   ConnectionState,
   CreateSessionRequest,
+  DeviceDecision,
+  DeviceLookup,
   InstallInfo,
+  RNFile,
   SubscribeHandlers,
   UncageClient,
   UncageClientOptions,

@@ -615,6 +615,7 @@ describe('browser API → machine', () => {
       install: `curl -fsSL ${t.api}/install.sh | bash`,
       setup: `uncage setup ${t.origin}`,
       windows: `irm ${t.api}/install.ps1 | iex`,
+      connectUrl: `uncage://connect?url=${encodeURIComponent(t.origin)}`,
     });
     // Public (no website session), like install.sh.
     const res = await fetch(`${t.api}/install.ps1`);

@@ -1,0 +1,46 @@
+{
+  "name": "connected-expo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Uncage example: a React Native (Expo) companion app for connected-demo — chat with your own computer's agent, approve tools, attach photos, get push notifications, approve new computers from the CLI's QR code",
+  "main": "expo-router/entry",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "expo start",
+    "start:go": "expo start --go",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "bundle:check": "expo export --platform android --platform ios --output-dir dist",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@uncage/client": "workspace:*",
+    "@uncage/react": "workspace:*",
+    "expo": "58.0.23",
+    "expo-build-properties": "58.0.12",
+    "expo-constants": "58.0.15",
+    "expo-dev-client": "58.0.18",
+    "expo-device": "58.0.5",
+    "expo-image-picker": "58.0.10",
+    "expo-linking": "58.0.16",
+    "expo-notifications": "58.1.8",
+    "expo-router": "58.0.30",
+    "expo-secure-store": "58.0.2",
+    "expo-status-bar": "58.0.4",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-safe-area-context": "5.11.1",
+    "react-native-screens": "4.30.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "typescript": "^6.0.3",
+    "vitest": "^5.1.0"
+  }
+}

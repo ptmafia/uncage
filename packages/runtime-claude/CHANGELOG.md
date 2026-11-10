@@ -1,5 +1,16 @@
 # @uncage/runtime-claude
 
+## 0.4.0
+
+### Minor Changes
+
+- Uncage 0.4: React Native apps and browser extensions become entry points, and one installed agent serves every Uncage site. `@uncage/client` and `@uncage/react` run in React Native (async headers, native file uploads, `reconnect()`, device approval, storage-adapter session persistence); the hub adds `trustedOrigins`, HTTP device approval routes, `onAttention` with `expoPushNotifier`, and `installInfo.connectUrl`; the CLI adds one-click connect (`uncage://` handler, `uncage connect` with a native confirmation and site identity checks), `uncage dashboard`, and a QR code in `uncage setup`. Breaking for custom implementations: `UncageClient` requires `reconnect`, `lookupDevice` and `decideDevice`; `UncageStore` requires `client`; `PersistSessionMode` accepts a storage adapter and restores asynchronously.
+
+### Patch Changes
+
+- Updated dependencies
+  - @uncage/protocol@0.4.0
+
 ## 0.3.1
 
 ### Patch Changes

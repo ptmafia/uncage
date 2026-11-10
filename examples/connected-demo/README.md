@@ -38,6 +38,9 @@ In traditional mode, one Node `http` server (`server.ts`) carries everything:
 | `/asset-files/[id]/…` | The published files, sent with a strict CSP (`lib/asset-csp.ts`): `sandbox allow-scripts`, `default-src 'none'`, `connect-src 'none'`; inline styles/scripts plus the asset's own files (`<origin>/asset-files/<id>/`, e.g. `css/app.css`), nothing else. Published means public: anyone with the link can open it (in public demo mode, page requests are owner-only). |
 | `/device` | `<ApproveDevice>`, where `uncage setup` sends the user. It sends `frame-ancestors 'none'` and `X-Frame-Options: DENY`, and the decision is a Server Action (a POST that Next.js only accepts from this site's Origin). |
 | `/login` | **Demo-only sign-in**: a username in an HMAC-signed cookie, with no password. Replace it with your real authentication; the hub only needs `getUser(req)`. |
+| `/api/app/token` | **Demo-only app sign-in** for the companion app (`examples/connected-expo`): `POST` returns `{ token, user, expiresAt }`, an HMAC-signed app token (30 days) that `getUser` accepts as `Authorization: Bearer <token>` (`lib/app-token.ts`). Issued for a valid app token (renewal), else the signed-in cookie user, else a random guest in public mode (at most 10 new guests per client IP per minute, found like the hub's rate limits: `CLIENT_IP_HEADER` / `TRUST_PROXY`, or Vercel's edge), else `{ "username": "…" }` from the JSON body (no password, like `/login`). |
+| `/api/app/push-token` | `POST { "token": "ExponentPushToken[…]" }` registers the signed-in user's Expo push token (bearer or cookie); `DELETE` with the same body removes it. At most 10 per user, purged when not re-registered for 30 days (the app re-registers on launch). A token belongs to the device's latest user (`lib/push-tokens.ts`: files with a reverse index, or Postgres `demo_push_tokens`). Trade-off: anyone who learns a device's Expo token can move it to their own account, which stops the previous user's pushes to that device; keeping it with the old user would instead leak their notifications to whoever uses the device now. |
+| `/.well-known/assetlinks.json`, `/.well-known/apple-app-site-association` | App links, so `/device?code=…` opens the app (`lib/well-known.ts`). Served only when their variables are set (below), as `application/json`, no sign-in. |
 
 ### Site tools and the skill
 
@@ -78,6 +81,20 @@ To keep your real `~/.uncage` and `~/Uncage` untouched while trying it, prefix b
 Environment: `PORT` (3200), `HOST` (127.0.0.1), `PUBLIC_URL` (`http://localhost:$PORT`, the URL users open and give to `uncage setup`), `DEMO_DATA_DIR` (`./.data`: the hub's PGlite store, the assets and the cookie secret), `DEMO_SECRET` (cookie key, at least 32 bytes; shorter values are ignored with a warning; otherwise generated into the data dir), `DATABASE_URL` (Postgres for the hub and the assets instead of the data dir), `TRUST_PROXY=1` / `CLIENT_IP_HEADER=<header>` (where per-IP rate limits find the client behind a proxy; leave both unset without one, see [DEPLOY.md](DEPLOY.md)).
 
 Public demo mode: `DEMO_PUBLIC=1` replaces the sign-in form with a random guest account, shows a banner, makes page requests owner-only (the page's sub-resources are guarded by the unguessable asset id), deletes assets last created or published more than 24 hours ago (traditional: at start and hourly; FaaS: by the hub's maintenance), caps each guest at 20 assets (atomically on Postgres) and all guests together at `DEMO_MAX_TOTAL_MB` of published pages (default 200), and hides Log out (the guest identity is the key to the linked computer). `DOCS_URL` (for example `https://uncage.example/docs/`) adds a link to the docs in the banner. To host it, see [DEPLOY.md](DEPLOY.md).
+
+### Companion app and extension settings
+
+Everything here is off until its variables are set, and works the same in both modes (files under `DEMO_DATA_DIR`, or Postgres).
+
+| Variable | What |
+| --- | --- |
+| `EXPO_PUSH=1` | The hub's `onAttention` sends Expo push notifications (approval needed, run finished or failed) to the tokens the app registered at `/api/app/push-token` (`expoPushNotifier` from `@uncage/hub`). Tokens Expo reports as `DeviceNotRegistered` are deleted. Built and unit-tested against a fake Expo endpoint; Android push is awaiting device confirmation, iOS push is not verified on a device. |
+| `EXPO_ACCESS_TOKEN` | Optional: the Expo access token, when "enhanced push security" is on for the Expo project. |
+| `ANDROID_PACKAGE` + `ANDROID_SHA256` | `/.well-known/assetlinks.json` (Android App Links): the app's package name and the SHA-256 fingerprint(s) of its signing certificate (`AB:CD:…`, comma-separated for several, e.g. the EAS development build and the release key). Built and unit-tested; awaiting device confirmation. |
+| `APPLE_TEAM_ID` + `IOS_BUNDLE_ID` | `/.well-known/apple-app-site-association` (iOS universal links for `/device`). Needs a paid Apple Developer account; built and unit-tested, not verified on a device. |
+| `TRUSTED_ORIGINS` | Comma-separated exact origins (e.g. `chrome-extension://<id>`) allowed past the hub's cross-site guard, for `examples/connected-extension`. |
+
+Step by step (free Expo account, EAS development build, Firebase for Android push): the [connected-expo README](../connected-expo/README.md), sections 2 and 3. The environment variables for the app are listed in [DEPLOY.md](DEPLOY.md).
 
 ## Run it (FaaS mode, locally)
 
@@ -122,7 +139,7 @@ Then follow the same steps as above against http://localhost:3200. The nodes' lo
 
 ## Tests
 
-- `pnpm --filter connected-demo test`: cookie signing, CSRF/redirect guards, both asset stores against one contract (Postgres through PGlite), both tools (with a fake `ctx`), the mode rules and the proxy.
+- `pnpm --filter connected-demo test`: cookie signing, app tokens (bearer = cookie user, invalid or expired → the hub's 401, guest minting rate limit), push tokens in both stores (cap, reverse index, 30-day purge), the `EXPO_PUSH` wiring against a fake Expo endpoint, the well-known files, CSRF/redirect guards, both asset stores against one contract (Postgres through PGlite), both tools (with a fake `ctx`), the mode rules and the proxy.
 - E2E (in `e2e/connected/`, from `e2e/`):
   - `pnpm exec playwright test --project=connected-mock`: real hub + real `uncage setup` (approved on `/device` by Playwright) + the real `@uncage/agent` with the testkit fake runtime.
   - `UNCAGE_DOCKER_TESTS=1 … --project=connected-multinode`: the same on two nodes with throwaway Redis and Postgres containers. It asserts both nodes answered (the proxy's `x-upstream-node` header). Without the variable it is reported as skipped, with the reason.

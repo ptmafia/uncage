@@ -44,6 +44,11 @@ export const sections = [
     items: [
       'guides/mount-the-hub',
       'guides/auth-and-device-approval',
+      'guides/react-native',
+      'guides/authenticate-apps',
+      'guides/push-notifications',
+      'guides/browser-extension',
+      'guides/one-click-connect',
       'guides/define-tools',
       'guides/write-skills',
       'guides/select-manifest',

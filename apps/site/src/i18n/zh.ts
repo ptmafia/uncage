@@ -41,7 +41,7 @@ export const zh: Dict = {
     dismiss: '关闭',
   },
   hero: {
-    eyebrow: 'v0.3 · 现已支持 Serverless',
+    eyebrow: 'v0.4 · 现已支持移动 App',
     title: '你的 coding agent，|*无处不在。*',
     lede: '你的用户手里早就有一套强大的环境：他们自己的 Claude Code、自己的账号、自己的工具。Uncage 把这套本地 harness 变成你的产品可以调用的服务。任务在用户的电脑上运行，结果回到你的网站上。',
     primary: '体验在线演示',
@@ -143,6 +143,18 @@ export const zh: Dict = {
         title: 'macOS、Windows 与 Linux',
         body: '一条命令，在 macOS、Windows 或 Linux 上装好一切。守护进程作为当前用户的后台服务运行：macOS 和 Linux 无需 sudo，Windows 为按用户安装。macOS 已在真机上验证；Windows 和 Linux 已通过 CI 验证，真机确认待完成。',
       },
+      {
+        title: '移动应用',
+        body: '在 React Native 应用里使用同一套 SDK：流式输出、审批、照片、推送，以及扫码批准新电脑。真机确认待完成。',
+      },
+      {
+        title: '浏览器扩展',
+        body: 'Chrome 侧边栏对着你的 hub 运行同样的对话。只需按精确的 origin 信任你的扩展。已在 Chromium 中测试，手动测试待完成。',
+      },
+      {
+        title: '一个 agent，所有网站',
+        body: '只装一次，之后一键连接任何 Uncage 网站。电脑上的确认框会核对网站身份，本地 dashboard 列出并可断开每个网站。真机确认待完成。',
+      },
     ],
     soon: [
       {
@@ -150,8 +162,8 @@ export const zh: Dict = {
         body: 'Codex 适配器现已发布，并已通过模拟服务器测试。下一步是在真实的可执行文件上完成验证。',
       },
       {
-        title: '更多入口',
-        body: '移动应用、聊天应用和浏览器扩展，驱动同一套本地 harness。',
+        title: '聊天应用',
+        body: 'Slack、飞书和 Telegram 机器人，驱动同一套本地 harness。',
       },
     ],
   },

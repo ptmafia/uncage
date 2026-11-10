@@ -5,6 +5,8 @@ description: 网站为连接你的电脑而给出的那一条命令，在 macOS�
 
 用 Uncage 搭建的网站会给出一条命令，用来连接你的电脑。这条命令会先检查电脑，每安装一样东西之前都会问 `[Y/n]`：先是 Node.js 22（有版本管理器时就用你自己的版本管理器），然后是 Uncage CLI。它会列出找到的 coding agent，最后提议为这个网站运行 `uncage setup`：它会打开浏览器，让你批准这台电脑。整个过程不使用 `sudo`，也不需要管理员权限；除非你同意，它不会改动你的默认 Node.js。
 
+要一键连接更多网站，需要 `@uncage/cli` 0.4 或更高版本。如果你装的是 0.3，请运行 `npm i -g @uncage/cli@latest`，然后再次运行 `uncage agent install`（或 `uncage setup`）：`uncage://` 处理程序只在那里注册。
+
 下面的示例使用 `https://your.site`；请复制网站上显示的命令，那里是网站自己的地址。
 
 ## macOS
@@ -141,6 +143,10 @@ npm uninstall -g @uncage/cli
 ```
 
 需要的话，再删除 `%USERPROFILE%\.uncage` 和 `%USERPROFILE%\Uncage`。脚本加入用户 `Path` 的目录，可以在 **设置 → 系统 → 系统信息 → 高级系统设置 → 环境变量** 中删除。
+
+## 另一个网站：一键连接
+
+`uncage setup` 安装好后台守护进程之后，还会为你的用户注册一个 `uncage://` 链接处理程序（macOS 上是一个小应用，Linux 上是 `.desktop` 文件，Windows 上是 `HKCU` 注册表项；不需要管理员权限）。之后任何其他 Uncage 网站都可以提供**一键连接**：链接会在你的电脑上弹出对话框，写明网站的域名并对相似域名发出警告，只有你点击“连接”之后，常规审批才会开始。不用终端，也不用再安装一次。你也可以自己运行 `uncage connect https://other.site`，而 `uncage dashboard` 会列出并可断开每个网站。[详情](/docs/zh-cn/guides/one-click-connect/)。`uncage agent uninstall` 会移除这个处理程序。请先运行 `uncage agent uninstall`，再运行 `npm uninstall -g @uncage/cli`：它会移除处理程序，先卸载 CLI 会留下一个失效的处理程序。
 
 ## 参数
 

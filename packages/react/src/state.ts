@@ -77,9 +77,13 @@ export interface SessionState {
 export interface DraftAttachment {
   localId: string;
   name: string;
+  /** Bytes; `0` when unknown (a React Native file reference without `size`). */
   size: number;
   kind: 'image' | 'file' | null;
-  /** Object URL for image previews; revoked on remove/clear/send/dispose. */
+  /**
+   * Image preview: an object URL (`blob:`, revoked on remove/clear/send/dispose) for a browser file,
+   * the file's own `uri` for a React Native file reference.
+   */
   previewUrl?: string;
   /** `uploading` also covers files queued until a draft's session exists. */
   status: 'uploading' | 'ready' | 'error';

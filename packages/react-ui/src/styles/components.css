@@ -1828,6 +1828,27 @@
   line-height: var(--uncage-text-caption-lh);
   color: var(--uncage-ink-3);
 }
+.uc-connect-oneclick {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+}
+.uc-connect-oneclick-link {
+  font-size: var(--uncage-text-caption);
+  line-height: var(--uncage-text-caption-lh);
+  color: var(--uncage-accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.uc-connect-oneclick-link:focus-visible {
+  border-radius: 2px;
+  box-shadow: var(--uncage-shadow-focus);
+  outline: none;
+}
+.uc-connect-oneclick-link:hover {
+  text-decoration-thickness: 2px;
+}
 .uc-connect-alt {
   display: flex;
   flex-direction: column;

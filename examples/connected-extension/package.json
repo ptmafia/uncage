@@ -1,0 +1,30 @@
+{
+  "name": "connected-extension",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Uncage example: a Chrome MV3 side panel that drives the user's own local agent through a website's hub (cookie session + the hub's trustedOrigins)",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@uncage/client": "workspace:*",
+    "@uncage/react": "workspace:*",
+    "@uncage/react-ui": "workspace:*",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.0",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "vite": "^8.3.6"
+  }
+}

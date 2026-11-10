@@ -10,21 +10,21 @@ You rarely call these yourself: `@uncage/client` (and the React packages on top 
 | | Connected Mode hub | Local Mode daemon |
 | --- | --- | --- |
 | Base | `<publicUrl><basePath>` (default `/api/uncage`) | `http://127.0.0.1:4783/v1`, reached through your proxy at `/api/uncage` |
-| Auth | Your cookies, via `getUser(req)` | `Authorization: Bearer <token>`, added by the proxy |
+| Auth | Your cookies or a bearer token you issue, via `getUser(req)` | `Authorization: Bearer <token>`, added by the proxy |
 | Extra | `/machines`, device endpoints, `install.sh` / `install.ps1`, `/maintenance`, the agent transports | none |
 
 The session, run, event and approval routes have the same request and response shapes in both. That is why the same client works against either: point it at `/api/uncage` and it talks to the hub or to the proxy.
 
 ## Browser API
 
-All routes below need a signed-in user (`401 unauthorized` otherwise). Resources of another user answer `404`, the same as missing ones. Non-GET requests from another origin get `403 forbidden_origin`.
+All routes below need a signed-in user (`401 unauthorized` otherwise). Resources of another user answer `404`, the same as missing ones. Non-GET requests from another origin get `403 forbidden_origin`; requests without an `Origin` header (native apps) and from [`trustedOrigins`](/docs/guides/mount-the-hub/#createhub-options) pass.
 
 | Method and path | Body / query | Answer |
 | --- | --- | --- |
 | `GET /health` | | `{ ok: true, protocol: "1.0", version }` |
 | `GET /runtimes` | `?machineId=` (optional) | `RuntimeInfo[]` of that computer, else of the first online one |
 | `GET /machines` | | `MachineInfo[]`: `{ id, name, os, agentVersion, runtimes, online, lastSeenAt, agentOutdated, transport }`, most recently seen first. `agentOutdated`: the agent is older than `minAgentVersion` (show “Agent update needed”). `transport`: `'ws'`, `'http'` or `null` while offline |
-| `GET /machines/install` | | `{ install, setup, windows }`: the commands to show (`curl … install.sh \| bash`, `uncage setup <url>`, `irm … install.ps1 \| iex`) |
+| `GET /machines/install` | | `{ install, setup, windows, connectUrl }`: the commands to show (`curl … install.sh \| bash`, `uncage setup <url>`, `irm … install.ps1 \| iex`) and `uncage://connect?url=<encoded setup url>`, the [one-click link](/docs/guides/one-click-connect/) for a computer that already runs Uncage |
 | `DELETE /machines/:id` | | `{ ok: true }`. Revokes the computer |
 | `GET /sessions` | | `Session[]`, each with `machineId`, oldest first |
 | `POST /sessions` | `{ runtime, title?, machineId? }` | `201 Session`. Without `machineId`: the most recently seen online computer. `workspace` is ignored |
@@ -37,10 +37,16 @@ All routes below need a signed-in user (`401 unauthorized` otherwise). Resources
 | `GET /runs?active=1` | | `ActiveRunInfo[]`: runs in progress in the user’s sessions |
 | `GET /runs/:id` | | `Run` |
 | `POST /runs/:id/cancel` | | `202` |
+| `GET /device/lookup` | `?code=` | The pending code’s `{ name?, os?, expiresAt, repairsMachine }`, or `null` when it is unknown or no longer pending. Same result and failed-code rate limit as `hub.lookupDevice` |
+| `POST /device/decision` | `{ code, approve }` (`Content-Type: application/json`) | `{ result: "ok" \| "not_found" \| "expired" }`. Approving binds that computer to the signed-in user |
 | `GET /approvals?sessionId=` | | Pending `ApprovalRequest[]` of that session |
 | `POST /approvals/:id/decision` | `{ decision: "allow" \| "deny", scope: "once" \| "session", reason? }` + header `Idempotency-Key` | The updated `ApprovalRequest`. A second, different decision gets `409` |
 
 The Local Mode daemon has the same routes under `/v1` except `/machines*`, and accepts `workspace` in `POST /v1/sessions` (inside its allowed roots).
+
+### Device approval for apps
+
+`GET /device/lookup` and `POST /device/decision` let an app or extension approve a computer without a page of your own (websites keep the [`/device` page](/docs/guides/auth-and-device-approval/) with `hub.lookupDevice` / `approveDevice`; both work). They need a signed-in user and share the failed-code limit of those calls: after 10 unknown codes in 10 minutes they answer `429 rate_limited` (`details.retryAfterSec`). The lookup is also behind the cross-site guard, so another site cannot spend the user’s guesses. The decision must be JSON: any other `Content-Type` gets `415 invalid_request`, because a cross-site form cannot send JSON without a preflight. `@uncage/client` has `lookupDevice(code)` and `decideDevice(code, approve)`, and `@uncage/react` has `useDeviceApproval(code)`.
 
 ### Server-sent events
 

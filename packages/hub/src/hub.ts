@@ -1,4 +1,5 @@
 import { UncageError } from '@uncage/core/errors';
+import { attentionDispatcher, type WaitUntil } from './attention.js';
 import {
   CONNECTED_PROTOCOL,
   MIN_AGENT_VERSION,
@@ -106,6 +107,37 @@ function siteDefaults(url: URL): { id: string; name: string } {
   return { id, name: url.hostname };
 }
 
+/** Origins a website or extension can actually send; never file:, data:, javascript:, blob:… */
+const TRUSTED_ORIGIN_SCHEMES = new Set(['https', 'http', 'chrome-extension', 'moz-extension', 'safari-web-extension']);
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * `trustedOrigins` entries must be exact origins as browsers send them in `Origin`:
+ * `scheme://host[:port]`, lowercase, no default port, no wildcard, path, query, credentials or
+ * trailing slash.
+ */
+function assertTrustedOrigins(list: readonly string[]): ReadonlySet<string> {
+  for (const o of list) {
+    const fail = (why: string) => new Error(`createHub: trustedOrigins entry "${o}" ${why}; use an exact origin such as chrome-extension://<id> or https://app.example.com`);
+    if (typeof o !== 'string' || o.includes('*')) throw fail('must not contain wildcards');
+    const m = /^([a-z][a-z0-9+.-]*):\/\/([a-z0-9.-]+|\[[0-9a-f:.]+\])(?::(\d{1,5}))?$/.exec(o);
+    if (!m) throw fail('is not an origin (scheme://host[:port], lowercase, no path)');
+    const [, scheme, host] = m;
+    if (!TRUSTED_ORIGIN_SCHEMES.has(scheme!)) throw fail(`has an unsupported scheme (allowed: ${[...TRUSTED_ORIGIN_SCHEMES].join(', ')})`);
+    if (scheme === 'http' && !LOOPBACK_HOSTS.has(host!)) throw fail('uses plain http on a non-loopback host (only localhost, 127.0.0.1 and [::1])');
+    if (m[1] === 'http' || m[1] === 'https') {
+      let canonical: string;
+      try {
+        canonical = new URL(o).origin;
+      } catch {
+        throw fail('is not a valid URL');
+      }
+      if (canonical !== o) throw fail(`is not in canonical form (browsers send "${canonical}")`);
+    }
+  }
+  return new Set(list);
+}
+
 export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   let publicUrl: URL;
   try {
@@ -121,6 +153,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   if (compareVersions(minAgentVersion, '0.0.0') < 0) throw new Error(`createHub: invalid minAgentVersion "${minAgentVersion}"`);
   const range = assertVersionRange(o.cliVersionRange ?? defaultCliRange(HUB_VERSION));
   const installExtension = assertInstallExtension(o.installScript);
+  const trustedOrigins = assertTrustedOrigins(o.trustedOrigins ?? []);
   const sessionStorage = o.sessionStorage ?? 'machine';
   const attachmentRetentionDays = o.attachmentRetentionDays ?? DEFAULT_ATTACHMENT_RETENTION_DAYS;
   if (!(attachmentRetentionDays > 0)) throw new Error(`createHub: attachmentRetentionDays must be > 0 (got ${attachmentRetentionDays})`);
@@ -233,8 +266,16 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     SHARED_CLIENT_KEY;
   let warnedSharedKey = false;
 
+  const attention = attentionDispatcher({ store, onAttention: o.onAttention, logger, sessionStorage });
+
   /** Index (and in site mode replicate) events from `machine`; returns the events to fan out. */
-  async function ingest(machine: MachineRecord, sessionId: string, events: UncageEvent[], send: (f: HubFrame) => void): Promise<UncageEvent[]> {
+  async function ingest(
+    machine: MachineRecord,
+    sessionId: string,
+    events: UncageEvent[],
+    send: (f: HubFrame) => void,
+    waitUntil?: WaitUntil,
+  ): Promise<UncageEvent[]> {
     if (events.length === 0) return [];
     let rec: SessionRecord | null = await store.getSession(sessionId);
     if (!rec && sessionStorage === 'site') {
@@ -284,6 +325,9 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
       const patch = indexPatch(rec, accepted);
       if (Object.keys(patch).length > 0) await store.updateSession(rec.id, patch);
     }
+    // Right after the events were accepted (site mode: stored; a resend would be dropped as a
+    // duplicate, so nothing below may skip it). Never awaited.
+    attention.fire(machine, rec, accepted, waitUntil);
 
     for (const e of accepted) {
       if (e.type === 'run.started') await store.putResource(e.payload.run.id, 'run', rec.id);
@@ -310,11 +354,11 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
         if (s.machineId === machine.id) send({ t: 'ack', sessionId: s.id, sequence: s.lastSequence });
       }
     },
-    async onEvents(machine, sessionId, events, send) {
+    async onEvents(machine, sessionId, events, send, waitUntil) {
       // A run that ended abandons its pending tool calls (the machine no longer waits for them).
       // (Other instances hear of it on the session channel.)
       for (const e of events) if (RUN_END.has(e.type) && e.runId) calls.runEnded(machine.id, e.runId);
-      const out = await ingest(machine, sessionId, events, send);
+      const out = await ingest(machine, sessionId, events, send, waitUntil);
       if (out.length > 0) await cluster.publish(sessionChannel(sessionId), JSON.stringify({ events: out }));
     },
     onToolCall: (machine, call) => calls.handle(machine, call),
@@ -372,6 +416,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
       },
       async () => ({ interruptedToolCalls: await calls.interruptStale() }),
       async () => ({ toolResults: await store.pruneToolCallResults(new Date(Date.now() - TOOL_RESULT_RETENTION_MS).toISOString()) }),
+      async (): Promise<Record<string, number>> => (store.pruneClaims ? { claims: await store.pruneClaims(new Date().toISOString()) } : {}),
     ],
   });
 
@@ -408,7 +453,8 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
     skills,
     sessionStorage,
     publicOrigin: origin,
-    install: { install: `curl -fsSL ${hubUrl}/install.sh | bash`, setup: `uncage setup ${setupUrl}`, windows: `irm ${hubUrl}/install.ps1 | iex` },
+    trustedOrigins,
+    install: { install: `curl -fsSL ${hubUrl}/install.sh | bash`, setup: `uncage setup ${setupUrl}`, windows: `irm ${hubUrl}/install.ps1 | iex`, connectUrl: `uncage://connect?url=${encodeURIComponent(setupUrl)}` },
     installScripts,
     maintenance: { secret: o.maintenance?.secret, run: () => upkeep.runNow() },
     version: HUB_VERSION,
@@ -467,6 +513,8 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
       (closing ??= (async () => {
         // Running site tool handlers get a bounded drain; the rest are finished as interrupted.
         await calls.close(toolDrainMs);
+        // onAttention calls still running get the same bounded drain (the store is closed after us).
+        await attention.idle(toolDrainMs);
         shutdown.abort();
         upkeep.stop();
         await upkeep.idle();

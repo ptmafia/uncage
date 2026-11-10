@@ -198,7 +198,9 @@ curl -s http://localhost:3000/api/uncage/health                 # needs a signed
 | オプション | デフォルト | 役割 |
 | --- | --- | --- |
 | `publicUrl` | （必須） | ウェブサイトの公開オリジン。例：`https://app.example.com`。インストールとセットアップのコマンド、`/device`へのリンク、トランスポートのURL、CSRFのオリジンチェックに使われます。`https://`である必要があります（`http://`は`localhost`、`127.0.0.1`、`[::1]`の場合のみ可）。 |
-| `getUser(req)` | （必須） | 認証処理。サインイン済みのブラウザからのリクエストなら`{ id, name? }`、それ以外は`null`を返します。 |
+| `getUser(req)` | （必須） | 認証処理。サインイン済みのブラウザまたはアプリ（`Authorization: Bearer …`、[ガイド](/docs/ja/guides/authenticate-apps/)）からのリクエストなら`{ id, name? }`、それ以外は`null`を返します。 |
+| `trustedOrigins` | `[]` | クロスサイト保護を通す追加の正確なオリジン。たとえば`chrome-extension://<id>`（[ガイド](/docs/ja/guides/browser-extension/)）。ワイルドカードやパスは不可で、httpsと拡張機能のスキーム、またはlocalhostに限った`http`のみ。自分で管理しているオリジンだけにしてください。ネイティブアプリは`Origin`を送らないため不要です。CORSは追加されません。ハブはプリフライトに応答しないため、信頼された`https`オリジンが役に立つのは、フレームワーク側でCORSを追加した場合だけです。ホスト権限を持つ拡張機能はCORSを回避します。 |
+| `onAttention(event, ctx)` | なし | 承認が要求されたとき、またはRunが完了・失敗したときに呼ばれ、プッシュ通知の送信に使います。イベントごとに最大1回で、10分より古いイベントでは呼ばれません。`expoPushNotifier`はすぐ使えるハンドラーです。[ガイド](/docs/ja/guides/push-notifications/) |
 | `store` | （必須） | `HubStore`。Nodeプロセス1つなら`@uncage/hub/node`の`pgliteHubStore({ dataDir })`、複数ノードとFaaSなら`postgresHubStore({ connectionString } \| { pool })`。ハブがこれを閉じることはありません。 |
 | `cluster` | `memoryCluster()` | `ClusterAdapter`。複数ノードとFaaSでは`redisCluster`または`postgresCluster`を使います。[ガイド](/docs/ja/guides/multi-node/) |
 | `basePath` | `/api/uncage` | ハブのマウント先。変更した場合は、同じパスを`UncageProvider`の`baseUrl`に渡してください。 |

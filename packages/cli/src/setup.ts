@@ -11,21 +11,26 @@ import {
   type ExecFn,
 } from '@uncage/agent';
 import type { TransportKind } from '@uncage/protocol';
+import { renderQr } from './qr.js';
+import { plainText } from './text.js';
 import { agentService, serviceSpec, type AgentService, type ServiceSpec } from './service/index.js';
+import { registerUrlHandler, type RegisterResult } from './service/url-handler.js';
 
 export const SETUP_HELP = `uncage setup - connect this computer to a website (Connected Mode)
 
 Usage:
-  uncage setup <url> [--no-daemon] [--no-browser]
+  uncage setup <url> [--no-daemon] [--no-browser] [--no-qr]
 
 Opens the website so you can approve this computer, saves the machine token in
 ~/.uncage/agent.yaml (readable only by you), then installs and starts the background agent
 ("uncage agent install": launchd on macOS, a systemd user service on Linux, a scheduled
-task on Windows).
+task on Windows) and the uncage:// link handler, so other websites connect in one click
+("uncage connect", which always asks you first).
 
 Options:
   --no-daemon    Do not install/start the background agent (run "uncage agent" yourself).
   --no-browser   Do not open a browser; just print the code and link.
+  --no-qr        Do not print the link as a QR code (it is only shown in a terminal).
   -h, --help     Show this help.`;
 
 export interface SetupDeps {
@@ -36,6 +41,10 @@ export interface SetupDeps {
   out: (line: string) => void;
   noDaemon?: boolean;
   noBrowser?: boolean;
+  /** Never print the QR code. */
+  noQr?: boolean;
+  /** Is stdout a terminal? The QR is printed only then (default `process.stdout.isTTY`). */
+  isTTY?: boolean;
   platform?: NodeJS.Platform;
   uid?: number;
   /** The background service (default: the one for this platform, `agentService`). */
@@ -46,6 +55,8 @@ export interface SetupDeps {
   env?: NodeJS.ProcessEnv;
   machine?: { name?: string; os?: string };
   sleep?: (ms: number) => Promise<void>;
+  /** See `InstallServiceDeps.urlHandler`. */
+  urlHandler?: false | ((spec: ServiceSpec) => Promise<RegisterResult>);
 }
 
 /** How the agent will connect, from the transports the website offers (the agent prefers WebSocket). */
@@ -55,7 +66,21 @@ export function transportLine(kinds: TransportKind[]): string {
   return 'HTTP streaming (this website runs on a serverless platform)';
 }
 
-export async function runSetup(d: SetupDeps): Promise<AgentSite> {
+/** What pairing needs (the device flow and saving the site), shared by `setup` and `connect`. */
+export type PairDeps = Pick<SetupDeps, 'url' | 'home' | 'fetch' | 'exec' | 'out' | 'noBrowser' | 'noQr' | 'isTTY' | 'platform' | 'machine' | 'sleep'> & {
+  /**
+   * The hub URL the user confirmed (`connect`): an approval page on another origin is refused before
+   * anything is printed or opened, and a hub answering with another site URL is refused, nothing saved.
+   */
+  expectUrl?: string;
+};
+
+/**
+ * The device flow: asks the hub for a code, prints the link (and a QR code in a terminal), opens
+ * the site's `/device?code=…`, waits for approval and saves the site in agent.yaml (one machineKey
+ * per site, reused on re-pairing). Does not touch the background agent.
+ */
+export async function pairSite(d: PairDeps): Promise<AgentSite> {
   const hubUrl = normalizeHubUrl(d.url);
   const config = await loadAgentConfig(d.home);
   // One machineKey per (machine, site): reuse the key from an earlier pairing with this hub.
@@ -64,28 +89,54 @@ export async function runSetup(d: SetupDeps): Promise<AgentSite> {
   const os = d.machine?.os ?? `${process.platform} ${release()}`;
 
   const code = await requestDeviceCode(d.fetch, hubUrl, { name, os, machineKey });
-  d.out(`To connect this computer, open:\n\n  ${code.verificationUri}\n\nand confirm the code:  ${code.userCode}\n`);
+  if (d.expectUrl !== undefined && new URL(code.verificationUri).origin !== new URL(d.expectUrl).origin) {
+    throw new Error(`The website's approval page is not on ${new URL(d.expectUrl).origin} (the site you confirmed). Not connected.`);
+  }
+  // Hub-supplied strings are printed only in a safe form: the parsed URL (control characters
+  // percent-encoded) and the code without control characters (no terminal escapes).
+  const approvalUrl = new URL(code.verificationUri).href;
+  const userCode = plainText(code.userCode);
+  d.out(`To connect this computer, open:\n\n  ${approvalUrl}\n\nand confirm the code:  ${userCode}\n`);
+  if ((d.isTTY ?? process.stdout.isTTY === true) && !d.noQr) {
+    d.out(`Or scan this with your phone:\n\n${renderQr(approvalUrl)}\n`);
+  }
   const platform = d.platform ?? process.platform;
   if (!d.noBrowser) {
-    await d.exec(...openUrlCommand(code.verificationUri, platform)).catch(() => d.out('(Could not open a browser; open the link above yourself.)'));
+    await d.exec(...openUrlCommand(approvalUrl, platform)).catch(() => d.out('(Could not open a browser; open the link above yourself.)'));
   }
   d.out('Waiting for approval…');
   const grant = await pollDeviceToken({ fetch: d.fetch, hubUrl, code, ...(d.sleep ? { sleep: d.sleep } : {}) });
   // Re-check the URL the hub hands back (a hub can only point us at https, or loopback in dev).
   const siteUrl = normalizeHubUrl(grant.site.url);
+  if (d.expectUrl !== undefined && siteUrl !== d.expectUrl) {
+    // The machine was approved on the hub we asked: revoke the token it just issued (best effort),
+    // so no approved machine is left behind for a site that is never saved.
+    const revoked = await d
+      .fetch(`${hubUrl}/machine/revoke`, { method: 'POST', headers: { authorization: `Bearer ${grant.machineToken}` } })
+      .then((r) => r.ok, () => false);
+    throw new Error(
+      `The website answered as ${siteUrl}, not ${d.expectUrl} (the site you confirmed). Not connected${revoked ? '; the machine it had just approved was revoked again' : '; remove this computer from its machine list if it shows there'}.`,
+    );
+  }
 
   const site: AgentSite = {
     id: grant.site.id,
-    name: grant.site.name,
+    name: plainText(grant.site.name),
     url: siteUrl,
     machineId: grant.machineId,
     token: grant.machineToken,
     machineKey,
+    connectedAt: new Date().toISOString(),
   };
   await updateAgentSites(d.home, (sites) => [...sites.filter((s) => s.id !== site.id && s.url !== siteUrl), site]);
   d.out(`✓ Connected to ${site.name} (${new URL(siteUrl).host}) as machine ${site.machineId}.`);
   d.out(`  Transport: ${transportLine(grant.transports.map((t) => t.kind))}`);
+  return site;
+}
 
+export async function runSetup(d: SetupDeps): Promise<AgentSite> {
+  const site = await pairSite(d);
+  const platform = d.platform ?? process.platform;
   if (d.noDaemon) {
     d.out('Background agent not installed (--no-daemon). Start it with: uncage agent');
   } else {
@@ -98,6 +149,7 @@ export async function runSetup(d: SetupDeps): Promise<AgentSite> {
       ...(d.service ? { service: d.service } : {}),
       ...(d.spec ? { spec: d.spec } : {}),
       ...(d.env ? { env: d.env } : {}),
+      ...(d.urlHandler !== undefined ? { urlHandler: d.urlHandler } : {}),
     });
   }
   return site;
@@ -112,6 +164,11 @@ export interface InstallServiceDeps {
   env?: NodeJS.ProcessEnv;
   service?: AgentService;
   spec?: ServiceSpec;
+  /**
+   * Registers the `uncage://` link handler for this spec after the service is installed (default
+   * `registerUrlHandler` for this platform); false skips it.
+   */
+  urlHandler?: false | ((spec: ServiceSpec) => Promise<RegisterResult>);
 }
 
 /**
@@ -133,5 +190,12 @@ export async function installAgentService(d: InstallServiceDeps): Promise<{ kind
   const where = service.kind === 'launchd' ? 'launchd' : service.kind === 'systemd' ? 'systemd --user' : service.kind === 'schtasks' ? 'Task Scheduler' : 'Run key';
   d.out(`✓ Background agent running (${where}: ${definitionPath}). Node: ${spec.nodePath}. Logs: ${spec.logsDir}`);
   for (const n of notes) d.out(`! ${n}`);
+  if (d.urlHandler !== false) {
+    const register = d.urlHandler ?? ((s: ServiceSpec) => registerUrlHandler({ platform, home: d.home, exec: d.exec, spec: s, env }));
+    // The link handler is a convenience: failing to register it never fails the install.
+    const r = await register(spec).catch((e: unknown): RegisterResult => ({ registered: false, location: '', notes: [e instanceof Error ? e.message : String(e)] }));
+    if (r.registered) d.out(`✓ uncage:// links connect new websites in one click (${r.location}).`);
+    for (const n of r.notes) d.out(`! ${n}`);
+  }
   return { kind: service.kind, definitionPath };
 }

@@ -37,6 +37,12 @@ Uncage 是一组 npm 包，把 Claude Code（以及 Codex）接入你自己的�
 - 停止、附件、模型 / 推理强度 / 权限模式选择，刷新页面历史不丢。
 - 开启网站侧存储后，即使用户电脑关机，对话在你的网站上依然可以查看。
 
+## 更多入口
+
+- **React Native 应用**无需修改就能使用 `@uncage/client` 和 `@uncage/react`：流式输出、审批、照片、从后台恢复、用手机批准电脑。
+- **浏览器扩展**在侧边栏里对着你的 hub 运行 `<AgentChat>`，配合 `trustedOrigins`。
+- **一个 agent，所有网站：** 用户只装一次 agent，每个嵌入 Uncage 的网站都可以一键连接。
+
 ## 你作为网站得到什么
 
 - **网站工具（site tools）。** 用 `defineTool` 声明一个能力（名称、zod schema、handler）。Claude Code 把它当作一个 MCP 工具。handler **在你的后端运行，身份是当前登录用户**，还能从这次运行的工作区拉取文件（`ctx.files.pull`）。
@@ -56,8 +62,10 @@ Uncage 是一组 npm 包，把 Claude Code（以及 Codex）接入你自己的�
 
 - **在做网站？** 先读[工作原理](/docs/zh-cn/start/how-it-works/)，再做 [Connected 模式快速上手](/docs/zh-cn/start/quickstart-connected/)（约 15 分钟）。
 - **agent 和你的应用在同一台机器上？** [Local 模式快速上手](/docs/zh-cn/start/quickstart-local/)只要 5 分钟。
+- **在做移动应用或浏览器扩展？** [React Native 应用](/docs/zh-cn/guides/react-native/)和[浏览器扩展](/docs/zh-cn/guides/browser-extension/)是同一个 hub 的更多入口，配有[应用认证](/docs/zh-cn/guides/authenticate-apps/)和[推送通知](/docs/zh-cn/guides/push-notifications/)。
+- **已经在电脑上用 Uncage？** 其他 Uncage 网站可以[一键连接](/docs/zh-cn/guides/one-click-connect/)，带身份检查和本地 dashboard。
 - **在用 coding agent？** 把 [Uncage 技能](/docs/skills/uncage/SKILL.md) 或 [`llms.txt`](/docs/llms.txt) 交给它。每个页面都有纯 Markdown 版本：在网址后面加 `.md` 即可。详见[面向 coding agent](/docs/zh-cn/start/for-coding-agents/)。
 
 :::note[状态]
-Connected 模式属于 Uncage 0.3（`@uncage/hub`、`@uncage/agent`，以及 `@uncage/cli` 里的 `uncage setup` / `uncage agent` 命令）。用户电脑一侧支持 **macOS、Linux 和 Windows**，以按用户运行的后台服务运行，需要 Node.js 22 或更高版本（安装脚本会帮你装好）。macOS 已在真机上验证；Linux 和 Windows 已通过 CI 验证，尚待真机确认。Claude Code 已实机验证；Codex 已实现，但还没有对真实二进制运行过，也暂不支持网站工具。详见[兼容性记录](https://github.com/ptmafia/uncage/blob/main/docs/compatibility.md)。
+Connected 模式属于 Uncage 0.4（`@uncage/hub`、`@uncage/agent`，以及 `@uncage/cli` 里的 `uncage setup` / `uncage agent` 命令）。用户电脑一侧支持 **macOS、Linux 和 Windows**，以按用户运行的后台服务运行，需要 Node.js 22 或更高版本（安装脚本会帮你装好）。macOS 已在真机上验证；Linux 和 Windows 已通过 CI 验证，尚待真机确认。Claude Code 已实机验证；Codex 已实现，但还没有对真实二进制运行过，也暂不支持网站工具。详见[兼容性记录](https://github.com/ptmafia/uncage/blob/main/docs/compatibility.md)。
 :::
