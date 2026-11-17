@@ -1,23 +1,34 @@
 /**
- * Approve a computer: opened by the CLI's QR code (`https://<site>/device?code=XXXX-XXXX`, via app
- * links, or `uncagedemo://device?code=…`). `useDeviceApproval` looks the code up and approves or
- * denies it for the signed-in user (the hub's `GET /device/lookup` and `POST /device/decision`).
+ * Approve a computer: opened by the CLI's QR code (`https://<site>/device?code=XXXX-XXXX`, via
+ * verified app links) or from the home screen. `useDeviceApproval` looks the code up and approves
+ * or denies it for the signed-in user (the hub's `GET /device/lookup` and `POST /device/decision`).
+ *
+ * Device-approval phishing guard: a code is pre-filled only when it came in a verified https app
+ * link (lib/links.ts; +native-intent drops `uncagedemo://` codes), and then the user must type its
+ * last 4 characters from their terminal before Approve works. A code the user typed whole needs no
+ * extra step. Deny is always one tap.
  */
-import { useDeviceApproval } from '@uncage/react';
+import { deviceCodeTail, useDeviceApproval, type DeviceCodeSource } from '@uncage/react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState, type JSX } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Banner, Button, Card } from '../components/ui';
 import { takePendingDeviceCode, useAuth } from '../lib/app';
-import { sanitizeDeviceCode } from '../lib/links';
+import { isVerifiedLinkCode, sanitizeDeviceCode, timeAgo } from '../lib/links';
 import { useTheme } from '../lib/theme';
 
-function Approval({ code }: { code: string }): JSX.Element {
+const WARNING = 'Only approve if you just ran `uncage setup` on a computer in front of you. Never approve a code someone sent you.';
+
+function Approval({ code, source }: { code: string; source: DeviceCodeSource }): JSX.Element {
   const t = useTheme();
   const router = useRouter();
   const { auth } = useAuth();
-  const { lookup, state, error, approve, deny } = useDeviceApproval(code);
+  const { lookup, state, error, confirmation, approve, deny } = useDeviceApproval(code, { source });
   const done = state === 'approved' || state === 'denied' || state === 'not_found' || state === 'expired';
+  const fromLink = source === 'link';
+  const upper = code.toUpperCase();
+  // From a link the last 4 characters are hidden: the user types them from their own terminal.
+  const shownCode = fromLink && deviceCodeTail(code).length === 4 ? `${upper.slice(0, -4)}••••` : upper;
 
   if (state === 'loading') {
     return (
@@ -27,9 +38,13 @@ function Approval({ code }: { code: string }): JSX.Element {
     );
   }
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={[styles.code, { color: t.text }]}>{code.toUpperCase()}</Text>
-      <Text style={{ color: t.muted, textAlign: 'center' }}>Check that this code matches the one in your terminal.</Text>
+    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+      <Text style={[styles.code, { color: t.text }]}>{shownCode}</Text>
+      {fromLink ? (
+        <Banner kind="warning" text={WARNING} />
+      ) : (
+        <Text style={{ color: t.muted, textAlign: 'center' }}>Check that this code matches the one in your terminal.</Text>
+      )}
       {lookup && state !== 'not_found' && state !== 'expired' && (
         <Card>
           <Text style={{ color: t.text, fontSize: 17, fontWeight: '700' }}>{lookup.name ?? 'A computer'}</Text>
@@ -39,8 +54,27 @@ function Approval({ code }: { code: string }): JSX.Element {
               ? `This reconnects your computer "${lookup.repairsMachine.name}" to ${auth?.user.name ?? 'your account'}.`
               : `Approving lets the website and this app run the agent on this computer as ${auth?.user.name ?? 'you'}.`}
           </Text>
-          <Text style={{ color: t.muted, fontSize: 12, marginTop: 8 }}>Expires {new Date(lookup.expiresAt).toLocaleTimeString()}</Text>
+          <Text style={{ color: t.muted, fontSize: 12, marginTop: 8 }}>
+            Requested {timeAgo(lookup.requestedAt)} · From IP {lookup.requestIp ?? 'unknown'}
+          </Text>
+          <Text style={{ color: t.muted, fontSize: 12, marginTop: 2 }}>Expires {new Date(lookup.expiresAt).toLocaleTimeString()}</Text>
         </Card>
+      )}
+      {fromLink && state === 'idle' && (
+        <View style={{ gap: 6 }}>
+          <Text style={{ color: t.text }}>Type the last 4 characters of the code shown in your terminal</Text>
+          <TextInput
+            value={confirmation.typed}
+            onChangeText={confirmation.setTyped}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            maxLength={16}
+            placeholder="••••"
+            placeholderTextColor={t.muted}
+            accessibilityLabel="Last 4 characters of the code"
+            style={[styles.input, { color: t.text, borderColor: t.border, backgroundColor: t.surface }]}
+          />
+        </View>
       )}
       {state === 'approved' && <Banner text="Approved. The computer connects in a moment." />}
       {state === 'denied' && <Banner text="Denied. The computer was not connected." />}
@@ -51,7 +85,13 @@ function Approval({ code }: { code: string }): JSX.Element {
         <Button title="Done" kind="secondary" onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} />
       ) : (
         <View style={{ flexDirection: 'row', gap: 10 }}>
-          <Button title="Approve" onPress={() => void approve()} busy={state === 'approving'} disabled={state !== 'idle'} style={{ flex: 1 }} />
+          <Button
+            title="Approve"
+            onPress={() => void approve()}
+            busy={state === 'approving'}
+            disabled={state !== 'idle' || !confirmation.matched}
+            style={{ flex: 1 }}
+          />
           <Button title="Deny" kind="secondary" onPress={() => void deny()} busy={state === 'denying'} disabled={state !== 'idle'} style={{ flex: 1 }} />
         </View>
       )}
@@ -59,7 +99,7 @@ function Approval({ code }: { code: string }): JSX.Element {
   );
 }
 
-/** Without a code in the link: type the code shown by `uncage setup`. */
+/** Without a trusted code in the link: type the code shown by `uncage setup`. */
 function EnterCode({ onCode }: { onCode(code: string): void }): JSX.Element {
   const t = useTheme();
   const [value, setValue] = useState('');
@@ -89,8 +129,12 @@ export default function DeviceScreen(): JSX.Element {
     takePendingDeviceCode();
   }, []);
   const [typed, setTyped] = useState<string | undefined>();
-  const code = sanitizeDeviceCode(params.code) ?? typed;
-  return code ? <Approval key={code} code={code} /> : <EnterCode onCode={setTyped} />;
+  // Only a code from a verified https app link is pre-filled; any other `code` param is ignored.
+  const fromParams = sanitizeDeviceCode(params.code);
+  const linkCode = isVerifiedLinkCode(fromParams) ? fromParams : undefined;
+  if (typed) return <Approval key={`typed:${typed}`} code={typed} source="typed" />;
+  if (linkCode) return <Approval key={`link:${linkCode}`} code={linkCode} source="link" />;
+  return <EnterCode onCode={setTyped} />;
 }
 
 const styles = StyleSheet.create({

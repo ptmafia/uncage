@@ -245,8 +245,13 @@ export class Stack {
     // The approval page may never be framed (clickjacking).
     expect(res?.headers()['x-frame-options']).toBe('DENY');
     expect(res?.headers()['content-security-policy']).toContain("frame-ancestors 'none'");
-    await expect(page.getByText(code!)).toBeVisible();
-    await page.getByRole('button', { name: '批准', exact: true }).click();
+    // A code from a link: last 4 characters hidden, Approve only after typing them (phishing guard).
+    await expect(page.getByText(`${code!.slice(0, -4)}••••`)).toBeVisible();
+    await expect(page.getByText('绝不要批准别人发给你的验证码', { exact: false })).toBeVisible();
+    const approve = page.getByRole('button', { name: '批准', exact: true });
+    await expect(approve).toBeDisabled();
+    await page.getByLabel('输入终端里显示的验证码的最后 4 位').fill(code!.slice(-4));
+    await approve.click();
     await expect(page.getByText('电脑已连接')).toBeVisible();
     const exit = await new Promise<number | null>((resolve) => {
       if (setup.proc.exitCode !== null) return resolve(setup.proc.exitCode);

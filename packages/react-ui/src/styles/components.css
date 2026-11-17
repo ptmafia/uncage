@@ -2057,6 +2057,47 @@
   letter-spacing: 0.12em;
   color: var(--uncage-ink);
 }
+.uc-approve-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: var(--uncage-text-caption);
+  line-height: var(--uncage-text-caption-lh);
+}
+.uc-approve-meta > div {
+  display: contents;
+}
+.uc-approve-meta dt {
+  color: var(--uncage-ink-3);
+}
+.uc-approve-meta dd {
+  margin: 0;
+  color: var(--uncage-ink);
+  font-variant-numeric: tabular-nums;
+}
+.uc-approve-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--uncage-ink);
+}
+.uc-approve-confirm-input {
+  width: 8em;
+  padding: 8px 10px;
+  border: 1px solid var(--uncage-border-strong);
+  border-radius: var(--uncage-radius-md);
+  background: var(--uncage-surface);
+  color: var(--uncage-ink);
+  font-family: var(--uncage-font-mono);
+  font-size: var(--uncage-text-body);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+.uc-approve-confirm-input:focus-visible {
+  outline: none;
+  box-shadow: var(--uncage-shadow-focus);
+}
 .uc-approve-result {
   display: flex;
   align-items: flex-start;

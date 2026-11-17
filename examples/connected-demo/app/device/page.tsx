@@ -5,7 +5,9 @@ import { ApprovePage } from './approve-page.tsx';
 export const dynamic = 'force-dynamic';
 
 /**
- * Where `uncage setup <this site>` sends the user (`/device?code=…`). next.config.ts makes it
+ * Where `uncage setup <this site>` sends the user (`/device?code=…`). A code from the URL is
+ * untrusted (anyone can send the link): ApprovePage shows it with `source="link"` (warning, request
+ * time and IP, type the last 4 characters). Plain `/device` lets the user type the whole code. next.config.ts makes it
  * unframeable (frame-ancestors 'none' + X-Frame-Options: DENY); the decision is a Server Action
  * (POST, Origin-checked by Next.js) made with the signed-in user — never a GET.
  */

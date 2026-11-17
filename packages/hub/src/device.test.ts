@@ -65,7 +65,12 @@ describe('deviceFlow', () => {
     expect(JSON.stringify(rec)).not.toContain(code.deviceCode);
 
     expect(await f.poll(code.deviceCode)).toEqual({ status: 'pending' });
-    expect(await f.lookup(code.userCode.toLowerCase(), { id: 'alice' })).toMatchObject({ name: 'Nathan’s MacBook', os: 'darwin' });
+    expect(await f.lookup(code.userCode.toLowerCase(), { id: 'alice' })).toMatchObject({
+      name: 'Nathan’s MacBook',
+      os: 'darwin',
+      requestedAt: '2026-11-07T00:00:00.000Z',
+      requestIp: null,
+    });
     expect(await f.approve(code.userCode, { id: 'alice' })).toBe('ok');
     expect(await f.lookup(code.userCode, { id: 'alice' })).toBeNull();
     now += 2000;
@@ -140,6 +145,24 @@ describe('deviceFlow', () => {
     now += 600_001;
     const fresh = await f.createCode({}, 'ip1');
     expect(await f.approve(fresh.userCode, { id: 'mallory' })).toBe('ok');
+  });
+
+  it('lookup shows when and from which IP the code was requested (phishing guard)', async () => {
+    const f = flow();
+    const code = await f.createCode({ name: 'Mac' }, '203.0.113.7', '203.0.113.7');
+    now += 90_000;
+    expect(await f.lookup(code.userCode, { id: 'alice' })).toEqual({
+      name: 'Mac',
+      expiresAt: '2026-11-07T00:10:00.000Z',
+      requestedAt: '2026-11-07T00:00:00.000Z',
+      requestIp: '203.0.113.7',
+      repairsMachine: null,
+    });
+    // Stored on the code, so every hub instance shows the same.
+    expect((await store.getDeviceCode(await sha256Hex(code.deviceCode)))?.clientIp).toBe('203.0.113.7');
+    // Unknown IP (shared rate-limit bucket): null, never the bucket key.
+    const anon = await f.createCode({}, 'shared');
+    expect(await f.lookup(anon.userCode, { id: 'alice' })).toMatchObject({ requestIp: null });
   });
 
   it('lookups of unknown codes count as failures too', async () => {

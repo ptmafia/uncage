@@ -1,8 +1,9 @@
 import type { ErrorCode } from '@uncage/protocol';
+import { deviceCodeTail, matchesDeviceCodeTail } from '@uncage/react';
 import { CheckCircle2, Laptop, ShieldAlert, XCircle } from 'lucide-react';
-import { useId, type JSX } from 'react';
+import { useEffect, useId, useState, type JSX } from 'react';
 import { cx, UncageUIProvider, useUi } from '../context.js';
-import { errorText, type Locale } from '../i18n.js';
+import { errorText, formatRelative, type Locale } from '../i18n.js';
 
 /** What the hub knows about a pending code (`hub.lookupDevice(code, user)`; extra fields are ignored). */
 export interface DeviceLookupInfo {
@@ -10,6 +11,10 @@ export interface DeviceLookupInfo {
   name?: string;
   os?: string;
   expiresAt?: string;
+  /** When `uncage setup` asked for the code (ISO), shown as relative time. */
+  requestedAt?: string;
+  /** The requesting computer's IP as the hub saw it; `null` = unknown. */
+  requestIp?: string | null;
   /** Approving re-pairs (rotates the token of) this existing computer of the user. */
   repairsMachine?: { id: string; name: string } | null;
 }
@@ -22,8 +27,16 @@ export interface DeviceLookupInfo {
 export type ApproveDeviceState = 'idle' | 'approving' | 'denying' | 'approved' | 'denied' | 'expired' | 'not_found';
 
 export interface ApproveDeviceProps {
-  /** The user code from the link (`?code=`), as the terminal shows it. */
+  /** The user code from the link (`?code=`) or typed by the user, as the terminal shows it. */
   code: string;
+  /**
+   * Where `code` came from. `'link'` (default): it arrived in a URL, so it is not trusted on its
+   * own (anyone can run `uncage setup` on their own computer and send the link): the page warns,
+   * hides the code's last 4 characters and enables Approve only once the user typed them from
+   * their terminal. `'typed'`: the user typed the whole code on your page; no extra step. Never
+   * derive `'typed'` from the URL.
+   */
+  source?: 'link' | 'typed';
   /** `hub.lookupDevice(code, user)`; `null` = unknown, used or expired code. */
   lookup: DeviceLookupInfo | null;
   onApprove(): void;
@@ -44,9 +57,10 @@ export interface ApproveDeviceProps {
 }
 
 /**
- * The website's device-approval page body for `uncage setup`: which computer asks to connect, the
- * code to compare with the terminal, and Approve / Deny. Presentational: the website looks the
- * code up and records the decision server-side (`hub.lookupDevice` / `approveDevice` /
+ * The website's device-approval page body for `uncage setup`: which computer asks to connect, when
+ * and from which IP it asked, the code to compare with the terminal, and Approve / Deny. A code
+ * from a link (`source: 'link'`, the default) must be confirmed by typing its last 4 characters.
+ * Presentational: the website looks the code up and records the decision server-side (`hub.lookupDevice` / `approveDevice` /
  * `denyDevice` with the signed-in user) and passes the outcome back in `state`.
  *
  * Security — approving gives a computer remote access to the user's account, so the page is a
@@ -70,6 +84,7 @@ export function ApproveDevice(props: ApproveDeviceProps): JSX.Element {
 
 function ApproveDeviceView({
   code,
+  source = 'link',
   lookup,
   onApprove,
   onDeny,
@@ -84,6 +99,14 @@ function ApproveDeviceView({
   const gone = lookup === null || state === 'expired' || state === 'not_found';
   const done = state === 'approved' || state === 'denied';
   const shownError = error && errorText(t, error);
+  const fromLink = source === 'link';
+  const tailId = useId();
+  const [typedTail, setTypedTail] = useState('');
+  useEffect(() => setTypedTail(''), [code]);
+  const confirmed = !fromLink || matchesDeviceCodeTail(code, typedTail);
+  const tail = deviceCodeTail(code);
+  // From a link: hide the last 4 characters, the user types them from their own terminal.
+  const shownCode = fromLink && tail.length === 4 ? `${code.trim().toUpperCase().slice(0, -4)}••••` : code;
 
   let content: JSX.Element;
   if (done) {
@@ -114,11 +137,59 @@ function ApproveDeviceView({
       <>
         <p className="uc-approve-body">{t.approveBody(name, os)}</p>
         <p className="uc-approve-what">{t.approveWhat}</p>
+        {fromLink && (
+          <p className="uc-banner" data-tone="warn" role="note" data-testid="uc-approve-warning">
+            <ShieldAlert aria-hidden />
+            <span className="uc-banner-text">{t.approveLinkWarning}</span>
+          </p>
+        )}
+        {(lookup.requestedAt !== undefined || lookup.requestIp !== undefined) && (
+          <dl className="uc-approve-meta">
+            {lookup.requestedAt !== undefined && (
+              <div>
+                <dt>{t.approveRequested}</dt>
+                <dd>
+                  <time dateTime={lookup.requestedAt} title={new Date(lookup.requestedAt).toLocaleString(locale)}>
+                    {formatRelative(lookup.requestedAt, locale, t.justNow)}
+                  </time>
+                </dd>
+              </div>
+            )}
+            {lookup.requestIp !== undefined && (
+              <div>
+                <dt>{t.approveRequestIp}</dt>
+                <dd>{lookup.requestIp ?? t.approveIpUnknown}</dd>
+              </div>
+            )}
+          </dl>
+        )}
         <div className="uc-approve-code-box">
           <span className="uc-approve-code-label">{t.approveCode}</span>
-          <code className="uc-approve-code">{code}</code>
-          <span className="uc-approve-code-hint">{t.approveMatch}</span>
+          <code className="uc-approve-code">{shownCode}</code>
+          {!fromLink && <span className="uc-approve-code-hint">{t.approveMatch}</span>}
         </div>
+        {fromLink && (
+          <div className="uc-approve-confirm">
+            <label htmlFor={tailId}>{t.approveTypeTail}</label>
+            <input
+              id={tailId}
+              className="uc-approve-confirm-input"
+              value={typedTail}
+              onChange={(e) => setTypedTail(e.target.value.slice(0, 16))}
+              autoComplete="off"
+              autoCapitalize="characters"
+              spellCheck={false}
+              inputMode="text"
+              maxLength={16}
+              placeholder="••••"
+              disabled={busy}
+              aria-describedby={`${tailId}-hint`}
+            />
+            <span id={`${tailId}-hint`} className="uc-approve-code-hint">
+              {t.approveTypeTailHint}
+            </span>
+          </div>
+        )}
         {lookup.repairsMachine && (
           <p className="uc-banner" data-tone="warn" role="note">
             <ShieldAlert aria-hidden />
@@ -144,9 +215,11 @@ function ApproveDeviceView({
           <button
             type="button"
             className="uc-btn uc-btn-primary"
-            disabled={busy}
+            disabled={busy || !confirmed}
             aria-busy={state === 'approving' || undefined}
-            onClick={onApprove}
+            onClick={() => {
+              if (confirmed) onApprove();
+            }}
           >
             {state === 'approving' && <span className="uc-spinner" aria-hidden />}
             {t.approve}

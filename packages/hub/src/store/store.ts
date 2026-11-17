@@ -32,6 +32,8 @@ export interface DeviceCodeRecord {
   os?: string;
   /** Hex SHA-256 of the agent's `machineKey`, if sent. */
   machineKeyHash?: string;
+  /** The requesting client's IP as the hub resolved it (shown on the approve page), if known. */
+  clientIp?: string;
   /** Set on approval. */
   userId?: string;
   createdAt: string;

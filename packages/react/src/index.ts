@@ -19,11 +19,13 @@ export {
   useUncageStore,
   usePersistSession,
   useDeviceApproval,
+  deviceCodeTail,
+  matchesDeviceCodeTail,
   useReconnect,
   PERSIST_SESSION_PARAM,
   PERSIST_SESSION_STORAGE_KEY,
 } from './hooks.js';
-export type { DeviceApprovalState, PersistSessionMode, PersistSessionStorage } from './hooks.js';
+export type { DeviceApprovalState, DeviceCodeSource, PersistSessionMode, PersistSessionStorage } from './hooks.js';
 export { UncageProvider } from './provider.js';
 export type { UncageProviderProps } from './provider.js';
 export { useSpeechInput } from './speech.js';

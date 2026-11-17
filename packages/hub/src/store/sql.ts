@@ -222,6 +222,11 @@ CREATE TABLE uncage_hub_claims (
 CREATE INDEX uncage_hub_claims_expires_idx ON uncage_hub_claims (expires_at)
 `,
   },
+  {
+    // The requesting client's IP, shown on the approve page (device-approval phishing guard).
+    id: 10,
+    sql: `ALTER TABLE uncage_hub_device_codes ADD client_ip text`,
+  },
 ];
 
 /** Postgres `unique_violation` (PGlite reports the same SQLSTATE). */
@@ -264,6 +269,7 @@ interface DeviceRow {
   os: string | null;
   user_id: string | null;
   machine_key_hash: string | null;
+  client_ip: string | null;
   created_at: string;
   expires_at: string;
 }
@@ -301,6 +307,7 @@ const toDevice = (r: DeviceRow): DeviceCodeRecord => ({
   ...(r.os !== null ? { os: r.os } : {}),
   ...(r.user_id !== null ? { userId: r.user_id } : {}),
   ...(r.machine_key_hash !== null ? { machineKeyHash: r.machine_key_hash } : {}),
+  ...(r.client_ip !== null && r.client_ip !== undefined ? { clientIp: r.client_ip } : {}),
   createdAt: r.created_at,
   expiresAt: r.expires_at,
 });
@@ -490,9 +497,9 @@ export function sqlHubStore(db: SqlClient, close: () => Promise<void>): HubStore
         new Date(Date.parse(r.createdAt) - 3_600_000).toISOString(),
       ]);
       await db.query(
-        `INSERT INTO uncage_hub_device_codes (device_code_hash, user_code_hash, status, name, os, user_id, created_at, expires_at, machine_key_hash)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [r.deviceCodeHash, r.userCodeHash, r.status, r.name ?? null, r.os ?? null, r.userId ?? null, r.createdAt, r.expiresAt, r.machineKeyHash ?? null],
+        `INSERT INTO uncage_hub_device_codes (device_code_hash, user_code_hash, status, name, os, user_id, created_at, expires_at, machine_key_hash, client_ip)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [r.deviceCodeHash, r.userCodeHash, r.status, r.name ?? null, r.os ?? null, r.userId ?? null, r.createdAt, r.expiresAt, r.machineKeyHash ?? null, r.clientIp ?? null],
       );
     },
     getDeviceCode: (hash) => one('SELECT * FROM uncage_hub_device_codes WHERE device_code_hash = $1', [hash], toDevice),

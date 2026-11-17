@@ -56,6 +56,13 @@ export interface DeviceLookup {
   name?: string;
   os?: string;
   expiresAt: string;
+  /** When `uncage setup` asked for this code (ISO). Show it ("2 minutes ago"): a code someone sent you is usually older. */
+  requestedAt: string;
+  /**
+   * The requesting computer's IP as the hub saw it (its client-IP resolution, see
+   * `HubOptions.rateLimits`), or `null` when the hub had none. Coarse on purpose: no geolocation.
+   */
+  requestIp: string | null;
   /** Set when approving would re-pair this existing machine (same `machineKey`) instead of adding one. */
   repairsMachine: { id: string; name: string } | null;
 }
@@ -110,8 +117,11 @@ export function deviceFlow(d: DeviceFlowDeps) {
   }
 
   return {
-    /** `clientKey` identifies the caller for rate limiting (normally its IP). Throws `rate_limited`. */
-    async createCode(body: DeviceCodeRequest, clientKey: string): Promise<DeviceCodeResponse> {
+    /**
+     * `clientKey` identifies the caller for rate limiting (normally its IP). `clientIp`, when the
+     * hub resolved one, is stored and shown on the approve page. Throws `rate_limited`.
+     */
+    async createCode(body: DeviceCodeRequest, clientKey: string, clientIp?: string): Promise<DeviceCodeResponse> {
       await d.limits.codesPerClient.take(clientKey);
       const deviceCode = randomSecret();
       // Retry on the (astronomically unlikely) user-code collision with a live code.
@@ -120,6 +130,7 @@ export function deviceFlow(d: DeviceFlowDeps) {
         const createdAt = new Date(now()).toISOString();
         const name = clipLabel(body.name);
         const os = clipLabel(body.os);
+        const ip = clipLabel(clientIp);
         try {
           await d.store.insertDeviceCode({
             deviceCodeHash: await sha256Hex(deviceCode),
@@ -127,6 +138,7 @@ export function deviceFlow(d: DeviceFlowDeps) {
             status: 'pending',
             ...(name ? { name } : {}),
             ...(os ? { os } : {}),
+            ...(ip ? { clientIp: ip } : {}),
             ...(body.machineKey ? { machineKeyHash: await sha256Hex(body.machineKey) } : {}),
             createdAt,
             expiresAt: new Date(now() + DEVICE_EXPIRES_IN_SEC * 1000).toISOString(),
@@ -185,6 +197,8 @@ export function deviceFlow(d: DeviceFlowDeps) {
             ...(rec.name ? { name: rec.name } : {}),
             ...(rec.os ? { os: rec.os } : {}),
             expiresAt: rec.expiresAt,
+            requestedAt: rec.createdAt,
+            requestIp: rec.clientIp ?? null,
             repairsMachine: known ? { id: known.id, name: known.name } : null,
           };
         },

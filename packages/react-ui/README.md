@@ -61,7 +61,8 @@ Against a local daemon (`uncage serve`, no `/machines`) nothing changes.
 
 - serve it only on your website's own origin, behind the user's normal signed-in session;
 - refuse framing: `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`;
-- record the decision with a CSRF-protected POST (Next.js Server Actions are POST-only and check `Origin` against the host; a hand-written route handler needs its own Origin check or CSRF token plus `SameSite` cookies). Never approve from a GET or from the link alone.
+- record the decision with a CSRF-protected POST (Next.js Server Actions are POST-only and check `Origin` against the host; a hand-written route handler needs its own Origin check or CSRF token plus `SameSite` cookies). Never approve from a GET or from the link alone;
+- treat a code that arrived in the URL as untrusted (device-approval phishing: anyone can run `uncage setup` against your site on their own computer and send the user the link). With `source="link"` (the default) the page warns "Only approve if you just ran `uncage setup` on a computer in front of you. Never approve a code someone sent you.", shows when and from which IP the code was requested (`lookup.requestedAt`, `lookup.requestIp`), hides the code's last 4 characters and enables Approve only after the user typed them from their terminal. Pass `source="typed"` only when the user typed the whole code on your page (never based on the URL). Deny is always one click.
 
 A Next.js example:
 
@@ -93,8 +94,8 @@ import { ApprovePage } from './approve-page';
 export default async function Page({ searchParams }: { searchParams: Promise<{ code?: string }> }) {
   const { code = '' } = await searchParams;
   const user = await currentUser();
-  const lookup = await hub.lookupDevice(code, user); // { name?, os?, repairsMachine } | null
-  return <ApprovePage code={code} lookup={lookup} />;
+  const lookup = await hub.lookupDevice(code, user); // { name?, os?, requestedAt, requestIp, repairsMachine } | null
+  return <ApprovePage code={code} lookup={lookup} />; // a code from the URL: source="link" (the default)
 }
 
 // app/device/actions.ts — a Server Action: POST with Next.js's built-in Origin (CSRF) check

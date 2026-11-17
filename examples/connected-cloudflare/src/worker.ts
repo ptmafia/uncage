@@ -187,6 +187,12 @@ async function device(req: Request, url: URL, env: Env, user: { id: string; name
     const form = await req.formData();
     const code = String(form.get('code') ?? '').trim().toUpperCase();
     const deny = form.get('decision') === 'deny';
+    // A code from a link (`tail` field present): approve only once the user typed its last 4
+    // characters from their own terminal (someone else may have started it and sent the link).
+    const tail = form.get('tail');
+    if (!deny && tail !== null && compactCode(String(tail)) !== compactCode(code).slice(-4)) {
+      return page('Device', '<p data-result="tail_mismatch">The last 4 characters do not match the code. Check your terminal and try again.</p>', 400);
+    }
     let result: string;
     try {
       result = deny ? await hub.denyDevice(code, user) : await hub.approveDevice(code, user);
@@ -216,7 +222,8 @@ async function device(req: Request, url: URL, env: Env, user: { id: string; name
       about = d
         ? `<p>Computer: <b>${esc(d.name ?? 'unnamed')}</b>${d.os ? ` (${esc(d.os)})` : ''}${
             d.repairsMachine ? ` — re-pairs <b>${esc(d.repairsMachine.name)}</b>` : ''
-          }</p>`
+          }</p>
+<p>Requested: <time datetime="${esc(d.requestedAt)}">${esc(ago(d.requestedAt))}</time> · From IP: ${esc(d.requestIp ?? 'unknown')}</p>`
         : '<p>Unknown or expired code.</p>';
     } catch (e) {
       if ((e as { code?: unknown } | null)?.code !== 'rate_limited') {
@@ -226,15 +233,32 @@ async function device(req: Request, url: URL, env: Env, user: { id: string; name
       about = `<p>${esc(e instanceof Error ? e.message : String(e))}</p>`;
     }
   }
+  // A code from the link is never trusted on its own: its last 4 characters are hidden and must be
+  // typed from the terminal. Without one, the user types the whole code.
+  const fields = code
+    ? `<p>Code: <code>${esc(compactCode(code).slice(0, 4))}-••••</code></p>
+  <input type="hidden" name="code" value="${esc(code)}">
+  <label>Type the last 4 characters of the code shown in your terminal <input name="tail" autocomplete="off" maxlength="16"></label>`
+    : `<label>Code <input name="code" autocomplete="off" required></label>`;
   return page(
     'Connect a computer',
-    `<p>Signed in as <b>${esc(user.name ?? user.id)}</b>. Approve only a code you started with <code>uncage setup</code>.</p>${about}
+    `<p>Signed in as <b>${esc(user.name ?? user.id)}</b>.</p>
+<p><strong>Only approve if you just ran <code>uncage setup</code> on a computer in front of you. Never approve a code someone sent you.</strong></p>${about}
 <form method="post" action="/device">
-  <label>Code <input name="code" value="${esc(code)}" autocomplete="off" required></label>
+  ${fields}
   <button name="decision" value="approve">Approve</button>
   <button name="decision" value="deny">Deny</button>
 </form>`,
   );
+}
+
+const compactCode = (s: string): string => s.toUpperCase().replace(/[\s-]/g, '');
+
+function ago(iso: string): string {
+  const min = Math.round((Date.now() - Date.parse(iso)) / 60_000);
+  if (!Number.isFinite(min)) return 'unknown';
+  if (min < 1) return 'just now';
+  return min < 60 ? `${min} minute${min === 1 ? '' : 's'} ago` : `${Math.round(min / 60)} h ago`;
 }
 
 function signInForm(next: string): string {

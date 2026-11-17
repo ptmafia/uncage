@@ -258,12 +258,14 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
       codesPerClient: storeRateLimiter(store, { name: 'device_code', max: o.rateLimits?.deviceCodesPerMinute ?? 20, windowMs: DEVICE_CODE_WINDOW_MS }),
     },
   });
-  /** Rate-limit key: custom `clientIp` > `info.clientIp` > (opt-in) rightmost X-Forwarded-For > shared. */
-  const clientKey = (req: Request, info?: { clientIp?: string }): string =>
+  /** Client IP: custom `clientIp` > `info.clientIp` > (opt-in) rightmost X-Forwarded-For; else unknown. */
+  const clientIpOf = (req: Request, info?: { clientIp?: string }): string | undefined =>
     o.rateLimits?.clientIp?.(req) ||
     info?.clientIp ||
     (o.rateLimits?.trustForwardedFor ? req.headers.get('x-forwarded-for')?.split(',').at(-1)?.trim() : undefined) ||
-    SHARED_CLIENT_KEY;
+    undefined;
+  /** Rate-limit key: the client IP, else one shared bucket. */
+  const clientKey = (req: Request, info?: { clientIp?: string }): string => clientIpOf(req, info) || SHARED_CLIENT_KEY;
   let warnedSharedKey = false;
 
   const attention = attentionDispatcher({ store, onAttention: o.onAttention, logger, sessionStorage });
@@ -479,7 +481,8 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
         // Opportunistic maintenance (the cron endpoint runs it itself). Never throws.
         const waitUntil = info?.waitUntil?.bind(info);
         if (path !== '/maintenance' && !shutdown.signal.aborted) await upkeep.maybeRun(waitUntil);
-        const key = clientKey(req, info);
+        const ip = clientIpOf(req, info);
+        const key = ip ?? SHARED_CLIENT_KEY;
         if (key === SHARED_CLIENT_KEY && path === '/device/code' && !warnedSharedKey) {
           warnedSharedKey = true;
           logger.warn(
@@ -488,7 +491,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
           );
         }
         // Machine routes (HTTP streaming transport) first, then the browser API.
-        return (await agentTransport.handle(req, url, path, key, waitUntil)) ?? (await api.handle(req, url, path, requestId, key));
+        return (await agentTransport.handle(req, url, path, key, waitUntil)) ?? (await api.handle(req, url, path, requestId, key, ip));
       } catch (err) {
         const uerr = err instanceof UncageError ? err : new UncageError('internal_error');
         if (!(err instanceof UncageError)) logger.error({ err, requestId }, 'hub request failed');
