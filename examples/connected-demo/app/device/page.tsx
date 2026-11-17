@@ -1,3 +1,4 @@
+import { deviceLinkParam } from '../../lib/device-link.ts';
 import { getHub } from '../../lib/hub-registry.ts';
 import { requireUser } from '../../lib/session.ts';
 import { ApprovePage } from './approve-page.tsx';
@@ -11,15 +12,12 @@ export const dynamic = 'force-dynamic';
  * unframeable (frame-ancestors 'none' + X-Frame-Options: DENY); the decision is a Server Action
  * (POST, Origin-checked by Next.js) made with the signed-in user — never a GET.
  */
-export default async function DevicePage({ searchParams }: { searchParams: Promise<{ code?: string }> }) {
-  const { code = '' } = await searchParams;
+export default async function DevicePage({ searchParams }: { searchParams: Promise<{ code?: string | string[] }> }) {
+  const { code: raw } = await searchParams;
+  // Only one well-formed code is looked up (lib/device-link.ts); anything else is an invalid link.
+  const { code, invalid } = deviceLinkParam(raw);
   const user = await requireUser(`/device${code ? `?code=${encodeURIComponent(code)}` : ''}`);
-  // A link code must be exactly what the CLI prints (ABCD-EFGH): padding such as `ABCD-EFGH----`
-  // could put the hidden last 4 characters on screen. Anything else is not looked up.
-  // (Same check as @uncage/react's isWellFormedDeviceCode, inlined: this is a Server Component and
-  // @uncage/react imports React client hooks, which Next.js refuses on the server.)
-  const wellFormed = /^[A-Z0-9]{4}-?[A-Z0-9]{4}$/i.test(code.trim());
-  if (code && !wellFormed) {
+  if (invalid) {
     return (
       <div className="demo-device">
         <ApprovePage code="" lookup={null} invalidLink />

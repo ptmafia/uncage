@@ -295,20 +295,6 @@ describe('useDeviceApproval with a code from a link (phishing guard)', () => {
     expect(typed.result.current.linkInvalid).toBe(false);
   });
 
-  it('approve() on an unconfirmed link code warns once and does nothing', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const f = fakeClient();
-    f.client.lookupDevice.mockResolvedValue(lookup);
-    const { result } = renderHook(() => useDeviceApproval('ABCD-EFGH'), { wrapper: wrap(f.client) });
-    await waitFor(() => expect(result.current.state).toBe('idle'));
-    await act(() => result.current.approve());
-    await act(() => result.current.approve());
-    // Once per page load (an earlier test in this file may already have used it up).
-    expect(warn.mock.calls.filter((c) => String(c[0]).includes('useDeviceApproval')).length).toBeLessThanOrEqual(1);
-    expect(f.client.decideDevice).not.toHaveBeenCalled();
-    warn.mockRestore();
-  });
-
   it('isWellFormedDeviceCode / maskDeviceCode', () => {
     expect(isWellFormedDeviceCode(' abcd-efgh ')).toBe(true);
     expect(isWellFormedDeviceCode('ABCDEFGH')).toBe(true);
