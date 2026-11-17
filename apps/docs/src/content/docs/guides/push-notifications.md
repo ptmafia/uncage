@@ -30,17 +30,20 @@ Pass it as `createHub({ …, onAttention })`. How it behaves:
 
 ## What leaves your hub
 
-A push goes from your hub to Expo, then to Apple or Google, and shows on the lock screen. The default text is built from the event and the **approval title**, and runtimes set that title from the tool call, so it can name a command or a file path. The default is one line of at most 180 characters (it includes the approval title and the session title), but it still reaches those services and the lock screen. If that is too much for your users, return a generic text from `message`:
+A push goes from your hub to Expo, then to Apple or Google, and shows on the lock screen. So by default `expoPushNotifier` sends **no conversation content**: only “An approval needs you”, “A run finished” or “A run failed” (with a short “Open the app…” body) and the deep-link `data` (`sessionId`, `approvalId?`, `kind`). The app loads the details over its own signed-in connection.
+
+`includeContent: true` is an explicit opt-in to the older, more specific text: the session title and the **approval title**. Runtimes set the approval title from the tool call, so it often names a shell command or a file path. Each text is one line of at most 180 characters, but it still passes through Expo, Apple or Google, and shows on the lock screen. Turn it on only if your users accept that:
 
 ```ts
 import { expoPushNotifier } from '@uncage/hub';
 
 declare const tokensFor: (userId: string) => Promise<string[]>;
 
-expoPushNotifier({
-  tokensFor,
-  message: (e) => ({ title: 'Uncage', body: e.approval ? 'An action needs your approval' : 'Your run has finished' }),
-});
+// Default: generic text only ("An approval needs you", "A run finished", "A run failed").
+expoPushNotifier({ tokensFor });
+
+// Opt in: the session title and the approval title (often a command or a path) go to the lock screen.
+expoPushNotifier({ tokensFor, includeContent: true });
 ```
 
 ## `expoPushNotifier`
@@ -67,7 +70,8 @@ It uses only `fetch`, so it runs anywhere the hub does (it is exported from the 
 | --- | --- |
 | `tokensFor(userId)` | Required. The user’s Expo push tokens. |
 | `accessToken` | Expo access token when enhanced push security is on. |
-| `message(e)` | `{ title, body }` per event, or `null` to send nothing. The default is short English text (`defaultPushMessage`); localize here. |
+| `message(e)` | `{ title, body }` per event, or `null` to send nothing. The default is short generic English text without conversation content (`defaultPushMessage`); localize here. |
+| `includeContent` | `true` adds the session title and the approval title to the default text (they reach Expo, Apple / Google and the lock screen). Default `false`. Ignored when you pass `message`. |
 | `onInvalidToken(token)` | Called for tokens Expo reports as `DeviceNotRegistered`. |
 | `fetch`, `endpoint` | Replace `fetch` or the Expo endpoint (tests). |
 | `timeoutMs` | A request to Expo unanswered after this is aborted and the call rejects (the hub logs it). Default `15000`. |

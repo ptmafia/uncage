@@ -57,6 +57,7 @@ With no Node.js version manager, the installer installs fnm, whose installer nee
 
 - **“Refusing plain http for …”**: the agent accepts `http://` only for `localhost`, `127.0.0.1` and `[::1]`. Use your site’s `https://` URL.
 - **The link opens but there is no Approve button**: the code is unknown, used or older than 10 minutes. Run `uncage setup <url>` again. Check that your `/device` page passes the `code` query parameter to `hub.lookupDevice`.
+- **Approve stays disabled**: a code from the link needs its last 4 characters typed from the terminal where `uncage setup` runs. That is on purpose ([phishing links](/docs/guides/auth-and-device-approval/#phishing-links)); if you did not run `uncage setup` yourself, click Deny.
 - **“Too many requests” / `rate_limited`**: too many codes from one IP (20 per minute), or too many wrong codes from one user (10 per 10 minutes). If it happens to many users at once, see the next section.
 - **No browser on that computer**: `uncage setup <url> --no-browser` prints the link and the code; open the link on any device where the user is signed in.
 - **`UNCAGE_HOME is for foreground runs`**: with `UNCAGE_HOME` set, use `--no-daemon` and run `uncage agent` yourself.

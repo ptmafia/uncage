@@ -57,6 +57,7 @@ Node.jsのバージョンマネージャーがない場合、インストーラ�
 
 - **「Refusing plain http for …」**：エージェントが`http://`を受け付けるのは、`localhost`、`127.0.0.1`、`[::1]`の場合だけです。サイトの`https://`のURLを使ってください。
 - **リンクは開くがApprove（承認）ボタンがない**：コードが未知、使用済み、または10分以上前のものです。`uncage setup <url>`をもう一度実行してください。`/device`ページがクエリパラメーターの`code`を`hub.lookupDevice`に渡しているかも確認してください。
+- **Approve（承認）が有効にならない**：リンクで届いたコードは、`uncage setup`を実行しているターミナルから最後の4文字を入力する必要があります。これは意図的な仕様です（[フィッシングリンク](/docs/ja/guides/auth-and-device-approval/#フィッシングリンク)）。自分で`uncage setup`を実行していない場合は**Deny**（拒否）をクリックしてください。
 - **「Too many requests」 / `rate_limited`**：1つのIPからのコードが多すぎる（1分あたり20）か、1人のユーザーによる間違ったコードが多すぎます（10分あたり10）。多くのユーザーで同時に起きる場合は、次のセクションを参照してください。
 - **そのコンピュータにブラウザがない**：`uncage setup <url> --no-browser`でリンクとコードが表示されます。ユーザーがサインインしている任意のデバイスでリンクを開いてください。
 - **`UNCAGE_HOME is for foreground runs`**：`UNCAGE_HOME`を設定している場合は、`--no-daemon`を付け、`uncage agent`を自分で実行してください。

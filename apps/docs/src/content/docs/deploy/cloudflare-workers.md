@@ -164,6 +164,11 @@ async function devicePage(req: Request, url: URL, env: Env, ctx: ExecutionContex
         const form = await req.formData();
         const code = String(form.get('code') ?? '');
         const approve = form.get('decision') === 'approve';
+        // The code came in a link (anyone can send one): approve only with its last 4 characters typed.
+        const tail = String(form.get('tail') ?? '').toUpperCase().replace(/[\s-]/g, '');
+        if (approve && tail !== code.toUpperCase().replace(/[\s-]/g, '').slice(-4)) {
+          return page('<p>The last 4 characters do not match. Check your terminal and try again.</p>', 400);
+        }
         const result = approve ? await hub.approveDevice(code, user) : await hub.denyDevice(code, user);
         if (result === 'ok') return page(approve ? '<p>Approved. You can close this tab.</p>' : '<p>Denied.</p>');
         return page(`<p>This code is ${result === 'expired' ? 'expired' : 'unknown'}. Run <code>uncage setup</code> again.</p>`, 410);
@@ -172,9 +177,12 @@ async function devicePage(req: Request, url: URL, env: Env, ctx: ExecutionContex
       const info = code ? await hub.lookupDevice(code, user) : null;
       if (!info) return page('<p>Unknown or expired code. Run <code>uncage setup</code> again.</p>', 404);
       const repair = info.repairsMachine ? `<p>This re-pairs <b>${esc(info.repairsMachine.name)}</b>.</p>` : '';
+      const asked = `<p>Requested ${esc(info.requestedAt)} from IP ${esc(info.requestIp ?? 'unknown')}.</p>`;
       return page(
-        `<form method="post"><p>Connect <b>${esc(info.name ?? 'a computer')}</b> to your account? Check that it shows the code <b>${esc(code)}</b>.</p>${repair}` +
-          `<input type="hidden" name="code" value="${esc(code)}"><button name="decision" value="approve">Approve</button> <button name="decision" value="deny">Deny</button></form>`,
+        `<form method="post"><p><b>Only approve if you just ran <code>uncage setup</code> on a computer in front of you. Never approve a code someone sent you.</b></p>` +
+          `<p>Connect <b>${esc(info.name ?? 'a computer')}</b> to your account?</p>${asked}${repair}` +
+          `<label>Type the last 4 characters of the code shown in your terminal <input name="tail" autocomplete="off" required></label>` +
+          `<input type="hidden" name="code" value="${esc(code)}"><button name="decision" value="approve">Approve</button> <button name="decision" value="deny" formnovalidate>Deny</button></form>`,
       );
     } finally {
       await hub.close();

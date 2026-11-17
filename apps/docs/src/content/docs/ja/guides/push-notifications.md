@@ -30,17 +30,20 @@ declare function sendPush(userId: string, text: string): Promise<void>;
 
 ## ハブから外に出るもの
 
-プッシュは、ハブからExpo、さらにAppleまたはGoogleを経由して、ロック画面に表示されます。既定の文面はイベントと**承認のタイトル**から作られ、そのタイトルはランタイムがツール呼び出しから決めるため、コマンドやファイルパスが含まれることがあります。既定の文面は1行で最大180文字です（承認のタイトルとセッションのタイトルを含みます）が、それでもこれらのサービスとロック画面には届きます。ユーザーにとって多すぎる場合は、`message`で汎用の文面を返してください。
+プッシュは、ハブからExpo、さらにAppleまたはGoogleを経由して、ロック画面に表示されます。そのため`expoPushNotifier`は既定で**会話の内容を一切送りません**。送るのは「An approval needs you」「A run finished」「A run failed」（と短い「Open the app…」の本文）、そしてディープリンク用の`data`（`sessionId`、`approvalId?`、`kind`）だけです。詳細はアプリがサインイン済みの自分の接続で読み込みます。
+
+`includeContent: true`は、以前のより具体的な文面に戻すための明示的なオプトインです。セッションのタイトルと**承認のタイトル**が入ります。承認のタイトルはランタイムがツール呼び出しから決めるため、シェルコマンドやファイルパスが含まれることがよくあります。各文面は1行で最大180文字ですが、それでもExpo、AppleまたはGoogleを経由し、ロック画面に表示されます。ユーザーがそれを受け入れられる場合にだけ有効にしてください。
 
 ```ts
 import { expoPushNotifier } from '@uncage/hub';
 
 declare const tokensFor: (userId: string) => Promise<string[]>;
 
-expoPushNotifier({
-  tokensFor,
-  message: (e) => ({ title: 'Uncage', body: e.approval ? 'An action needs your approval' : 'Your run has finished' }),
-});
+// Default: generic text only ("An approval needs you", "A run finished", "A run failed").
+expoPushNotifier({ tokensFor });
+
+// Opt in: the session title and the approval title (often a command or a path) go to the lock screen.
+expoPushNotifier({ tokensFor, includeContent: true });
 ```
 
 ## `expoPushNotifier`
@@ -67,7 +70,8 @@ export const onAttention = expoPushNotifier({
 | --- | --- |
 | `tokensFor(userId)` | 必須。ユーザーのExpoプッシュトークン。 |
 | `accessToken` | enhanced push securityが有効なときのExpoアクセストークン。 |
-| `message(e)` | イベントごとの`{ title, body }`。`null`を返すと何も送りません。既定は短い英語の文面（`defaultPushMessage`）なので、ここで翻訳します。 |
+| `message(e)` | イベントごとの`{ title, body }`。`null`を返すと何も送りません。既定は会話の内容を含まない短い汎用の英語の文面（`defaultPushMessage`）なので、ここで翻訳します。 |
+| `includeContent` | `true`にすると、既定の文面にセッションのタイトルと承認のタイトルが加わります（Expo、Apple / Google、ロック画面に届きます）。既定は`false`。`message`を渡した場合は無視されます。 |
 | `onInvalidToken(token)` | Expoが`DeviceNotRegistered`と報告したトークンに対して呼ばれます。 |
 | `fetch`、`endpoint` | `fetch`やExpoのエンドポイントの差し替え（テスト用）。 |
 | `timeoutMs` | Expoへのリクエストがこの時間を過ぎても応答しない場合は中断され、呼び出しはrejectします（ハブがログに出します）。既定は`15000`。 |

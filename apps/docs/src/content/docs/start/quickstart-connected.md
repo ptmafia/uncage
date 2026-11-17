@@ -238,7 +238,7 @@ export default function UncagePage() {
 
 ## 7. The approval page
 
-`uncage setup` sends the user to `/device?code=…` on your site. Approving there gives that computer access to the user’s account, so the page must be served only to the signed-in user, must not be framable, and must record the decision with a POST that only your own origin can send. Next.js Server Actions are POST-only and check the `Origin`, which covers the last point.
+`uncage setup` sends the user to `/device?code=…` on your site. Approving there gives that computer access to the user’s account, so the page must be served only to the signed-in user, must not be framable, and must record the decision with a POST that only your own origin can send. Next.js Server Actions are POST-only and check the `Origin`, which covers the last point. A code from the link is never trusted on its own: `<ApproveDevice>` shows the request time and IP and asks for the code’s last 4 characters ([phishing links](/docs/guides/auth-and-device-approval/#phishing-links)).
 
 ```tsx title="app/device/page.tsx"
 import type { ApproveDeviceProps } from '@uncage/react-ui';
@@ -369,7 +369,7 @@ Open `http://localhost:3000/uncage`. The chat shows **Connect your computer** wi
    uncage setup http://localhost:3000
    ```
 
-3. **Approve.** Setup prints a code and opens `http://localhost:3000/device?code=…`. Check that the code matches and click **Approve**. Setup saves the machine token in `~/.uncage/agent.yaml` and starts the background agent (a per-user service: launchd on macOS, systemd on Linux, a scheduled task on Windows; `uncage agent status` shows it).
+3. **Approve.** Setup prints a code and opens `http://localhost:3000/device?code=…`. The page warns you never to approve a code someone sent you, and hides the code’s last 4 characters: type them from the terminal, then click **Approve**. Setup saves the machine token in `~/.uncage/agent.yaml` and starts the background agent (a per-user service: launchd on macOS, systemd on Linux, a scheduled task on Windows; `uncage agent status` shows it).
 
 Back on the chat page, the status changes from “Waiting for your computer…” to **Connected: &lt;your computer’s name&gt;**.
 

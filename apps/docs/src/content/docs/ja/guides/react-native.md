@@ -63,24 +63,35 @@ export function useAppLifecycle() {
 
 - **`usePersistSession(storage)`**は`{ get, set }`アダプターを受け取ります（同期でも非同期でも可：AsyncStorage、SecureStore、MMKV）。既定の`'url'`、または`window` / `localStorage`がない環境での`'localStorage'`では何もせず、例外も投げません。
 - **`useReconnect()`**は`client.reconnect()`を返します。開いているすべてのイベントストリームを、最後のシーケンスからすぐにやり直すので、アプリが数分間バックグラウンドにいても、取りこぼしも重複もありません。`AppState`が`active`になったときに呼びます。健全なストリーム（直近20秒以内にデータが届いている）は維持され、`reconnect({ force: true })`なら必ず再起動します。
-- **`useDeviceApproval(code)`**は、次の承認画面を動かします。
+- **`useDeviceApproval(code, { source })`**は、次の承認画面を動かします。
 
 ## 4. スマートフォンでコンピュータを承認する
 
 `uncage setup`は、承認リンクをターミナルのQRコードとして表示します（`--no-qr`で無効化、出力がターミナルでないときは省略されます）。ハブの検証パス（既定は`/device`）をAndroidのApp LinksやiOSのユニバーサルリンクでアプリに割り当てておけば、スキャンするとアプリの承認画面が開きます。そうでない場合は、スマートフォンでモバイルウェブの承認ページが開きます。
 
 ```tsx nocheck
-import { useDeviceApproval } from '@uncage/react';
+import { useDeviceApproval, type DeviceCodeSource } from '@uncage/react';
 
-export function ApproveScreen({ code }: { code: string }) {
-  const { lookup, state, error, approve, deny } = useDeviceApproval(code);
+export function ApproveScreen({ code, source }: { code: string; source: DeviceCodeSource }) {
+  // source: 'link' (a verified app link: untrusted on its own) or 'typed' (the user typed the whole code).
+  const { lookup, state, error, confirmation, approve, deny } = useDeviceApproval(code, { source });
   // state: 'loading' | 'idle' | 'approving' | 'denying' | 'approved' | 'denied'
   //        | 'not_found' | 'expired' | 'error'
-  // lookup: { name?, os?, expiresAt, repairsMachine } | null: show it so the user compares the computer.
+  // lookup: { name?, os?, expiresAt, requestedAt, requestIp, repairsMachine } | null.
+  // confirmation: { required, typed, matched, setTyped }: with 'link', approve() waits until
+  //   the user typed the code's last 4 characters (setTyped) and matched is true.
   // error: { code, message }, e.g. 'rate_limited' (10 wrong codes in 10 minutes).
-  return null; // render lookup, error and two buttons that call approve() / deny()
+  return null; // render the warning, lookup, a last-4 input, error, and approve() / deny() buttons
 }
 ```
+
+**フィッシング対策**。誰でも自分のコンピュータであなたのサイトに対して`uncage setup`を実行し、そのリンクをユーザーに送れます。また、どのアプリやウェブページでもあなたのカスタムURLスキームを開けます。そのため次のようにします。
+
+- **カスタムスキーム（`yourapp://device?code=…`）のコードは決して入力済みにしません**。ユーザーがコードを入力する画面を開きます（`source: 'typed'`）。
+- 自分のサイトに対する**検証済み**のhttpsアプリリンク（App Links / ユニバーサルリンク。OSが`assetlinks.json` / `apple-app-site-association`を確認済み）のコードは、`source: 'link'`（デフォルト）として入力済みにできます。ユーザーがコードの最後の4文字を入力するまで`approve()`は何もしません（`confirmation.setTyped`、`confirmation.matched`）。画面ではその4文字を隠してください。
+- どちらの場合も、警告「Only approve if you just ran `uncage setup` on a computer in front of you. Never approve a code someone sent you.」（目の前のコンピュータで`uncage setup`を実行した直後にだけ承認してください。誰かから送られたコードは絶対に承認しないでください）、要求時刻（`lookup.requestedAt`を相対時間で）とIP（`lookup.requestIp`）を表示します。`deny()`に追加の手順は不要です。
+
+`examples/connected-expo`はまさにこのとおりに実装しています（`app/+native-intent.tsx`、`lib/links.ts`、`app/device.tsx`）。
 
 照会自体が失敗した場合（たとえば`rate_limited`）、`state`は`'error'`になります。`retry()`で照会をやり直せます。判定の失敗では`error`が設定されて`'idle'`に戻るので、再試行できます。`approve()`と`deny()`は`'idle'`のときだけ動作します。内部では[`GET /device/lookup`と`POST /device/decision`](/docs/ja/reference/http-api/)を呼んでいます。`client.lookupDevice(code)`と`client.decideDevice(code, approve)`は、Reactなしで同じことをします。
 

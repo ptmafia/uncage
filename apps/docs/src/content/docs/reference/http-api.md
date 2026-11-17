@@ -37,7 +37,7 @@ All routes below need a signed-in user (`401 unauthorized` otherwise). Resources
 | `GET /runs?active=1` | | `ActiveRunInfo[]`: runs in progress in the user’s sessions |
 | `GET /runs/:id` | | `Run` |
 | `POST /runs/:id/cancel` | | `202` |
-| `GET /device/lookup` | `?code=` | The pending code’s `{ name?, os?, expiresAt, repairsMachine }`, or `null` when it is unknown or no longer pending. Same result and failed-code rate limit as `hub.lookupDevice` |
+| `GET /device/lookup` | `?code=` | The pending code’s `{ name?, os?, expiresAt, requestedAt, requestIp, repairsMachine }` (`requestedAt`: when it was requested; `requestIp`: the IP the hub saw, or `null`), or `null` when it is unknown or no longer pending. Same result and failed-code rate limit as `hub.lookupDevice` |
 | `POST /device/decision` | `{ code, approve }` (`Content-Type: application/json`) | `{ result: "ok" \| "not_found" \| "expired" }`. Approving binds that computer to the signed-in user |
 | `GET /approvals?sessionId=` | | Pending `ApprovalRequest[]` of that session |
 | `POST /approvals/:id/decision` | `{ decision: "allow" \| "deny", scope: "once" \| "session", reason? }` + header `Idempotency-Key` | The updated `ApprovalRequest`. A second, different decision gets `409` |
@@ -46,7 +46,7 @@ The Local Mode daemon has the same routes under `/v1` except `/machines*`, and a
 
 ### Device approval for apps
 
-`GET /device/lookup` and `POST /device/decision` let an app or extension approve a computer without a page of your own (websites keep the [`/device` page](/docs/guides/auth-and-device-approval/) with `hub.lookupDevice` / `approveDevice`; both work). They need a signed-in user and share the failed-code limit of those calls: after 10 unknown codes in 10 minutes they answer `429 rate_limited` (`details.retryAfterSec`). The lookup is also behind the cross-site guard, so another site cannot spend the user’s guesses. The decision must be JSON: any other `Content-Type` gets `415 invalid_request`, because a cross-site form cannot send JSON without a preflight. `@uncage/client` has `lookupDevice(code)` and `decideDevice(code, approve)`, and `@uncage/react` has `useDeviceApproval(code)`.
+`GET /device/lookup` and `POST /device/decision` let an app or extension approve a computer without a page of your own (websites keep the [`/device` page](/docs/guides/auth-and-device-approval/) with `hub.lookupDevice` / `approveDevice`; both work). They need a signed-in user and share the failed-code limit of those calls: after 10 unknown codes in 10 minutes they answer `429 rate_limited` (`details.retryAfterSec`). The lookup is also behind the cross-site guard, so another site cannot spend the user’s guesses. The decision must be JSON: any other `Content-Type` gets `415 invalid_request`, because a cross-site form cannot send JSON without a preflight. `@uncage/client` has `lookupDevice(code)` and `decideDevice(code, approve)`, and `@uncage/react` has `useDeviceApproval(code, { source })`. A code that arrived in a link is not trusted on its own: show the request time and IP and ask for its last 4 characters before approving ([phishing links](/docs/guides/auth-and-device-approval/#phishing-links)).
 
 ### Server-sent events
 

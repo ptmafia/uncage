@@ -67,9 +67,14 @@ carries `machineId`, the computer it runs on, so UIs can show that computer's st
   `chrome-extension://<id>` ([Browser extensions](https://uncage-dev.vercel.app/docs/guides/browser-extension/)). Invalid entries
   make `createHub` throw. It is not CORS: the hub sends no `Access-Control-*` headers and does not
   answer preflight, so a trusted `https://` website origin only works if your framework adds CORS.
-- **Device approval from an app**: `GET <base>/device/lookup?code=` (the pending computer, or
+- **Device approval from an app**: `GET <base>/device/lookup?code=` (the pending computer with
+  `requestedAt` and the requesting `requestIp`, or
   `null`) and `POST <base>/device/decision` `{ code, approve }` → `{ result: 'ok' | 'not_found' |
-  'expired' }` (JSON only). Both go through `getUser` and the cross-site guard.
+  'expired' }` (JSON only). Both go through `getUser` and the cross-site guard. A code that arrived
+  in a link is not trusted on its own (anyone can run `uncage setup` on their own computer and send
+  the link): show `requestedAt` and `requestIp`, warn, and ask for the code's last 4 characters
+  before approving (`<ApproveDevice>` and `useDeviceApproval` do this by default;
+  [Phishing links](https://uncage-dev.vercel.app/docs/guides/auth-and-device-approval/#phishing-links)).
 - **One-click connect**: `GET <base>/machines/install` includes `connectUrl`
   (`uncage://connect?url=<setup url>`; [One-click connect](https://uncage-dev.vercel.app/docs/guides/one-click-connect/)).
 - **`onAttention(e, ctx)`**: called once per approval requested, run completed or run failed (deduped

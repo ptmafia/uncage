@@ -30,6 +30,7 @@ description: Connected 模式（传输、机器令牌、设备登录、用户之
 - 验证码只能由已登录用户通过你的 `/device` 页面批准，你必须保护这个页面免受框架嵌入和 CSRF 攻击（[指南](/docs/zh-cn/guides/auth-and-device-approval/#审批页device)）。
 - 限流：每个客户端 IP 每分钟 20 个设备码；每个用户每 10 分钟最多 10 次失败的验证码查询或决定。计数保存在 hub 存储里，所有节点和函数实例共享。
 - 设备码（CLI 轮询用的密钥）和用户码都以哈希形式保存。
+- 钓鱼链接：任何人都可以在自己的电脑上生成验证码并发送链接。URL 里带来的验证码本身永远不可信：审批页会显示警告、验证码的请求时间和来源 IP（`requestedAt`、`requestIp`；只有 IP，不做地理定位），并且只有在用户从终端输入验证码的最后 4 位之后才启用批准按钮（[指南](/docs/zh-cn/guides/auth-and-device-approval/#钓鱼链接)）。应用绝不预填来自自定义 URL scheme 的验证码。
 
 ## 用户之间的隔离
 
@@ -108,7 +109,7 @@ Uncage 服务只绑定回环地址，要求使用 `~/.uncage/token`（权限 600
 
 - [ ] `getUser` 返回真实的已登录用户，或者 `null`；会话 cookie 设置了 `Secure`，以及 `SameSite=Lax` 或 `Strict`。
 - [ ] `publicUrl` 是你的 `https://` 源，你的代理会转发原始的 `Host`。
-- [ ] `/device` 要求登录，发送 `frame-ancestors 'none'` 和 `X-Frame-Options: DENY`，并用带 CSRF 防护的 POST 做决定。
+- [ ] `/device` 要求登录，发送 `frame-ancestors 'none'` 和 `X-Frame-Options: DENY`，用带 CSRF 防护的 POST 做决定，并对链接里带来的验证码要求输入最后 4 位。
 - [ ] 每个工具 handler 都把读写范围限定在 `ctx.user.id` 之内。
 - [ ] 工具错误信息可以安全地展示给用户；详细信息写进你的日志。
 - [ ] 发布、发送、付款或删除类的工具使用 `requiresConfirmation: true`。

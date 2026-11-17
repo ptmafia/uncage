@@ -30,6 +30,7 @@ Protocol version `2`. The agent always connects **out**, so users need no open p
 - Codes can only be approved by a signed-in user, through your `/device` page, which you must protect against framing and CSRF ([guide](/docs/guides/auth-and-device-approval/#the-approval-page-device)).
 - Rate limits: 20 device codes per minute per client IP; 10 failed code lookups or decisions per user per 10 minutes. Counted in the hub store, shared by every node and function instance.
 - The device code (the CLI’s polling secret) and the user code are stored hashed.
+- Phishing links: anyone can start a code on their own computer and send the link. A code from the URL is never trusted on its own: the approve page warns, shows when and from which IP the code was requested (`requestedAt`, `requestIp`; IP only, no geolocation), and enables Approve only after the user typed the code’s last 4 characters from their terminal ([guide](/docs/guides/auth-and-device-approval/#phishing-links)). Apps never pre-fill a code from a custom URL scheme.
 
 ## Isolation between users
 
@@ -108,7 +109,7 @@ The daemon binds to loopback only, requires a bearer token from `~/.uncage/token
 
 - [ ] `getUser` returns the real signed-in user, or `null`; session cookies are `Secure` and `SameSite=Lax` or `Strict`.
 - [ ] `publicUrl` is your `https://` origin, and your proxy forwards the original `Host`.
-- [ ] `/device` requires sign-in, sends `frame-ancestors 'none'` and `X-Frame-Options: DENY`, and decides with a CSRF-protected POST.
+- [ ] `/device` requires sign-in, sends `frame-ancestors 'none'` and `X-Frame-Options: DENY`, decides with a CSRF-protected POST, and asks for the last 4 characters of a code that came in the link.
 - [ ] Every tool handler scopes its reads and writes to `ctx.user.id`.
 - [ ] Tool errors are user-safe; details go to your logs.
 - [ ] Tools that publish, send, pay or delete use `requiresConfirmation: true`.
