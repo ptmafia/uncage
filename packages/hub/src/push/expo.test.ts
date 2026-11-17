@@ -37,7 +37,12 @@ const tokens = (n: number) => Array.from({ length: n }, (_, i) => `ExponentPushT
 describe('expoPushNotifier', () => {
   it('batches 250 tokens into 3 requests', async () => {
     const expo = fakeExpo();
-    const notify = expoPushNotifier({ tokensFor: async (u) => (u === 'alice' ? tokens(250) : []), accessToken: 'secret', fetch: expo.fetch });
+    const notify = expoPushNotifier({
+      tokensFor: async (u) => (u === 'alice' ? tokens(250) : []),
+      accessToken: 'secret',
+      fetch: expo.fetch,
+      includeContent: true,
+    });
     await notify(event(), ctx);
     expect(expo.calls.map((c) => c.messages.length)).toEqual([100, 100, 50]);
     expect(expo.calls.every((c) => c.url === EXPO_PUSH_ENDPOINT)).toBe(true);
@@ -53,7 +58,7 @@ describe('expoPushNotifier', () => {
     });
     // Run ends carry no approvalId; no access token → no Authorization header.
     const expo2 = fakeExpo();
-    await expoPushNotifier({ tokensFor: async () => tokens(1), fetch: expo2.fetch, endpoint: 'https://push.test/send' })(
+    await expoPushNotifier({ tokensFor: async () => tokens(1), fetch: expo2.fetch, endpoint: 'https://push.test/send', includeContent: true })(
       event({ kind: 'run_completed', approval: undefined }),
       ctx,
     );
@@ -65,6 +70,22 @@ describe('expoPushNotifier', () => {
     const expo3 = fakeExpo();
     await expoPushNotifier({ tokensFor: async () => [], fetch: expo3.fetch })(event(), ctx);
     expect(expo3.calls).toHaveLength(0);
+  });
+
+  it('by default sends no conversation content: generic text plus the deep-link data', async () => {
+    const expo = fakeExpo();
+    const notify = expoPushNotifier({ tokensFor: async () => tokens(1), fetch: expo.fetch });
+    await notify(event({ sessionTitle: 'Secret project', approval: { id: 'apr_1', title: 'cat ~/.ssh/id_rsa', category: 'shell' } }), ctx);
+    await notify(event({ kind: 'run_completed', approval: undefined, sessionTitle: 'Secret project' }), ctx);
+    await notify(event({ kind: 'run_failed', approval: undefined, sessionTitle: 'Secret project' }), ctx);
+    const sent = expo.calls.map((c) => c.messages[0]!);
+    expect(sent.map((m) => [m.title, m.body])).toEqual([
+      ['An approval needs you', 'Open the app to review it.'],
+      ['A run finished', 'Open the app to see the result.'],
+      ['A run failed', 'Open the app to see what happened.'],
+    ]);
+    expect(sent[0]!.data).toEqual({ sessionId: 'ses_1', approvalId: 'apr_1', kind: 'approval_requested' });
+    expect(JSON.stringify(sent)).not.toMatch(/Secret project|id_rsa/);
   });
 
   it('reports DeviceNotRegistered via onInvalidToken', async () => {
@@ -172,15 +193,21 @@ describe('expoPushNotifier', () => {
 describe('defaultPushMessage', () => {
   it('caps title and body at 180 characters on one line', () => {
     const command = `rm -rf ./build && ${'x'.repeat(5_000)}\nsecond line`;
-    const m = defaultPushMessage(event({ approval: { id: 'apr_1', title: command, category: 'shell' } }));
+    const m = defaultPushMessage(event({ approval: { id: 'apr_1', title: command, category: 'shell' } }), { includeContent: true });
     expect(m.title).toBe('Approval needed');
     expect([...m.body].length).toBeLessThanOrEqual(180);
     expect(m.body.endsWith('…')).toBe(true);
     expect(m.body.startsWith('Fix the build: rm -rf ./build && xxx')).toBe(true);
     expect(m.body).not.toContain('\n');
-    const long = defaultPushMessage(event({ kind: 'run_completed', approval: undefined, sessionTitle: 'é'.repeat(400) }));
+    const long = defaultPushMessage(event({ kind: 'run_completed', approval: undefined, sessionTitle: 'é'.repeat(400) }), { includeContent: true });
     expect([...long.body].length).toBe(180);
     // Short text is untouched.
-    expect(defaultPushMessage(event()).body).toBe('Fix the build: Run npm test');
+    expect(defaultPushMessage(event(), { includeContent: true }).body).toBe('Fix the build: Run npm test');
+  });
+
+  it('is generic unless includeContent is set', () => {
+    expect(defaultPushMessage(event())).toEqual({ title: 'An approval needs you', body: 'Open the app to review it.' });
+    expect(defaultPushMessage(event({ kind: 'run_completed', approval: undefined }))).toEqual({ title: 'A run finished', body: 'Open the app to see the result.' });
+    expect(defaultPushMessage(event({ kind: 'run_failed', approval: undefined }))).toEqual({ title: 'A run failed', body: 'Open the app to see what happened.' });
   });
 });

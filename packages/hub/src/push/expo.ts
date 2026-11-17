@@ -12,10 +12,16 @@ export interface ExpoPushNotifierOptions {
   accessToken?: string;
   fetch?: typeof fetch;
   /**
-   * Title and body per event; `null` sends nothing. Defaults to `defaultPushMessage` (short English
-   * messages that include the session and approval titles; see there for what leaves your hub).
+   * Title and body per event; `null` sends nothing. Defaults to `defaultPushMessage` (short generic
+   * English messages without conversation content; see there for what leaves your hub).
    */
   message?(e: AttentionEvent): { title: string; body: string } | null;
+  /**
+   * Opt in to putting the session title and the approval's title (often a shell command or a file
+   * path) into the default message. They then travel through Expo and Apple / Google and show on
+   * the lock screen. Default `false`. Ignored when you pass `message`.
+   */
+  includeContent?: boolean;
   /** A token Expo reports as `DeviceNotRegistered` (app uninstalled): delete it from your database. */
   onInvalidToken?(token: string): void | Promise<void>;
   /** Defaults to `EXPO_PUSH_ENDPOINT`. */
@@ -37,17 +43,30 @@ function pushText(s: string): string {
 }
 
 /**
- * The default messages (English; pass `message` to localize or to send generic text).
+ * The default messages (English; pass `message` to localize).
  *
  * **What leaves your hub**: the message goes to Expo, then Apple (APNs) or Google (FCM), and shows
- * on the lock screen. By default it contains the session title and, for an approval, the
- * approval's `title`: the runtime's summary of the tool call, often the shell command or the file it
- * touches. Nothing else from the event (no tool input, output or file contents) is included, and
- * each text is cut to one line of at most 180 characters. To send nothing specific, pass for example
- * `message: () => ({ title: 'Approval needed', body: 'Open the app to review.' })`.
+ * on the lock screen. By default it is generic ("An approval needs you", "A run finished", "A run
+ * failed") and carries no conversation content: the app opens the right screen from the push
+ * `data` (`sessionId`, `approvalId`, `kind`) and loads the details over its signed-in connection.
+ *
+ * With `includeContent: true` (an explicit opt-in) the text also has the session title and, for
+ * an approval, the approval's `title`: the runtime's summary of the tool call, often the shell
+ * command or the file it touches. Nothing else from the event (no tool input, output or file
+ * contents) is included, and each text is cut to one line of at most 180 characters.
  */
-export function defaultPushMessage(e: AttentionEvent): { title: string; body: string } {
+export function defaultPushMessage(e: AttentionEvent, opts: { includeContent?: boolean } = {}): { title: string; body: string } {
   const out = (title: string, body: string) => ({ title: pushText(title), body: pushText(body) });
+  if (!opts.includeContent) {
+    switch (e.kind) {
+      case 'approval_requested':
+        return out('An approval needs you', 'Open the app to review it.');
+      case 'run_completed':
+        return out('A run finished', 'Open the app to see the result.');
+      case 'run_failed':
+        return out('A run failed', 'Open the app to see what happened.');
+    }
+  }
   switch (e.kind) {
     case 'approval_requested': {
       const what = e.approval?.title || 'Your agent is waiting for your approval.';
@@ -65,14 +84,16 @@ type Ticket = { status: 'ok'; id?: string } | { status: 'error'; message?: strin
 /**
  * An `onAttention` handler that sends Expo push notifications to the user's devices: one message
  * per token, in requests of at most 100, with `data: { sessionId, approvalId?, kind }` for the app
- * to open the right screen. Tokens Expo reports as `DeviceNotRegistered` go to `onInvalidToken`.
+ * to open the right screen. The default text has no conversation content (`includeContent` opts
+ * in; see `defaultPushMessage`). Tokens Expo reports as `DeviceNotRegistered` go to `onInvalidToken`.
  * Rejects (the hub logs it) when a request fails or times out (`timeoutMs`), when `onInvalidToken`
  * throws, or when Expo refused messages for another reason (e.g. `InvalidCredentials`: error codes
  * and counts only, never tokens). Several failures reject with an `AggregateError` (all of them in
  * `errors`). Uses only `fetch` (any platform).
  */
 export function expoPushNotifier(o: ExpoPushNotifierOptions): OnAttention {
-  const message = o.message ?? defaultPushMessage;
+  const includeContent = o.includeContent === true;
+  const message = o.message ?? ((e: AttentionEvent) => defaultPushMessage(e, { includeContent }));
   const endpoint = o.endpoint ?? EXPO_PUSH_ENDPOINT;
   const timeoutMs = o.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   return async (e) => {

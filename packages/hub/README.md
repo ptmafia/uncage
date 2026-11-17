@@ -74,11 +74,12 @@ carries `machineId`, the computer it runs on, so UIs can show that computer's st
   (`uncage://connect?url=<setup url>`; [One-click connect](https://uncage-dev.vercel.app/docs/guides/one-click-connect/)).
 - **`onAttention(e, ctx)`**: called once per approval requested, run completed or run failed (deduped
   across nodes through the store, never blocks ingest, events older than 10 minutes skipped).
-  `expoPushNotifier({ tokensFor, accessToken?, message?, onInvalidToken? })` is a ready handler
-  that sends Expo push notifications; `defaultPushMessage` is its default text. **What leaves your
-  hub**: the session title and the approval's title (often the shell command or file) go to Expo,
-  then Apple or Google, and show on the lock screen (cut to 180 characters). Pass `message` for
-  generic text, e.g. `() => ({ title: 'Approval needed', body: 'Open the app to review.' })`
+  `expoPushNotifier({ tokensFor, accessToken?, message?, includeContent?, onInvalidToken? })` is a
+  ready handler that sends Expo push notifications; `defaultPushMessage` is its default text. **What
+  leaves your hub**: by default only generic text ("An approval needs you", "A run finished", "A run
+  failed") plus `data: { sessionId, approvalId?, kind }` goes to Expo, then Apple or Google, and the
+  lock screen. `includeContent: true` opts in to adding the session title and the approval's title
+  (often the shell command or file; cut to 180 characters). Pass `message` for your own text
   ([Push notifications](https://uncage-dev.vercel.app/docs/guides/push-notifications/)).
 
 ## Site tools
