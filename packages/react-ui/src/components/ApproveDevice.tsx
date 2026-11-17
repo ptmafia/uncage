@@ -1,5 +1,5 @@
 import type { ErrorCode } from '@uncage/protocol';
-import { matchesDeviceCodeTail } from '@uncage/react';
+import { isWellFormedDeviceCode, maskDeviceCode, matchesDeviceCodeTail } from '@uncage/react';
 import { CheckCircle2, Laptop, ShieldAlert, XCircle } from 'lucide-react';
 import { useEffect, useId, useState, type JSX } from 'react';
 import { cx, UncageUIProvider, useUi } from '../context.js';
@@ -86,10 +86,6 @@ export function ApproveDevice(props: ApproveDeviceProps): JSX.Element {
   );
 }
 
-/** Exactly the shape the CLI prints: `ABCD-EFGH` or `ABCDEFGH` (after trimming). */
-const LINK_CODE = /^[A-Z0-9]{4}-?[A-Z0-9]{4}$/i;
-const compact = (s: string): string => s.toUpperCase().replace(/[\s-]/g, '');
-
 function ApproveDeviceView({
   code,
   source = 'link',
@@ -113,11 +109,11 @@ function ApproveDeviceView({
   useEffect(() => setTypedTail(''), [code]);
   // A link code must have exactly the CLI's shape; padding (`ABCD-EFGH----`) could otherwise put
   // the real last 4 characters on screen.
-  const linkInvalid = fromLink && !LINK_CODE.test(code.trim());
+  const linkInvalid = fromLink && !isWellFormedDeviceCode(code);
   const confirmed = !linkInvalid && (!fromLink || matchesDeviceCodeTail(code, typedTail));
   // From a link: hide the last 4 characters (built from the compacted code), the user types them
   // from their own terminal.
-  const shownCode = fromLink ? `${compact(code).slice(0, 4)}-••••` : code;
+  const shownCode = fromLink ? maskDeviceCode(code) : code;
 
   let content: JSX.Element;
   if (done) {

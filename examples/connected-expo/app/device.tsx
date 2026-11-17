@@ -8,13 +8,13 @@
  * last 4 characters from their terminal before Approve works. A code the user typed whole needs no
  * extra step. Deny is always one tap.
  */
-import { useDeviceApproval, type DeviceCodeSource } from '@uncage/react';
+import { isWellFormedDeviceCode, maskDeviceCode, useDeviceApproval, type DeviceCodeSource } from '@uncage/react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState, type JSX } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Banner, Button, Card } from '../components/ui';
 import { takePendingDeviceCode, useAuth } from '../lib/app';
-import { isVerifiedLinkCode, isWellFormedDeviceCode, maskDeviceCode, sanitizeDeviceCode, timeAgo } from '../lib/links';
+import { isVerifiedLinkCode, sanitizeDeviceCode, timeAgo } from '../lib/links';
 import { useTheme } from '../lib/theme';
 
 const WARNING = 'Only approve if you just ran `uncage setup` on a computer in front of you. Never approve a code someone sent you.';

@@ -16,6 +16,8 @@ export default async function DevicePage({ searchParams }: { searchParams: Promi
   const user = await requireUser(`/device${code ? `?code=${encodeURIComponent(code)}` : ''}`);
   // A link code must be exactly what the CLI prints (ABCD-EFGH): padding such as `ABCD-EFGH----`
   // could put the hidden last 4 characters on screen. Anything else is not looked up.
+  // (Same check as @uncage/react's isWellFormedDeviceCode, inlined: this is a Server Component and
+  // @uncage/react imports React client hooks, which Next.js refuses on the server.)
   const wellFormed = /^[A-Z0-9]{4}-?[A-Z0-9]{4}$/i.test(code.trim());
   if (code && !wellFormed) {
     return (

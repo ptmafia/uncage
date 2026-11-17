@@ -241,6 +241,12 @@ export class Stack {
     const link = /(https?:\/\/\S+\/device\?code=\S+)/.exec(setup.output())?.[1];
     const code = /confirm the code:\s+(\S+)/.exec(setup.output())?.[1];
     expect(link, setup.output()).toBeTruthy();
+    // A padded code (`?code=ABCD-EFGH----`) could put the hidden last 4 on screen: "not a valid link",
+    // no lookup, no Approve button, and the last 4 characters nowhere on the page.
+    await page.goto(`${link!}----`);
+    await expect(page.getByText('这个链接无效', { exact: false })).toBeVisible();
+    await expect(page.getByRole('button', { name: '批准', exact: true })).toHaveCount(0);
+    expect(await page.locator('body').innerText()).not.toContain(code!.slice(-4));
     const res = await page.goto(link!);
     // The approval page may never be framed (clickjacking).
     expect(res?.headers()['x-frame-options']).toBe('DENY');

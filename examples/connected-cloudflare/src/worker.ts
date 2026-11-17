@@ -216,7 +216,8 @@ async function device(req: Request, url: URL, env: Env, user: { id: string; name
   }
   const rawCode = (url.searchParams.get('code') ?? '').trim().toUpperCase();
   // A link code must be exactly what the CLI prints (ABCD-EFGH): padding such as `ABCD-EFGH----`
-  // could put the hidden last 4 characters on screen. Anything else is not looked up.
+  // could put the hidden last 4 characters on screen. Anything else is not looked up. (The same
+  // check as @uncage/react's isWellFormedDeviceCode, inlined: this Worker has no React dependency.)
   const linkInvalid = rawCode !== '' && !/^[A-Z0-9]{4}-?[A-Z0-9]{4}$/.test(rawCode);
   const code = linkInvalid ? '' : rawCode;
   let about = linkInvalid ? '<p data-result="invalid_link">This link is not valid. Type the code shown in your terminal instead.</p>' : '';

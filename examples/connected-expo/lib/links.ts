@@ -11,6 +11,8 @@
  * characters. `uncagedemo://`, `exp://` and every other form open the manual-entry screen.
  */
 
+import { isWellFormedDeviceCode } from '@uncage/react';
+
 /** Device codes are short (`ABCD-EFGH`); anything else is not passed on. */
 const CODE = /^[A-Za-z0-9-]{1,32}$/;
 
@@ -58,19 +60,6 @@ export function deviceCodeFromPath(path: string): string | undefined {
   const p = parseLink(path);
   if (!p?.device) return undefined;
   return sanitizeDeviceCode(new URLSearchParams(p.query).get('code') ?? undefined);
-}
-
-/**
- * A code from a link must have exactly the shape the CLI prints (`ABCD-EFGH` or `ABCDEFGH`):
- * padding such as `ABCD-EFGH----` could otherwise put the hidden last 4 characters on screen.
- */
-export function isWellFormedDeviceCode(code: string): boolean {
-  return /^[A-Z0-9]{4}-?[A-Z0-9]{4}$/i.test(code.trim());
-}
-
-/** `ABCD-••••`, built from the compacted code (spaces and dashes removed). */
-export function maskDeviceCode(code: string): string {
-  return `${code.toUpperCase().replace(/[\s-]/g, '').slice(0, 4)}-••••`;
 }
 
 export type DeviceLink = { kind: 'verified'; code: string } | { kind: 'manual' };
