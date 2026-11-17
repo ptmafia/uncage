@@ -250,7 +250,7 @@ export class Stack {
     await expect(page.getByText('绝不要批准别人发给你的验证码', { exact: false })).toBeVisible();
     const approve = page.getByRole('button', { name: '批准', exact: true });
     await expect(approve).toBeDisabled();
-    await page.getByLabel('输入终端里显示的验证码的最后 4 位').fill(code!.slice(-4));
+    await page.getByLabel('输入你面前这台电脑的终端里显示的最后 4 位', { exact: false }).fill(code!.slice(-4));
     await approve.click();
     await expect(page.getByText('电脑已连接')).toBeVisible();
     const exit = await new Promise<number | null>((resolve) => {

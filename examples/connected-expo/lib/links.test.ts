@@ -8,6 +8,8 @@ import {
   sanitizeDeviceCode,
   sanitizeId,
   timeAgo,
+  isWellFormedDeviceCode,
+  maskDeviceCode,
 } from './links';
 
 describe('device links', () => {
@@ -67,6 +69,20 @@ describe('device links', () => {
     expect(isVerifiedLinkCode('abcd-efgh')).toBe(true);
     expect(isVerifiedLinkCode(undefined)).toBe(false);
     expect(routeDeviceLink('/chat/ses_1', site)).toBeUndefined();
+  });
+
+  it('a padded or malformed code in a verified link is never pre-filled; the mask uses the compacted code', () => {
+    const site = 'https://demo.example.com';
+    for (const code of ['ABCD-EFGH----', 'AB-CD-EF-GH', 'ABCD--EFGH', 'ABCD-EFGH-WXYZ']) {
+      expect(deviceLinkFromPath(`https://demo.example.com/device?code=${code}`, site), code).toEqual({ kind: 'manual' });
+    }
+    expect(deviceLinkFromPath('https://demo.example.com/device?code=ABCD%20EFGH', site)).toEqual({ kind: 'manual' });
+    expect(deviceLinkFromPath('https://demo.example.com/device?code=abcdefgh', site)).toEqual({ kind: 'verified', code: 'abcdefgh' });
+    expect(isWellFormedDeviceCode(' ABCD-EFGH ')).toBe(true);
+    expect(isWellFormedDeviceCode('ABCD EFGH')).toBe(false);
+    expect(maskDeviceCode('ABCD-EFGH----')).toBe('ABCD-••••');
+    expect(maskDeviceCode('a b-c d e f g h')).toBe('ABCD-••••');
+    expect(maskDeviceCode('abcdefgh')).toBe('ABCD-••••');
   });
 
   it('timeAgo', () => {

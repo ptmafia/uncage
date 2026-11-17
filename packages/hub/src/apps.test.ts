@@ -169,6 +169,15 @@ describe('apps and extensions on the browser API', () => {
     } finally {
       await t2.close();
     }
+    // No trusted client IP (hub.fetch without info, no rateLimits.clientIp): stored as null, never the shared bucket.
+    const t3 = await startTestHub({ getUser: appGetUser });
+    try {
+      const res3 = await t3.hub.fetch(new Request(`${t3.api}/device/code`, jsonInit('POST', { name: 'X' })));
+      const c3 = (await res3.json()) as DeviceCodeResponse;
+      expect(await t3.hub.lookupDevice(c3.userCode, { id: 'alice' })).toMatchObject({ requestIp: null });
+    } finally {
+      await t3.close();
+    }
   });
 
   it('device lookup/decision: approve binds, deny, not_found, expired, rate_limited after 10 bad codes', async () => {

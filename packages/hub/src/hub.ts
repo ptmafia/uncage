@@ -225,6 +225,7 @@ export async function createHub(o: HubOptions & HubInternals): Promise<Hub> {
   const userCodeWindowMs = o.rateLimits?.userCodeWindowMs ?? DEFAULT_USER_CODE_WINDOW_MS;
   const device = deviceFlow({
     store,
+    logger,
     verificationUri: `${origin}/${trimSlashes(o.verificationPath ?? '/device')}`,
     site,
     transports: transportOffers,

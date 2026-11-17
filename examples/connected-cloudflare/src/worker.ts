@@ -214,8 +214,12 @@ async function device(req: Request, url: URL, env: Env, user: { id: string; name
           : 'Unknown code. Check it and try again.';
     return page('Device', `<p data-result="${esc(result)}">${esc(text)}</p>`, result === 'ok' ? 200 : 400);
   }
-  const code = (url.searchParams.get('code') ?? '').trim().toUpperCase();
-  let about = '';
+  const rawCode = (url.searchParams.get('code') ?? '').trim().toUpperCase();
+  // A link code must be exactly what the CLI prints (ABCD-EFGH): padding such as `ABCD-EFGH----`
+  // could put the hidden last 4 characters on screen. Anything else is not looked up.
+  const linkInvalid = rawCode !== '' && !/^[A-Z0-9]{4}-?[A-Z0-9]{4}$/.test(rawCode);
+  const code = linkInvalid ? '' : rawCode;
+  let about = linkInvalid ? '<p data-result="invalid_link">This link is not valid. Type the code shown in your terminal instead.</p>' : '';
   if (code) {
     try {
       const d = await hub.lookupDevice(code, user);
@@ -223,7 +227,10 @@ async function device(req: Request, url: URL, env: Env, user: { id: string; name
         ? `<p>Computer: <b>${esc(d.name ?? 'unnamed')}</b>${d.os ? ` (${esc(d.os)})` : ''}${
             d.repairsMachine ? ` — re-pairs <b>${esc(d.repairsMachine.name)}</b>` : ''
           }</p>
-<p>Requested: <time datetime="${esc(d.requestedAt)}">${esc(ago(d.requestedAt))}</time> · From IP: ${esc(d.requestIp ?? 'unknown')}</p>`
+<p><small>Name and system: reported by the computer, not verified.</small></p>
+<p>Requested: <time datetime="${esc(d.requestedAt)}">${esc(ago(d.requestedAt))}</time>${
+            d.requestIp ? ` · IP as seen by the server: ${esc(d.requestIp)}` : ''
+          }</p>`
         : '<p>Unknown or expired code.</p>';
     } catch (e) {
       if ((e as { code?: unknown } | null)?.code !== 'rate_limited') {
@@ -238,7 +245,7 @@ async function device(req: Request, url: URL, env: Env, user: { id: string; name
   const fields = code
     ? `<p>Code: <code>${esc(compactCode(code).slice(0, 4))}-••••</code></p>
   <input type="hidden" name="code" value="${esc(code)}">
-  <label>Type the last 4 characters of the code shown in your terminal <input name="tail" autocomplete="off" maxlength="16"></label>`
+  <label>Type the last 4 characters shown in the terminal of a computer you are sitting at. If someone gave you these characters, choose Deny. <input name="tail" autocomplete="off" maxlength="16"></label>`
     : `<label>Code <input name="code" autocomplete="off" required></label>`;
   return page(
     'Connect a computer',

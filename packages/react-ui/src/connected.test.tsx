@@ -622,11 +622,15 @@ describe('ApproveDevice', () => {
     );
     expect(screen.getByText('3 minutes ago')).toBeTruthy();
     expect(screen.getByText('203.0.113.7')).toBeTruthy();
+    expect(screen.getByText('IP as seen by the server')).toBeTruthy();
+    expect(screen.getByText('Name and system: reported by the computer, not verified.')).toBeTruthy();
     // The last 4 characters are not on the page: they come from the user's own terminal.
     expect(screen.getByText('WDJB-••••')).toBeTruthy();
     expect(screen.queryByText('WDJB-MJHT')).toBeNull();
     const approve = screen.getByRole('button', { name: 'Approve' }) as HTMLButtonElement;
-    const input = screen.getByLabelText('Type the last 4 characters of the code shown in your terminal') as HTMLInputElement;
+    const input = screen.getByLabelText(
+      'Type the last 4 characters shown in the terminal of a computer you are sitting at. If someone gave you these characters, choose Deny.',
+    ) as HTMLInputElement;
     expect(approve.disabled).toBe(true);
     fireEvent.click(approve);
     expect(p.onApprove).not.toHaveBeenCalled();
@@ -638,13 +642,26 @@ describe('ApproveDevice', () => {
     expect(p.onApprove).toHaveBeenCalledTimes(1);
   });
 
-  it('a code from a link: Deny stays one click; unknown IP shows "unknown"', () => {
+  it('a code from a link: Deny stays one click; an unknown IP is hidden', () => {
     const p = base({ lookup: { repairsMachine: null, requestedAt: new Date().toISOString(), requestIp: null } });
     render(<ApproveDevice {...p} />);
     expect(screen.getByText('just now')).toBeTruthy();
-    expect(screen.getByText('unknown')).toBeTruthy();
+    expect(screen.queryByText('IP as seen by the server')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Deny' }));
     expect(p.onDeny).toHaveBeenCalledTimes(1);
+  });
+
+  it('a padded or malformed link code is "not valid": never shows the tail, no buttons', () => {
+    for (const code of ['WDJB-MJHT----', 'WD-JB-MJ-HT', 'WDJB MJHT', 'WDJB--MJHT', ' WDJB-MJHT-WXYZ']) {
+      const { unmount, container } = render(<ApproveDevice {...base({ code })} />);
+      expect(screen.getByRole('alert').textContent).toBe('This link is not valid. Type the code shown in your terminal instead.');
+      expect(container.textContent).not.toContain('MJHT');
+      expect(screen.queryByRole('button')).toBeNull();
+      unmount();
+    }
+    // A well-formed code without the dash is fine, masked from the compacted code.
+    render(<ApproveDevice {...base({ code: ' wdjbmjht ' })} />);
+    expect(screen.getByText('WDJB-••••')).toBeTruthy();
   });
 
   it('a typed code: no warning, no extra step, full code shown', () => {

@@ -67,8 +67,10 @@ Anyone can run `uncage setup https://your.site` on **their own** computer and se
 So a code from the URL is not trusted on its own:
 
 - Show the warning “Only approve if you just ran `uncage setup` on a computer in front of you. Never approve a code someone sent you.”
-- Show when the code was requested (relative time: a code someone sent is usually minutes old) and the IP the hub saw (`requestIp`, from the hub’s client-IP resolution; `null` when it has none). The IP is coarse on purpose: no geolocation.
-- Hide the code’s last 4 characters and enable Approve only once the user typed them. The user reads them from their terminal; a phishing victim has none.
+- Show when the code was requested (relative time: a code someone sent is usually minutes old) and the IP as seen by the server (`requestIp`, from the hub’s client-IP resolution; `null`, and not shown, when the hub had no trusted client IP). The IP is coarse on purpose: no geolocation.
+- Label the computer’s name and OS as reported by the computer, not verified. The hub drops a reported name or OS that contains the code’s last 4 characters, and strips control characters.
+- Hide the code’s last 4 characters and enable Approve only once the user typed them from the terminal of a computer they are sitting at. An attacker may try to tell the user those characters (in the message, on the phone): never type characters someone gave you; choose Deny.
+- Accept a code from the URL only in the exact shape the CLI prints (`ABCD-EFGH` or `ABCDEFGH`); anything else (extra dashes or spaces) is “not a valid link” and is not looked up, and the masked code is built from the compacted code.
 - When the user typed the whole code on your page (no code in the URL), no extra step is needed. Never decide that from the URL itself.
 - Deny stays one click.
 

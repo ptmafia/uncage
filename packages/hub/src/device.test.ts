@@ -1,6 +1,6 @@
 import { DeviceCodeResponseSchema } from '@uncage/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { deviceFlow, generateUserCode, normalizeUserCode, USER_CODE_ALPHABET } from './device.js';
+import { deviceFlow, generateUserCode, labelRevealsCodeTail, normalizeUserCode, USER_CODE_ALPHABET } from './device.js';
 import { sha256Hex } from './web.js';
 import { storeRateLimiter } from './rate-limit.js';
 import { pgliteHubStore } from './node/index.js';
@@ -163,6 +163,39 @@ describe('deviceFlow', () => {
     // Unknown IP (shared rate-limit bucket): null, never the bucket key.
     const anon = await f.createCode({}, 'shared');
     expect(await f.lookup(anon.userCode, { id: 'alice' })).toMatchObject({ requestIp: null });
+  });
+
+  it('drops a reported name / OS that shows the code\'s last 4 characters, and strips control characters', async () => {
+    const warned: unknown[] = [];
+    let n = 0;
+    const f = deviceFlow({
+      limits: {
+        userFailures: storeRateLimiter(store, { name: 'user_code', max: 10, windowMs: 600_000, now: () => now }),
+        codesPerClient: storeRateLimiter(store, { name: 'device_code', max: 1000, windowMs: 60_000, now: () => now }),
+      },
+      store,
+      verificationUri: 'https://app.example.com/device',
+      site: { id: 'app.example.com', name: 'app.example.com', url: 'https://app.example.com/api/uncage' },
+      transports: () => [{ kind: 'ws', url: 'wss://app.example.com/api/uncage/agent' }],
+      createMachine: async () => ({ machineId: 'mch_1', machineToken: 'tok_1' }),
+      now: () => now,
+      // Distinct codes that all end in EFGH.
+      generateCode: () => `${['ABCD', 'BCDE', 'CDEF', 'DEFG', 'HJKM', 'KMNP', 'MNPQ', 'PQRS'][n++ % 8]}-EFGH`,
+      logger: { warn: (o) => void warned.push(o), error: () => undefined },
+    });
+    for (const name of ['Type EFGH to approve', 'e f g h', 'E-F.G_H laptop', 'efgh']) {
+      const c = await f.createCode({ name, os: 'darwin' }, 'ip');
+      expect(await f.lookup(c.userCode, { id: 'alice' })).toMatchObject({ os: 'darwin' });
+      expect((await f.lookup(c.userCode, { id: 'alice' }))?.name).toBeUndefined();
+    }
+    const viaOs = await f.createCode({ name: 'Mac', os: 'EF GH' }, 'ip');
+    expect(await f.lookup(viaOs.userCode, { id: 'alice' })).toMatchObject({ name: 'Mac' });
+    expect((await f.lookup(viaOs.userCode, { id: 'alice' }))?.os).toBeUndefined();
+    expect(warned).toHaveLength(5);
+    // Other labels are kept; control and bidi characters are stripped.
+    const ok = await f.createCode({ name: 'Nathan\u202E’s Mac\u0007', os: 'darwin\n' }, 'ip');
+    expect(await f.lookup(ok.userCode, { id: 'alice' })).toMatchObject({ name: 'Nathan’s Mac', os: 'darwin' });
+    expect(labelRevealsCodeTail('ABCD laptop', 'ABCD-EFGH')).toBe(false);
   });
 
   it('lookups of unknown codes count as failures too', async () => {

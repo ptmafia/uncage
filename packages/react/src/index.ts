@@ -20,6 +20,8 @@ export {
   usePersistSession,
   useDeviceApproval,
   deviceCodeTail,
+  isWellFormedDeviceCode,
+  maskDeviceCode,
   matchesDeviceCodeTail,
   useReconnect,
   PERSIST_SESSION_PARAM,

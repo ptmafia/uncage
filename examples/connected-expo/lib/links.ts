@@ -60,11 +60,24 @@ export function deviceCodeFromPath(path: string): string | undefined {
   return sanitizeDeviceCode(new URLSearchParams(p.query).get('code') ?? undefined);
 }
 
+/**
+ * A code from a link must have exactly the shape the CLI prints (`ABCD-EFGH` or `ABCDEFGH`):
+ * padding such as `ABCD-EFGH----` could otherwise put the hidden last 4 characters on screen.
+ */
+export function isWellFormedDeviceCode(code: string): boolean {
+  return /^[A-Z0-9]{4}-?[A-Z0-9]{4}$/i.test(code.trim());
+}
+
+/** `ABCD-••••`, built from the compacted code (spaces and dashes removed). */
+export function maskDeviceCode(code: string): string {
+  return `${code.toUpperCase().replace(/[\s-]/g, '').slice(0, 4)}-••••`;
+}
+
 export type DeviceLink = { kind: 'verified'; code: string } | { kind: 'manual' };
 
 /**
  * What a `/device` link may do. `verified`: an https link to `siteUrl`'s host (an App Link /
- * Universal Link the OS verified) with a valid code; the approve screen pre-fills it, and the user
+ * Universal Link the OS verified) with a well-formed code (`ABCD-EFGH`); the approve screen pre-fills it, and the user
  * still types its last 4 characters. `manual`: any other `/device` link (custom scheme, Expo Go,
  * another host, a bare path); the code is dropped and the manual-entry screen opens.
  * `undefined`: not a `/device` link.
@@ -74,7 +87,7 @@ export function deviceLinkFromPath(path: string, siteUrl: string | undefined): D
   if (!p?.device) return undefined;
   const code = sanitizeDeviceCode(new URLSearchParams(p.query).get('code') ?? undefined);
   const site = httpsHost(siteUrl);
-  if (code && site && p.scheme === 'https' && p.host === site) return { kind: 'verified', code };
+  if (code && isWellFormedDeviceCode(code) && site && p.scheme === 'https' && p.host === site) return { kind: 'verified', code };
   return { kind: 'manual' };
 }
 

@@ -17,11 +17,12 @@ export function ApprovePage({
   code,
   lookup,
   initialError,
-}: Pick<ApproveDeviceProps, 'code' | 'lookup'> & { initialError?: { code: string; message: string } }) {
+  invalidLink = false,
+}: Pick<ApproveDeviceProps, 'code' | 'lookup'> & { initialError?: { code: string; message: string }; invalidLink?: boolean }) {
   const [typed, setTyped] = useState<{ code: string; lookup: ApproveDeviceProps['lookup'] } | null>(null);
   if (code) return <Decision code={code} source="link" lookup={lookup} initialError={initialError} />;
   if (typed) return <Decision code={typed.code} source="typed" lookup={typed.lookup} />;
-  return <EnterCode onFound={setTyped} />;
+  return <EnterCode onFound={setTyped} invalidLink={invalidLink} />;
 }
 
 function Decision({
@@ -58,7 +59,13 @@ function Decision({
 }
 
 /** Plain `/device`: the user types the whole code from their terminal. */
-function EnterCode({ onFound }: { onFound(v: { code: string; lookup: ApproveDeviceProps['lookup'] }): void }) {
+function EnterCode({
+  onFound,
+  invalidLink,
+}: {
+  onFound(v: { code: string; lookup: ApproveDeviceProps['lookup'] }): void;
+  invalidLink: boolean;
+}) {
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | undefined>();
@@ -77,6 +84,11 @@ function EnterCode({ onFound }: { onFound(v: { code: string; lookup: ApproveDevi
     <div className="uc-root uc-approve-page" data-theme="auto" lang="zh-CN">
       <form className="uc-dialog uc-approve" onSubmit={(e) => void submit(e)}>
         <h1 className="uc-dialog-title">连接一台电脑</h1>
+        {invalidLink && (
+          <p className="uc-banner" data-tone="warn" role="note">
+            <span className="uc-banner-text">这个链接无效。请改为输入终端里显示的验证码。</span>
+          </p>
+        )}
         <label className="uc-approve-confirm">
           输入终端里 `uncage setup` 显示的验证码
           <input

@@ -14,6 +14,16 @@ export const dynamic = 'force-dynamic';
 export default async function DevicePage({ searchParams }: { searchParams: Promise<{ code?: string }> }) {
   const { code = '' } = await searchParams;
   const user = await requireUser(`/device${code ? `?code=${encodeURIComponent(code)}` : ''}`);
+  // A link code must be exactly what the CLI prints (ABCD-EFGH): padding such as `ABCD-EFGH----`
+  // could put the hidden last 4 characters on screen. Anything else is not looked up.
+  const wellFormed = /^[A-Z0-9]{4}-?[A-Z0-9]{4}$/i.test(code.trim());
+  if (code && !wellFormed) {
+    return (
+      <div className="demo-device">
+        <ApprovePage code="" lookup={null} invalidLink />
+      </div>
+    );
+  }
   let lookup = null;
   let error: { code: string; message: string } | undefined;
   try {

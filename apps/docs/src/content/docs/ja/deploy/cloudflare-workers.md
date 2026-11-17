@@ -173,15 +173,18 @@ async function devicePage(req: Request, url: URL, env: Env, ctx: ExecutionContex
         if (result === 'ok') return page(approve ? '<p>Approved. You can close this tab.</p>' : '<p>Denied.</p>');
         return page(`<p>This code is ${result === 'expired' ? 'expired' : 'unknown'}. Run <code>uncage setup</code> again.</p>`, 410);
       }
-      const code = url.searchParams.get('code') ?? '';
-      const info = code ? await hub.lookupDevice(code, user) : null;
+      const code = (url.searchParams.get('code') ?? '').trim();
+      // Exactly what the CLI prints: padding such as ABCD-EFGH---- is not a valid link.
+      if (!/^[A-Z0-9]{4}-?[A-Z0-9]{4}$/i.test(code)) return page('<p>This link is not valid. Run <code>uncage setup</code> again.</p>', 400);
+      const info = await hub.lookupDevice(code, user);
       if (!info) return page('<p>Unknown or expired code. Run <code>uncage setup</code> again.</p>', 404);
       const repair = info.repairsMachine ? `<p>This re-pairs <b>${esc(info.repairsMachine.name)}</b>.</p>` : '';
-      const asked = `<p>Requested ${esc(info.requestedAt)} from IP ${esc(info.requestIp ?? 'unknown')}.</p>`;
+      const ip = info.requestIp ? ` · IP as seen by the server: ${esc(info.requestIp)}` : '';
+      const asked = `<p>Requested ${esc(info.requestedAt)}${ip}. Name and system: reported by the computer, not verified.</p>`;
       return page(
         `<form method="post"><p><b>Only approve if you just ran <code>uncage setup</code> on a computer in front of you. Never approve a code someone sent you.</b></p>` +
           `<p>Connect <b>${esc(info.name ?? 'a computer')}</b> to your account?</p>${asked}${repair}` +
-          `<label>Type the last 4 characters of the code shown in your terminal <input name="tail" autocomplete="off" required></label>` +
+          `<label>Type the last 4 characters shown in the terminal of a computer you are sitting at. If someone gave you these characters, choose Deny. <input name="tail" autocomplete="off" required></label>` +
           `<input type="hidden" name="code" value="${esc(code)}"><button name="decision" value="approve">Approve</button> <button name="decision" value="deny" formnovalidate>Deny</button></form>`,
       );
     } finally {

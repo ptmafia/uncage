@@ -130,9 +130,16 @@ describe('connected-cloudflare worker', () => {
     expect(html).toContain('laptop');
     // A code from the link: warning, request time and IP, last 4 characters hidden.
     expect(html).toContain('Never approve a code someone sent you.');
-    expect(html).toContain('From IP:');
+    expect(html).toContain('reported by the computer');
     expect(html).toContain(`${code.userCode.slice(0, 4)}-••••`);
     expect(html).toContain('name="tail"');
+    // Padded / malformed link codes are not looked up and never show the tail.
+    for (const bad of [`${code.userCode}----`, `${code.userCode.slice(0, 2)}-${code.userCode.slice(2)}`, `${code.userCode.replace('-', '%20')}`]) {
+      const page = await (await call(`/device?code=${bad}`, { headers: { cookie } })).text();
+      expect(page).toContain('data-result="invalid_link"');
+      expect(page).not.toContain(code.userCode.slice(-4));
+      expect(page).not.toContain('name="tail"');
+    }
     const form = (body: string) => ({ method: 'POST', headers: { cookie, origin: ORIGIN, 'content-type': 'application/x-www-form-urlencoded' }, body });
     const wrongTail = await call('/device', form(`code=${code.userCode}&tail=ZZZZ&decision=approve`));
     expect(wrongTail.status).toBe(400);

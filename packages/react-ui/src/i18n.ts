@@ -240,11 +240,13 @@ const en = {
   approveLinkWarning:
     'Only approve if you just ran `uncage setup` on a computer in front of you. Never approve a code someone sent you.',
   approveRequested: 'Requested',
-  approveRequestIp: 'From IP',
-  approveIpUnknown: 'unknown',
+  approveRequestIp: 'IP as seen by the server',
+  approveReported: 'Name and system: reported by the computer, not verified.',
   justNow: 'just now',
-  approveTypeTail: 'Type the last 4 characters of the code shown in your terminal',
+  approveTypeTail:
+    'Type the last 4 characters shown in the terminal of a computer you are sitting at. If someone gave you these characters, choose Deny.',
   approveTypeTailHint: 'Approve unlocks when they match.',
+  deviceLinkInvalid: 'This link is not valid. Type the code shown in your terminal instead.',
   // Errors (by `UncageClientError.code`; unknown codes show the server message)
   errors: {
     attachment_type_unsupported: 'This file type is not supported.',
@@ -463,11 +465,12 @@ const zhCN: Strings = {
   deviceExpired: '验证码已过期。重新运行 `uncage setup` 获取新的验证码。',
   approveLinkWarning: '只有当你刚刚在面前的电脑上运行了 `uncage setup` 时才批准。绝不要批准别人发给你的验证码。',
   approveRequested: '请求时间',
-  approveRequestIp: '来源 IP',
-  approveIpUnknown: '未知',
+  approveRequestIp: '服务器看到的 IP',
+  approveReported: '名称和系统：由那台电脑自己上报，未经验证。',
   justNow: '刚刚',
-  approveTypeTail: '输入终端里显示的验证码的最后 4 位',
+  approveTypeTail: '输入你面前这台电脑的终端里显示的最后 4 位。如果这些字符是别人告诉你的，请选择拒绝。',
   approveTypeTailHint: '输入一致后才能批准。',
+  deviceLinkInvalid: '这个链接无效。请改为输入终端里显示的验证码。',
   errors: {
     attachment_type_unsupported: '不支持这种文件类型。',
     unsupported_capability: '当前运行时不支持这个功能或选项。',

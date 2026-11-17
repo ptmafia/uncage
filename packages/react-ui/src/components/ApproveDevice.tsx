@@ -1,5 +1,5 @@
 import type { ErrorCode } from '@uncage/protocol';
-import { deviceCodeTail, matchesDeviceCodeTail } from '@uncage/react';
+import { matchesDeviceCodeTail } from '@uncage/react';
 import { CheckCircle2, Laptop, ShieldAlert, XCircle } from 'lucide-react';
 import { useEffect, useId, useState, type JSX } from 'react';
 import { cx, UncageUIProvider, useUi } from '../context.js';
@@ -13,7 +13,7 @@ export interface DeviceLookupInfo {
   expiresAt?: string;
   /** When `uncage setup` asked for the code (ISO), shown as relative time. */
   requestedAt?: string;
-  /** The requesting computer's IP as the hub saw it; `null` = unknown. */
+  /** The requesting computer's IP as the hub saw it; `null` = unknown (not shown). */
   requestIp?: string | null;
   /** Approving re-pairs (rotates the token of) this existing computer of the user. */
   repairsMachine?: { id: string; name: string } | null;
@@ -27,7 +27,11 @@ export interface DeviceLookupInfo {
 export type ApproveDeviceState = 'idle' | 'approving' | 'denying' | 'approved' | 'denied' | 'expired' | 'not_found';
 
 export interface ApproveDeviceProps {
-  /** The user code from the link (`?code=`) or typed by the user, as the terminal shows it. */
+  /**
+   * The user code from the link (`?code=`) or typed by the user, as the terminal shows it. With
+   * `source: 'link'` it must be exactly `ABCD-EFGH` or `ABCDEFGH`; anything else shows "This link is
+   * not valid" (do not look it up).
+   */
   code: string;
   /**
    * Where `code` came from. `'link'` (default): it arrived in a URL, so it is not trusted on its
@@ -82,6 +86,10 @@ export function ApproveDevice(props: ApproveDeviceProps): JSX.Element {
   );
 }
 
+/** Exactly the shape the CLI prints: `ABCD-EFGH` or `ABCDEFGH` (after trimming). */
+const LINK_CODE = /^[A-Z0-9]{4}-?[A-Z0-9]{4}$/i;
+const compact = (s: string): string => s.toUpperCase().replace(/[\s-]/g, '');
+
 function ApproveDeviceView({
   code,
   source = 'link',
@@ -103,10 +111,13 @@ function ApproveDeviceView({
   const tailId = useId();
   const [typedTail, setTypedTail] = useState('');
   useEffect(() => setTypedTail(''), [code]);
-  const confirmed = !fromLink || matchesDeviceCodeTail(code, typedTail);
-  const tail = deviceCodeTail(code);
-  // From a link: hide the last 4 characters, the user types them from their own terminal.
-  const shownCode = fromLink && tail.length === 4 ? `${code.trim().toUpperCase().slice(0, -4)}••••` : code;
+  // A link code must have exactly the CLI's shape; padding (`ABCD-EFGH----`) could otherwise put
+  // the real last 4 characters on screen.
+  const linkInvalid = fromLink && !LINK_CODE.test(code.trim());
+  const confirmed = !linkInvalid && (!fromLink || matchesDeviceCodeTail(code, typedTail));
+  // From a link: hide the last 4 characters (built from the compacted code), the user types them
+  // from their own terminal.
+  const shownCode = fromLink ? `${compact(code).slice(0, 4)}-••••` : code;
 
   let content: JSX.Element;
   if (done) {
@@ -114,6 +125,13 @@ function ApproveDeviceView({
       <p className="uc-approve-result" role="status" data-tone={state === 'approved' ? 'ok' : 'neutral'}>
         {state === 'approved' ? <CheckCircle2 aria-hidden /> : <XCircle aria-hidden />}
         <span>{state === 'approved' ? t.approvedDone : t.deniedDone}</span>
+      </p>
+    );
+  } else if (linkInvalid) {
+    content = (
+      <p className="uc-approve-result" role="alert" data-tone="err">
+        <XCircle aria-hidden />
+        <span>{t.deviceLinkInvalid}</span>
       </p>
     );
   } else if (gone && shownError) {
@@ -136,6 +154,7 @@ function ApproveDeviceView({
     content = (
       <>
         <p className="uc-approve-body">{t.approveBody(name, os)}</p>
+        <p className="uc-approve-code-hint">{t.approveReported}</p>
         <p className="uc-approve-what">{t.approveWhat}</p>
         {fromLink && (
           <p className="uc-banner" data-tone="warn" role="note" data-testid="uc-approve-warning">
@@ -143,7 +162,7 @@ function ApproveDeviceView({
             <span className="uc-banner-text">{t.approveLinkWarning}</span>
           </p>
         )}
-        {(lookup.requestedAt !== undefined || lookup.requestIp !== undefined) && (
+        {(lookup.requestedAt !== undefined || typeof lookup.requestIp === 'string') && (
           <dl className="uc-approve-meta">
             {lookup.requestedAt !== undefined && (
               <div>
@@ -155,10 +174,10 @@ function ApproveDeviceView({
                 </dd>
               </div>
             )}
-            {lookup.requestIp !== undefined && (
+            {typeof lookup.requestIp === 'string' && (
               <div>
                 <dt>{t.approveRequestIp}</dt>
-                <dd>{lookup.requestIp ?? t.approveIpUnknown}</dd>
+                <dd>{lookup.requestIp}</dd>
               </div>
             )}
           </dl>

@@ -2,7 +2,7 @@ import { act, cleanup, render, renderHook, waitFor } from '@testing-library/reac
 import { UncageClientError } from '@uncage/client';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { deviceCodeTail, matchesDeviceCodeTail, useDeviceApproval, usePersistSession, useReconnect, useUncageStore } from './hooks.js';
+import { deviceCodeTail, isWellFormedDeviceCode, maskDeviceCode, matchesDeviceCodeTail, useDeviceApproval, usePersistSession, useReconnect, useUncageStore } from './hooks.js';
 import { UncageProvider } from './provider.js';
 import { fakeClient, session, snapshot } from './test-fixtures.js';
 
@@ -275,6 +275,49 @@ describe('useDeviceApproval with a code from a link (phishing guard)', () => {
     rerender({ c: 'BBBB-WXYZ' });
     await waitFor(() => expect(result.current.state).toBe('idle'));
     expect(result.current.confirmation).toMatchObject({ typed: '', matched: false });
+  });
+
+  it('a malformed link code (padded dashes, spaces) is not looked up and cannot be approved', async () => {
+    const f = fakeClient();
+    f.client.lookupDevice.mockResolvedValue(lookup);
+    for (const bad of ['ABCD-EFGH----', 'AB-CD-EF-GH', 'ABCD EFGH', 'ABCD-EFGH WXYZ', '-ABCD-EFGH']) {
+      const { result, unmount } = renderHook(() => useDeviceApproval(bad), { wrapper: wrap(f.client) });
+      await waitFor(() => expect(result.current.state).toBe('not_found'));
+      expect(result.current.linkInvalid).toBe(true);
+      act(() => result.current.confirmation.setTyped(deviceCodeTail(bad)));
+      expect(result.current.confirmation.matched).toBe(false);
+      unmount();
+    }
+    expect(f.client.lookupDevice).not.toHaveBeenCalled();
+    // Typed codes are normalized by the hub as before.
+    const typed = renderHook(() => useDeviceApproval('abcd efgh', TYPED), { wrapper: wrap(f.client) });
+    await waitFor(() => expect(typed.result.current.state).toBe('idle'));
+    expect(typed.result.current.linkInvalid).toBe(false);
+  });
+
+  it('approve() on an unconfirmed link code warns once and does nothing', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const f = fakeClient();
+    f.client.lookupDevice.mockResolvedValue(lookup);
+    const { result } = renderHook(() => useDeviceApproval('ABCD-EFGH'), { wrapper: wrap(f.client) });
+    await waitFor(() => expect(result.current.state).toBe('idle'));
+    await act(() => result.current.approve());
+    await act(() => result.current.approve());
+    // Once per page load (an earlier test in this file may already have used it up).
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('useDeviceApproval')).length).toBeLessThanOrEqual(1);
+    expect(f.client.decideDevice).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('isWellFormedDeviceCode / maskDeviceCode', () => {
+    expect(isWellFormedDeviceCode(' abcd-efgh ')).toBe(true);
+    expect(isWellFormedDeviceCode('ABCDEFGH')).toBe(true);
+    for (const bad of ['ABCD-EFGH----', 'ABCD--EFGH', 'AB-CD-EF-GH', 'ABCD EFGH', 'ABCD-EFG', 'ABCD-EFGH1']) expect(isWellFormedDeviceCode(bad), bad).toBe(false);
+    expect(maskDeviceCode('abcd-efgh')).toBe('ABCD-••••');
+    expect(maskDeviceCode('ABCDEFGH')).toBe('ABCD-••••');
+    // Built from the compacted code: padding never reveals the tail.
+    expect(maskDeviceCode('ABCD-EFGH----')).toBe('ABCD-••••');
+    expect(maskDeviceCode('A B-C D E F G H')).toBe('ABCD-••••');
   });
 
   it('deviceCodeTail / matchesDeviceCodeTail', () => {
