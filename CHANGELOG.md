@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1 — 2026-11-18
+
+Security patch. All public `@uncage/*` packages move to 0.4.1 together. Upgrade is recommended for every deployment.
+
+- **Device-approval phishing (high).** Anyone could run `uncage setup` against a site on their own computer and send a user the `/device?code=` link; approving it linked the sender's computer to the user's account. The hub now stores the requesting client IP (store migration 10; `null` when the hub has no trusted client IP), and `lookupDevice` / `GET <base>/device/lookup` return `requestedAt` and `requestIp`. `<ApproveDevice>` and `useDeviceApproval` warn, show the request time and IP, label the computer name and OS as reported by the computer, hide the code's last 4 characters and enable Approve only after the user typed them. A malformed link code is refused without a lookup; the hub drops a reported name or OS containing the code's last 4 characters and strips control characters. Deny stays one click.
+- **Push notifications leaked conversation content (medium).** `expoPushNotifier` / `defaultPushMessage` send generic text ("An approval needs you", "A run finished", "A run failed") plus the deep-link data; titles are included only with `includeContent: true`.
+- **Behaviour change, check before upgrading:** every device code is treated as coming from a link unless you pass `source: 'typed'` (only for a code the user typed on your page, never based on the URL). A custom approve screen built on `useDeviceApproval` must show the warning, the request time and IP, and an input wired to `confirmation.setTyped`, or Approve never enables.
+
 ## 0.4.0 — 2026-11-10
 
 React Native apps and browser extensions become entry points, and one installed agent serves every Uncage site. All public `@uncage/*` packages move to 0.4.0 together.
