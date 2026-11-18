@@ -2,8 +2,9 @@
  * Traditional-mode regression on the Railway shape: the demo's container image
  * (examples/connected-demo/Dockerfile — Next.js + hub + the machines' WebSocket on one port, PGlite
  * in the container's /data) with the real `uncage setup` and the real agent on the fake runtime,
- * through the whole connected golden path. Builds the image (`uncage-connected-demo:e2e`, docker's
- * cache makes rebuilds quick) when it is missing. Runs only with UNCAGE_DOCKER_TESTS=1 (project
+ * through the whole connected golden path. Builds the image (`uncage-connected-demo:e2e`) on every
+ * run, so it always matches the sources (docker's layer cache keeps an unchanged rebuild quick; an
+ * image kept from an older checkout once made this test exercise stale code). Runs only with UNCAGE_DOCKER_TESTS=1 (project
  * `connected-container`); otherwise reported as skipped with the reason.
  */
 import { execFile } from 'node:child_process';
@@ -24,14 +25,8 @@ test.afterAll(() => stack.cleanup());
 
 test('Railway shape (demo container, WebSocket): connect, run, approve, publish, reload history, offline', async ({ page }) => {
   test.setTimeout(900_000);
-  const present = await execFileP('docker', ['image', 'inspect', IMAGE]).then(
-    () => true,
-    () => false,
-  );
-  if (!present) {
-    stack.log(`building ${IMAGE}`);
-    await execFileP('docker', ['build', '-f', 'examples/connected-demo/Dockerfile', '-t', IMAGE, '.'], { cwd: repo, timeout: 840_000, maxBuffer: 64 * 1024 * 1024 });
-  }
+  stack.log(`building ${IMAGE}`);
+  await execFileP('docker', ['build', '-f', 'examples/connected-demo/Dockerfile', '-t', IMAGE, '.'], { cwd: repo, timeout: 840_000, maxBuffer: 64 * 1024 * 1024 });
   const demo = await stack.demoContainer(CONNECTED_PORTS.container, IMAGE);
   const info = (await (await page.request.get(`${demo.url}/api/uncage/agent/info`)).json()) as { transports: Array<{ kind: string }> };
   expect(info.transports.map((t) => t.kind)).toContain('ws');

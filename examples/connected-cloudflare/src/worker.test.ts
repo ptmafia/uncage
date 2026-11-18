@@ -126,13 +126,30 @@ describe('connected-cloudflare worker', () => {
     ).json()) as { deviceCode: string; userCode: string };
     expect((await call(`/device?code=${code.userCode}`)).status).toBe(401); // not signed in
     const shown = await call(`/device?code=${code.userCode}`, { headers: { cookie } });
-    expect(await shown.text()).toContain('laptop');
+    const html = await shown.text();
+    expect(html).toContain('laptop');
+    // A code from the link: warning, request time and IP, last 4 characters hidden.
+    expect(html).toContain('Never approve a code someone sent you.');
+    expect(html).toContain('reported by the computer');
+    expect(html).toContain(`${code.userCode.slice(0, 4)}-••••`);
+    expect(html).toContain('name="tail"');
+    // Padded / malformed link codes are not looked up and never show the tail.
+    for (const bad of [`${code.userCode}----`, `${code.userCode.slice(0, 2)}-${code.userCode.slice(2)}`, `${code.userCode.replace('-', '%20')}`]) {
+      const page = await (await call(`/device?code=${bad}`, { headers: { cookie } })).text();
+      expect(page).toContain('data-result="invalid_link"');
+      expect(page).not.toContain(code.userCode.slice(-4));
+      expect(page).not.toContain('name="tail"');
+    }
+    const form = (body: string) => ({ method: 'POST', headers: { cookie, origin: ORIGIN, 'content-type': 'application/x-www-form-urlencoded' }, body });
+    const wrongTail = await call('/device', form(`code=${code.userCode}&tail=ZZZZ&decision=approve`));
+    expect(wrongTail.status).toBe(400);
+    expect(await wrongTail.text()).toContain('data-result="tail_mismatch"');
 
     const forged = await call('/device', { method: 'POST', headers: { cookie: `${COOKIE}=alice.00`, 'content-type': 'application/x-www-form-urlencoded' }, body: `code=${code.userCode}` });
     expect(forged.status).toBe(401);
     const cross = await call('/device', { method: 'POST', headers: { cookie, origin: 'https://evil.example', 'content-type': 'application/x-www-form-urlencoded' }, body: `code=${code.userCode}` });
     expect(cross.status).toBe(403);
-    const approved = await call('/device', { method: 'POST', headers: { cookie, origin: ORIGIN, 'content-type': 'application/x-www-form-urlencoded' }, body: `code=${code.userCode}&decision=approve` });
+    const approved = await call('/device', { method: 'POST', headers: { cookie, origin: ORIGIN, 'content-type': 'application/x-www-form-urlencoded' }, body: `code=${code.userCode}&tail=${code.userCode.slice(-4).toLowerCase()}&decision=approve` });
     expect(approved.status).toBe(200);
     expect(await approved.text()).toContain('data-result="ok"');
 

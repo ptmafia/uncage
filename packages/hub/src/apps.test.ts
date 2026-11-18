@@ -151,6 +151,35 @@ describe('apps and extensions on the browser API', () => {
     }
   });
 
+  it('device lookup reports requestedAt and the requesting IP the hub resolved', async () => {
+    const t = await start({ rateLimits: { clientIp: (req) => req.headers.get('x-test-ip') ?? undefined } });
+    const before = Date.now();
+    const res = await fetch(`${t.api}/device/code`, jsonInit('POST', { name: 'Evil' }, { 'x-test-ip': '198.51.100.23' }));
+    const code = (await res.json()) as DeviceCodeResponse;
+    const found = (await (await lookup(t, code.userCode)).json()) as { requestedAt: string; requestIp: string | null };
+    expect(found.requestIp).toBe('198.51.100.23');
+    expect(Date.parse(found.requestedAt)).toBeGreaterThanOrEqual(before - 1000);
+    expect(Date.parse(found.requestedAt)).toBeLessThanOrEqual(Date.now());
+    // Default resolution: the node adapter passes the socket address.
+    const t2 = await startTestHub({ getUser: appGetUser });
+    try {
+      const c2 = await newCode(t2);
+      const l2 = (await (await lookup(t2, c2.userCode)).json()) as { requestIp: string | null };
+      expect(l2.requestIp).toMatch(/127\.0\.0\.1|::1/);
+    } finally {
+      await t2.close();
+    }
+    // No trusted client IP (hub.fetch without info, no rateLimits.clientIp): stored as null, never the shared bucket.
+    const t3 = await startTestHub({ getUser: appGetUser });
+    try {
+      const res3 = await t3.hub.fetch(new Request(`${t3.api}/device/code`, jsonInit('POST', { name: 'X' })));
+      const c3 = (await res3.json()) as DeviceCodeResponse;
+      expect(await t3.hub.lookupDevice(c3.userCode, { id: 'alice' })).toMatchObject({ requestIp: null });
+    } finally {
+      await t3.close();
+    }
+  });
+
   it('device lookup/decision: approve binds, deny, not_found, expired, rate_limited after 10 bad codes', async () => {
     const t = await start();
     // Approve binds the computer to the signed-in user.

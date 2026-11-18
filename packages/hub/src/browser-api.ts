@@ -101,6 +101,8 @@ interface Call {
   requestId: string;
   /** Rate-limit key for the caller (IP). */
   clientKey: string;
+  /** The caller's IP when the hub could resolve one (unlike `clientKey`, never a shared fallback). */
+  clientIp?: string;
 }
 
 const json = (data: unknown, status = 200): Response => Response.json(data, { status });
@@ -327,9 +329,9 @@ export function browserApi(ctx: ApiContext) {
     add('POST', '/maintenance', runMaintenance, { public: true });
   }
 
-  add('POST', '/device/code', async ({ req, clientKey }) => {
+  add('POST', '/device/code', async ({ req, clientKey, clientIp }) => {
     const body = parse(DeviceCodeRequestSchema, (await readJson(req, ctx.bodyTimeoutMs)) ?? {});
-    return json(await ctx.device.createCode(body, clientKey));
+    return json(await ctx.device.createCode(body, clientKey, clientIp));
   }, { public: true });
 
   add('POST', '/device/token', async ({ req }) => {
@@ -616,7 +618,7 @@ export function browserApi(ctx: ApiContext) {
   }
 
   /** Routes a request whose path (below `basePath`) is `path`. */
-  async function handle(req: Request, url: URL, path: string, requestId: string, clientKey: string): Promise<Response> {
+  async function handle(req: Request, url: URL, path: string, requestId: string, clientKey: string, clientIp?: string): Promise<Response> {
     let matchedPath = false;
     for (const r of routes) {
       const m = r.pattern.exec(path);
@@ -643,7 +645,7 @@ export function browserApi(ctx: ApiContext) {
         if (crossSite(req, r.guardReads)) throw new UncageError('forbidden_origin', { message: 'Cross-site request refused.' });
         user = u;
       }
-      return r.run({ req, url, params, user, requestId, clientKey });
+      return r.run({ req, url, params, user, requestId, clientKey, ...(clientIp ? { clientIp } : {}) });
     }
     throw new UncageError(matchedPath ? 'invalid_request' : 'not_found', {
       message: matchedPath ? `Method ${req.method} is not allowed for ${path}.` : `No route for ${req.method} ${path}.`,

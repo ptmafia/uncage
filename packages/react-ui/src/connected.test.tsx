@@ -545,7 +545,7 @@ describe('ApproveDevice', () => {
   });
 
   it('shows the computer, OS and code; Approve / Deny call back', () => {
-    const p = base();
+    const p = base({ source: 'typed' });
     render(<ApproveDevice {...p} />);
     expect(screen.getByRole('heading', { name: 'Connect this computer?' })).toBeTruthy();
     expect(screen.getByText('Nathan’s MacBook (macOS) wants to connect to your account.')).toBeTruthy();
@@ -583,7 +583,7 @@ describe('ApproveDevice', () => {
   });
 
   it('rate_limited: localized message, buttons stay enabled for a retry', () => {
-    render(<ApproveDevice {...base({ error: { code: 'rate_limited', message: 'Too many requests.' } })} />);
+    render(<ApproveDevice {...base({ source: 'typed', error: { code: 'rate_limited', message: 'Too many requests.' } })} />);
     expect(screen.getByRole('alert').textContent).toBe('Too many requests. Wait a moment and try again.');
     expect((screen.getByRole('button', { name: 'Approve' }) as HTMLButtonElement).disabled).toBe(false);
   });
@@ -605,6 +605,80 @@ describe('ApproveDevice', () => {
   it('no lookup and no error: "code not found"', () => {
     render(<ApproveDevice {...base({ lookup: null })} />);
     expect(screen.getByRole('alert').textContent).toContain('invalid or has expired');
+  });
+
+  it('a code from a link (default): warning, masked code, time and IP; Approve needs the last 4 typed', () => {
+    const p = base({
+      lookup: {
+        name: 'MacBook',
+        repairsMachine: null,
+        requestedAt: new Date(Date.now() - 3 * 60_000).toISOString(),
+        requestIp: '203.0.113.7',
+      },
+    });
+    render(<ApproveDevice {...p} />);
+    expect(screen.getByRole('note').textContent).toBe(
+      'Only approve if you just ran `uncage setup` on a computer in front of you. Never approve a code someone sent you.',
+    );
+    expect(screen.getByText('3 minutes ago')).toBeTruthy();
+    expect(screen.getByText('203.0.113.7')).toBeTruthy();
+    expect(screen.getByText('IP as seen by the server')).toBeTruthy();
+    expect(screen.getByText('Name and system: reported by the computer, not verified.')).toBeTruthy();
+    // The last 4 characters are not on the page: they come from the user's own terminal.
+    expect(screen.getByText('WDJB-••••')).toBeTruthy();
+    expect(screen.queryByText('WDJB-MJHT')).toBeNull();
+    const approve = screen.getByRole('button', { name: 'Approve' }) as HTMLButtonElement;
+    const input = screen.getByLabelText(
+      'Type the last 4 characters shown in the terminal of a computer you are sitting at. If someone gave you these characters, choose Deny.',
+    ) as HTMLInputElement;
+    expect(approve.disabled).toBe(true);
+    fireEvent.click(approve);
+    expect(p.onApprove).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: 'WDJB' } });
+    expect(approve.disabled).toBe(true);
+    fireEvent.change(input, { target: { value: 'mjht' } });
+    expect(approve.disabled).toBe(false);
+    fireEvent.click(approve);
+    expect(p.onApprove).toHaveBeenCalledTimes(1);
+  });
+
+  it('a code from a link: Deny stays one click; an unknown IP is hidden', () => {
+    const p = base({ lookup: { repairsMachine: null, requestedAt: new Date().toISOString(), requestIp: null } });
+    render(<ApproveDevice {...p} />);
+    expect(screen.getByText('just now')).toBeTruthy();
+    expect(screen.queryByText('IP as seen by the server')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Deny' }));
+    expect(p.onDeny).toHaveBeenCalledTimes(1);
+  });
+
+  it('a padded or malformed link code is "not valid": never shows the tail, no buttons', () => {
+    for (const code of ['WDJB-MJHT----', 'WD-JB-MJ-HT', 'WDJB MJHT', 'WDJB--MJHT', ' WDJB-MJHT-WXYZ']) {
+      const { unmount, container } = render(<ApproveDevice {...base({ code })} />);
+      expect(screen.getByRole('alert').textContent).toBe('This link is not valid. Type the code shown in your terminal instead.');
+      expect(container.textContent).not.toContain('MJHT');
+      expect(screen.queryByRole('button')).toBeNull();
+      unmount();
+    }
+    // A well-formed code without the dash is fine, masked from the compacted code.
+    render(<ApproveDevice {...base({ code: ' wdjbmjht ' })} />);
+    expect(screen.getByText('WDJB-••••')).toBeTruthy();
+  });
+
+  it('a typed code: no warning, no extra step, full code shown', () => {
+    const p = base({ source: 'typed', lookup: { repairsMachine: null, requestedAt: new Date().toISOString(), requestIp: '198.51.100.1' } });
+    render(<ApproveDevice {...p} />);
+    expect(screen.queryByRole('note')).toBeNull();
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.getByText('WDJB-MJHT')).toBeTruthy();
+    expect(screen.getByText('198.51.100.1')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    expect(p.onApprove).toHaveBeenCalledTimes(1);
+  });
+
+  it('a code from a link in zh-CN: localized warning and relative time', () => {
+    render(<ApproveDevice {...base({ locale: 'zh-CN', lookup: { repairsMachine: null, requestedAt: new Date(Date.now() - 2 * 3_600_000).toISOString(), requestIp: '203.0.113.7' } })} />);
+    expect(screen.getByRole('note').textContent).toContain('绝不要批准别人发给你的验证码');
+    expect(screen.getByText('2小时前')).toBeTruthy();
   });
 
   it('zh-CN via the locale prop or a surrounding provider', () => {

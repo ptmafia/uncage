@@ -47,6 +47,9 @@ test('Cloudflare Workers with real Claude Code: connect → one run calling save
   expect(link, setup.output()).toBeTruthy();
   await page.goto(link!);
   await expect(page.getByText(/Computer: /)).toBeVisible();
+  const code = /confirm the code:\s+(\S+)/.exec(setup.output())?.[1];
+  expect(code, setup.output()).toBeTruthy();
+  await page.getByLabel('Type the last 4 characters shown in the terminal of a computer you are sitting at', { exact: false }).fill(code!.slice(-4));
   await page.getByRole('button', { name: 'Approve' }).click();
   await expect(page.locator('[data-result="ok"]')).toBeVisible();
   const exit = await new Promise<number | null>((resolve) => (setup.proc.exitCode !== null ? resolve(setup.proc.exitCode) : setup.proc.once('exit', resolve)));

@@ -63,24 +63,35 @@ export function useAppLifecycle() {
 
 - **`usePersistSession(storage)`** 接受一个 `{ get, set }` 适配器（同步或异步均可：AsyncStorage、SecureStore、MMKV）。使用默认的 `'url'`，或在没有 `window` / `localStorage` 时使用 `'localStorage'`，它什么也不做，也不会抛出错误。
 - **`useReconnect()`** 返回 `client.reconnect()`：它立即从最后的序号重新开始每一条打开的事件流，所以应用在后台停留几分钟之后，既不会丢事件，也不会重复。在 `AppState` 变为 `active` 时调用它。健康的流（最近 20 秒内有数据到达）会被保留；`reconnect({ force: true })` 则无论如何都重启。
-- **`useDeviceApproval(code)`** 驱动下面的审批界面。
+- **`useDeviceApproval(code, { source })`** 驱动下面的审批界面。
 
 ## 4. 用手机批准一台电脑
 
 `uncage setup` 会把审批链接打印成终端里的二维码（`--no-qr` 可关闭；输出不是终端时会跳过）。如果你用 Android App Links 或 iOS universal links 把 hub 的验证路径（默认 `/device`）映射到你的应用，扫码就会打开你的审批界面；否则手机会打开你的移动网页审批页。
 
 ```tsx nocheck
-import { useDeviceApproval } from '@uncage/react';
+import { useDeviceApproval, type DeviceCodeSource } from '@uncage/react';
 
-export function ApproveScreen({ code }: { code: string }) {
-  const { lookup, state, error, approve, deny } = useDeviceApproval(code);
+export function ApproveScreen({ code, source }: { code: string; source: DeviceCodeSource }) {
+  // source: 'link' (a verified app link: untrusted on its own) or 'typed' (the user typed the whole code).
+  const { lookup, state, error, confirmation, approve, deny } = useDeviceApproval(code, { source });
   // state: 'loading' | 'idle' | 'approving' | 'denying' | 'approved' | 'denied'
   //        | 'not_found' | 'expired' | 'error'
-  // lookup: { name?, os?, expiresAt, repairsMachine } | null: show it so the user compares the computer.
+  // lookup: { name?, os?, expiresAt, requestedAt, requestIp, repairsMachine } | null.
+  // confirmation: { required, typed, matched, setTyped }: with 'link', approve() waits until
+  //   the user typed the code's last 4 characters (setTyped) and matched is true.
   // error: { code, message }, e.g. 'rate_limited' (10 wrong codes in 10 minutes).
-  return null; // render lookup, error and two buttons that call approve() / deny()
+  return null; // render the warning, lookup, a last-4 input, error, and approve() / deny() buttons
 }
 ```
+
+**防钓鱼。** 任何人都可以在自己的电脑上对你的网站运行 `uncage setup`，再把链接发给用户；任何应用或网页也都能打开你的自定义 URL scheme。所以：
+
+- **绝不要预填来自自定义 scheme 的验证码**（`yourapp://device?code=…`）：打开让用户自己输入验证码的界面（`source: 'typed'`）。
+- 来自你自己网站的、**经过验证的** https 应用链接（App Links / universal links，系统已检查过你的 `assetlinks.json` / `apple-app-site-association`）可以预填验证码，作为 `source: 'link'`（默认值）：在用户输入验证码的最后 4 位之前，`approve()` 什么也不做（`confirmation.setTyped`、`confirmation.matched`）。界面上要隐藏这 4 位。
+- 两种情况下都要显示警告“只有当你刚刚在面前的电脑上运行了 `uncage setup` 时才批准。绝不要批准别人发给你的验证码。”、请求时间（`lookup.requestedAt`，用相对时间）和 IP（`lookup.requestIp`）。`deny()` 永远不需要额外步骤。
+
+`examples/connected-expo` 正是这样做的（`app/+native-intent.tsx`、`lib/links.ts`、`app/device.tsx`）。
 
 当查询本身失败（例如 `rate_limited`）时，`state` 为 `'error'`；可以调用 `retry()` 再次查询；决定失败时会回到 `'idle'` 并设置 `error`，用户可以重试。`approve()` 和 `deny()` 只在 `'idle'` 时生效。它们底层调用 [`GET /device/lookup` 和 `POST /device/decision`](/docs/zh-cn/reference/http-api/)；`client.lookupDevice(code)` 和 `client.decideDevice(code, approve)` 是不依赖 React 的同一功能。
 

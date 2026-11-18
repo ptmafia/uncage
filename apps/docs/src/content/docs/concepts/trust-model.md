@@ -44,6 +44,7 @@ These are the trade-offs the user accepts by connecting a computer:
 
 - **Claude Code acts within the session folder and its permission mode, with the user’s own account.** In `default` mode the user approves commands and edits. Claude Code itself auto-allows some actions it considers safe, such as reading files. Those still appear as tool steps.
 - **A command the user approves runs with the user’s rights**, like any Claude Code command. Approval cards show the command or path; read them.
+- **Approve only a computer you just connected yourself.** Approving a code links that computer to the account: it then receives the account’s prompts, attachments and site-tool calls. Anyone can start `uncage setup` against the website on their own computer and send a user the link, so the approve page warns, shows when and from which IP the code was requested, and asks for the code’s last 4 characters from the user’s own terminal before Approve works. Never approve a code someone sent you.
 - **The website sees the conversation** (it routes it, and may store it). It does not see other files on the computer unless Claude Code reads them into the conversation or a tool pulls them from the session folder.
 
 ## For website developers: your side of the deal
@@ -51,7 +52,7 @@ These are the trade-offs the user accepts by connecting a computer:
 Uncage cannot protect against a website that misuses its own users’ trust, but it gives you the pieces to deserve it:
 
 - **Authenticate every request.** `getUser(req)` must return the real signed-in user or `null`. See [Auth and device approval](/docs/guides/auth-and-device-approval/).
-- **Protect `/device`.** Approving a code links a computer to an account. Serve it only to the signed-in user, refuse framing, and decide with a CSRF-protected POST.
+- **Protect `/device`.** Approving a code links a computer to an account. Serve it only to the signed-in user, refuse framing, decide with a CSRF-protected POST, and never trust a code that arrived in the link: warn, show the request time and IP, and require the code’s last 4 characters ([phishing links](/docs/guides/auth-and-device-approval/#phishing-links)).
 - **Check ownership in tool handlers.** `ctx.user` is the session owner; use it for every lookup (`WHERE owner = ctx.user.id`).
 - **Throw user-safe errors.** A handler’s thrown message is shown to the user and the model.
 - **Use `requiresConfirmation`** for any tool that publishes, sends, pays or deletes.

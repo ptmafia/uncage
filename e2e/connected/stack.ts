@@ -241,12 +241,26 @@ export class Stack {
     const link = /(https?:\/\/\S+\/device\?code=\S+)/.exec(setup.output())?.[1];
     const code = /confirm the code:\s+(\S+)/.exec(setup.output())?.[1];
     expect(link, setup.output()).toBeTruthy();
+    // A padded code (`?code=ABCD-EFGH----`) could put the hidden last 4 on screen: "not a valid link",
+    // no lookup, no Approve button, and the last 4 characters nowhere on the page.
+    await page.goto(`${link!}----`);
+    await expect(page.getByText('这个链接无效', { exact: false })).toBeVisible();
+    await expect(page.getByRole('button', { name: '批准', exact: true })).toHaveCount(0);
+    expect(await page.locator('body').innerText()).not.toContain(code!.slice(-4));
     const res = await page.goto(link!);
     // The approval page may never be framed (clickjacking).
     expect(res?.headers()['x-frame-options']).toBe('DENY');
     expect(res?.headers()['content-security-policy']).toContain("frame-ancestors 'none'");
-    await expect(page.getByText(code!)).toBeVisible();
-    await page.getByRole('button', { name: '批准', exact: true }).click();
+    // A code from a link: last 4 characters hidden, Approve only after typing them (phishing guard).
+    await expect(page.getByText(`${code!.slice(0, -4)}••••`)).toBeVisible();
+    await expect(page.getByText('绝不要批准别人发给你的验证码', { exact: false })).toBeVisible();
+    const approve = page.getByRole('button', { name: '批准', exact: true });
+    await expect(approve).toBeDisabled();
+    // Nowhere on the valid page (name and OS included) do the last 4 characters appear.
+    const tail = code!.toUpperCase().replace(/[\s-]/g, '').slice(-4);
+    expect((await page.locator('body').innerText()).toUpperCase().replace(/[\s-]/g, '')).not.toContain(tail);
+    await page.getByLabel('输入你面前这台电脑的终端里显示的最后 4 位', { exact: false }).fill(code!.slice(-4));
+    await approve.click();
     await expect(page.getByText('电脑已连接')).toBeVisible();
     const exit = await new Promise<number | null>((resolve) => {
       if (setup.proc.exitCode !== null) return resolve(setup.proc.exitCode);

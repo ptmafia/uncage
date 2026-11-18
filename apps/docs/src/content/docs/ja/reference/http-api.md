@@ -37,7 +37,7 @@ description: ハブのブラウザAPI、デバイスエンドポイント、イ�
 | `GET /runs?active=1` | | `ActiveRunInfo[]`：ユーザーのセッションで進行中の実行 |
 | `GET /runs/:id` | | `Run` |
 | `POST /runs/:id/cancel` | | `202` |
-| `GET /device/lookup` | `?code=` | 保留中のコードの`{ name?, os?, expiresAt, repairsMachine }`。不明、またはもう保留中でない場合は`null`。結果と失敗コードのレート制限は`hub.lookupDevice`と同じです |
+| `GET /device/lookup` | `?code=` | 保留中のコードの`{ name?, os?, expiresAt, requestedAt, requestIp, repairsMachine }`（`requestedAt`は要求された時刻、`requestIp`はハブが見たIPまたは`null`）。不明、またはもう保留中でない場合は`null`。結果と失敗コードのレート制限は`hub.lookupDevice`と同じです |
 | `POST /device/decision` | `{ code, approve }`（`Content-Type: application/json`） | `{ result: "ok" \| "not_found" \| "expired" }`。承認すると、そのコンピュータがサインイン中のユーザーに結び付きます |
 | `GET /approvals?sessionId=` | | そのセッションの保留中の`ApprovalRequest[]` |
 | `POST /approvals/:id/decision` | `{ decision: "allow" \| "deny", scope: "once" \| "session", reason? }` +ヘッダー`Idempotency-Key` | 更新された`ApprovalRequest`。2回目に異なる判定を送ると`409` |
@@ -46,7 +46,7 @@ Local モードのデーモンには、`/machines*`を除く同じルートが`/
 
 ### アプリ向けのデバイス承認
 
-`GET /device/lookup`と`POST /device/decision`を使うと、アプリや拡張機能が自前のページなしでコンピュータを承認できます（ウェブサイトは、`hub.lookupDevice` / `approveDevice`を使う[`/device`ページ](/docs/ja/guides/auth-and-device-approval/)をこれまでどおり使います。どちらも使えます）。サインイン中のユーザーが必要で、これらの呼び出しと失敗コードの制限を共有します。10分間に不明なコードが10回あると、`429 rate_limited`（`details.retryAfterSec`）を返します。照会もクロスサイト保護の対象なので、別のサイトがユーザーの試行回数を消費することはできません。判定はJSONでなければならず、それ以外の`Content-Type`は`415 invalid_request`になります。クロスサイトのフォームは、プリフライトなしにJSONを送れないためです。`@uncage/client`には`lookupDevice(code)`と`decideDevice(code, approve)`が、`@uncage/react`には`useDeviceApproval(code)`があります。
+`GET /device/lookup`と`POST /device/decision`を使うと、アプリや拡張機能が自前のページなしでコンピュータを承認できます（ウェブサイトは、`hub.lookupDevice` / `approveDevice`を使う[`/device`ページ](/docs/ja/guides/auth-and-device-approval/)をこれまでどおり使います。どちらも使えます）。サインイン中のユーザーが必要で、これらの呼び出しと失敗コードの制限を共有します。10分間に不明なコードが10回あると、`429 rate_limited`（`details.retryAfterSec`）を返します。照会もクロスサイト保護の対象なので、別のサイトがユーザーの試行回数を消費することはできません。判定はJSONでなければならず、それ以外の`Content-Type`は`415 invalid_request`になります。クロスサイトのフォームは、プリフライトなしにJSONを送れないためです。`@uncage/client`には`lookupDevice(code)`と`decideDevice(code, approve)`が、`@uncage/react`には`useDeviceApproval(code, { source })`があります。リンクで届いたコードはそれだけでは信用しません。承認の前に要求時刻とIPを表示し、コードの最後の4文字の入力を求めてください（[フィッシングリンク](/docs/ja/guides/auth-and-device-approval/#フィッシングリンク)）。
 
 ### Server-Sent Events
 

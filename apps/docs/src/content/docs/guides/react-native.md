@@ -63,24 +63,35 @@ export function useAppLifecycle() {
 
 - **`usePersistSession(storage)`** takes an adapter `{ get, set }` (sync or async: AsyncStorage, SecureStore, MMKV). With the default `'url'` or with `'localStorage'` and no `window` / `localStorage` it does nothing and never throws.
 - **`useReconnect()`** returns `client.reconnect()`: it restarts every open event stream at once from its last sequence, so after the app was in the background for minutes nothing is lost and nothing repeats. Call it when `AppState` becomes `active`. A stream that is healthy (bytes arrived in the last 20 seconds) is kept; `reconnect({ force: true })` restarts it anyway.
-- **`useDeviceApproval(code)`** drives the approve screen below.
+- **`useDeviceApproval(code, { source })`** drives the approve screen below.
 
 ## 4. Approving a computer from the phone
 
 `uncage setup` prints the approval link as a terminal QR code (`--no-qr` turns it off; it is skipped when the output is not a terminal). If you map the hub’s verification path (`/device` by default) to your app with Android App Links or iOS universal links, scanning the code opens your approval screen; otherwise the phone opens your mobile web approval page.
 
 ```tsx nocheck
-import { useDeviceApproval } from '@uncage/react';
+import { useDeviceApproval, type DeviceCodeSource } from '@uncage/react';
 
-export function ApproveScreen({ code }: { code: string }) {
-  const { lookup, state, error, approve, deny } = useDeviceApproval(code);
+export function ApproveScreen({ code, source }: { code: string; source: DeviceCodeSource }) {
+  // source: 'link' (a verified app link: untrusted on its own) or 'typed' (the user typed the whole code).
+  const { lookup, state, error, confirmation, approve, deny } = useDeviceApproval(code, { source });
   // state: 'loading' | 'idle' | 'approving' | 'denying' | 'approved' | 'denied'
   //        | 'not_found' | 'expired' | 'error'
-  // lookup: { name?, os?, expiresAt, repairsMachine } | null: show it so the user compares the computer.
+  // lookup: { name?, os?, expiresAt, requestedAt, requestIp, repairsMachine } | null.
+  // confirmation: { required, typed, matched, setTyped }: with 'link', approve() waits until
+  //   the user typed the code's last 4 characters (setTyped) and matched is true.
   // error: { code, message }, e.g. 'rate_limited' (10 wrong codes in 10 minutes).
-  return null; // render lookup, error and two buttons that call approve() / deny()
+  return null; // render the warning, lookup, a last-4 input, error, and approve() / deny() buttons
 }
 ```
+
+**Phishing guard.** Anyone can run `uncage setup` against your site on their own computer and send a user the link, and any app or web page can open your custom URL scheme. So:
+
+- **Never pre-fill a code from your custom scheme** (`yourapp://device?code=…`): open the screen where the user types the code (`source: 'typed'`).
+- A code from a **verified** https App Link / universal link for your own site (the OS checked your `assetlinks.json` / `apple-app-site-association`) may be pre-filled, as `source: 'link'` (the default): `approve()` does nothing until the user typed the code’s last 4 characters (`confirmation.setTyped`, `confirmation.matched`). Hide those 4 characters on screen.
+- Either way show the warning “Only approve if you just ran `uncage setup` on a computer in front of you. Never approve a code someone sent you.”, the request time (`lookup.requestedAt`, as relative time) and IP (`lookup.requestIp`). `deny()` never needs the extra step.
+
+`examples/connected-expo` does exactly this (`app/+native-intent.tsx`, `lib/links.ts`, `app/device.tsx`).
 
 `state` is `'error'` when the lookup itself failed (for example `rate_limited`); call `retry()` to run the lookup again; a failed decision returns to `'idle'` with `error` set so the user can retry. `approve()` and `deny()` act only from `'idle'`. Under the hood these call [`GET /device/lookup` and `POST /device/decision`](/docs/reference/http-api/#device-approval-for-apps); `client.lookupDevice(code)` and `client.decideDevice(code, approve)` are the same without React.
 

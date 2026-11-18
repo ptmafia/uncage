@@ -57,6 +57,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 - **“Refusing plain http for …”**：守护进程只对 `localhost`、`127.0.0.1` 和 `[::1]` 接受 `http://`。请使用你网站的 `https://` URL。
 - **链接能打开，但没有批准按钮**：这个验证码未知、已被使用或已超过 10 分钟。重新运行 `uncage setup <url>`。检查你的 `/device` 页面是否把 `code` 查询参数传给了 `hub.lookupDevice`。
+- **批准按钮一直不可用**：链接里带来的验证码需要从运行 `uncage setup` 的终端里输入最后 4 位。这是有意为之（[钓鱼链接](/docs/zh-cn/guides/auth-and-device-approval/#钓鱼链接)）；如果不是你自己运行的 `uncage setup`，请点击拒绝。
 - **“Too many requests” / `rate_limited`**：同一 IP 申请的设备码过多（每分钟 20 个），或同一用户输错验证码过多（每 10 分钟 10 次）。如果很多用户同时遇到，见下一节。
 - **那台电脑没有浏览器**：`uncage setup <url> --no-browser` 会打印链接和验证码；在任意一台已登录该用户的设备上打开链接。
 - **`UNCAGE_HOME is for foreground runs`**：设置了 `UNCAGE_HOME` 时，请使用 `--no-daemon`，并自己运行 `uncage agent`。

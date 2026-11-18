@@ -57,19 +57,36 @@ export async function getUser(req: Request): Promise<HubUser | null> {
 1. **要求正常的登录会话。** 用户未登录时，把他带到你的登录页，登录后再回来。
 2. **禁止被嵌入框架：** `Content-Security-Policy: frame-ancestors 'none'` 和 `X-Frame-Options: DENY`。
 3. **用带 CSRF 防护的 POST 做决定。** 绝不要通过 GET 批准，也不要仅凭链接本身就批准。
-4. **展示正在批准的内容：** 验证码（用户拿它和终端里的对照），以及 `hub.lookupDevice` 返回的电脑名称和操作系统。
+4. **展示正在批准的内容：** 电脑名称和操作系统，以及验证码是何时、从哪个 IP 请求的（`requestedAt`、`requestIp`），这些都来自 `hub.lookupDevice`。
+5. **绝不信任链接里带来的验证码。** 显示警告，并且只有在用户从自己的终端输入验证码的最后 4 位之后才启用批准按钮（见[钓鱼链接](#钓鱼链接)）。
+
+### 钓鱼链接
+
+任何人都可以在**自己的**电脑上运行 `uncage setup https://your.site`，再把它打印出的链接（或二维码、应用深层链接）发给你的用户。页面打开时验证码已经填好，而“确认验证码和终端里的一致”对一个根本没有终端的人毫无意义。用户一旦批准，发送者的电脑就连接到了该用户的账号，会收到用户的提示词、附件和网站工具调用。页面上的电脑名称和操作系统由发送者提供，不能证明任何事。
+
+所以 URL 里带来的验证码本身不可信：
+
+- 显示警告“只有当你刚刚在面前的电脑上运行了 `uncage setup` 时才批准。绝不要批准别人发给你的验证码。”
+- 显示验证码的请求时间（相对时间：别人发来的验证码通常已经过了几分钟）和服务器看到的 IP（`requestIp`，来自 hub 自己的客户端 IP 解析；hub 没有可信的客户端 IP 时为 `null`，不显示）。IP 有意保持粗粒度：不做地理定位。
+- 把电脑名称和操作系统标注为“由那台电脑自己上报，未经验证”。hub 会丢弃包含验证码最后 4 位的上报名称或操作系统，并去掉控制字符。
+- 隐藏验证码的最后 4 位，只有用户从自己面前那台电脑的终端里输入它们之后才启用批准按钮。攻击者可能会设法把这几个字符告诉用户（写在消息里、打电话）：绝不要输入别人给你的字符，请选择拒绝。
+- URL 里的验证码只接受 CLI 打印的确切格式（`ABCD-EFGH` 或 `ABCDEFGH`）；其他形式（多余的短横线或空格）视为“链接无效”，不做查询；遮盖后的验证码由去掉分隔符后的验证码生成。
+- 用户在你的页面上自己输入完整验证码时（URL 里没有验证码），不需要额外步骤。绝不要根据 URL 本身来判断这一点。
+- 拒绝仍然只需点一下。
+
+`<ApproveDevice>` 在 `source="link"`（默认值）下会做到以上全部；只有用户自己输入的验证码才传 `source="typed"`。在你自己的界面里，`useDeviceApproval(code, { source })` 做同样的事。
 
 hub 提供三个调用，每个都接收验证码和已登录用户：
 
 | 调用 | 返回 |
 | --- | --- |
-| `hub.lookupDevice(code, user)` | 验证码待处理时返回 `{ name?, os?, expiresAt, repairsMachine }`，否则返回 `null`。如果批准会重新配对该用户的某台电脑，则设置 `repairsMachine`：那台电脑保留原来的 id 和会话，旧令牌失效。 |
+| `hub.lookupDevice(code, user)` | 验证码待处理时返回 `{ name?, os?, expiresAt, requestedAt, requestIp, repairsMachine }`，否则返回 `null`。`requestedAt` 是 `uncage setup` 请求验证码的时间（ISO），`requestIp` 是 hub 当时看到的 IP（或 `null`）。如果批准会重新配对该用户的某台电脑，则设置 `repairsMachine`：那台电脑保留原来的 id 和会话，旧令牌失效。 |
 | `hub.approveDevice(code, user)` | `'ok'`、`'not_found'` 或 `'expired'` |
 | `hub.denyDevice(code, user)` | `'ok'`、`'not_found'` 或 `'expired'` |
 
 验证码由 `ABCDEFGHJKMNPQRSTUVWXYZ23456789` 中的 8 个字符组成，显示为 `ABCD-2345`，10 分钟内有效。大小写、空格和短横线都会被忽略。未知的验证码算作猜错：10 分钟内猜错 10 次后（`rateLimits.userCodeFailures`、`userCodeWindowMs`），这些调用会抛出 `code: 'rate_limited'` 的错误（`details.retryAfterSec`）。
 
-`@uncage/react-ui` 里的 `<ApproveDevice>` 负责渲染这个页面：码、电脑、重新配对警告、批准和拒绝按钮，以及结果。它只负责展示；决定在服务器上做。把失败调用的错误传给它的 `error` 属性：错误会以本地化文字显示（`rate_limited` 时为“请求太频繁了，稍等一下再试。”）；有查询结果时显示在按钮上方，`lookupDevice` 本身失败、`lookup` 为 `null` 时则替代“验证码无效或已过期”的提示。
+`@uncage/react-ui` 里的 `<ApproveDevice>` 负责渲染这个页面：电脑、请求时间和 IP、验证码、钓鱼警告和最后 4 位的输入框（`source="link"`，默认值）、重新配对警告、批准和拒绝按钮，以及结果。它只负责展示；决定在服务器上做。把失败调用的错误传给它的 `error` 属性：错误会以本地化文字显示（`rate_limited` 时为“请求太频繁了，稍等一下再试。”）；有查询结果时显示在按钮上方，`lookupDevice` 本身失败、`lookup` 为 `null` 时则替代“验证码无效或已过期”的提示。
 
 ### Next.js
 
@@ -165,7 +182,7 @@ attachWebSocket(hub, server);
 server.listen(3000);
 ```
 
-在页面上调用 `GET /device/lookup?code=…`，渲染 `<ApproveDevice code lookup state error onApprove onDeny />`，再用 `{ code, approve }` 调用 `POST /device/decision`（浏览器在 `fetch` 发起的 POST 上会带 `Origin`）。把返回结果映射到 `ApproveDevice` 的 `state`：`'ok'` → `'approved'` 或 `'denied'`；`'not_found'` 和 `'expired'` 原样传入；错误交给它的 `error` 属性（按钮保持可用，方便重试；`lookup: null` 时错误会替代“找不到验证码”的提示）。
+在页面上调用 `GET /device/lookup?code=…`，渲染 `<ApproveDevice code lookup state error onApprove onDeny />`（URL 里带来的验证码保持默认的 `source="link"`），再用 `{ code, approve }` 调用 `POST /device/decision`（浏览器在 `fetch` 发起的 POST 上会带 `Origin`）。把返回结果映射到 `ApproveDevice` 的 `state`：`'ok'` → `'approved'` 或 `'denied'`；`'not_found'` 和 `'expired'` 原样传入；错误交给它的 `error` 属性（按钮保持可用，方便重试；`lookup: null` 时错误会替代“找不到验证码”的提示）。
 
 ## 吊销电脑
 

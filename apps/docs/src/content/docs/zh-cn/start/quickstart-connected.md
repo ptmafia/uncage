@@ -238,7 +238,7 @@ export default function UncagePage() {
 
 ## 7. 审批页
 
-`uncage setup` 会把用户带到你网站上的 `/device?code=…`。在这里批准，就等于让那台电脑访问该用户的账号，所以这个页面必须只对已登录用户开放、不能被嵌入框架，并且要用只有你自己的源才能发出的 POST 记录决定。Next.js 的 Server Action 只接受 POST 并会检查 `Origin`，正好满足最后一点。
+`uncage setup` 会把用户带到你网站上的 `/device?code=…`。在这里批准，就等于让那台电脑访问该用户的账号，所以这个页面必须只对已登录用户开放、不能被嵌入框架，并且要用只有你自己的源才能发出的 POST 记录决定。Next.js 的 Server Action 只接受 POST 并会检查 `Origin`，正好满足最后一点。链接里带来的验证码本身不可信：`<ApproveDevice>` 会显示请求时间和 IP，并要求输入验证码的最后 4 位（[钓鱼链接](/docs/zh-cn/guides/auth-and-device-approval/#钓鱼链接)）。
 
 ```tsx title="app/device/page.tsx"
 import type { ApproveDeviceProps } from '@uncage/react-ui';
@@ -369,7 +369,7 @@ curl -s http://localhost:3000/api/uncage/install.sh | head -3
    uncage setup http://localhost:3000
    ```
 
-3. **批准。** setup 会打印一个验证码，并打开 `http://localhost:3000/device?code=…`。确认验证码一致后点击 **Approve**（批准）。setup 会把机器令牌存到 `~/.uncage/agent.yaml`，并启动后台守护进程（按用户运行的服务：macOS 上是 launchd，Linux 上是 systemd，Windows 上是计划任务；用 `uncage agent status` 可以查看）。
+3. **批准。** setup 会打印一个验证码，并打开 `http://localhost:3000/device?code=…`。页面会警告你绝不要批准别人发来的验证码，并隐藏验证码的最后 4 位：从终端里输入这 4 位，然后点击 **Approve**（批准）。setup 会把机器令牌存到 `~/.uncage/agent.yaml`，并启动后台守护进程（按用户运行的服务：macOS 上是 launchd，Linux 上是 systemd，Windows 上是计划任务；用 `uncage agent status` 可以查看）。
 
 回到对话页，状态从“Waiting for your computer…”（等待你的电脑上线…）变为 **Connected: &lt;你的电脑名&gt;**（已连接）。
 

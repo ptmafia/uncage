@@ -295,13 +295,24 @@ export interface Hub {
   denyDevice(userCode: string, user: HubUser): Promise<'ok' | 'not_found' | 'expired'>;
   /**
    * What the approve page shows about a pending code, or `null` if unknown / no longer pending.
+   * Show `requestedAt` and `requestIp` next to the code: a code that arrived in a link may have
+   * been started by someone else on their own computer (device-approval phishing).
    * `repairsMachine` is set when approving would re-pair one of `user`'s existing machines (warn
    * "re-pairing <name>"): it keeps its id and sessions and its old token stops working.
    */
   lookupDevice(
     userCode: string,
     user: HubUser,
-  ): Promise<{ name?: string; os?: string; expiresAt: string; repairsMachine: { id: string; name: string } | null } | null>;
+  ): Promise<{
+    name?: string;
+    os?: string;
+    expiresAt: string;
+    /** When the code was requested (ISO). */
+    requestedAt: string;
+    /** The requesting computer's IP as the hub saw it, or `null` if unknown. */
+    requestIp: string | null;
+    repairsMachine: { id: string; name: string } | null;
+  } | null>;
   /**
    * Runs maintenance now unless another instance holds the maintenance lease or the hub is closed
    * (`ran: false`). You rarely need it: see `HubOptions.maintenance`.

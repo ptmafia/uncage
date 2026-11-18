@@ -57,19 +57,36 @@ The browser API is authenticated by your cookies, so the hub protects it against
 1. **Require the normal signed-in session.** If the user is not signed in, send them to your login page and back.
 2. **Refuse framing:** `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`.
 3. **Decide with a CSRF-protected POST.** Never approve from a GET, or from the link alone.
-4. **Show what is being approved:** the code (the user compares it with the terminal) and the computer’s name and OS from `hub.lookupDevice`.
+4. **Show what is being approved:** the computer’s name and OS, and when and from which IP the code was requested (`requestedAt`, `requestIp`), all from `hub.lookupDevice`.
+5. **Never trust a code that arrived in the link.** Warn, and enable Approve only after the user typed the code’s last 4 characters from their own terminal (see [Phishing links](#phishing-links)).
+
+### Phishing links
+
+Anyone can run `uncage setup https://your.site` on **their own** computer and send one of your users the link it prints (or a QR code, or an app deep link). The page then opens pre-filled, and “check that the code matches your terminal” means nothing to someone who has no terminal. If the user approves, the sender’s computer is linked to the user’s account and receives their prompts, attachments and site-tool calls. The computer name and OS on the page come from the sender and prove nothing.
+
+So a code from the URL is not trusted on its own:
+
+- Show the warning “Only approve if you just ran `uncage setup` on a computer in front of you. Never approve a code someone sent you.”
+- Show when the code was requested (relative time: a code someone sent is usually minutes old) and the IP as seen by the server (`requestIp`, from the hub’s client-IP resolution; `null`, and not shown, when the hub had no trusted client IP). The IP is coarse on purpose: no geolocation.
+- Label the computer’s name and OS as reported by the computer, not verified. The hub drops a reported name or OS that contains the code’s last 4 characters, and strips control characters.
+- Hide the code’s last 4 characters and enable Approve only once the user typed them from the terminal of a computer they are sitting at. An attacker may try to tell the user those characters (in the message, on the phone): never type characters someone gave you; choose Deny.
+- Accept a code from the URL only in the exact shape the CLI prints (`ABCD-EFGH` or `ABCDEFGH`); anything else (extra dashes or spaces) is “not a valid link” and is not looked up, and the masked code is built from the compacted code.
+- When the user typed the whole code on your page (no code in the URL), no extra step is needed. Never decide that from the URL itself.
+- Deny stays one click.
+
+`<ApproveDevice>` does all of this with `source="link"`, its default; pass `source="typed"` only for a code the user typed. `useDeviceApproval(code, { source })` does the same for your own screens.
 
 The hub gives you three calls, each taking the code and the signed-in user:
 
 | Call | Returns |
 | --- | --- |
-| `hub.lookupDevice(code, user)` | `{ name?, os?, expiresAt, repairsMachine }` for a pending code, else `null`. `repairsMachine` is set when approving would re-pair one of this user’s computers: it keeps its id and sessions, and its old token stops working. |
+| `hub.lookupDevice(code, user)` | `{ name?, os?, expiresAt, requestedAt, requestIp, repairsMachine }` for a pending code, else `null`. `requestedAt` is when `uncage setup` asked for the code (ISO), `requestIp` the IP the hub saw then (or `null`). `repairsMachine` is set when approving would re-pair one of this user’s computers: it keeps its id and sessions, and its old token stops working. |
 | `hub.approveDevice(code, user)` | `'ok'`, `'not_found'` or `'expired'` |
 | `hub.denyDevice(code, user)` | `'ok'`, `'not_found'` or `'expired'` |
 
 Codes are 8 characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, shown as `ABCD-2345`, and valid for 10 minutes. Case, spaces and the dash are ignored. Unknown codes count as failed guesses: after 10 in 10 minutes (`rateLimits.userCodeFailures`, `userCodeWindowMs`) these calls throw an error with `code: 'rate_limited'` (`details.retryAfterSec`).
 
-`<ApproveDevice>` from `@uncage/react-ui` renders the page: the code, the computer, a re-pair warning, Approve and Deny, and the result. It is presentational; you make the decision on the server. Pass a failed call’s error to its `error` prop: it is shown localized (for `rate_limited`: “Too many requests. Wait a moment and try again.”), above the buttons when there is a lookup, or instead of “This code is invalid or has expired” when `lookupDevice` itself failed and `lookup` is `null`.
+`<ApproveDevice>` from `@uncage/react-ui` renders the page: the computer, the request time and IP, the code, the phishing warning and the last-4 input (`source="link"`, the default), a re-pair warning, Approve and Deny, and the result. It is presentational; you make the decision on the server. Pass a failed call’s error to its `error` prop: it is shown localized (for `rate_limited`: “Too many requests. Wait a moment and try again.”), above the buttons when there is a lookup, or instead of “This code is invalid or has expired” when `lookupDevice` itself failed and `lookup` is `null`.
 
 ### Next.js
 
@@ -165,7 +182,7 @@ attachWebSocket(hub, server);
 server.listen(3000);
 ```
 
-On the page, call `GET /device/lookup?code=…`, render `<ApproveDevice code lookup state error onApprove onDeny />`, and `POST /device/decision` with `{ code, approve }` (the browser sends `Origin` on `fetch` POSTs). Map the answers to `ApproveDevice`’s `state`: `'ok'` → `'approved'` or `'denied'`; `'not_found'` and `'expired'` as they are; errors go to its `error` prop (the buttons stay enabled for a retry; with `lookup: null` the error replaces the “code not found” message).
+On the page, call `GET /device/lookup?code=…`, render `<ApproveDevice code lookup state error onApprove onDeny />` (a code from the URL keeps the default `source="link"`), and `POST /device/decision` with `{ code, approve }` (the browser sends `Origin` on `fetch` POSTs). Map the answers to `ApproveDevice`’s `state`: `'ok'` → `'approved'` or `'denied'`; `'not_found'` and `'expired'` as they are; errors go to its `error` prop (the buttons stay enabled for a retry; with `lookup: null` the error replaces the “code not found” message).
 
 ## Revoking computers
 

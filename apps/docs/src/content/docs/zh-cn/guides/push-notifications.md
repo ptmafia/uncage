@@ -30,17 +30,20 @@ declare function sendPush(userId: string, text: string): Promise<void>;
 
 ## 离开你的 hub 的内容
 
-推送会从你的 hub 发到 Expo，再到 Apple 或 Google，并显示在锁屏上。默认文案由事件和**审批标题**生成，而运行时会根据工具调用来设置这个标题，所以它可能包含命令或文件路径。默认文案是一行，最多 180 个字符（包含审批标题和会话标题），但仍会到达这些服务和锁屏。如果这对你的用户来说太多，可以从 `message` 返回一段通用文案：
+推送会从你的 hub 发到 Expo，再到 Apple 或 Google，并显示在锁屏上。所以 `expoPushNotifier` 默认**不发送任何对话内容**：只有“An approval needs you”“A run finished”或“A run failed”（加上一句简短的“Open the app…”正文），以及深层链接用的 `data`（`sessionId`、`approvalId?`、`kind`）。应用通过自己已登录的连接加载详情。
+
+`includeContent: true` 是一个显式的选择加入，恢复以前更具体的文案：会话标题和**审批标题**。运行时会根据工具调用设置审批标题，所以它常常包含 shell 命令或文件路径。每段文案是一行，最多 180 个字符，但仍会经过 Expo、Apple 或 Google，并显示在锁屏上。只有你的用户能接受这一点时才打开它：
 
 ```ts
 import { expoPushNotifier } from '@uncage/hub';
 
 declare const tokensFor: (userId: string) => Promise<string[]>;
 
-expoPushNotifier({
-  tokensFor,
-  message: (e) => ({ title: 'Uncage', body: e.approval ? 'An action needs your approval' : 'Your run has finished' }),
-});
+// Default: generic text only ("An approval needs you", "A run finished", "A run failed").
+expoPushNotifier({ tokensFor });
+
+// Opt in: the session title and the approval title (often a command or a path) go to the lock screen.
+expoPushNotifier({ tokensFor, includeContent: true });
 ```
 
 ## `expoPushNotifier`
@@ -67,7 +70,8 @@ export const onAttention = expoPushNotifier({
 | --- | --- |
 | `tokensFor(userId)` | 必填。用户的 Expo 推送令牌。 |
 | `accessToken` | 开启 enhanced push security 时使用的 Expo 访问令牌。 |
-| `message(e)` | 每个事件的 `{ title, body }`，返回 `null` 则不发送。默认是简短的英文文案（`defaultPushMessage`）；在这里做本地化。 |
+| `message(e)` | 每个事件的 `{ title, body }`，返回 `null` 则不发送。默认是简短、通用、不含对话内容的英文文案（`defaultPushMessage`）；在这里做本地化。 |
+| `includeContent` | 为 `true` 时，默认文案会加上会话标题和审批标题（它们会到达 Expo、Apple / Google 和锁屏）。默认 `false`。传了 `message` 时忽略。 |
 | `onInvalidToken(token)` | 对 Expo 报告为 `DeviceNotRegistered` 的令牌调用。 |
 | `fetch`、`endpoint` | 替换 `fetch` 或 Expo 端点（用于测试）。 |
 | `timeoutMs` | 对 Expo 的请求超过这个时间没有应答就会中止，调用随之 reject（hub 会记录）。默认 `15000`。 |

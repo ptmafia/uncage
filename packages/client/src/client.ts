@@ -63,6 +63,10 @@ export interface DeviceLookup {
   name?: string;
   os?: string;
   expiresAt: string;
+  /** When `uncage setup` asked for the code (ISO). Hubs before 0.4.1 leave it out. */
+  requestedAt?: string;
+  /** The requesting computer's IP as the hub saw it; `null` = unknown. Hubs before 0.4.1 leave it out. */
+  requestIp?: string | null;
   /** Set when approving would re-pair this existing computer instead of adding one. */
   repairsMachine: { id: string; name: string } | null;
 }

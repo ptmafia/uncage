@@ -1,5 +1,6 @@
 import type { DeviceCodeRequest, DeviceCodeResponse, DeviceTokenResponse, TransportOffer } from '@uncage/protocol';
 import type { RateLimiter } from './rate-limit.js';
+import type { HubLogger } from './machines.js';
 import type { HubStore } from './store/store.js';
 import type { HubUser } from './types.js';
 import { randomInt, randomToken, sha256Hex } from './web.js';
@@ -45,6 +46,10 @@ export interface DeviceFlowDeps {
     codesPerClient: RateLimiter;
   };
   now?: () => number;
+  /** Warned when a reported name / OS is dropped because it contains the code's last 4 characters. */
+  logger?: HubLogger;
+  /** User-code generator (tests). Default `generateUserCode`. */
+  generateCode?: () => string;
 }
 
 /** Polls this much earlier than `intervalSec` are still accepted (timer jitter). */
@@ -56,12 +61,35 @@ export interface DeviceLookup {
   name?: string;
   os?: string;
   expiresAt: string;
+  /** When `uncage setup` asked for this code (ISO). Show it ("2 minutes ago"): a code someone sent you is usually older. */
+  requestedAt: string;
+  /**
+   * The requesting computer's IP as the hub saw it (its client-IP resolution, see
+   * `HubOptions.rateLimits`), or `null` when the hub had none. Coarse on purpose: no geolocation.
+   */
+  requestIp: string | null;
   /** Set when approving would re-pair this existing machine (same `machineKey`) instead of adding one. */
   repairsMachine: { id: string; name: string } | null;
 }
 
-const clipLabel = (v: string | undefined): string | undefined =>
-  typeof v === 'string' && v.trim() !== '' ? v.trim().slice(0, 100) : undefined;
+/** Control and format characters (incl. bidi overrides), which could disguise a label. */
+const CONTROL_CHARS = /[\p{Cc}\p{Cf}]/gu;
+
+const clipLabel = (v: string | undefined): string | undefined => {
+  if (typeof v !== 'string') return undefined;
+  const clean = v.replace(CONTROL_CHARS, '').trim().slice(0, 100);
+  return clean === '' ? undefined : clean;
+};
+
+/**
+ * Whether a computer-reported label carries the user code's last 4 characters (case, spaces and
+ * any separators ignored). The approve page asks the user to type those 4 characters from their
+ * own terminal, so the requester must not be able to show them on the page.
+ */
+export function labelRevealsCodeTail(label: string, userCode: string): boolean {
+  const tail = userCode.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(-4);
+  return tail.length === 4 && label.toUpperCase().replace(/[^A-Z0-9]/g, '').includes(tail);
+}
 
 /** OAuth-device-authorization-style pairing: the CLI polls, the signed-in user approves on the website. */
 export function deviceFlow(d: DeviceFlowDeps) {
@@ -110,16 +138,30 @@ export function deviceFlow(d: DeviceFlowDeps) {
   }
 
   return {
-    /** `clientKey` identifies the caller for rate limiting (normally its IP). Throws `rate_limited`. */
-    async createCode(body: DeviceCodeRequest, clientKey: string): Promise<DeviceCodeResponse> {
+    /**
+     * `clientKey` identifies the caller for rate limiting (normally its IP). `clientIp`, when the
+     * hub resolved one, is stored and shown on the approve page. Throws `rate_limited`.
+     */
+    async createCode(body: DeviceCodeRequest, clientKey: string, clientIp?: string): Promise<DeviceCodeResponse> {
       await d.limits.codesPerClient.take(clientKey);
       const deviceCode = randomSecret();
       // Retry on the (astronomically unlikely) user-code collision with a live code.
       for (let attempt = 0; ; attempt++) {
-        const userCode = generateUserCode();
+        const userCode = (d.generateCode ?? generateUserCode)();
         const createdAt = new Date(now()).toISOString();
-        const name = clipLabel(body.name);
-        const os = clipLabel(body.os);
+        let name = clipLabel(body.name);
+        let os = clipLabel(body.os);
+        const ip = clipLabel(clientIp);
+        // Phishing guard: a reported name / OS showing the code's last 4 characters is dropped
+        // (the page then shows its default label).
+        if (name && labelRevealsCodeTail(name, userCode)) {
+          d.logger?.warn({ field: 'name' }, 'device code: reported computer name contained the code; replaced with the default label');
+          name = undefined;
+        }
+        if (os && labelRevealsCodeTail(os, userCode)) {
+          d.logger?.warn({ field: 'os' }, 'device code: reported OS contained the code; replaced with the default label');
+          os = undefined;
+        }
         try {
           await d.store.insertDeviceCode({
             deviceCodeHash: await sha256Hex(deviceCode),
@@ -127,6 +169,7 @@ export function deviceFlow(d: DeviceFlowDeps) {
             status: 'pending',
             ...(name ? { name } : {}),
             ...(os ? { os } : {}),
+            ...(ip ? { clientIp: ip } : {}),
             ...(body.machineKey ? { machineKeyHash: await sha256Hex(body.machineKey) } : {}),
             createdAt,
             expiresAt: new Date(now() + DEVICE_EXPIRES_IN_SEC * 1000).toISOString(),
@@ -185,6 +228,8 @@ export function deviceFlow(d: DeviceFlowDeps) {
             ...(rec.name ? { name: rec.name } : {}),
             ...(rec.os ? { os: rec.os } : {}),
             expiresAt: rec.expiresAt,
+            requestedAt: rec.createdAt,
+            requestIp: rec.clientIp ?? null,
             repairsMachine: known ? { id: known.id, name: known.name } : null,
           };
         },

@@ -31,7 +31,7 @@ It talks to your app's same-origin proxy (`createUncageHandler` / `createUncageN
 | `machines()` | `GET /machines` | `MachineInfo[]` (Connected Mode hub; a local daemon answers 404) |
 | `installInfo()` | `GET /machines/install` | `{ install, setup, windows, connectUrl? }` (the commands that connect a computer; `connectUrl` is the `uncage://connect?url=…` [one-click link](https://uncage-dev.vercel.app/docs/guides/one-click-connect/)) |
 | `revokeMachine(machineId)` | `DELETE /machines/:id` | — (disconnects that computer) |
-| `lookupDevice(code)` | `GET /device/lookup?code=` | `DeviceLookup \| null` (the pending computer for an approve screen; `null` if unknown or no longer pending) |
+| `lookupDevice(code)` | `GET /device/lookup?code=` | `DeviceLookup \| null` (the pending computer for an approve screen, with `requestedAt` and the requesting `requestIp`; `null` if unknown or no longer pending) |
 | `decideDevice(code, approve)` | `POST /device/decision` | `'ok' \| 'not_found' \| 'expired'` (approve or deny it, e.g. from a phone) |
 
 `startRun` and `decide` send an `Idempotency-Key` header (a fresh UUID; pass your own `key` to `decide` to make retries safe). Calling the HTTP API yourself, these two endpoints **require** `Idempotency-Key`: without it you get 400 `invalid_request`. Repeating a key with the same body returns the first result instead of starting a second run.

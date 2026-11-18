@@ -57,19 +57,36 @@ export async function getUser(req: Request): Promise<HubUser | null> {
 1. **通常のサインイン済みセッションを必須にします**。ユーザーがサインインしていなければ、ログインページに送ってから戻します。
 2. **フレーム内での表示を拒否します**：`Content-Security-Policy: frame-ancestors 'none'`と`X-Frame-Options: DENY`。
 3. **CSRF対策済みのPOSTで判定します**。GETやリンクを開いただけで承認してはいけません。
-4. **何を承認するのかを表示します**：コード（ユーザーはターミナルの表示と見比べます）と、`hub.lookupDevice`から得たコンピュータの名前とOS。
+4. **何を承認するのかを表示します**：コンピュータの名前とOS、そしてコードがいつ、どのIPから要求されたか（`requestedAt`、`requestIp`）。いずれも`hub.lookupDevice`から得られます。
+5. **リンクで届いたコードを信用しません**。警告を表示し、ユーザーが自分のターミナルからコードの最後の4文字を入力するまで**Approve**（承認）を有効にしません（[フィッシングリンク](#フィッシングリンク)を参照）。
+
+### フィッシングリンク
+
+誰でも**自分の**コンピュータで`uncage setup https://your.site`を実行し、表示されたリンク（またはQRコード、アプリのディープリンク）をあなたのユーザーに送れます。ページはコードが入力済みの状態で開き、「ターミナルのコードと一致するか確認する」という指示は、ターミナルを持たない相手には意味がありません。ユーザーが承認すると、送信者のコンピュータがそのユーザーのアカウントに接続され、プロンプト、添付ファイル、サイトツールの呼び出しを受け取ります。ページに表示されるコンピュータ名とOSは送信者が送ったもので、何の証明にもなりません。
+
+そのため、URLで届いたコードはそれだけでは信用しません。
+
+- 警告「Only approve if you just ran `uncage setup` on a computer in front of you. Never approve a code someone sent you.」（目の前のコンピュータで`uncage setup`を実行した直後にだけ承認してください。誰かから送られたコードは絶対に承認しないでください）を表示します。
+- コードが要求された時刻（相対時間。送られてきたコードはたいてい数分前のものです）と、サーバーから見たIP（`requestIp`。ハブ自身のクライアントIP解決によるもので、ハブに信頼できるクライアントIPがなければ`null`で、表示しません）を表示します。IPはあえて粗い情報にとどめ、位置情報の推定はしません。
+- コンピュータの名前とOSには「コンピュータの自己申告で、検証されていない」と明記します。ハブは、コードの最後の4文字を含む名前やOSを破棄し、制御文字を取り除きます。
+- コードの最後の4文字を隠し、ユーザーが目の前にあるコンピュータのターミナルからそれを入力して初めて**Approve**を有効にします。攻撃者はその文字をユーザーに伝えようとするかもしれません（メッセージや電話で）。誰かから教えられた文字は絶対に入力せず、**Deny**（拒否）を選んでください。
+- URLのコードは、CLIが表示するとおりの形（`ABCD-EFGH`または`ABCDEFGH`）だけを受け付けます。それ以外（余分なハイフンやスペース）は「無効なリンク」として照会せず、隠したコードは区切りを除いたコードから作ります。
+- ユーザーがあなたのページでコード全体を自分で入力した場合（URLにコードがない場合）は、追加の手順は不要です。これをURL自体から判断してはいけません。
+- **Deny**（拒否）はこれまでどおりワンクリックです。
+
+`<ApproveDevice>`はデフォルトの`source="link"`でこれをすべて行います。`source="typed"`は、ユーザーが自分で入力したコードにだけ渡してください。独自の画面では`useDeviceApproval(code, { source })`が同じことを行います。
 
 ハブには3つの呼び出しがあり、いずれもコードとサインイン中のユーザーを受け取ります。
 
 | 呼び出し | 戻り値 |
 | --- | --- |
-| `hub.lookupDevice(code, user)` | 保留中のコードなら`{ name?, os?, expiresAt, repairsMachine }`、それ以外は`null`。`repairsMachine`は、承認するとこのユーザーのコンピュータのいずれかが再ペアリングされる場合に設定されます。そのコンピュータはIDとセッションを維持し、古いトークンは使えなくなります。 |
+| `hub.lookupDevice(code, user)` | 保留中のコードなら`{ name?, os?, expiresAt, requestedAt, requestIp, repairsMachine }`、それ以外は`null`。`requestedAt`は`uncage setup`がコードを要求した時刻（ISO）、`requestIp`はそのときハブが見たIP（または`null`）です。`repairsMachine`は、承認するとこのユーザーのコンピュータのいずれかが再ペアリングされる場合に設定されます。そのコンピュータはIDとセッションを維持し、古いトークンは使えなくなります。 |
 | `hub.approveDevice(code, user)` | `'ok'`、`'not_found'`、`'expired'`のいずれか |
 | `hub.denyDevice(code, user)` | `'ok'`、`'not_found'`、`'expired'`のいずれか |
 
 コードは`ABCDEFGHJKMNPQRSTUVWXYZ23456789`から選ばれた8文字で、`ABCD-2345`の形式で表示され、10分間有効です。大文字・小文字、スペース、ハイフンは無視されます。未知のコードは推測の失敗として数えられ、10分間に10回失敗すると（`rateLimits.userCodeFailures`、`userCodeWindowMs`）、これらの呼び出しは`code: 'rate_limited'`（`details.retryAfterSec`）のエラーを投げます。
 
-`@uncage/react-ui`の`<ApproveDevice>`がこのページを描画します。コード、コンピュータ、再ペアリングの警告、**Approve**（承認）と**Deny**（拒否）のボタン、そして結果です。表示だけを担うコンポーネントなので、判定はサーバーで行います。失敗した呼び出しのエラーは`error`プロップに渡してください。ローカライズされたメッセージ（`rate_limited`なら「Too many requests. Wait a moment and try again.」）が表示されます。照会結果がある場合はボタンの上に、`lookupDevice`自体が失敗して`lookup`が`null`の場合は「This code is invalid or has expired」の代わりに表示されます。
+`@uncage/react-ui`の`<ApproveDevice>`がこのページを描画します。コンピュータ、要求時刻とIP、コード、フィッシングの警告と最後の4文字の入力欄（デフォルトの`source="link"`）、再ペアリングの警告、**Approve**（承認）と**Deny**（拒否）のボタン、そして結果です。表示だけを担うコンポーネントなので、判定はサーバーで行います。失敗した呼び出しのエラーは`error`プロップに渡してください。ローカライズされたメッセージ（`rate_limited`なら「Too many requests. Wait a moment and try again.」）が表示されます。照会結果がある場合はボタンの上に、`lookupDevice`自体が失敗して`lookup`が`null`の場合は「This code is invalid or has expired」の代わりに表示されます。
 
 ### Next.js
 
@@ -165,7 +182,7 @@ attachWebSocket(hub, server);
 server.listen(3000);
 ```
 
-ページでは`GET /device/lookup?code=…`を呼び出し、`<ApproveDevice code lookup state error onApprove onDeny />`を描画して、`{ code, approve }`を付けて`POST /device/decision`を送ります（ブラウザは`fetch`のPOSTに`Origin`を付けます）。応答は`ApproveDevice`の`state`に対応づけます。`'ok'`は`'approved'`または`'denied'`に、`'not_found'`と`'expired'`はそのままです。エラーは`error`プロップに渡します（再試行できるようボタンは有効なままです。`lookup: null`の場合は、エラーが「コードが見つからない」というメッセージの代わりに表示されます）。
+ページでは`GET /device/lookup?code=…`を呼び出し、`<ApproveDevice code lookup state error onApprove onDeny />`を描画して（URLで届いたコードはデフォルトの`source="link"`のまま）、`{ code, approve }`を付けて`POST /device/decision`を送ります（ブラウザは`fetch`のPOSTに`Origin`を付けます）。応答は`ApproveDevice`の`state`に対応づけます。`'ok'`は`'approved'`または`'denied'`に、`'not_found'`と`'expired'`はそのままです。エラーは`error`プロップに渡します（再試行できるようボタンは有効なままです。`lookup: null`の場合は、エラーが「コードが見つからない」というメッセージの代わりに表示されます）。
 
 ## コンピュータを取り消す
 

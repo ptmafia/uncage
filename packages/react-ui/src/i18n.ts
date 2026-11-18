@@ -15,6 +15,20 @@ export function formatClock(iso: string): string {
  * File size for chips: `512 B`, `1.2 KB`, `3.4 MB`. With `whole`, a whole number drops its
  * decimal (`10 MB`, for limits).
  */
+/** `iso` relative to `now` ("3 minutes ago"), in `locale`; under a minute is `justNow`. */
+export function formatRelative(iso: string, locale: Locale, justNow: string, now = Date.now()): string {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return '';
+  const sec = Math.round((now - ms) / 1000);
+  if (Math.abs(sec) < 60) return justNow;
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+  const min = Math.round(sec / 60);
+  if (Math.abs(min) < 60) return rtf.format(-min, 'minute');
+  const hr = Math.round(min / 60);
+  if (Math.abs(hr) < 24) return rtf.format(-hr, 'hour');
+  return rtf.format(-Math.round(hr / 24), 'day');
+}
+
 export function formatBytes(n: number, o: { whole?: boolean } = {}): string {
   const fmt = (v: number) => (o.whole && Number.isInteger(v) ? String(v) : v.toFixed(1));
   if (n < 1024) return `${n} B`;
@@ -223,6 +237,16 @@ const en = {
   deniedDone: 'Denied. Nothing was connected.',
   deviceNotFound: 'This code is invalid or has expired. Run `uncage setup` again to get a new one.',
   deviceExpired: 'This code has expired. Run `uncage setup` again to get a new one.',
+  approveLinkWarning:
+    'Only approve if you just ran `uncage setup` on a computer in front of you. Never approve a code someone sent you.',
+  approveRequested: 'Requested',
+  approveRequestIp: 'IP as seen by the server',
+  approveReported: 'Name and system: reported by the computer, not verified.',
+  justNow: 'just now',
+  approveTypeTail:
+    'Type the last 4 characters shown in the terminal of a computer you are sitting at. If someone gave you these characters, choose Deny.',
+  approveTypeTailHint: 'Approve unlocks when they match.',
+  deviceLinkInvalid: 'This link is not valid. Type the code shown in your terminal instead.',
   // Errors (by `UncageClientError.code`; unknown codes show the server message)
   errors: {
     attachment_type_unsupported: 'This file type is not supported.',
@@ -439,6 +463,14 @@ const zhCN: Strings = {
   deniedDone: '已拒绝，没有连接任何电脑。',
   deviceNotFound: '验证码无效或已过期。重新运行 `uncage setup` 获取新的验证码。',
   deviceExpired: '验证码已过期。重新运行 `uncage setup` 获取新的验证码。',
+  approveLinkWarning: '只有当你刚刚在面前的电脑上运行了 `uncage setup` 时才批准。绝不要批准别人发给你的验证码。',
+  approveRequested: '请求时间',
+  approveRequestIp: '服务器看到的 IP',
+  approveReported: '名称和系统：由那台电脑自己上报，未经验证。',
+  justNow: '刚刚',
+  approveTypeTail: '输入你面前这台电脑的终端里显示的最后 4 位。如果这些字符是别人告诉你的，请选择拒绝。',
+  approveTypeTailHint: '输入一致后才能批准。',
+  deviceLinkInvalid: '这个链接无效。请改为输入终端里显示的验证码。',
   errors: {
     attachment_type_unsupported: '不支持这种文件类型。',
     unsupported_capability: '当前运行时不支持这个功能或选项。',

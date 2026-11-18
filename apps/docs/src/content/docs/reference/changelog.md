@@ -5,6 +5,11 @@ description: "What changed in each Uncage release: 0.4 (React Native apps, brows
 
 All public `@uncage/*` packages share one version. The authoritative record is [`CHANGELOG.md`](https://github.com/ptmafia/uncage/blob/main/CHANGELOG.md) in the repository (and each package’s changelog on npm), written by [Changesets](/docs/guides/ci-and-releases/#releases) at release time.
 
+## 0.4.1 (2026-11-18): security patch
+
+- **Device-approval phishing (high)**: a `/device?code=` link sent by someone else could link their computer to your account. The approve screen (`<ApproveDevice>`, `useDeviceApproval`) now warns, shows the request time and IP, and enables Approve only after the user types the code's last 4 characters. Hub store migration 10 records the requesting IP. **Custom approve screens** built on `useDeviceApproval` must render the warning and an input wired to `confirmation.setTyped`; pass `source: 'typed'` only for a code typed on your page.
+- **Push notifications (medium)**: `expoPushNotifier` sends generic text with no session or approval titles unless `includeContent: true`.
+
 ## 0.4.0 (2026-11-10): React Native, browser extensions, one agent for every site
 
 - **[React Native apps](/docs/guides/react-native/)**: `@uncage/client` and `@uncage/react` run in Expo / React Native (async bearer headers, native file uploads, `reconnect()`, storage-adapter persistence, `useDeviceApproval`). [Authenticate apps](/docs/guides/authenticate-apps/), [push notifications](/docs/guides/push-notifications/) with `onAttention` + `expoPushNotifier`.

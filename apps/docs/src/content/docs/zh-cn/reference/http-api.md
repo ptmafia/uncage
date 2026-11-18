@@ -37,7 +37,7 @@ description: hub 浏览器 API、设备端点、安装脚本、维护端点以�
 | `GET /runs?active=1` | | `ActiveRunInfo[]`：该用户各会话中正在进行的运行 |
 | `GET /runs/:id` | | `Run` |
 | `POST /runs/:id/cancel` | | `202` |
-| `GET /device/lookup` | `?code=` | 待处理验证码的 `{ name?, os?, expiresAt, repairsMachine }`，验证码未知或已不在待处理状态时为 `null`。结果和失败验证码的限流与 `hub.lookupDevice` 相同 |
+| `GET /device/lookup` | `?code=` | 待处理验证码的 `{ name?, os?, expiresAt, requestedAt, requestIp, repairsMachine }`（`requestedAt`：请求时间；`requestIp`：hub 看到的 IP，或 `null`），验证码未知或已不在待处理状态时为 `null`。结果和失败验证码的限流与 `hub.lookupDevice` 相同 |
 | `POST /device/decision` | `{ code, approve }`（`Content-Type: application/json`） | `{ result: "ok" \| "not_found" \| "expired" }`。批准会把那台电脑绑定到已登录用户 |
 | `GET /approvals?sessionId=` | | 该会话待处理的 `ApprovalRequest[]` |
 | `POST /approvals/:id/decision` | `{ decision: "allow" \| "deny", scope: "once" \| "session", reason? }` + 请求头 `Idempotency-Key` | 更新后的 `ApprovalRequest`。第二个不同的决定会得到 `409` |
@@ -46,7 +46,7 @@ Local 模式的 Uncage 服务在 `/v1` 下有同样的路由，但没有 `/machi
 
 ### 应用的设备审批
 
-`GET /device/lookup` 和 `POST /device/decision` 让应用或扩展无需自己的页面就能批准一台电脑（网站继续使用带 `hub.lookupDevice` / `approveDevice` 的 [`/device` 页面](/docs/zh-cn/guides/auth-and-device-approval/)；两种方式都可用）。它们需要已登录用户，并与那些调用共用失败验证码的限制：10 分钟内 10 次未知验证码之后，返回 `429 rate_limited`（`details.retryAfterSec`）。查询也在跨站防护之内，所以其他网站无法消耗用户的尝试次数。决定请求必须是 JSON：其他 `Content-Type` 会得到 `415 invalid_request`，因为跨站表单无法在不经过预检的情况下发送 JSON。`@uncage/client` 有 `lookupDevice(code)` 和 `decideDevice(code, approve)`，`@uncage/react` 有 `useDeviceApproval(code)`。
+`GET /device/lookup` 和 `POST /device/decision` 让应用或扩展无需自己的页面就能批准一台电脑（网站继续使用带 `hub.lookupDevice` / `approveDevice` 的 [`/device` 页面](/docs/zh-cn/guides/auth-and-device-approval/)；两种方式都可用）。它们需要已登录用户，并与那些调用共用失败验证码的限制：10 分钟内 10 次未知验证码之后，返回 `429 rate_limited`（`details.retryAfterSec`）。查询也在跨站防护之内，所以其他网站无法消耗用户的尝试次数。决定请求必须是 JSON：其他 `Content-Type` 会得到 `415 invalid_request`，因为跨站表单无法在不经过预检的情况下发送 JSON。`@uncage/client` 有 `lookupDevice(code)` 和 `decideDevice(code, approve)`，`@uncage/react` 有 `useDeviceApproval(code, { source })`。链接里带来的验证码本身不可信：批准前要显示请求时间和 IP，并要求输入它的最后 4 位（[钓鱼链接](/docs/zh-cn/guides/auth-and-device-approval/#钓鱼链接)）。
 
 ### Server-sent events
 

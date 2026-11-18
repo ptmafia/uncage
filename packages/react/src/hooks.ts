@@ -435,6 +435,43 @@ export type DeviceApprovalState =
   | 'expired'
   | 'error';
 
+/**
+ * Where the device code came from. `'typed'`: the user typed the whole code from their own
+ * terminal. `'link'`: it arrived in a URL (`/device?code=`, a QR code, an app link) and is not
+ * trusted on its own, since anyone can run `uncage setup` on their own computer and send the link
+ * (device-approval phishing).
+ */
+export type DeviceCodeSource = 'link' | 'typed';
+
+const compactCode = (s: string): string => s.toUpperCase().replace(/[\s-]/g, '');
+
+/** The characters a user types to confirm a code that came in a link: its last 4 (`ABCD-EFGH` → `EFGH`). */
+export function deviceCodeTail(code: string): string {
+  return compactCode(code).slice(-4);
+}
+
+/** Whether `typed` (case, spaces and dashes ignored) is the last 4 characters of `code`. */
+export function matchesDeviceCodeTail(code: string, typed: string): boolean {
+  const tail = deviceCodeTail(code);
+  return tail.length > 0 && compactCode(typed) === tail;
+}
+
+/**
+ * Whether a code that arrived in a link has the exact shape the CLI prints (`ABCD-EFGH` or
+ * `ABCDEFGH`, after trimming). Anything else (extra dashes, spaces, other characters) is refused
+ * without a lookup: a padded code could put other characters where the hidden last 4 should be.
+ */
+export function isWellFormedDeviceCode(code: string): boolean {
+  return /^[A-Z0-9]{4}-?[A-Z0-9]{4}$/i.test(code.trim());
+}
+
+/** The code as shown while its last 4 characters must be typed: `ABCD-••••` (built from the compacted code). */
+export function maskDeviceCode(code: string): string {
+  return `${compactCode(code).slice(0, 4)}-••••`;
+}
+
+let warnedUnconfirmed = false;
+
 const toApprovalError = (err: unknown): { code: string; message: string } =>
   err instanceof UncageClientError
     ? { code: err.code, message: err.message }
@@ -455,17 +492,40 @@ const toApprovalError = (err: unknown): { code: string; message: string } =>
  *
  * `approve` / `deny` only act from `'idle'` (no double submit); `retry` only acts from `'error'`.
  * Changing `code` starts over at `'loading'`.
+ *
+ * **Codes from links** (`source: 'link'`, the default): `approve()` does nothing until the user has
+ * typed the code's last 4 characters (`confirmation.setTyped`, checked by `confirmation.matched`).
+ * Show a warning ("Only approve if you just ran `uncage setup` on a computer in front of you. Never
+ * approve a code someone sent you."), `lookup.requestedAt` and `lookup.requestIp` next to it. Pass
+ * `source: 'typed'` only when the user typed the whole code themselves. `deny()` never needs it.
+ * A link code that is not exactly `ABCD-EFGH` / `ABCDEFGH` is not looked up: `state` is
+ * `'not_found'` and `linkInvalid` is `true` (show "this link is not valid" and the manual entry).
  */
-export function useDeviceApproval(code: string): {
+export function useDeviceApproval(
+  code: string,
+  options: { source?: DeviceCodeSource } = {},
+): {
   lookup: DeviceLookup | null;
   state: DeviceApprovalState;
   error?: { code: string; message: string };
+  /**
+   * Type-to-confirm for codes from links. `required`: `source` is `'link'`. `typed`: what the user
+   * typed so far. `matched`: it equals the code's last 4 characters (always `true` when not required).
+   */
+  confirmation: { required: boolean; typed: string; matched: boolean; setTyped(value: string): void };
+  /** A link-sourced code with the wrong shape: it was not looked up and cannot be approved. */
+  linkInvalid: boolean;
   approve(): Promise<void>;
   deny(): Promise<void>;
   /** Re-runs a failed lookup (only from `'error'`). */
   retry(): void;
 } {
   const { client } = useUncageStore();
+  const required = (options.source ?? 'link') === 'link';
+  const [typed, setTypedState] = useState('');
+  const linkInvalid = required && !isWellFormedDeviceCode(code);
+  const matched = !linkInvalid && (!required || matchesDeviceCodeTail(code, typed));
+  const setTyped = useCallback((value: string) => setTypedState(value.slice(0, 16)), []);
   const [lookup, setLookup] = useState<DeviceLookup | null>(null);
   const [state, setState] = useState<DeviceApprovalState>('loading');
   const [error, setError] = useState<{ code: string; message: string } | undefined>();
@@ -480,6 +540,14 @@ export function useDeviceApproval(code: string): {
     setLookup(null);
     setError(undefined);
     setState('loading');
+    setTypedState('');
+    if (linkInvalid) {
+      setState('not_found');
+      return () => {
+        cancelled = true;
+        if (generation.current === gen) generation.current++;
+      };
+    }
     client.lookupDevice(code).then(
       (found) => {
         if (cancelled) return;
@@ -496,11 +564,21 @@ export function useDeviceApproval(code: string): {
       cancelled = true;
       if (generation.current === gen) generation.current++;
     };
-  }, [client, code, attempt]);
+  }, [client, code, attempt, linkInvalid]);
 
   const decide = useCallback(
     async (approve: boolean): Promise<void> => {
       if (inFlight.current || state !== 'idle') return;
+      // A code from a link is approved only after the user typed its last 4 characters.
+      if (approve && !matched) {
+        if (!warnedUnconfirmed && typeof console !== 'undefined') {
+          warnedUnconfirmed = true;
+          console.warn(
+            "[uncage] useDeviceApproval: approve() ignored: this code came from a link (source: 'link', the default since 0.4.1) and the user has not typed its last 4 characters (confirmation.setTyped). Pass { source: 'typed' } only for a code the user typed.",
+          );
+        }
+        return;
+      }
       inFlight.current = true;
       const gen = generation.current;
       setError(undefined);
@@ -517,14 +595,15 @@ export function useDeviceApproval(code: string): {
         if (gen === generation.current) inFlight.current = false;
       }
     },
-    [client, code, state],
+    [client, code, state, matched],
   );
   const approve = useCallback(() => decide(true), [decide]);
   const deny = useCallback(() => decide(false), [decide]);
   const retry = useCallback(() => {
     if (state === 'error') setAttempt((n) => n + 1);
   }, [state]);
-  return { lookup, state, ...(error ? { error } : {}), approve, deny, retry };
+  const confirmation = useMemo(() => ({ required, typed, matched, setTyped }), [required, typed, matched, setTyped]);
+  return { lookup, state, ...(error ? { error } : {}), confirmation, linkInvalid, approve, deny, retry };
 }
 
 /**

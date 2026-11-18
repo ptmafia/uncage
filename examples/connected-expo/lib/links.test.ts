@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { assetToFile, pickedFileName } from './attachments';
-import { deviceCodeFromPath, sanitizeDeviceCode, sanitizeId } from './links';
+import {
+  deviceCodeFromPath,
+  deviceLinkFromPath,
+  isVerifiedLinkCode,
+  routeDeviceLink,
+  sanitizeDeviceCode,
+  sanitizeId,
+  timeAgo,
+} from './links';
 
 describe('device links', () => {
   it('reads the code from every way the CLI QR / app links arrive', () => {
@@ -20,6 +28,63 @@ describe('device links', () => {
     expect(deviceCodeFromPath(`/device?code=A${'&x=1'.repeat(1000)}`)).toBeUndefined();
     expect(sanitizeDeviceCode(['ABCD-EFGH', 'x'])).toBe('ABCD-EFGH');
     expect(sanitizeDeviceCode(undefined)).toBeUndefined();
+  });
+
+  it('pre-fills a code only from a verified https link to the configured site', () => {
+    const site = 'https://demo.example.com';
+    expect(deviceLinkFromPath('https://demo.example.com/device?code=ABCD-EFGH', site)).toEqual({ kind: 'verified', code: 'ABCD-EFGH' });
+    expect(deviceLinkFromPath('https://DEMO.example.com/device/?code=ABCD-EFGH', site)).toEqual({ kind: 'verified', code: 'ABCD-EFGH' });
+    // The custom scheme (any app or web page can fire it), Expo Go, other hosts, http, bare paths:
+    // the manual-entry screen, without the code.
+    for (const p of [
+      'uncagedemo://device?code=ABCD-EFGH',
+      'uncagedemo:///device?code=ABCD-EFGH',
+      'uncagedemo://device/?code=ABCD-EFGH',
+      'exp://192.168.1.20:8081/--/device?code=ABCD-EFGH',
+      'https://evil.example/device?code=ABCD-EFGH',
+      'https://demo.example.com.evil.example/device?code=ABCD-EFGH',
+      'http://demo.example.com/device?code=ABCD-EFGH',
+      '/device?code=ABCD-EFGH',
+      'https://demo.example.com/device',
+    ]) {
+      expect(deviceLinkFromPath(p, site), p).toEqual({ kind: 'manual' });
+    }
+    // No https site configured (Expo Go on a LAN): never pre-filled.
+    expect(deviceLinkFromPath('http://192.168.1.20:3200/device?code=ABCD-EFGH', 'http://192.168.1.20:3200')).toEqual({ kind: 'manual' });
+    expect(deviceLinkFromPath('https://demo.example.com/device?code=ABCD-EFGH', undefined)).toEqual({ kind: 'manual' });
+    expect(deviceLinkFromPath('/chat/ses_1', site)).toBeUndefined();
+    expect(deviceLinkFromPath('uncagedemo://chat/ses_1', site)).toBeUndefined();
+  });
+
+  it('routeDeviceLink: verified codes are remembered and kept for after sign-in; others are dropped', () => {
+    const site = 'https://demo.example.com';
+    expect(routeDeviceLink('uncagedemo://device?code=WXYZ-2345', site)).toEqual({ route: '/device' });
+    expect(isVerifiedLinkCode('WXYZ-2345')).toBe(false);
+    expect(routeDeviceLink('https://demo.example.com/device?code=ABCD-EFGH', site)).toEqual({
+      route: '/device?code=ABCD-EFGH',
+      pendingCode: 'ABCD-EFGH',
+    });
+    expect(isVerifiedLinkCode('abcd-efgh')).toBe(true);
+    expect(isVerifiedLinkCode(undefined)).toBe(false);
+    expect(routeDeviceLink('/chat/ses_1', site)).toBeUndefined();
+  });
+
+  it('a padded or malformed code in a verified link is never pre-filled', () => {
+    const site = 'https://demo.example.com';
+    for (const code of ['ABCD-EFGH----', 'AB-CD-EF-GH', 'ABCD--EFGH', 'ABCD-EFGH-WXYZ']) {
+      expect(deviceLinkFromPath(`https://demo.example.com/device?code=${code}`, site), code).toEqual({ kind: 'manual' });
+    }
+    expect(deviceLinkFromPath('https://demo.example.com/device?code=ABCD%20EFGH', site)).toEqual({ kind: 'manual' });
+    expect(deviceLinkFromPath('https://demo.example.com/device?code=abcdefgh', site)).toEqual({ kind: 'verified', code: 'abcdefgh' });
+  });
+
+  it('timeAgo', () => {
+    const now = Date.parse('2026-11-17T12:00:00Z');
+    expect(timeAgo('2026-11-17T11:59:30Z', now)).toBe('just now');
+    expect(timeAgo('2026-11-17T11:59:00Z', now)).toBe('1 minute ago');
+    expect(timeAgo('2026-11-17T11:45:00Z', now)).toBe('15 minutes ago');
+    expect(timeAgo('2026-11-17T09:00:00Z', now)).toBe('3 hours ago');
+    expect(timeAgo(undefined, now)).toBe('unknown');
   });
 
   it('sanitizeId accepts session ids only', () => {

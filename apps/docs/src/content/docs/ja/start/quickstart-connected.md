@@ -238,7 +238,7 @@ export default function UncagePage() {
 
 ## 7. 承認ページ
 
-`uncage setup`はユーザーをあなたのサイトの`/device?code=…`へ誘導します。そこで承認すると、そのコンピュータがユーザーのアカウントにアクセスできるようになります。そのため、このページはサインイン中のユーザーにだけ提供し、フレーム内に埋め込めないようにし、判断は自分のオリジンからしか送れないPOSTで記録する必要があります。Next.jsのServer ActionsはPOST専用で`Origin`を検証するため、最後の点はこれで満たせます。
+`uncage setup`はユーザーをあなたのサイトの`/device?code=…`へ誘導します。そこで承認すると、そのコンピュータがユーザーのアカウントにアクセスできるようになります。そのため、このページはサインイン中のユーザーにだけ提供し、フレーム内に埋め込めないようにし、判断は自分のオリジンからしか送れないPOSTで記録する必要があります。Next.jsのServer ActionsはPOST専用で`Origin`を検証するため、最後の点はこれで満たせます。リンクで届いたコードはそれだけでは信用しません。`<ApproveDevice>`は要求時刻とIPを表示し、コードの最後の4文字の入力を求めます（[フィッシングリンク](/docs/ja/guides/auth-and-device-approval/#フィッシングリンク)）。
 
 ```tsx title="app/device/page.tsx"
 import type { ApproveDeviceProps } from '@uncage/react-ui';
@@ -369,7 +369,7 @@ curl -s http://localhost:3000/api/uncage/install.sh | head -3
    uncage setup http://localhost:3000
    ```
 
-3. **承認します**。setupはコードを表示し、`http://localhost:3000/device?code=…`を開きます。コードが一致していることを確認し、**Approve**（承認）をクリックします。setupはマシントークンを`~/.uncage/agent.yaml`に保存し、バックグラウンドのエージェント（ユーザー単位のサービス。macOSではlaunchd、Linuxではsystemd、Windowsではタスク スケジューラのタスク。`uncage agent status`で確認できます）を起動します。
+3. **承認します**。setupはコードを表示し、`http://localhost:3000/device?code=…`を開きます。ページは、誰かから送られたコードを絶対に承認しないよう警告し、コードの最後の4文字を隠します。ターミナルからその4文字を入力し、**Approve**（承認）をクリックします。setupはマシントークンを`~/.uncage/agent.yaml`に保存し、バックグラウンドのエージェント（ユーザー単位のサービス。macOSではlaunchd、Linuxではsystemd、Windowsではタスク スケジューラのタスク。`uncage agent status`で確認できます）を起動します。
 
 チャットページに戻ると、ステータスが「Waiting for your computer…」（コンピュータを待機中）から**Connected: &lt;コンピュータ名&gt;**（接続済み）に変わります。
 
